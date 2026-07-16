@@ -1,0 +1,35 @@
+# Allow only the repository's documented normal push command to run outside
+# the sandbox without prompting.
+prefix_rule(
+    pattern = ["git", "push", "origin", "HEAD"],
+    decision = "allow",
+    justification = "Allow normal pushes for this trusted repository outside the Windows sandbox.",
+    match = [
+        "git push origin HEAD",
+    ],
+    not_match = [
+        "git push",
+        "git push origin main",
+        "git push upstream HEAD",
+    ],
+)
+
+# A more restrictive matching rule wins over the allow rule above.
+prefix_rule(
+    pattern = [
+        "git",
+        "push",
+        "origin",
+        "HEAD",
+        ["--force", "-f", "--force-with-lease", "--mirror", "--delete"],
+    ],
+    decision = "forbidden",
+    justification = "Force, mirror, and delete pushes require explicit approval for the individual operation.",
+    match = [
+        "git push origin HEAD --force",
+        "git push origin HEAD -f",
+        "git push origin HEAD --force-with-lease",
+        "git push origin HEAD --mirror",
+        "git push origin HEAD --delete",
+    ],
+)
