@@ -1,12 +1,7 @@
-from edu_agent_app.api import app
+"""Compatibility entry point; prefer ``python -m edu_agent_app`` for local runs."""
+
+from edu_agent_app.__main__ import app, main
 
 
 if __name__ == "__main__":
-    import asyncio
-    import sys
-
-    import uvicorn
-
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()

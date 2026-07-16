@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "baseUrl": ".",
+    "paths": {
+      "@edu/api-client": ["packages/api-client/src/index.ts"],
+      "@edu/auth": ["packages/auth/src/index.ts"],
+      "@edu/design-tokens": ["packages/design-tokens/src/index.ts"],
+      "@edu/design-tokens/tokens.css": ["packages/design-tokens/tokens.css"],
+      "@edu/test-utils": ["packages/test-utils/src/index.ts"],
+      "@edu/ui": ["packages/ui/src/index.ts"],
+      "@edu/ui/shell.css": ["packages/ui/src/shell.css"]
+    }
+  }
+}

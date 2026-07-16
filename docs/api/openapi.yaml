@@ -1,0 +1,554 @@
+openapi: 3.1.0
+info:
+  title: EDU Platform Gateway API
+  version: 0.1.0
+  description: T03 contract baseline. The endpoints are contract-only and have no course business implementation in this task.
+servers:
+  - url: http://localhost:8080
+    description: Local Gateway
+  - url: http://127.0.0.1:4010
+    description: OpenAPI mock
+tags:
+  - name: Authentication
+  - name: Users
+  - name: Courses
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Log in with a platform account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              student:
+                value:
+                  account: student@example.com
+                  password: example-password
+      responses:
+        '200':
+          description: Login succeeded
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              examples:
+                success:
+                  value:
+                    tokenType: Bearer
+                    accessToken: mock-access-token
+                    expiresIn: 1800
+                    refreshToken: mock-refresh-token
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      summary: Get the authenticated user summary
+      responses:
+        '200':
+          description: Current user
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+              examples:
+                student:
+                  value:
+                    id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6171
+                    displayName: 示例学生
+                    avatarUrl: https://cdn.example.test/avatars/student.png
+                    roles: [STUDENT]
+                    permissions: [course:read]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/courses:
+    get:
+      tags: [Courses]
+      operationId: listCourses
+      summary: List published courses
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: categoryId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paged course summaries
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoursePage'
+              examples:
+                firstPage:
+                  value:
+                    items:
+                      - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+                        title: 七年级代数基础
+                        summary: 从有理数到一元一次方程
+                        coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
+                        teacher:
+                          id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6101
+                          displayName: 王老师
+                        category:
+                          id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6301
+                          name: 初中数学
+                        level: BEGINNER
+                        accessType: PUBLIC
+                    page: 1
+                    size: 20
+                    total: 1
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/courses/{courseId}:
+    get:
+      tags: [Courses]
+      operationId: getCourse
+      summary: Get a published course detail
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      responses:
+        '200':
+          description: Course detail
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseDetail'
+              examples:
+                algebra:
+                  value:
+                    id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+                    title: 七年级代数基础
+                    summary: 从有理数到一元一次方程
+                    description: "## 课程介绍\n循序渐进掌握代数基础。"
+                    coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
+                    teacher:
+                      id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6101
+                      displayName: 王老师
+                    category:
+                      id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6301
+                      name: 初中数学
+                    level: BEGINNER
+                    accessType: PUBLIC
+                    publishedVersion: v1
+                    chapters:
+                      - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6401
+                        title: 有理数
+                        sequence: 1
+                        lessons:
+                          - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6501
+                            title: 正数与负数
+                            type: VIDEO
+                            sequence: 1
+                            previewable: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    TraceId:
+      description: Correlation identifier propagated through Gateway and services.
+      schema:
+        type: string
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: One-based page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Size:
+      name: size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CourseId:
+      name: courseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      description: Authentication is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: IAM.UNAUTHORIZED
+            message: 请先登录或重新登录
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/users/me
+            fieldErrors: []
+    Forbidden:
+      description: The authenticated user cannot access the resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: IAM.FORBIDDEN
+            message: 无权访问该资源
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/users/me
+            fieldErrors: []
+    NotFound:
+      description: The requested resource does not exist or is not visible.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: COURSE.NOT_FOUND
+            message: 课程不存在或不可见
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+            fieldErrors: []
+    ValidationFailed:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: COMMON.VALIDATION_FAILED
+            message: 请求参数不合法
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/auth/login
+            fieldErrors:
+              - field: account
+                reason: 账号不能为空
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: GATEWAY.RATE_LIMITED
+            message: 请求过于频繁，请稍后再试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/auth/login
+            fieldErrors: []
+    InternalError:
+      description: Unexpected server error without internal details.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: COMMON.INTERNAL_ERROR
+            message: 服务暂时不可用
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/courses
+            fieldErrors: []
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [account, password]
+      properties:
+        account:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [tokenType, accessToken, expiresIn, refreshToken]
+      properties:
+        tokenType:
+          type: string
+          const: Bearer
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: Access token lifetime in seconds.
+        refreshToken:
+          type: string
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, roles, permissions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+        roles:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/UserRole'
+        permissions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    UserRole:
+      type: string
+      enum: [STUDENT, TEACHER, OPERATOR]
+    CoursePage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CourseSummary'
+        page:
+          type: integer
+          minimum: 1
+        size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+          format: int64
+    CourseSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, summary, coverUrl, teacher, category, level, accessType]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        summary:
+          type: string
+          maxLength: 300
+        coverUrl:
+          type: string
+          format: uri
+        teacher:
+          $ref: '#/components/schemas/TeacherSummary'
+        category:
+          $ref: '#/components/schemas/CategorySummary'
+        level:
+          $ref: '#/components/schemas/CourseLevel'
+        accessType:
+          $ref: '#/components/schemas/CourseAccessType'
+    CourseDetail:
+      type: object
+      additionalProperties: false
+      required: [id, title, summary, description, coverUrl, teacher, category, level, accessType, publishedVersion, chapters]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        summary:
+          type: string
+          maxLength: 300
+        description:
+          type: string
+          description: Markdown course description.
+        coverUrl:
+          type: string
+          format: uri
+        teacher:
+          $ref: '#/components/schemas/TeacherSummary'
+        category:
+          $ref: '#/components/schemas/CategorySummary'
+        level:
+          $ref: '#/components/schemas/CourseLevel'
+        accessType:
+          $ref: '#/components/schemas/CourseAccessType'
+        publishedVersion:
+          type: string
+        chapters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chapter'
+    TeacherSummary:
+      type: object
+      additionalProperties: false
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+    CategorySummary:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+    CourseLevel:
+      type: string
+      enum: [BEGINNER, INTERMEDIATE, ADVANCED]
+    CourseAccessType:
+      type: string
+      enum: [PUBLIC, ENROLLMENT_REQUIRED]
+    Chapter:
+      type: object
+      additionalProperties: false
+      required: [id, title, sequence, lessons]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        sequence:
+          type: integer
+          minimum: 1
+        lessons:
+          type: array
+          items:
+            $ref: '#/components/schemas/LessonSummary'
+    LessonSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, type, sequence, previewable]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        type:
+          type: string
+          enum: [VIDEO, ARTICLE, ASSESSMENT]
+        sequence:
+          type: integer
+          minimum: 1
+        previewable:
+          type: boolean
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [code, message, traceId, timestamp, path, fieldErrors]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*\.[A-Z][A-Z0-9_]*$'
+          example: COMMON.VALIDATION_FAILED
+        message:
+          type: string
+        traceId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+        fieldErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, reason]
+      properties:
+        field:
+          type: string
+        reason:
+          type: string
+security:
+  - bearerAuth: []

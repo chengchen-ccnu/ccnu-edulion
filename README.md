@@ -1,4 +1,17 @@
-# EDU Agent（精简拆分版）
+# EDU 在线网课平台
+
+本仓库正在按 T01 + T03 建立在线网课平台 Monorepo 基线：
+
+```text
+java-platform/   Gateway、五个领域服务与 shared-kernel 的 Maven 多模块工程
+edu_agent_app/   已有 Python 数学智能体（原地复用，不重新实现）
+web-apps/        学生端、教师端、管理端与共享 packages
+docs/            OpenAPI、事件、前端、ADR 与路线图事实来源
+```
+
+仓库级规则和完整验证命令见 `AGENTS.md`，首版 API 见 `docs/api/openapi.yaml`。本轮没有实现登录或课程业务，也没有引入支付、Elasticsearch 或 Kubernetes。
+
+## Python Agent（精简拆分版）
 
 这是从相邻旧项目 `../edu_agent/智能体项目` 拆分出的核心服务。代码放在当前项目，大型题库、FAISS 索引、BGE 模型和 EduAgentV7 权重继续按路径复用，避免重复复制约 GB 级资产。
 
@@ -12,7 +25,8 @@ edu_agent_app/
   retrieval.py    BM25 + FAISS 混合检索、重排、阈值、Neo4j
   workflow.py     两级检索回退、分步教学、循环保护
   api.py          FastAPI、SSE、会话中断与恢复
-server.py         启动入口
+  __main__.py     标准模块与 console script 入口
+server.py         兼容旧启动方式的入口
 tests/            不依赖外部数据库的核心规则测试
 ```
 
@@ -50,7 +64,8 @@ tests/            不依赖外部数据库的核心规则测试
 ```powershell
 Copy-Item .env.example .env
 conda activate langgraph
-uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+python -m pip install -e .
+python -m edu_agent_app
 ```
 
 `.env` 中至少需要配置模型 API 密钥。默认资产路径就是当前目录旁边的旧项目；如果移动了数据，请修改 `EDU_AGENT_ASSET_ROOT` 和 `BGE_MODEL_PATH`。
