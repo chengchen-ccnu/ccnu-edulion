@@ -1,0 +1,64 @@
+# 系统和 IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+.agents/
+.codex/
+
+# 本地环境、密钥和证书
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.langgraph_api/
+
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Node.js / Vue / pnpm
+node_modules/
+.pnpm-store/
+dist/
+.vite/
+.turbo/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# 日志、缓存和本地运行数据
+*.log
+logs/
+tmp/
+.cache/
+coverage/
+docker-data/
+
+# 大型本地模型、向量索引和业务资产不进入版本库
+data/
+models/
+faiss_question_db/
+faiss_knowledge_points/
