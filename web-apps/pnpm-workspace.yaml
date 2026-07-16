@@ -4,3 +4,6 @@ packages:
 
 nodeLinker: hoisted
 storeDir: .pnpm-store
+
+onlyBuiltDependencies:
+  - esbuild

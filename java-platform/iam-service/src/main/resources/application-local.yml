@@ -1,0 +1,46 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${IAM_MYSQL_DATABASE}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=${MYSQL_SERVER_TIMEZONE:Asia/Shanghai}&useSSL=${MYSQL_SSL_ENABLED:false}&allowPublicKeyRetrieval=${MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:true}
+    username: ${MYSQL_USERNAME}
+    password: ${MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${MYSQL_MAXIMUM_POOL_SIZE:2}
+      minimum-idle: ${MYSQL_MINIMUM_IDLE:0}
+      connection-timeout: ${MYSQL_CONNECTION_TIMEOUT_MS:3000}
+      validation-timeout: ${MYSQL_VALIDATION_TIMEOUT_MS:2000}
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      database: ${IAM_REDIS_DATABASE:1}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${REDIS_TIMEOUT:2s}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+
+management:
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+    redis:
+      enabled: true
+
+platform:
+  messaging:
+    rocketmq:
+      enabled: ${ROCKETMQ_ENABLED:false}
+      name-server: ${ROCKETMQ_NAME_SERVER:}
+      namespace: ${ROCKETMQ_NAMESPACE:}
+      access-key: ${ROCKETMQ_ACCESS_KEY:}
+      secret-key: ${ROCKETMQ_SECRET_KEY:}

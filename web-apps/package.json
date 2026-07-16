@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.22.0",
   "scripts": {
     "build": "pnpm generate:api && pnpm --workspace-concurrency=1 -r --if-present run build",
+    "check:api": "pnpm generate:api && git diff --exit-code HEAD -- packages/api-client/src/generated/schema.d.ts && git ls-files --error-unmatch packages/api-client/src/generated/schema.d.ts",
     "dev:student": "pnpm --filter @edu/student-web dev",
     "dev:teacher": "pnpm --filter @edu/teacher-web dev",
     "dev:admin": "pnpm --filter @edu/admin-web dev",

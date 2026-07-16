@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: Java / JDK 17
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: |
+            java-platform/pom.xml
+            java-platform/*/pom.xml
+
+      - name: Verify Maven reactor
+        run: mvn -B -ntp -f java-platform/pom.xml clean verify
+
+  python:
+    name: Python / 3.9
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9 with pip cache
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+
+      - name: Compile Python sources
+        run: python -m compileall -q edu_agent_app server.py
+
+      - name: Run unit tests without external assets
+        run: python -m unittest discover -s tests -v
+
+      - name: Build wheel without runtime dependencies
+        run: python -m pip wheel --no-deps --wheel-dir .m2/python-wheels .
+
+  frontend:
+    name: Frontend / Node 20.19
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm 10.22.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.22.0
+          run_install: false
+
+      - name: Set up Node 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.5
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: web-apps/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web-apps/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install frozen dependencies
+        run: pnpm --dir web-apps install --frozen-lockfile
+
+      - name: Generate OpenAPI client
+        run: pnpm --dir web-apps run generate:api
+
+      - name: Typecheck workspaces
+        run: pnpm --dir web-apps run typecheck
+
+      - name: Run Vitest
+        run: pnpm --dir web-apps run test
+
+      - name: Build student, teacher, and admin applications
+        run: pnpm --dir web-apps run build
+
+  contract:
+    name: OpenAPI generated source is current
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm 10.22.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.22.0
+          run_install: false
+
+      - name: Set up Node 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.5
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: web-apps/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web-apps/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install frozen dependencies
+        run: pnpm --dir web-apps install --frozen-lockfile
+
+      - name: Regenerate and reject uncommitted contract drift
+        run: pnpm --dir web-apps run check:api
