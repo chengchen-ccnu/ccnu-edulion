@@ -1,0 +1,26 @@
+{
+  "name": "edu-platform-web-apps",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.22.0",
+  "scripts": {
+    "build": "pnpm generate:api && pnpm --workspace-concurrency=1 -r --if-present run build",
+    "dev:student": "pnpm --filter @edu/student-web dev",
+    "dev:teacher": "pnpm --filter @edu/teacher-web dev",
+    "dev:admin": "pnpm --filter @edu/admin-web dev",
+    "generate:api": "pnpm --filter @edu/api-client generate",
+    "mock:api": "prism mock ../docs/api/openapi.yaml --host 127.0.0.1 --port 4010",
+    "test": "vitest run",
+    "typecheck": "pnpm generate:api && pnpm --workspace-concurrency=1 -r --if-present run typecheck"
+  },
+  "devDependencies": {
+    "@stoplight/prism-cli": "5.14.2",
+    "@types/node": "26.1.1",
+    "@vitejs/plugin-vue": "6.0.1",
+    "openapi-typescript": "7.10.1",
+    "typescript": "5.9.3",
+    "vite": "7.2.2",
+    "vitest": "3.2.4",
+    "vue-tsc": "3.1.3"
+  }
+}

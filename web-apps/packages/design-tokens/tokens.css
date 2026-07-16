@@ -1,0 +1,21 @@
+:root {
+  color-scheme: light;
+  --edu-color-primary: #1f5eff;
+  --edu-color-primary-strong: #1648c8;
+  --edu-color-ink: #162033;
+  --edu-color-muted: #657087;
+  --edu-color-surface: #ffffff;
+  --edu-color-canvas: #f3f6fb;
+  --edu-color-border: #dce3ef;
+  --edu-color-success: #16835d;
+  --edu-radius-sm: 8px;
+  --edu-radius-md: 14px;
+  --edu-shadow-card: 0 16px 40px rgba(36, 56, 92, 0.1);
+  --edu-space-xs: 4px;
+  --edu-space-sm: 8px;
+  --edu-space-md: 16px;
+  --edu-space-lg: 24px;
+  --edu-space-xl: 40px;
+  --edu-font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --edu-content-max: 1200px;
+}

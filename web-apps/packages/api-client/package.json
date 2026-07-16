@@ -1,0 +1,16 @@
+{
+  "name": "@edu/api-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ../../../docs/api/openapi.yaml -o src/generated/schema.d.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.15.0"
+  }
+}

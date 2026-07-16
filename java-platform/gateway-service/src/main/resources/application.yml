@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: gateway-service
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: iam-service
+              uri: ${IAM_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth/**,/api/v1/users/**
+            - id: course-service
+              uri: ${COURSE_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/courses/**
+            - id: media-service
+              uri: ${MEDIA_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/media/**
+            - id: learning-service
+              uri: ${LEARNING_SERVICE_URL:http://localhost:8084}
+              predicates:
+                - Path=/api/v1/learning/**,/api/v1/assessments/**,/api/v1/attempts/**
+            - id: operation-service
+              uri: ${OPERATION_SERVICE_URL:http://localhost:8085}
+              predicates:
+                - Path=/api/v1/operations/**
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

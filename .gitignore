@@ -23,6 +23,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+build/
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -33,6 +35,7 @@ htmlcov/
 
 # Java / Maven
 target/
+.m2/
 *.class
 *.jar
 *.war
