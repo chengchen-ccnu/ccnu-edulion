@@ -70,12 +70,18 @@ jobs:
           version: 10.22.0
           run_install: false
 
-      - name: Set up Node 20.19 with pnpm cache
+      - name: Set up Node 20.19
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.5
-          cache: pnpm
-          cache-dependency-path: web-apps/pnpm-lock.yaml
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: web-apps/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web-apps/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install frozen dependencies
         run: pnpm --dir web-apps install --frozen-lockfile
@@ -105,12 +111,18 @@ jobs:
           version: 10.22.0
           run_install: false
 
-      - name: Set up Node 20.19 with pnpm cache
+      - name: Set up Node 20.19
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.5
-          cache: pnpm
-          cache-dependency-path: web-apps/pnpm-lock.yaml
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: web-apps/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web-apps/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install frozen dependencies
         run: pnpm --dir web-apps install --frozen-lockfile
