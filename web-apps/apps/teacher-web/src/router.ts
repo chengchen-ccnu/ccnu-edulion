@@ -1,10 +1,21 @@
+import { AccessDeniedPage, installAuthGuard } from "@edu/auth";
 import { createRouter, createWebHistory } from "vue-router";
-import LoginPage from "./views/LoginPage.vue";
+
+import { authStore } from "./auth";
 import PlaceholderPage from "./views/PlaceholderPage.vue";
-export const router = createRouter({history:createWebHistory(),routes:[
-  {path:"/",redirect:"/teacher/dashboard"},
-  {path:"/teacher/dashboard",component:PlaceholderPage,props:{heading:"教师工作台",note:"本轮只提供路由和布局。"}},
-  {path:"/teacher/courses",component:PlaceholderPage,props:{heading:"课程管理",note:"课程编辑与发布不在 T01 + T03 范围。"}},
-  {path:"/login",name:"login",component:LoginPage},
-  {path:"/:pathMatch(.*)*",component:PlaceholderPage,props:{heading:"页面不存在",note:"请检查访问地址。"}}
-]});
+
+export const router = createRouter({ history: createWebHistory(), routes: [
+  { path: "/", redirect: "/teacher/dashboard" },
+  { path: "/teacher/dashboard", name: "teacher-dashboard", component: PlaceholderPage,
+    meta: { requiresAuth: true, requiredRole: "TEACHER" },
+    props: { heading: "教师工作台", note: "已通过 TEACHER 身份和最小权限校验。" } },
+  { path: "/teacher/courses", name: "teacher-courses", component: PlaceholderPage,
+    meta: { requiresAuth: true, requiredRole: "TEACHER" },
+    props: { heading: "课程管理", note: "课程业务留给 T05。" } },
+  { path: "/forbidden", name: "forbidden", component: AccessDeniedPage,
+    meta: { requiresAuth: true }, props: { store: authStore } },
+  { path: "/:pathMatch(.*)*", component: PlaceholderPage,
+    props: { heading: "页面不存在", note: "请检查访问地址。" } }
+] });
+
+installAuthGuard(router, authStore, { onLoginRedirect: url => window.location.assign(url) });

@@ -1,0 +1,30 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:iam_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
+
+platform:
+  iam:
+    jwt:
+      issuer: edu-platform-iam-test
+      audience: edu-platform-gateway-test
+      secret: test-only-secret-with-at-least-32-bytes
+      access-ttl: 2m
+    refresh:
+      ttl: 10m
+      cookie-secure: false
+    login-rate-limit:
+      attempts: 5
+      window: 15m
+    seed:
+      enabled: false
+      password: ""

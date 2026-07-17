@@ -12,6 +12,9 @@ spring:
       minimum-idle: ${MYSQL_MINIMUM_IDLE:0}
       connection-timeout: ${MYSQL_CONNECTION_TIMEOUT_MS:3000}
       validation-timeout: ${MYSQL_VALIDATION_TIMEOUT_MS:2000}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -37,6 +40,12 @@ management:
       enabled: true
 
 platform:
+  iam:
+    seed:
+      enabled: ${IAM_SEED_ENABLED:false}
+      password: ${IAM_SEED_PASSWORD:}
+    refresh:
+      cookie-secure: ${IAM_REFRESH_COOKIE_SECURE:false}
   messaging:
     rocketmq:
       enabled: ${ROCKETMQ_ENABLED:false}

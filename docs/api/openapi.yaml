@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.1.0
-  description: T03 contract baseline. The endpoints are contract-only and have no course business implementation in this task.
+  version: 0.2.0
+  description: T04 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -28,7 +28,7 @@ paths:
             examples:
               student:
                 value:
-                  account: student@example.com
+                  account: student_test_01
                   password: example-password
       responses:
         '200':
@@ -36,6 +36,8 @@ paths:
           headers:
             X-Trace-Id:
               $ref: '#/components/headers/TraceId'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
           content:
             application/json:
               schema:
@@ -45,12 +47,59 @@ paths:
                   value:
                     tokenType: Bearer
                     accessToken: mock-access-token
-                    expiresIn: 1800
-                    refreshToken: mock-refresh-token
+                    expiresIn: 900
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshAccessToken
+      summary: Rotate the refresh session and issue a new access token
+      description: The current refresh token is read only from the HttpOnly cookie. A successful call invalidates it and sets a replacement cookie.
+      security:
+        - refreshCookie: []
+      responses:
+        '200':
+          description: Refresh succeeded and the refresh cookie was rotated.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/RefreshConflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke the current refresh session and clear its cookie
+      security: []
+      responses:
+        '204':
+          description: The session is revoked or was already absent. The refresh cookie is cleared.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Set-Cookie:
+              $ref: '#/components/headers/ClearedRefreshCookie'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -197,11 +246,25 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: EDU_REFRESH
   headers:
     TraceId:
       description: Correlation identifier propagated through Gateway and services.
       schema:
         type: string
+    RefreshCookie:
+      description: Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1/auth and Secure outside local development.
+      schema:
+        type: string
+        example: EDU_REFRESH=opaque-token; Max-Age=604800; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Secure
+    ClearedRefreshCookie:
+      description: Expired refresh cookie returned by logout.
+      schema:
+        type: string
+        example: EDU_REFRESH=; Max-Age=0; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Secure
   parameters:
     Page:
       name: page
@@ -252,6 +315,19 @@ components:
             traceId: 2f6c8c3b98f14a9c
             timestamp: '2026-07-16T10:00:00Z'
             path: /api/v1/users/me
+            fieldErrors: []
+    RefreshConflict:
+      description: The refresh token was already rotated or revoked. The whole token family is revoked and the user must log in again.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: IAM.REFRESH_REUSED
+            message: 登录会话已失效，请重新登录
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/auth/refresh
             fieldErrors: []
     NotFound:
       description: The requested resource does not exist or is not visible.
@@ -329,7 +405,7 @@ components:
     LoginResponse:
       type: object
       additionalProperties: false
-      required: [tokenType, accessToken, expiresIn, refreshToken]
+      required: [tokenType, accessToken, expiresIn]
       properties:
         tokenType:
           type: string
@@ -340,8 +416,6 @@ components:
           type: integer
           minimum: 1
           description: Access token lifetime in seconds.
-        refreshToken:
-          type: string
     CurrentUser:
       type: object
       additionalProperties: false
@@ -369,7 +443,7 @@ components:
             type: string
     UserRole:
       type: string
-      enum: [STUDENT, TEACHER, OPERATOR]
+      enum: [STUDENT, TEACHER, ADMIN]
     CoursePage:
       type: object
       additionalProperties: false

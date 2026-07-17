@@ -21,6 +21,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate the refresh session and issue a new access token
+         * @description The current refresh token is read only from the HttpOnly cookie. A successful call invalidates it and sets a replacement cookie.
+         */
+        post: operations["refreshAccessToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke the current refresh session and clear its cookie */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/me": {
         parameters: {
             query?: never;
@@ -86,7 +123,6 @@ export interface components {
             accessToken: string;
             /** @description Access token lifetime in seconds. */
             expiresIn: number;
-            refreshToken: string;
         };
         CurrentUser: {
             /** Format: uuid */
@@ -98,7 +134,7 @@ export interface components {
             permissions: string[];
         };
         /** @enum {string} */
-        UserRole: "STUDENT" | "TEACHER" | "OPERATOR";
+        UserRole: "STUDENT" | "TEACHER" | "ADMIN";
         CoursePage: {
             items: components["schemas"]["CourseSummary"][];
             page: number;
@@ -218,6 +254,25 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The refresh token was already rotated or revoked. The whole token family is revoked and the user must log in again. */
+        RefreshConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.REFRESH_REUSED",
+                 *       "message": "登录会话已失效，请重新登录",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-07-16T10:00:00Z",
+                 *       "path": "/api/v1/auth/refresh",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description The requested resource does not exist or is not visible. */
         NotFound: {
             headers: {
@@ -311,6 +366,10 @@ export interface components {
     headers: {
         /** @description Correlation identifier propagated through Gateway and services. */
         TraceId: string;
+        /** @description Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1/auth and Secure outside local development. */
+        RefreshCookie: string;
+        /** @description Expired refresh cookie returned by logout. */
+        ClearedRefreshCookie: string;
     };
     pathItems: never;
 }
@@ -333,6 +392,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Trace-Id": components["headers"]["TraceId"];
+                    "Set-Cookie": components["headers"]["RefreshCookie"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -340,7 +400,56 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    refreshAccessToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refresh succeeded and the refresh cookie was rotated. */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    "Set-Cookie": components["headers"]["RefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["RefreshConflict"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session is revoked or was already absent. The refresh cookie is cleared. */
+            204: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    "Set-Cookie": components["headers"]["ClearedRefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };

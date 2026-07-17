@@ -1,0 +1,102 @@
+package com.eduplatform.gateway.config;
+
+import com.eduplatform.shared.api.ApiError;
+import tools.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.List;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtAudienceValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.reactive.CorsWebFilter;
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+@Configuration
+@EnableConfigurationProperties(GatewayProperties.class)
+public class GatewaySecurityConfig {
+    @Bean
+    SecretKey gatewayJwtSecretKey(GatewayProperties properties) {
+        String secret = properties.jwt().secret();
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("IAM_JWT_SECRET must contain at least 32 UTF-8 bytes");
+        }
+        return new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+    }
+
+    @Bean
+    ReactiveJwtDecoder gatewayJwtDecoder(SecretKey key, GatewayProperties properties) {
+        NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withSecretKey(key).build();
+        OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(properties.jwt().issuer()),
+                new JwtAudienceValidator(properties.jwt().audience()));
+        decoder.setJwtValidator(validator);
+        return decoder;
+    }
+
+    @Bean
+    SecurityWebFilterChain gatewaySecurity(ServerHttpSecurity http, ObjectMapper objectMapper) {
+        return http.csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .authorizeExchange(auth -> auth
+                        .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
+                        .pathMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .anyExchange().authenticated())
+                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults())
+                        .authenticationEntryPoint((exchange, exception) -> writeError(exchange, objectMapper,
+                                HttpStatus.UNAUTHORIZED, "IAM.UNAUTHORIZED", "请先登录或重新登录")))
+                .exceptionHandling(errors -> errors.accessDeniedHandler((exchange, exception) ->
+                        writeError(exchange, objectMapper, HttpStatus.FORBIDDEN,
+                                "IAM.FORBIDDEN", "无权访问该资源")))
+                .build();
+    }
+
+    @Bean
+    CorsWebFilter corsWebFilter(GatewayProperties properties) {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(properties.allowedOrigins());
+        configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Trace-Id"));
+        configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return new CorsWebFilter(source);
+    }
+
+    private static Mono<Void> writeError(ServerWebExchange exchange, ObjectMapper objectMapper,
+            HttpStatus status, String code, String message) {
+        exchange.getResponse().setStatusCode(status);
+        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        String traceId = exchange.getAttribute(TraceWebFilter.ATTRIBUTE);
+        ApiError error = new ApiError(code, message, traceId, Instant.now(),
+                exchange.getRequest().getPath().value(), List.of());
+        byte[] bytes;
+        try {
+            bytes = objectMapper.writeValueAsBytes(error);
+        } catch (Exception serializationFailure) {
+            bytes = "{\"code\":\"COMMON.INTERNAL_ERROR\",\"message\":\"服务暂时不可用\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        return exchange.getResponse().writeWith(Mono.just(exchange.getResponse().bufferFactory().wrap(bytes)));
+    }
+}

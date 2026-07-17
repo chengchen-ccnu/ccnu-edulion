@@ -1,2 +1,0 @@
-<script setup lang="ts">import { DEFAULT_MOCK_BASE_URL } from "@edu/api-client";</script>
-<template><section class="card login-card"><span class="badge">登录占位</span><h2>教师登录</h2><p>认证与教师权限将在 T04 实现。</p><label>账号<input disabled placeholder="teacher@example.com" /></label><label>密码<input disabled type="password" placeholder="••••••••" /></label><button disabled>登录</button><small>OpenAPI Mock：{{ DEFAULT_MOCK_BASE_URL }}</small></section></template>
