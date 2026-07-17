@@ -10,7 +10,9 @@
   --edu-color-success: #16835d;
   --edu-radius-sm: 8px;
   --edu-radius-md: 14px;
+  --edu-radius-lg: 26px;
   --edu-shadow-card: 0 16px 40px rgba(36, 56, 92, 0.1);
+  --edu-shadow-elevated: 0 28px 80px rgba(30, 50, 90, 0.16);
   --edu-space-xs: 4px;
   --edu-space-sm: 8px;
   --edu-space-md: 16px;

@@ -82,6 +82,19 @@ class GatewayRouteSecurityTest {
     }
 
     @Test
+    void browserPreflightIsPublicAndReturnsCredentialedCorsHeaders() {
+        client.options().uri("/api/v1/auth/login")
+                .header("Origin", "http://localhost:5173")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "content-type")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().valueEquals("Access-Control-Allow-Origin", "http://localhost:5173")
+                .expectHeader().valueEquals("Access-Control-Allow-Credentials", "true")
+                .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("POST"));
+    }
+
+    @Test
     void validTokenReachesCurrentUserRouteWithTrustedIdentity() {
         Instant now = Instant.now();
         client.get().uri("/api/v1/users/me")

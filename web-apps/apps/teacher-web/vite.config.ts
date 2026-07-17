@@ -9,4 +9,4 @@ const workspaceAlias = {
   "@edu/design-tokens": fileURLToPath(new URL("../../packages/design-tokens/src/index.ts", import.meta.url)),
   "@edu/ui": fileURLToPath(new URL("../../packages/ui/src/index.ts", import.meta.url))
 };
-export default defineConfig({ plugins: [vue()], resolve: { alias: workspaceAlias }, server: { port: 5174 } });
+export default defineConfig({ plugins: [vue()], resolve: { alias: workspaceAlias }, server: { port: 5174, strictPort: true } });

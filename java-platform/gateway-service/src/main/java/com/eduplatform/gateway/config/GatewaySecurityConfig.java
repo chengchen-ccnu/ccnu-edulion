@@ -55,6 +55,7 @@ public class GatewaySecurityConfig {
     SecurityWebFilterChain gatewaySecurity(ServerHttpSecurity http, ObjectMapper objectMapper) {
         return http.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(auth -> auth
+                        .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()

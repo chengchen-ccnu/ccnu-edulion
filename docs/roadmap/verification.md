@@ -53,7 +53,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 ## 2026-07-17 T04 验证记录
 
 - 契约：OpenAPI 0.2.0 已定义登录、刷新、退出和当前用户，生成的 TypeScript 类型已更新；Prism 成功加载 6 条路由，登录 Mock 返回 200、Access Token 和 HttpOnly Refresh Cookie。
-- Java：`clean verify` 的 8 个 Reactor 模块全部成功；随后增强的 Gateway 定向测试 5 个通过。IAM 共 9 个测试通过，覆盖 BCrypt 登录、错误密码、禁用账号、失败限流、Refresh 过期/轮换/复用、退出、Flyway/MyBatis 和 Seed 幂等清理。
-- 数据库：只在测试进程中创建 H2 MySQL 模式的 `iam_test` 与 `iam_seed_test` 内存数据库，Flyway 创建 7 张 IAM 表；没有连接或修改本机来源不明的 MySQL 数据库。真实 MySQL 迁移仍需在用途明确的 IAM 专用 Schema 中验收。
-- Frontend：pnpm 10.22.0 冻结安装、OpenAPI 生成、全部 workspace 类型检查、10 个 Vitest 测试和学生/教师/管理三端生产构建通过。测试覆盖三角色登录、错误状态、单次 401 刷新重放和路由守卫。
+- Java：`clean verify` 的 8 个 Reactor 模块全部成功；Gateway 共 6 个测试通过（含 CORS 预检），IAM 共 9 个测试通过，覆盖 BCrypt 登录、错误密码、禁用账号、失败限流、Refresh 过期/轮换/复用、退出、Flyway/MyBatis 和 Seed 幂等清理。
+- 数据库：测试进程继续使用 H2 MySQL 模式的 `iam_test` 与 `iam_seed_test`。本地人工验收另外创建了用途明确的 `edu_platform_iam_dev`，Flyway V1 成功且只创建 7 张 IAM 业务表；显式启用 local Seed 后幂等生成 `student_test_01`、`teacher_test_01`、`admin_test_01` 及三组最小角色权限。未读取、修改或删除本机其他既有数据库；清理方式为 IAM Seed 专用清理脚本。
+- Frontend：pnpm 10.22.0 冻结安装、OpenAPI 生成一致性、全部 workspace 类型检查、15 个 Vitest 测试和学生/教师/管理三端生产构建通过。统一登录测试覆盖单角色自动分流、多角色工作台选择、安全 redirect、匿名教师/管理端回跳、403 工作台入口、单次 401 刷新和跨应用 Refresh Cookie 恢复。
 - Python：源码字节码编译和 8 个既有单元测试通过；旧版 pip 使用 `--use-feature=in-tree-build` 后 wheel 构建成功，未修改 Python Agent 源码。
