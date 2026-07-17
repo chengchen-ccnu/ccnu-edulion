@@ -5,7 +5,8 @@ a.router-link-active { color: var(--edu-color-primary); }
 .app-shell { min-height: 100vh; }
 .app-shell__header { display: flex; align-items: center; justify-content: space-between; gap: var(--edu-space-lg); padding: var(--edu-space-lg) max(var(--edu-space-lg), calc((100vw - var(--edu-content-max)) / 2)); background: var(--edu-color-surface); border-bottom: 1px solid var(--edu-color-border); }
 .app-shell__header h1 { margin: var(--edu-space-xs) 0 0; font-size: clamp(1.4rem, 3vw, 2rem); }
-.app-shell__header nav { display: flex; flex-wrap: wrap; gap: var(--edu-space-lg); }
+.app-shell__header nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--edu-space-lg); }
+.app-shell__header nav button { padding: 0; color: var(--edu-color-muted); background: none; border: 0; font: inherit; font-weight: 600; cursor: pointer; }
 .app-shell__eyebrow { color: var(--edu-color-primary); font-size: .75rem; font-weight: 800; letter-spacing: .08em; }
 .app-shell__content { width: min(calc(100% - 32px), var(--edu-content-max)); margin: 0 auto; padding: var(--edu-space-xl) 0; }
 .card { max-width: 720px; padding: clamp(24px, 5vw, 48px); background: var(--edu-color-surface); border: 1px solid var(--edu-color-border); border-radius: var(--edu-radius-md); box-shadow: var(--edu-shadow-card); }
@@ -15,5 +16,8 @@ a.router-link-active { color: var(--edu-color-primary); }
 .login-card { display: grid; gap: var(--edu-space-md); max-width: 520px; }
 .login-card label { display: grid; gap: var(--edu-space-sm); font-weight: 700; }
 .login-card input { width: 100%; padding: 12px 14px; border: 1px solid var(--edu-color-border); border-radius: var(--edu-radius-sm); background: #f7f9fc; }
-.login-card button { padding: 12px 16px; color: white; background: var(--edu-color-primary); border: 0; border-radius: var(--edu-radius-sm); font-weight: 800; opacity: .55; }
+.login-card form { display: grid; gap: var(--edu-space-md); }
+.login-card button { padding: 12px 16px; color: white; background: var(--edu-color-primary); border: 0; border-radius: var(--edu-radius-sm); font-weight: 800; cursor: pointer; }
+.login-card button:disabled { cursor: not-allowed; opacity: .55; }
+.login-card .field-error, .login-card .auth-error { color: #a51d2d; }
 @media (max-width: 720px) { .app-shell__header { align-items: flex-start; flex-direction: column; } .app-shell__content { padding-top: var(--edu-space-lg); } }
