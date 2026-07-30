@@ -138,5 +138,5 @@ pnpm.cmd --dir web-apps run build
 ## 分支、PR 与关键提交
 
 - 分支：`feat/t05-course-catalog`
-- Draft PR：待创建后回填。
-- 关键实现提交：`feat: implement T05 course catalog backend`（创建后回填提交哈希）。
+- Draft PR：[#4 feat: implement T05 course catalog backend](https://github.com/chengchen-ccnu/ccnu-edulion/pull/4)
+- 关键实现提交：`323f89d7d044888ac944df195b55a25dc606d546`（`feat: implement T05 course catalog backend`）。
