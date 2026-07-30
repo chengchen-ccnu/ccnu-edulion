@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.2.0
-  description: T04 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie.
+  version: 0.3.0
+  description: T05 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Published course versions are immutable; teacher edits create or update a separate draft.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -12,6 +12,7 @@ tags:
   - name: Authentication
   - name: Users
   - name: Courses
+  - name: Teacher Courses
 paths:
   /api/v1/auth/login:
     post:
@@ -154,6 +155,14 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: level
+          in: query
+          schema:
+            $ref: '#/components/schemas/CourseLevel'
+        - name: accessType
+          in: query
+          schema:
+            $ref: '#/components/schemas/CourseAccessType'
       responses:
         '200':
           description: Paged course summaries
@@ -236,6 +245,191 @@ paths:
                             previewable: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses:
+    post:
+      tags: [Teacher Courses]
+      operationId: createTeacherCourse
+      summary: Create an idempotent course draft owned by the current teacher
+      description: Repeating the same `clientRequestId` for the same teacher returns the originally created course.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCourseRequest'
+      responses:
+        '201':
+          description: Course draft created
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Location:
+              schema:
+                type: string
+                example: /api/v1/teacher/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCourse'
+        '200':
+          description: Existing course returned for a repeated `clientRequestId`
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCourse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses/{courseId}:
+    get:
+      tags: [Teacher Courses]
+      operationId: getTeacherCourse
+      summary: Get the current teacher-owned course editor snapshot
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      responses:
+        '200':
+          description: Current draft when present, otherwise the latest published version
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCourse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Teacher Courses]
+      operationId: updateTeacherCourse
+      summary: Replace editable course metadata
+      description: Editing a course without a draft copies the immutable published version into a new draft first. Repeating an identical request body is a no-op.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCourseRequest'
+      responses:
+        '200':
+          description: Updated editor snapshot
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCourse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses/{courseId}/curriculum:
+    put:
+      tags: [Teacher Courses]
+      operationId: replaceTeacherCourseCurriculum
+      summary: Replace the complete editable chapter and lesson ordering
+      description: Repeating an identical curriculum body is a no-op and preserves the current chapter and lesson identifiers.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceCurriculumRequest'
+      responses:
+        '200':
+          description: Updated editor snapshot
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCourse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses/{courseId}/publication:
+    put:
+      tags: [Teacher Courses]
+      operationId: updateTeacherCoursePublication
+      summary: Publish the current draft or unpublish the current live course
+      description: Publishing archives the previous published version without modifying it. Repeating the same target status is idempotent.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePublicationRequest'
+      responses:
+        '200':
+          description: Current publication state
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoursePublication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -357,6 +551,19 @@ components:
             fieldErrors:
               - field: account
                 reason: 账号不能为空
+    VersionConflict:
+      description: The editable course revision changed since it was read.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: COURSE.VERSION_CONFLICT
+            message: 课程已被更新，请刷新后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-07-16T10:00:00Z'
+            path: /api/v1/teacher/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+            fieldErrors: []
     TooManyRequests:
       description: Rate limit exceeded.
       headers:
@@ -554,6 +761,9 @@ components:
     CourseAccessType:
       type: string
       enum: [PUBLIC, ENROLLMENT_REQUIRED]
+    CoursePublicationStatus:
+      type: string
+      enum: [DRAFT, PUBLISHED, UNPUBLISHED]
     Chapter:
       type: object
       additionalProperties: false
@@ -593,6 +803,206 @@ components:
           minimum: 1
         previewable:
           type: boolean
+    CreateCourseRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, title, summary, description, coverUrl, instructorDisplayName, categoryId, level, accessType]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        summary:
+          type: string
+          maxLength: 300
+        description:
+          type: string
+          maxLength: 20000
+        coverUrl:
+          type: string
+          format: uri
+          maxLength: 512
+        instructorDisplayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Course byline content; ownership is always taken from the trusted authenticated user ID.
+        categoryId:
+          type: string
+          format: uuid
+        level:
+          $ref: '#/components/schemas/CourseLevel'
+        accessType:
+          $ref: '#/components/schemas/CourseAccessType'
+    UpdateCourseRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, title, summary, description, coverUrl, instructorDisplayName, categoryId, level, accessType]
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+          format: int64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        summary:
+          type: string
+          maxLength: 300
+        description:
+          type: string
+          maxLength: 20000
+        coverUrl:
+          type: string
+          format: uri
+          maxLength: 512
+        instructorDisplayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        categoryId:
+          type: string
+          format: uuid
+        level:
+          $ref: '#/components/schemas/CourseLevel'
+        accessType:
+          $ref: '#/components/schemas/CourseAccessType'
+    ReplaceCurriculumRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, chapters]
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+          format: int64
+        chapters:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ChapterInput'
+    ChapterInput:
+      type: object
+      additionalProperties: false
+      required: [title, sequence, lessons]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        sequence:
+          type: integer
+          minimum: 1
+        lessons:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/LessonInput'
+    LessonInput:
+      type: object
+      additionalProperties: false
+      required: [title, type, sequence, previewable]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        type:
+          type: string
+          enum: [VIDEO, ARTICLE, ASSESSMENT]
+        sequence:
+          type: integer
+          minimum: 1
+        previewable:
+          type: boolean
+    UpdatePublicationRequest:
+      type: object
+      additionalProperties: false
+      required: [status, expectedRevision]
+      properties:
+        status:
+          type: string
+          enum: [PUBLISHED, UNPUBLISHED]
+        expectedRevision:
+          type: integer
+          minimum: 0
+          format: int64
+    TeacherCourse:
+      type: object
+      additionalProperties: false
+      required: [id, publicationStatus, hasUnpublishedChanges, version, revision, title, summary, description, coverUrl, instructorDisplayName, category, level, accessType, chapters, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        publicationStatus:
+          $ref: '#/components/schemas/CoursePublicationStatus'
+        hasUnpublishedChanges:
+          type: boolean
+        publishedVersion:
+          type: [string, 'null']
+        draftVersion:
+          type: [string, 'null']
+        version:
+          type: string
+        revision:
+          type: integer
+          minimum: 0
+          format: int64
+        title:
+          type: string
+        summary:
+          type: string
+        description:
+          type: string
+        coverUrl:
+          type: string
+          format: uri
+        instructorDisplayName:
+          type: string
+        category:
+          $ref: '#/components/schemas/CategorySummary'
+        level:
+          $ref: '#/components/schemas/CourseLevel'
+        accessType:
+          $ref: '#/components/schemas/CourseAccessType'
+        chapters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chapter'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CoursePublication:
+      type: object
+      additionalProperties: false
+      required: [id, status, hasUnpublishedChanges, revision, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/CoursePublicationStatus'
+        publishedVersion:
+          type: [string, 'null']
+        draftVersion:
+          type: [string, 'null']
+        hasUnpublishedChanges:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 0
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
     ApiError:
       type: object
       additionalProperties: false

@@ -73,6 +73,20 @@ source java-platform/iam-service/src/main/resources/db/seed/cleanup-iam-seed.sql
 
 跨应用跳转后 Access Token 会随页面内存一起丢失，目标应用通过 Gateway 域下的 `EDU_REFRESH` HttpOnly Cookie 调用刷新接口恢复登录态。不要为本地调试把 Access Token 写入 `localStorage`。
 
+## T05 课程迁移与最小目录数据
+
+T05 只允许把 `COURSE_MYSQL_DATABASE` 指向用途明确的课程专用开发 Schema `edu_platform_course_dev`（自动化环境可使用 `edu_platform_course_test`）。应用不会创建数据库；启用 `local` profile 后，Flyway 只在该 Schema 中创建 `category`、`course`、`course_version`、`chapter` 和 `lesson`。这些表只保存课程域事实，不包含媒体资源、题库、报名、学习进度或运营数据，也不建立跨 Schema 外键。
+
+本地最小验收数据默认不生成。确认连接目标严格为 `edu_platform_course_dev` 后，可显式设置 `COURSE_SEED_ENABLED=true` 并启动 `course-service`。初始化器使用固定 UUID 幂等生成：一个“初中数学”分类、一门归属于 T04 `teacher_test_01` 固定用户 ID 的已发布“七年级代数基础”课程、一个章节和一个可试看视频类型课时。课时只有课程目录元数据，不包含媒体 ID 或播放地址。重复启动不会增加重复记录，production profile 不会加载该初始化器。
+
+清理前再次执行 `SELECT DATABASE()` 并确认结果为 `edu_platform_course_dev`，然后在 MySQL 交互式客户端中执行：
+
+```sql
+source java-platform/course-service/src/main/resources/db/seed/cleanup-course-seed.sql;
+```
+
+脚本只删除上述固定课程 Fixture（包括验收期间由它派生出的草稿版本）和不再被任何课程版本引用的固定测试分类，不删除 Flyway 表或其他课程。重新生成时再次设置 `COURSE_SEED_ENABLED=true` 并重启 `course-service`；完成验收后恢复为 `false`。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RocketMQ。

@@ -34,6 +34,7 @@ import org.springframework.test.context.DynamicPropertySource;
 class GatewayRouteSecurityTest {
     private static final String SECRET = "test-only-secret-with-at-least-32-bytes";
     private static HttpServer iamStub;
+    private static HttpServer courseStub;
 
     @DynamicPropertySource
     static void iamServiceUrl(DynamicPropertyRegistry registry) {
@@ -42,6 +43,10 @@ class GatewayRouteSecurityTest {
             iamStub.createContext("/", GatewayRouteSecurityTest::handleIamRequest);
             iamStub.start();
             registry.add("IAM_SERVICE_URL", () -> "http://127.0.0.1:" + iamStub.getAddress().getPort());
+            courseStub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            courseStub.createContext("/", GatewayRouteSecurityTest::handleCourseRequest);
+            courseStub.start();
+            registry.add("COURSE_SERVICE_URL", () -> "http://127.0.0.1:" + courseStub.getAddress().getPort());
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
@@ -50,6 +55,7 @@ class GatewayRouteSecurityTest {
     @AfterAll
     static void stopIamStub() {
         if (iamStub != null) iamStub.stop(0);
+        if (courseStub != null) courseStub.stop(0);
     }
 
     @Value("${local.server.port}") int port;
@@ -92,6 +98,15 @@ class GatewayRouteSecurityTest {
                 .expectHeader().valueEquals("Access-Control-Allow-Origin", "http://localhost:5173")
                 .expectHeader().valueEquals("Access-Control-Allow-Credentials", "true")
                 .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("POST"));
+
+        client.options().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")
+                .header("Origin", "http://localhost:5174")
+                .header("Access-Control-Request-Method", "PUT")
+                .header("Access-Control-Request-Headers", "authorization,content-type")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().valueEquals("Access-Control-Allow-Origin", "http://localhost:5174")
+                .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("PUT"));
     }
 
     @Test
@@ -112,14 +127,56 @@ class GatewayRouteSecurityTest {
                 .exchange().expectStatus().isUnauthorized();
     }
 
+    @Test
+    void publishedCourseRoutesArePublic() {
+        client.get().uri("/api/v1/courses?page=1").exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.route").isEqualTo("course");
+    }
+
+    @Test
+    void teacherCourseRoutesRequireTeacherRoleAndForwardTrustedIdentity() {
+        Instant now = Instant.now();
+        client.get().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("IAM.FORBIDDEN");
+
+        client.get().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300),
+                        "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001")
+                .jsonPath("$.roles").isEqualTo("TEACHER");
+    }
+
     private String token(Instant issuedAt, Instant expiresAt) {
+        return token(issuedAt, expiresAt, "STUDENT", "learning:access");
+    }
+
+    private String token(Instant issuedAt, Instant expiresAt, String role, String permission) {
         SecretKey key = new SecretKeySpec(SECRET.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
         JwtClaimsSet claims = JwtClaimsSet.builder().issuer("edu-platform-iam-test")
                 .audience(List.of("edu-platform-gateway-test")).subject("00000000-0000-4000-8000-000000000001")
-                .issuedAt(issuedAt).expiresAt(expiresAt).claim("roles", List.of("STUDENT"))
-                .claim("permissions", List.of("learning:access")).build();
+                .issuedAt(issuedAt).expiresAt(expiresAt).claim("roles", List.of(role))
+                .claim("permissions", List.of(permission)).build();
         return encoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).build(), claims)).getTokenValue();
+    }
+
+    private static void handleCourseRequest(HttpExchange exchange) throws IOException {
+        exchange.getRequestBody().readAllBytes();
+        String userId = exchange.getRequestHeaders().getFirst("X-User-Id");
+        String roles = exchange.getRequestHeaders().getFirst("X-User-Roles");
+        String body = userId == null
+                ? "{\"route\":\"course\"}"
+                : "{\"route\":\"course\",\"userId\":\"" + userId + "\",\"roles\":\"" + roles + "\"}";
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
     }
 
     private static void handleIamRequest(HttpExchange exchange) throws IOException {

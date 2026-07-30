@@ -109,6 +109,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/courses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an idempotent course draft owned by the current teacher
+         * @description Repeating the same `clientRequestId` for the same teacher returns the originally created course.
+         */
+        post: operations["createTeacherCourse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current teacher-owned course editor snapshot */
+        get: operations["getTeacherCourse"];
+        /**
+         * Replace editable course metadata
+         * @description Editing a course without a draft copies the immutable published version into a new draft first. Repeating an identical request body is a no-op.
+         */
+        put: operations["updateTeacherCourse"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/curriculum": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the complete editable chapter and lesson ordering
+         * @description Repeating an identical curriculum body is a no-op and preserves the current chapter and lesson identifiers.
+         */
+        put: operations["replaceTeacherCourseCurriculum"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Publish the current draft or unpublish the current live course
+         * @description Publishing archives the previous published version without modifying it. Repeating the same target status is idempotent.
+         */
+        put: operations["updateTeacherCoursePublication"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -184,6 +265,8 @@ export interface components {
         CourseLevel: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
         /** @enum {string} */
         CourseAccessType: "PUBLIC" | "ENROLLMENT_REQUIRED";
+        /** @enum {string} */
+        CoursePublicationStatus: "DRAFT" | "PUBLISHED" | "UNPUBLISHED";
         Chapter: {
             /** Format: uuid */
             id: string;
@@ -199,6 +282,95 @@ export interface components {
             type: "VIDEO" | "ARTICLE" | "ASSESSMENT";
             sequence: number;
             previewable: boolean;
+        };
+        CreateCourseRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            title: string;
+            summary: string;
+            description: string;
+            /** Format: uri */
+            coverUrl: string;
+            /** @description Course byline content; ownership is always taken from the trusted authenticated user ID. */
+            instructorDisplayName: string;
+            /** Format: uuid */
+            categoryId: string;
+            level: components["schemas"]["CourseLevel"];
+            accessType: components["schemas"]["CourseAccessType"];
+        };
+        UpdateCourseRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            title: string;
+            summary: string;
+            description: string;
+            /** Format: uri */
+            coverUrl: string;
+            instructorDisplayName: string;
+            /** Format: uuid */
+            categoryId: string;
+            level: components["schemas"]["CourseLevel"];
+            accessType: components["schemas"]["CourseAccessType"];
+        };
+        ReplaceCurriculumRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            chapters: components["schemas"]["ChapterInput"][];
+        };
+        ChapterInput: {
+            title: string;
+            sequence: number;
+            lessons: components["schemas"]["LessonInput"][];
+        };
+        LessonInput: {
+            title: string;
+            /** @enum {string} */
+            type: "VIDEO" | "ARTICLE" | "ASSESSMENT";
+            sequence: number;
+            previewable: boolean;
+        };
+        UpdatePublicationRequest: {
+            /** @enum {string} */
+            status: "PUBLISHED" | "UNPUBLISHED";
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        TeacherCourse: {
+            /** Format: uuid */
+            id: string;
+            publicationStatus: components["schemas"]["CoursePublicationStatus"];
+            hasUnpublishedChanges: boolean;
+            publishedVersion?: string | null;
+            draftVersion?: string | null;
+            version: string;
+            /** Format: int64 */
+            revision: number;
+            title: string;
+            summary: string;
+            description: string;
+            /** Format: uri */
+            coverUrl: string;
+            instructorDisplayName: string;
+            category: components["schemas"]["CategorySummary"];
+            level: components["schemas"]["CourseLevel"];
+            accessType: components["schemas"]["CourseAccessType"];
+            chapters: components["schemas"]["Chapter"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CoursePublication: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["CoursePublicationStatus"];
+            publishedVersion?: string | null;
+            draftVersion?: string | null;
+            hasUnpublishedChanges: boolean;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            updatedAt: string;
         };
         ApiError: {
             /** @example COMMON.VALIDATION_FAILED */
@@ -311,6 +483,25 @@ export interface components {
                  *           "reason": "账号不能为空"
                  *         }
                  *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The editable course revision changed since it was read. */
+        VersionConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "COURSE.VERSION_CONFLICT",
+                 *       "message": "课程已被更新，请刷新后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-07-16T10:00:00Z",
+                 *       "path": "/api/v1/teacher/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201",
+                 *       "fieldErrors": []
                  *     }
                  */
                 "application/json": components["schemas"]["ApiError"];
@@ -487,6 +678,8 @@ export interface operations {
                 size?: components["parameters"]["Size"];
                 keyword?: string;
                 categoryId?: string;
+                level?: components["schemas"]["CourseLevel"];
+                accessType?: components["schemas"]["CourseAccessType"];
             };
             header?: never;
             path?: never;
@@ -531,6 +724,177 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTeacherCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCourseRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing course returned for a repeated `clientRequestId` */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourse"];
+                };
+            };
+            /** @description Course draft created */
+            201: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTeacherCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current draft when present, otherwise the latest published version */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateTeacherCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCourseRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated editor snapshot */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VersionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    replaceTeacherCourseCurriculum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceCurriculumRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated editor snapshot */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VersionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateTeacherCoursePublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePublicationRequest"];
+            };
+        };
+        responses: {
+            /** @description Current publication state */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoursePublication"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VersionConflict"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };
