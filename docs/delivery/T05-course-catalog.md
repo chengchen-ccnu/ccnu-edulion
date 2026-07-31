@@ -145,5 +145,7 @@ pnpm.cmd --dir web-apps run build
 ## 分支、PR 与关键提交
 
 - 分支：`feat/t05-course-catalog`
-- PR：[#4 feat: implement T05 course catalog backend](https://github.com/chengchen-ccnu/ccnu-edulion/pull/4)
+- 已合并 PR：[#4 feat: implement T05 course catalog backend](https://github.com/chengchen-ccnu/ccnu-edulion/pull/4)
+- 合并提交：`0f2cf6ec800402c033d9b4fee33e18399e59afc7`。
 - 关键实现提交：`323f89d7d044888ac944df195b55a25dc606d546`（`feat: implement T05 course catalog backend`）。
+- 验收与本地凭据提交：`6e2b3567583e20672113149e05db3e186df2a700`（`chore: secure local credentials and record T05 acceptance`）。
