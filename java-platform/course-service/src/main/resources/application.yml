@@ -1,6 +1,14 @@
 spring:
   application:
     name: course-service
+  flyway:
+    enabled: false
+  jackson:
+    default-property-inclusion: non_null
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+  mapper-locations: classpath:mappers/*.xml
 server:
   port: ${SERVER_PORT:8082}
 management:
@@ -13,7 +21,7 @@ management:
 spring:
   config:
     activate:
-      on-profile: "!local"
+      on-profile: "!local & !test"
   autoconfigure:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration

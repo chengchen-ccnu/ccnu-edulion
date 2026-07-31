@@ -13,7 +13,7 @@ spring:
             - id: course-service
               uri: ${COURSE_SERVICE_URL:http://localhost:8082}
               predicates:
-                - Path=/api/v1/courses/**
+                - Path=/api/v1/courses/**,/api/v1/teacher/courses/**
             - id: media-service
               uri: ${MEDIA_SERVICE_URL:http://localhost:8083}
               predicates:

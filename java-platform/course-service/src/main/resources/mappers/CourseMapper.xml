@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.eduplatform.course.persistence.CourseMapper">
+    <sql id="publishedFilters">
+        c.publication_status = 'PUBLISHED'
+        <if test="keyword != null and keyword != ''">
+            AND (LOCATE(#{keyword}, cv.title) &gt; 0
+                 OR LOCATE(#{keyword}, cv.summary) &gt; 0)
+        </if>
+        <if test="categoryId != null">
+            AND cv.category_id = #{categoryId}
+        </if>
+        <if test="level != null">
+            AND cv.level = #{level}
+        </if>
+        <if test="accessType != null">
+            AND cv.access_type = #{accessType}
+        </if>
+    </sql>
+
+    <select id="countPublished" resultType="long">
+        SELECT COUNT(*)
+        FROM course c
+        JOIN course_version cv ON cv.id = c.published_version_id
+        WHERE <include refid="publishedFilters"/>
+    </select>
+
+    <select id="listPublished" resultType="com.eduplatform.course.domain.CourseListRow">
+        SELECT c.id,
+               cv.title,
+               cv.summary,
+               cv.cover_url,
+               c.owner_teacher_id AS teacher_id,
+               cv.instructor_display_name AS teacher_display_name,
+               cv.category_id,
+               cat.name AS category_name,
+               cv.level,
+               cv.access_type
+        FROM course c
+        JOIN course_version cv ON cv.id = c.published_version_id
+        JOIN category cat ON cat.id = cv.category_id
+        WHERE <include refid="publishedFilters"/>
+        ORDER BY c.published_at DESC, c.id
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="findPublicVersion" resultType="com.eduplatform.course.domain.CourseVersionEntity">
+        SELECT cv.*, cat.name AS category_name, c.owner_teacher_id
+        FROM course c
+        JOIN course_version cv ON cv.id = c.published_version_id
+        JOIN category cat ON cat.id = cv.category_id
+        WHERE c.id = #{courseId}
+          AND c.publication_status = 'PUBLISHED'
+    </select>
+
+    <select id="findVersion" resultType="com.eduplatform.course.domain.CourseVersionEntity">
+        SELECT cv.*, cat.name AS category_name
+        FROM course_version cv
+        JOIN category cat ON cat.id = cv.category_id
+        WHERE cv.id = #{versionId}
+    </select>
+
+    <sql id="courseColumns">
+        id, create_request_id, owner_teacher_id, current_draft_version_id, published_version_id,
+        publication_status, published_at, created_at, updated_at, row_version
+    </sql>
+
+    <select id="findOwnedCourse" resultType="com.eduplatform.course.domain.CourseEntity">
+        SELECT <include refid="courseColumns"/>
+        FROM course
+        WHERE id = #{courseId} AND owner_teacher_id = #{teacherId}
+    </select>
+
+    <select id="lockOwnedCourse" resultType="com.eduplatform.course.domain.CourseEntity">
+        SELECT <include refid="courseColumns"/>
+        FROM course
+        WHERE id = #{courseId} AND owner_teacher_id = #{teacherId}
+        FOR UPDATE
+    </select>
+
+    <select id="findByOwnerAndRequest" resultType="com.eduplatform.course.domain.CourseEntity">
+        SELECT <include refid="courseColumns"/>
+        FROM course
+        WHERE owner_teacher_id = #{teacherId} AND create_request_id = #{createRequestId}
+    </select>
+
+    <select id="countActiveCategory" resultType="int">
+        SELECT COUNT(*) FROM category WHERE id = #{categoryId} AND status = 'ACTIVE'
+    </select>
+
+    <insert id="insertCourse">
+        INSERT INTO course (
+            id, create_request_id, owner_teacher_id, current_draft_version_id,
+            published_version_id, publication_status, row_version
+        ) VALUES (
+            #{id}, #{createRequestId}, #{ownerTeacherId}, #{currentDraftVersionId},
+            #{publishedVersionId}, #{publicationStatus}, #{rowVersion}
+        )
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+
+    <insert id="insertCourseVersion">
+        INSERT INTO course_version (
+            id, course_id, version_number, version_label, lifecycle_status,
+            title, summary, description, cover_url, instructor_display_name,
+            category_id, level, access_type, curriculum_hash, row_version
+        ) VALUES (
+            #{id}, #{courseId}, #{versionNumber}, #{versionLabel}, #{lifecycleStatus},
+            #{title}, #{summary}, #{description}, #{coverUrl}, #{instructorDisplayName},
+            #{categoryId}, #{level}, #{accessType}, #{curriculumHash}, #{rowVersion}
+        )
+    </insert>
+
+    <update id="setDraftVersion">
+        UPDATE course
+        SET current_draft_version_id = #{versionId},
+            row_version = row_version + 1
+        WHERE id = #{courseId}
+    </update>
+
+    <update id="updateMetadata">
+        UPDATE course_version
+        SET title = #{version.title},
+            summary = #{version.summary},
+            description = #{version.description},
+            cover_url = #{version.coverUrl},
+            instructor_display_name = #{version.instructorDisplayName},
+            category_id = #{version.categoryId},
+            level = #{version.level},
+            access_type = #{version.accessType},
+            row_version = row_version + 1
+        WHERE id = #{version.id}
+          AND lifecycle_status = 'DRAFT'
+          AND row_version = #{expectedRevision}
+    </update>
+
+    <update id="reserveCurriculum">
+        UPDATE course_version
+        SET curriculum_hash = #{curriculumHash},
+            row_version = row_version + 1
+        WHERE id = #{versionId}
+          AND lifecycle_status = 'DRAFT'
+          AND row_version = #{expectedRevision}
+    </update>
+
+    <delete id="deleteLessonsByVersion">
+        DELETE FROM lesson
+        WHERE chapter_id IN (
+            SELECT id FROM chapter WHERE course_version_id = #{versionId}
+        )
+    </delete>
+
+    <delete id="deleteChaptersByVersion">
+        DELETE FROM chapter WHERE course_version_id = #{versionId}
+    </delete>
+
+    <insert id="insertChapter">
+        INSERT INTO chapter (id, course_version_id, title, position)
+        VALUES (#{id}, #{courseVersionId}, #{title}, #{position})
+    </insert>
+
+    <insert id="insertLesson">
+        INSERT INTO lesson (id, chapter_id, title, lesson_type, position, previewable)
+        VALUES (#{id}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable})
+    </insert>
+
+    <select id="listChapters" resultType="com.eduplatform.course.domain.ChapterEntity">
+        SELECT id, course_version_id, title, position
+        FROM chapter
+        WHERE course_version_id = #{versionId}
+        ORDER BY position, id
+    </select>
+
+    <select id="listLessons" resultType="com.eduplatform.course.domain.LessonEntity">
+        SELECT id, chapter_id, title, lesson_type, position, previewable
+        FROM lesson
+        WHERE chapter_id = #{chapterId}
+        ORDER BY position, id
+    </select>
+
+    <select id="countChapters" resultType="int">
+        SELECT COUNT(*) FROM chapter WHERE course_version_id = #{versionId}
+    </select>
+
+    <select id="countEmptyChapters" resultType="int">
+        SELECT COUNT(*)
+        FROM chapter ch
+        WHERE ch.course_version_id = #{versionId}
+          AND NOT EXISTS (SELECT 1 FROM lesson l WHERE l.chapter_id = ch.id)
+    </select>
+
+    <update id="archiveVersion">
+        UPDATE course_version
+        SET lifecycle_status = 'ARCHIVED'
+        WHERE id = #{versionId} AND lifecycle_status = 'PUBLISHED'
+    </update>
+
+    <update id="publishVersion">
+        UPDATE course_version
+        SET lifecycle_status = 'PUBLISHED'
+        WHERE id = #{versionId} AND lifecycle_status = 'DRAFT'
+    </update>
+
+    <update id="publishDraft">
+        UPDATE course
+        SET current_draft_version_id = NULL,
+            published_version_id = #{versionId},
+            publication_status = 'PUBLISHED',
+            published_at = CURRENT_TIMESTAMP(6),
+            row_version = row_version + 1
+        WHERE id = #{courseId}
+    </update>
+
+    <update id="updatePublicationStatus">
+        UPDATE course
+        SET publication_status = #{status},
+            published_at = CASE WHEN #{status} = 'PUBLISHED' THEN CURRENT_TIMESTAMP(6) ELSE published_at END,
+            row_version = row_version + 1
+        WHERE id = #{courseId}
+          AND publication_status &lt;&gt; #{status}
+    </update>
+</mapper>
