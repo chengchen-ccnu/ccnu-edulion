@@ -70,11 +70,19 @@ T05 在既有 Monorepo 中实现课程域后端闭环：
 从仓库根目录启动：
 
 ```powershell
-mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl course-service -am spring-boot:run
-mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl gateway-service -am spring-boot:run
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    if ($env:COURSE_MYSQL_DATABASE -ne 'edu_platform_course_dev') {
+        throw '拒绝启动：不是 edu_platform_course_dev'
+    }
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service -am spring-boot:run
+}
+
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl gateway-service -am spring-boot:run
+}
 ```
 
-凭据必须通过当前进程、IDE 密钥配置或本机密钥管理工具注入，不得写入仓库或命令历史。
+首次使用前运行 `scripts/Initialize-LocalEnvironment.ps1`，通过 Windows DPAPI 初始化本机 MySQL 凭据。Seed 密码、JWT 密钥等其他秘密仍必须通过当前进程、IDE 密钥配置或本机密钥管理工具注入，不得写入仓库或命令历史。完整说明见 `docs/development/local-environment.md`。
 
 ## 伪数据、清理与重新生成
 
@@ -113,13 +121,12 @@ pnpm.cmd --dir web-apps run build
 - OpenAPI 客户端生成和全部 workspace 类型检查通过；Vitest 15 个测试通过；学生/教师/管理三端生产构建通过。
 - Prism 成功加载 OpenAPI，学生课程列表和带 Bearer 头的教师创建 Mock 均返回 200。
 - Vitest/Vite 在受限沙箱内首次因 esbuild 子进程 `EPERM` 无法启动，获准在沙箱外复跑后通过。
-
-未执行：真实 MySQL `edu_platform_course_dev` 迁移和 Seed。本机 3306 端口与 MySQL 客户端可用，但当前进程没有 `MYSQL_USERNAME`、`MYSQL_PASSWORD` 或 `COURSE_MYSQL_DATABASE`，因此没有创建、读取或修改任何本机 Schema。
+- 2026-07-31，用户通过 DPAPI 本地凭据工作流在专用 `edu_platform_course_dev` 完成真实 MySQL 人工验收：Flyway V1、固定 Seed、匿名列表/筛选/分页/详情、教师幂等创建、目录编排、发布版本隔离、再次发布、乐观锁冲突、Gateway 角色拒绝、下架和定向清理均符合预期。该项为用户报告的人工验收结果；Codex 未读取、打印或复制本机凭据，也未在本轮重新操作数据库。
 
 ## 人工演示步骤
 
 1. 由有权限的本地数据库管理员准备空的 `edu_platform_course_dev` 和课程服务专用账号，确认当前连接数据库名称。
-2. 注入 local 环境变量，设置 `COURSE_SEED_ENABLED=true`，启动 `course-service`；确认 Flyway V1 成功且 Seed 只生成本页列出的固定数据。
+2. 使用 `scripts/Initialize-LocalEnvironment.ps1` 初始化本机凭据，再通过 `scripts/Invoke-WithLocalEnvironment.ps1` 注入 local 环境；设置 `COURSE_SEED_ENABLED=true`，启动 `course-service`，确认 Flyway V1 成功且 Seed 只生成本页列出的固定数据。
 3. 启动 IAM 与 Gateway，使用 T04 教师测试账号登录并获得内存 Access Token。
 4. 匿名调用 `GET /api/v1/courses`，验证筛选分页；调用固定课程详情，验证只显示 `v1` 和固定目录。
 5. 携带教师 Token 创建课程，保存返回的课程 ID/revision；编排目录并发布。
@@ -129,7 +136,7 @@ pnpm.cmd --dir web-apps run build
 
 ## 已知风险与后续依赖
 
-- 真实 MySQL 8 迁移、索引执行计划和 Seed 尚未在本机凭据环境验证；当前证据为 H2 MySQL 模式和 SQL 方言审查。
+- 真实 MySQL 8 的迁移、Seed 和功能链路已完成人工验收，但尚未使用生产级数据量验证分页查询和索引执行计划。
 - 分类管理不在 T05 范围；除 local/test 固定分类外，部署环境需要受控的分类初始化或后续管理能力。
 - `VIDEO`/`ASSESSMENT` 当前只是目录类型。媒体就绪校验、测验绑定、播放授权分别依赖后续 T07/T09/T11，T05 不创建这些资源。
 - 当前教师可直接发布/下架；课程审核工作流、管理员复核和发布领域事件尚未实现。RocketMQ/Outbox 接入需要后续任务补齐。
@@ -138,5 +145,5 @@ pnpm.cmd --dir web-apps run build
 ## 分支、PR 与关键提交
 
 - 分支：`feat/t05-course-catalog`
-- Draft PR：[#4 feat: implement T05 course catalog backend](https://github.com/chengchen-ccnu/ccnu-edulion/pull/4)
+- PR：[#4 feat: implement T05 course catalog backend](https://github.com/chengchen-ccnu/ccnu-edulion/pull/4)
 - 关键实现提交：`323f89d7d044888ac944df195b55a25dc606d546`（`feat: implement T05 course catalog backend`）。
