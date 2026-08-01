@@ -49,6 +49,8 @@ RabbitMQ 不可用不会回滚已经提交的上传/资产事实：Outbox 保留
 
 自动化测试使用 H2 MySQL 模式，进程退出即销毁。真实验收只创建并操作 `edu_platform_media_dev`，其中保留上述表与 `flyway_schema_history`，没有创建其他领域表。最终真实验收结束后 10 张数据表中的测试行均应为 0。
 
+实施过程中首次创建专用 Schema 并应用 V1 后，又为迁移文件补充了不改变表结构的中文说明，Flyway 因校验和变化按设计拒绝继续运行。经只读确认该 Schema 仅含本任务 10 张表、`flyway_schema_history` 和本轮残留测试事件，并获得针对该专用 Schema 的删除授权后，精确删除并重建了 `edu_platform_media_dev`，再以最终 V1 完成迁移和真实验收；没有删除、清空或修改其他 Schema。
+
 ## 5. 配置与启动
 
 所有本地命令必须通过仓库外凭据加载器执行：
