@@ -86,3 +86,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 权限：教师领域请求复用 T04 内存 Access Token，并在 401 时通过统一认证层刷新和重试一次；路由继续校验角色和最小工作台权限，页面不保存 Token。
 - 数据：没有新增迁移、持久数据库、表或 Seed；自动化测试只在 H2 内存 `course_test`/`course_seed_test` 中重建 T05 表和最小合成课程数据，进程退出后释放。
 - 未完成：Codex 内置浏览器无法访问宿主机本地服务且外部 Chrome 连接不可用，因此未完成视觉验收；真实 Gateway/MySQL 人工端到端和桌面/窄屏布局检查需按 T06 交付文档补验。
+- 发布：Draft PR [#6](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6) 已创建，等待 CI、人工视觉/真实联调验收和评审；不得自行合并。

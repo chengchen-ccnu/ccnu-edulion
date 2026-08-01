@@ -142,5 +142,5 @@ pnpm.cmd --dir web-apps run build
 ## 分支、PR 与关键提交
 
 - 分支：`feat/t06-course-web`
-- Draft PR：提交并推送后创建，随后回填链接。
+- Draft PR：[#6 feat: implement T06 course web](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6)。
 - 关键实现提交：`f1e3b139c3f6355013b1ff0b96fc3278454bfa7c`（`feat: implement T06 course web`）。
