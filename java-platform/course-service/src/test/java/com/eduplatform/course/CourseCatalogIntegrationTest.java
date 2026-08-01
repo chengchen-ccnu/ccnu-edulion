@@ -44,6 +44,8 @@ class CourseCatalogIntegrationTest {
     @Test
     void flywayMyBatisPublicCatalogSupportsFiltersPaginationAndDetail() {
         flyway.validate();
+        assertThat(service.listActiveCategories()).singleElement()
+                .satisfies(category -> assertThat(category.id()).isEqualTo(CATEGORY_ID.toString()));
         CourseDtos.TeacherCourse draft = service.create(TEACHER_ID, createRequest(UUID.randomUUID(), "代数基础"))
                 .course();
         CourseDtos.TeacherCourse withCurriculum = service.replaceCurriculum(
@@ -89,6 +91,12 @@ class CourseCatalogIntegrationTest {
                     assertThat(error.status().value()).isEqualTo(404);
                     assertThat(error.code()).isEqualTo("COURSE.NOT_FOUND");
                 });
+
+        service.create(OTHER_TEACHER_ID, createRequest(UUID.randomUUID(), "其他教师课程"));
+        CourseDtos.TeacherCoursePage page = service.listTeacherCourses(TEACHER_ID, 1, 10);
+        assertThat(page.total()).isEqualTo(1);
+        assertThat(page.items()).singleElement()
+                .satisfies(course -> assertThat(course.id()).isEqualTo(created.course().id()));
     }
 
     @Test

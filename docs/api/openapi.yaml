@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.3.0
-  description: T05 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Published course versions are immutable; teacher edits create or update a separate draft.
+  version: 0.4.0
+  description: T06 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Published course versions are immutable; teacher edits create or update a separate draft.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -127,7 +127,7 @@ paths:
                     displayName: 示例学生
                     avatarUrl: https://cdn.example.test/avatars/student.png
                     roles: [STUDENT]
-                    permissions: [course:read]
+                    permissions: [learning:access]
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -198,6 +198,33 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/courses/categories:
+    get:
+      tags: [Courses]
+      operationId: listCourseCategories
+      summary: List active course categories
+      security: []
+      responses:
+        '200':
+          description: Active categories ordered by name and identifier
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CategorySummary'
+              examples:
+                active:
+                  value:
+                    - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6301
+                      name: 初中数学
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/courses/{courseId}:
     get:
       tags: [Courses]
@@ -250,6 +277,60 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /api/v1/teacher/courses:
+    get:
+      tags: [Teacher Courses]
+      operationId: listTeacherCourses
+      summary: List courses owned by the current teacher
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Paged teacher course editor snapshots ordered by most recently updated
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherCoursePage'
+              examples:
+                firstPage:
+                  value:
+                    items:
+                      - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6201
+                        publicationStatus: DRAFT
+                        hasUnpublishedChanges: true
+                        publishedVersion: null
+                        draftVersion: v1
+                        version: v1
+                        revision: 0
+                        title: 七年级代数基础
+                        summary: 从有理数到一元一次方程
+                        description: "## 课程介绍\n循序渐进掌握代数基础。"
+                        coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
+                        instructorDisplayName: 王老师
+                        category:
+                          id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6301
+                          name: 初中数学
+                        level: BEGINNER
+                        accessType: PUBLIC
+                        chapters: []
+                        createdAt: '2026-08-01T00:00:00Z'
+                        updatedAt: '2026-08-01T00:00:00Z'
+                    page: 1
+                    size: 20
+                    total: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       tags: [Teacher Courses]
       operationId: createTeacherCourse
@@ -980,6 +1061,25 @@ components:
         updatedAt:
           type: string
           format: date-time
+    TeacherCoursePage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeacherCourse'
+        page:
+          type: integer
+          minimum: 1
+        size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+          format: int64
     CoursePublication:
       type: object
       additionalProperties: false

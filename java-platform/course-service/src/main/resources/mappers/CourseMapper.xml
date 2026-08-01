@@ -60,6 +60,13 @@
         WHERE cv.id = #{versionId}
     </select>
 
+    <select id="listActiveCategories" resultType="com.eduplatform.course.domain.CategoryEntity">
+        SELECT id, name
+        FROM category
+        WHERE status = 'ACTIVE'
+        ORDER BY name, id
+    </select>
+
     <sql id="courseColumns">
         id, create_request_id, owner_teacher_id, current_draft_version_id, published_version_id,
         publication_status, published_at, created_at, updated_at, row_version
@@ -69,6 +76,20 @@
         SELECT <include refid="courseColumns"/>
         FROM course
         WHERE id = #{courseId} AND owner_teacher_id = #{teacherId}
+    </select>
+
+    <select id="countOwnedCourses" resultType="long">
+        SELECT COUNT(*)
+        FROM course
+        WHERE owner_teacher_id = #{teacherId}
+    </select>
+
+    <select id="listOwnedCourses" resultType="com.eduplatform.course.domain.CourseEntity">
+        SELECT <include refid="courseColumns"/>
+        FROM course
+        WHERE owner_teacher_id = #{teacherId}
+        ORDER BY updated_at DESC, id
+        LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="lockOwnedCourse" resultType="com.eduplatform.course.domain.CourseEntity">

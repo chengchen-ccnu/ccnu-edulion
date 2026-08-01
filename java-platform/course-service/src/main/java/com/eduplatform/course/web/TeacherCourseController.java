@@ -2,6 +2,8 @@ package com.eduplatform.course.web;
 
 import com.eduplatform.course.service.CourseCatalogService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -23,6 +26,16 @@ public class TeacherCourseController {
 
     public TeacherCourseController(CourseCatalogService service) {
         this.service = service;
+    }
+
+    @GetMapping
+    CourseDtos.TeacherCoursePage list(
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
+        return service.listTeacherCourses(teacher.userId(), page, size);
     }
 
     @PostMapping
