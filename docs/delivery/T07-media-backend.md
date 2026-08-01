@@ -117,5 +117,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\Invoke-
 ## 12. 分支、提交与 PR
 
 - 分支：`codex/t07-media-backend`
-- 关键提交：提交后回填。
-- PR：创建后回填；必须保持 Ready for review，由用户决定是否合并。
+- 关键实现提交：`2659062e30f1c603e225dba6f993d8618734c771`
+- PR：[#9 T07 通用媒体后端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/9)，状态为 Ready for review；由用户决定是否合并。
