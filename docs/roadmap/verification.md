@@ -97,11 +97,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 文档验证：执行 `git diff --check`，并使用 `rg` 检查 `coverUrl`、`avatarUrl`、上传、附件、导入/导出、Banner 和 OSS 相关描述是否存在未映射占位。文档任务没有运行 Java、Python 或前端构建，不能把本次结果作为 T07/T08 功能已实现的证据。
 - 数据：没有连接、创建或修改任何数据库、表、OSS Bucket 或伪数据。
 
-## 2026-08-01 RabbitMQ 选型与 T07 前置条件审计
+## 2026-08-01 T07 验证记录
 
-- 范围：仅更新仓库规则、README、架构技术栈、ADR、本地环境、任务拆分和 backlog；没有修改 Java/Python/前端生产代码、OpenAPI、事件 Schema、数据库迁移或运行时配置。
-- 现状：所有 Java 模块均未引入 RocketMQ 或 RabbitMQ 客户端；各服务 `application-local.yml` 与 `.env.example` 中只有 T02 留下且默认禁用的 `ROCKETMQ_*` 占位。因此本次把 RabbitMQ 记录为后续实现选型，不把消息链路描述成已经可用。
-- 决策：T07 使用 RabbitMQ 4.x + Spring AMQP，可靠事件采用 Outbox、publisher confirm/return、有限重试、死信和按 `eventId` 幂等消费；T07 同时删除 RocketMQ 遗留占位，禁止保留两套 MQ。
-- 环境分层：契约、基础构建和适配器 Mock 不要求安装 RabbitMQ、FFmpeg 或配置真实 OSS；真实消息验收才要求 RabbitMQ + 兼容 Erlang，真实 OSS 直传验收要求明确授权的专用 Bucket，真实本机视频转码才要求 FFmpeg。
-- 验证：执行文档关键词审计和 `git diff --check`；未运行 Java、Python 或前端构建，本记录不能作为 T07 功能实现或 RabbitMQ/OSS/FFmpeg 真实联调成功的证据。
-- 数据：没有连接、创建或修改任何数据库、Schema、表、队列、Exchange、RabbitMQ 用户/vhost、OSS Bucket、OSS 对象或伪数据。
+- 契约：OpenAPI 0.5.0 定义上传会话、单对象与 Multipart 授权、完成/取消、资产分页与详情、处理状态和短期访问授权；`media-events.v1.yaml` 冻结媒体事件信封、版本、路由键和引用台账语义。TypeScript 客户端重新生成并通过全 workspace 类型检查。
+- Java：完整 `clean verify` 的 8 个 Reactor 模块全部通过；Gateway 9 项测试包含媒体路由、认证头和 DELETE CORS 边界，media-service 的 5 项 H2 集成测试覆盖单对象、Multipart、用途/角色策略、请求幂等、引用事件台账和回收。真实环境测试显式启用后另有 1 项通过。
+- RabbitMQ：在本机 RabbitMQ 4.3.4 默认 vhost 上通过 Spring AMQP 实际验证持久消息发布、publisher confirm、return、消费后确认、有限退避重试、超限死信、`eventId` 持久化幂等、未确认消息重投以及 Broker 不可用时 Outbox 保留。资源名为 `edu.media.events.v1`、`edu.media.dlx.v1`、`edu.media.processing.v1`、`edu.media.references.v1`、`edu.media.lifecycle.v1` 和 `edu.media.dlq.v1`。
+- OSS：测试只在专用 Bucket 的唯一 `t07-acceptance/<runId>/` 前缀生成单对象、Multipart 原件和 FFmpeg 派生对象；验证真实预签名直传、HEAD 元数据复核、短期访问和处理链路后，按已知精确 Object Key 删除，未列举、覆盖或删除其他对象。
+- FFmpeg：由测试运行时合成最小视频，实际经过可替换 Worker 边界执行 MP4 派生，验证 `PENDING/RUNNING/SUCCEEDED` 主链路及失败/取消状态模型；合成输入、临时目录和转码产物均未提交。
+- 数据：创建且仅操作 `edu_platform_media_dev`。Flyway V1 创建 10 张 media-service 业务/技术表和 `flyway_schema_history`；真实验收使用固定测试 owner 与每次唯一请求/事件标识，结束后逐表断言 10 张数据表均为 0。H2 自动化数据库随测试进程销毁。
+- Frontend：`generate:api`、全 workspace `typecheck`、4 个 Vitest 文件共 20 项测试和学生/教师/管理三端生产构建通过。Prism 成功加载完整 0.5.0 契约，媒体分页 GET 返回 200；媒体 POST 的 PowerShell 客户端请求在工具层超时且 Prism 未收到请求，因此不记录为 Mock 成功。
+- Python：`compileall`、8 项既有单元测试和 `--no-deps` wheel 构建通过，未修改 Python Agent 实现。
+- 安全与边界：没有读取或输出本地凭据，没有提交签名 URL、OSS 对象、转码产物或大型二进制文件；Gateway 和领域服务不代理文件字节，也没有接入 OSS SDK。当前首期只启用 `COURSE_COVER` 与 `LESSON_VIDEO`，外部恶意文件/内容审核服务尚未接入，生产开放前必须补齐。

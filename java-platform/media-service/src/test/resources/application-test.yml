@@ -1,0 +1,45 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:media_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
+
+platform:
+  media:
+    enabled: true
+    messaging:
+      enabled: false
+      outbox-poll-delay: 2s
+      confirm-timeout: 2s
+      max-publish-attempts: 3
+    upload:
+      grant-ttl: 15m
+      session-ttl: 24h
+      multipart-threshold: 10
+      part-size: 5
+    maintenance:
+      enabled: false
+      fixed-delay: 1h
+      unbound-retention: 24h
+    worker:
+      enabled: false
+      ffmpeg-path: ffmpeg
+      timeout: 30s
+    oss:
+      enabled: false
+      endpoint: ""
+      region: ""
+      bucket: ""
+      key-prefix: t07-test
+      access-key-id: ""
+      access-key-secret: ""
+      security-token: ""
+      access-grant-ttl: 10m

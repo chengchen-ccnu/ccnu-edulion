@@ -208,6 +208,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/media/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or replay an upload session
+         * @description The authenticated caller declares the intended media purpose and immutable file metadata. The service validates role, purpose, extension, MIME, size and quota, then generates an unguessable private OSS object key. Reusing the same `clientRequestId` with the same request fingerprint returns the original session; changing any immutable field returns `MEDIA.IDEMPOTENCY_CONFLICT`.
+         */
+        post: operations["createMediaUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/uploads/{uploadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an owned upload session and resumable part state */
+        get: operations["getMediaUpload"];
+        put?: never;
+        post?: never;
+        /** Idempotently cancel an unfinished upload session */
+        delete: operations["cancelMediaUpload"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/uploads/{uploadId}/parts/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a short-lived URL for one multipart part
+         * @description Repeating the same part number and declared length is idempotent. The URL is bound to the server-side object key and provider upload ID; neither is a business identifier.
+         */
+        post: operations["authorizeMediaUploadPart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/uploads/{uploadId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete, verify and enqueue an uploaded object
+         * @description For multipart sessions, parts must be unique and ordered by `partNumber`. The service completes the provider upload, performs an OSS HEAD check for object existence, length and MIME, and records the asset plus Outbox event in one local transaction. An identical replay returns the same asset; conflicting completion data returns `MEDIA.IDEMPOTENCY_CONFLICT`. Processing continues asynchronously and may remain pending while RabbitMQ is unavailable.
+         */
+        post: operations["completeMediaUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List media assets owned by the authenticated caller
+         * @description Results are ordered by `createdAt` descending and then `mediaId` descending. Pagination is one-based and stable for a fixed dataset.
+         */
+        get: operations["listMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{mediaId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get owned media metadata and processing status */
+        get: operations["getMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{mediaId}/access-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a short-lived, object-level read grant
+         * @description T07 permits the uploader to preview an owned READY asset. Domain-authorized viewers are added by later consumer tasks; the client cannot assert course, question, AI-session or review visibility. Signed URLs are transient projections and must not be persisted.
+         */
+        post: operations["createMediaAccessGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -397,6 +532,147 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        /**
+         * @description Stable business purpose. T07 enables COURSE_COVER and LESSON_VIDEO; later domain tasks enable the remaining values without inventing a second upload protocol.
+         * @enum {string}
+         */
+        MediaPurpose: "COURSE_COVER" | "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT" | "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "AI_QUESTION_IMAGE" | "USER_AVATAR" | "TEACHER_QUALIFICATION" | "BANNER_IMAGE" | "TOPIC_COVER" | "REPORT_EXPORT";
+        /** @enum {string} */
+        MediaUploadMode: "SINGLE_PUT" | "MULTIPART";
+        /** @enum {string} */
+        MediaUploadStatus: "CREATED" | "UPLOADING" | "UPLOADED" | "VERIFYING" | "PROCESSING" | "READY" | "REJECTED" | "FAILED" | "EXPIRED" | "CANCELED";
+        /** @enum {string} */
+        MediaAssetStatus: "UPLOADED" | "VERIFYING" | "PROCESSING" | "READY" | "REJECTED" | "FAILED" | "EXPIRED" | "DELETING" | "DELETED";
+        /** @enum {string} */
+        MediaProcessingStatus: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+        CreateMediaUploadRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            purpose: components["schemas"]["MediaPurpose"];
+            /** @description Original display name only. It is never used as the OSS object key. */
+            fileName: string;
+            /** Format: int64 */
+            size: number;
+            mimeType: string;
+            sha256: string;
+        };
+        AuthorizeMediaPartRequest: {
+            partNumber: number;
+            /** Format: int64 */
+            contentLength: number;
+            contentMd5?: string | null;
+        };
+        CompleteMediaUploadRequest: {
+            sha256: string;
+            /** @description Empty for SINGLE_PUT. Required, unique and ascending for MULTIPART. */
+            parts: components["schemas"]["CompletedMediaPart"][];
+        };
+        CompletedMediaPart: {
+            partNumber: number;
+            etag: string;
+        };
+        MediaUploadGrant: {
+            /** @constant */
+            method: "PUT";
+            /**
+             * Format: uri
+             * @description Short-lived bearer URL. Never persist or log it.
+             */
+            url: string;
+            /** @description Exact headers that must accompany the direct OSS request. */
+            headers: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        MediaMultipartUpload: {
+            /** Format: int64 */
+            partSize: number;
+            maxParts: number;
+            uploadedParts: components["schemas"]["UploadedMediaPart"][];
+        };
+        UploadedMediaPart: {
+            partNumber: number;
+            etag: string;
+            /** Format: int64 */
+            size: number;
+        };
+        MediaUploadSession: {
+            /** Format: uuid */
+            uploadId: string;
+            /** Format: uuid */
+            clientRequestId: string;
+            purpose: components["schemas"]["MediaPurpose"];
+            mode: components["schemas"]["MediaUploadMode"];
+            status: components["schemas"]["MediaUploadStatus"];
+            fileName: string;
+            /** Format: int64 */
+            size: number;
+            mimeType: string;
+            sha256: string;
+            uploadGrant?: components["schemas"]["MediaUploadGrant"] | null;
+            multipart?: components["schemas"]["MediaMultipartUpload"] | null;
+            /** Format: uuid */
+            mediaId?: string | null;
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        MediaVariant: {
+            /** @example baseline-mp4-v1 */
+            variant: string;
+            mimeType: string;
+            /** Format: int64 */
+            size: number;
+        };
+        MediaAsset: {
+            /** Format: uuid */
+            mediaId: string;
+            purpose: components["schemas"]["MediaPurpose"];
+            status: components["schemas"]["MediaAssetStatus"];
+            processingStatus: components["schemas"]["MediaProcessingStatus"];
+            originalFileName: string;
+            mimeType: string;
+            /** Format: int64 */
+            size: number;
+            sha256: string;
+            variants: components["schemas"]["MediaVariant"][];
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        MediaAssetPage: {
+            items: components["schemas"]["MediaAsset"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        CreateMediaAccessGrantRequest: {
+            /** @description Use `ORIGINAL` for the verified private source object or a listed variant name. */
+            variant: string;
+            /** @enum {string} */
+            disposition: "INLINE" | "ATTACHMENT";
+        };
+        MediaAccessGrant: {
+            /** @constant */
+            method: "GET";
+            /**
+             * Format: uri
+             * @description Short-lived bearer URL. Never persist or log it.
+             */
+            url: string;
+            headers: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expiresAt: string;
+        };
         ApiError: {
             /** @example COMMON.VALIDATION_FAILED */
             code: string;
@@ -571,12 +847,71 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The upload or media asset does not exist or is not owned by the authenticated caller. */
+        MediaNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "MEDIA.NOT_FOUND",
+                 *       "message": "媒体资源不存在或不可见",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-01T10:00:00Z",
+                 *       "path": "/api/v1/media/0198f434-215d-7abc-9123-123456789abc",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The idempotency key, upload state, completion metadata or media state conflicts with the requested operation. */
+        MediaConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "MEDIA.IDEMPOTENCY_CONFLICT",
+                 *       "message": "clientRequestId 已用于不同的上传请求",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-01T10:00:00Z",
+                 *       "path": "/api/v1/media/uploads",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description OSS is unavailable for an operation that must complete synchronously. RabbitMQ outages do not use this response after media facts have committed; pending Outbox records are retried. */
+        MediaDependencyUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "MEDIA.STORAGE_UNAVAILABLE",
+                 *       "message": "媒体存储暂时不可用，请稍后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-01T10:00:00Z",
+                 *       "path": "/api/v1/media/uploads",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description One-based page number. */
         Page: number;
         Size: number;
         CourseId: string;
+        UploadId: string;
+        MediaId: string;
     };
     requestBodies: never;
     headers: {
@@ -975,6 +1310,257 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    createMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMediaUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing session returned for an identical `clientRequestId` replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUploadSession"];
+                };
+            };
+            /** @description Upload session created. */
+            201: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUploadSession"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    getMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uploadId: components["parameters"]["UploadId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current upload session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUploadSession"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    cancelMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uploadId: components["parameters"]["UploadId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The unfinished session is canceled, or was already canceled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            409: components["responses"]["MediaConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    authorizeMediaUploadPart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uploadId: components["parameters"]["UploadId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthorizeMediaPartRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived part upload grant. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUploadGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    completeMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uploadId: components["parameters"]["UploadId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteMediaUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing asset returned for an identical completion replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAsset"];
+                };
+            };
+            /** @description Object verified and asynchronous processing accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAsset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    listMedia: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                purpose?: components["schemas"]["MediaPurpose"];
+                status?: components["schemas"]["MediaAssetStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paged owned assets; no OSS key or signed URL is included. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAssetPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Media metadata without storage credentials or a signed URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAsset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createMediaAccessGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMediaAccessGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived private read grant. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAccessGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["MediaNotFound"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
 }

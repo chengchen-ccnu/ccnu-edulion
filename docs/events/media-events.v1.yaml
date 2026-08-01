@@ -1,0 +1,237 @@
+contract: edu.media.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.media.events.v1
+compatibility: backward
+producer: media-service
+consumers:
+  - media-service processing worker
+  - media-service reference ledger
+  - version-compatible downstream domain services
+deliverySemantics: at-least-once; consumers persist eventId before ACK
+description: |
+  T07 media-domain events. Producers may add optional payload fields in version 1,
+  but removing/renaming fields, changing required fields or changing semantics requires
+  a new eventVersion and routing key. Events are created in the same local transaction as
+  the media fact via Outbox; storage keys, credentials and signed URLs are forbidden.
+
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId:
+      type: string
+      format: uuid
+      description: Global idempotency key persisted by every consumer.
+    eventType:
+      type: string
+      enum:
+        - MediaUploaded
+        - MediaReady
+        - MediaRejected
+        - MediaFailed
+        - MediaDeleted
+        - MediaReferenceBound
+        - MediaReferenceReleased
+    eventVersion:
+      type: integer
+      const: 1
+    aggregateId:
+      type: string
+      format: uuid
+      description: mediaId for every T07 media event.
+    occurredAt:
+      type: string
+      format: date-time
+    traceId:
+      type: string
+      minLength: 8
+      maxLength: 64
+    payload:
+      type: object
+
+events:
+  MediaUploaded:
+    routingKey: media.uploaded.v1
+    aggregate: media_asset
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, ownerId, mimeType, size, sha256]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/definitions/MediaPurpose'
+        ownerId:
+          type: string
+          format: uuid
+        mimeType:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+        sha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+  MediaReady:
+    routingKey: media.ready.v1
+    aggregate: media_asset
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, status, variants]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/definitions/MediaPurpose'
+        status:
+          type: string
+          const: READY
+        variants:
+          type: array
+          items:
+            $ref: '#/definitions/MediaVariant'
+  MediaRejected:
+    routingKey: media.rejected.v1
+    aggregate: media_asset
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, errorCode, reason]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/definitions/MediaPurpose'
+        errorCode:
+          type: string
+          pattern: '^MEDIA\.[A-Z][A-Z0-9_]*$'
+        reason:
+          type: string
+          maxLength: 500
+  MediaFailed:
+    routingKey: media.failed.v1
+    aggregate: media_asset
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, errorCode, reason, retryable]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/definitions/MediaPurpose'
+        errorCode:
+          type: string
+          pattern: '^MEDIA\.[A-Z][A-Z0-9_]*$'
+        reason:
+          type: string
+          maxLength: 500
+        retryable:
+          type: boolean
+  MediaDeleted:
+    routingKey: media.deleted.v1
+    aggregate: media_asset
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, reason]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/definitions/MediaPurpose'
+        reason:
+          type: string
+          enum: [UNBOUND_RETENTION_EXPIRED, EXPLICIT_RETENTION_EXPIRED]
+  MediaReferenceBound:
+    routingKey: media.reference.bound.v1
+    aggregate: media_asset
+    producer: owning-domain-service
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, ownerService, referenceType, referenceId]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        ownerService:
+          $ref: '#/definitions/OwnerService'
+        referenceType:
+          type: string
+          minLength: 1
+          maxLength: 80
+        referenceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+  MediaReferenceReleased:
+    routingKey: media.reference.released.v1
+    aggregate: media_asset
+    producer: owning-domain-service
+    payload:
+      type: object
+      additionalProperties: false
+      required: [mediaId, ownerService, referenceType, referenceId]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        ownerService:
+          $ref: '#/definitions/OwnerService'
+        referenceType:
+          type: string
+          minLength: 1
+          maxLength: 80
+        referenceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+definitions:
+  MediaPurpose:
+    type: string
+    enum:
+      - COURSE_COVER
+      - LESSON_VIDEO
+      - VIDEO_POSTER
+      - SUBTITLE
+      - COURSEWARE
+      - ARTICLE_ATTACHMENT
+      - QUESTION_IMAGE
+      - QUESTION_AUDIO
+      - QUESTION_ATTACHMENT
+      - QUESTION_IMPORT_SOURCE
+      - AI_QUESTION_IMAGE
+      - USER_AVATAR
+      - TEACHER_QUALIFICATION
+      - BANNER_IMAGE
+      - TOPIC_COVER
+      - REPORT_EXPORT
+  OwnerService:
+    type: string
+    enum: [course-service, learning-service, iam-service, agent-access, operation-service]
+  MediaVariant:
+    type: object
+    additionalProperties: false
+    required: [variant, mimeType, size]
+    properties:
+      variant:
+        type: string
+        maxLength: 80
+      mimeType:
+        type: string
+      size:
+        type: integer
+        format: int64
+        minimum: 0

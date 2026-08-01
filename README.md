@@ -9,7 +9,7 @@ web-apps/        学生端、教师端、管理端与共享 packages
 docs/            OpenAPI、事件、前端、ADR 与路线图事实来源
 ```
 
-仓库级规则和完整验证命令见 `AGENTS.md`，本地 MySQL/Redis/OSS/RabbitMQ 配置约定见 `docs/development/local-environment.md`，当前 API 见 `docs/api/openapi.yaml`。登录权限和课程/目录纵向切片已经实现；RabbitMQ 已完成架构选型但要到 T07 才替换仓库中的历史 RocketMQ 占位，视频、封面及其他业务文件的阿里云 OSS 上传也由 T07/T08 等后续任务完成。当前没有引入 MinIO、Docker、支付、Elasticsearch 或 Kubernetes。
+仓库级规则和完整验证命令见 `AGENTS.md`，本地 MySQL/Redis/OSS/RabbitMQ 配置约定见 `docs/development/local-environment.md`，当前 API 见 `docs/api/openapi.yaml`。登录权限、课程/目录与通用媒体后端纵向切片已经实现；课程页面的媒体绑定与播放由 T08 接入。当前没有引入 MinIO、Docker、支付、Elasticsearch 或 Kubernetes。
 
 ## Python Agent（精简拆分版）
 

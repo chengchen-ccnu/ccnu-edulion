@@ -1,6 +1,10 @@
 spring:
   application:
     name: media-service
+  task:
+    scheduling:
+      pool:
+        size: 2
 server:
   port: ${SERVER_PORT:8083}
 management:
@@ -19,3 +23,35 @@ spring:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
       - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
       - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
+
+platform:
+  media:
+    enabled: false
+    messaging:
+      enabled: false
+      outbox-poll-delay: 2s
+      confirm-timeout: 10s
+      max-publish-attempts: 20
+    oss:
+      enabled: false
+      endpoint: ""
+      region: ""
+      bucket: ""
+      key-prefix: quarantine
+      access-key-id: ""
+      access-key-secret: ""
+      security-token: ""
+      access-grant-ttl: 10m
+    upload:
+      grant-ttl: 15m
+      session-ttl: 24h
+      multipart-threshold: 10485760
+      part-size: 5242880
+    worker:
+      enabled: false
+      ffmpeg-path: ffmpeg
+      timeout: 2m
+    maintenance:
+      enabled: false
+      fixed-delay: 1h
+      unbound-retention: 24h

@@ -1,0 +1,21 @@
+package com.eduplatform.media.domain;
+
+/** 平台级媒体用途；用途决定角色、MIME、大小、处理和引用规则。 */
+public enum MediaPurpose {
+    COURSE_COVER,
+    LESSON_VIDEO,
+    VIDEO_POSTER,
+    SUBTITLE,
+    COURSEWARE,
+    ARTICLE_ATTACHMENT,
+    QUESTION_IMAGE,
+    QUESTION_AUDIO,
+    QUESTION_ATTACHMENT,
+    QUESTION_IMPORT_SOURCE,
+    AI_QUESTION_IMAGE,
+    USER_AVATAR,
+    TEACHER_QUALIFICATION,
+    BANNER_IMAGE,
+    TOPIC_COVER,
+    REPORT_EXPORT
+}

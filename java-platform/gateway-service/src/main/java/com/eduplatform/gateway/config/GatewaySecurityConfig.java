@@ -81,7 +81,7 @@ public class GatewaySecurityConfig {
     CorsWebFilter corsWebFilter(GatewayProperties properties) {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOrigins());
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Trace-Id"));
         configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After"));
         configuration.setAllowCredentials(true);

@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.4.0
-  description: T06 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Published course versions are immutable; teacher edits create or update a separate draft.
+  version: 0.5.0
+  description: T07 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Media uploads are authorized through Gateway, transferred directly to private OSS objects, and completed idempotently before asynchronous processing.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -13,6 +13,7 @@ tags:
   - name: Users
   - name: Courses
   - name: Teacher Courses
+  - name: Media
 paths:
   /api/v1/auth/login:
     post:
@@ -515,6 +516,248 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/media/uploads:
+    post:
+      tags: [Media]
+      operationId: createMediaUpload
+      summary: Create or replay an upload session
+      description: |
+        The authenticated caller declares the intended media purpose and immutable file metadata. The service validates role, purpose, extension, MIME, size and quota, then generates an unguessable private OSS object key. Reusing the same `clientRequestId` with the same request fingerprint returns the original session; changing any immutable field returns `MEDIA.IDEMPOTENCY_CONFLICT`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMediaUploadRequest'
+      responses:
+        '201':
+          description: Upload session created.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Location:
+              schema:
+                type: string
+                example: /api/v1/media/uploads/0198f434-215d-7abc-9123-123456789abc
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadSession'
+        '200':
+          description: Existing session returned for an identical `clientRequestId` replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/media/uploads/{uploadId}:
+    get:
+      tags: [Media]
+      operationId: getMediaUpload
+      summary: Get an owned upload session and resumable part state
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      responses:
+        '200':
+          description: Current upload session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      tags: [Media]
+      operationId: cancelMediaUpload
+      summary: Idempotently cancel an unfinished upload session
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      responses:
+        '204':
+          description: The unfinished session is canceled, or was already canceled.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/media/uploads/{uploadId}/parts/authorize:
+    post:
+      tags: [Media]
+      operationId: authorizeMediaUploadPart
+      summary: Create a short-lived URL for one multipart part
+      description: Repeating the same part number and declared length is idempotent. The URL is bound to the server-side object key and provider upload ID; neither is a business identifier.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeMediaPartRequest'
+      responses:
+        '200':
+          description: Short-lived part upload grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadGrant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/media/uploads/{uploadId}/complete:
+    post:
+      tags: [Media]
+      operationId: completeMediaUpload
+      summary: Complete, verify and enqueue an uploaded object
+      description: |
+        For multipart sessions, parts must be unique and ordered by `partNumber`. The service completes the provider upload, performs an OSS HEAD check for object existence, length and MIME, and records the asset plus Outbox event in one local transaction. An identical replay returns the same asset; conflicting completion data returns `MEDIA.IDEMPOTENCY_CONFLICT`. Processing continues asynchronously and may remain pending while RabbitMQ is unavailable.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteMediaUploadRequest'
+      responses:
+        '202':
+          description: Object verified and asynchronous processing accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '200':
+          description: Existing asset returned for an identical completion replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/media:
+    get:
+      tags: [Media]
+      operationId: listMedia
+      summary: List media assets owned by the authenticated caller
+      description: Results are ordered by `createdAt` descending and then `mediaId` descending. Pagination is one-based and stable for a fixed dataset.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: purpose
+          in: query
+          schema:
+            $ref: '#/components/schemas/MediaPurpose'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/MediaAssetStatus'
+      responses:
+        '200':
+          description: Paged owned assets; no OSS key or signed URL is included.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAssetPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/media/{mediaId}:
+    get:
+      tags: [Media]
+      operationId: getMedia
+      summary: Get owned media metadata and processing status
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+      responses:
+        '200':
+          description: Media metadata without storage credentials or a signed URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/media/{mediaId}/access-grants:
+    post:
+      tags: [Media]
+      operationId: createMediaAccessGrant
+      summary: Issue a short-lived, object-level read grant
+      description: T07 permits the uploader to preview an owned READY asset. Domain-authorized viewers are added by later consumer tasks; the client cannot assert course, question, AI-session or review visibility. Signed URLs are transient projections and must not be persisted.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMediaAccessGrantRequest'
+      responses:
+        '201':
+          description: Short-lived private read grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAccessGrant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
 components:
   securitySchemes:
     bearerAuth:
@@ -559,6 +802,20 @@ components:
         default: 20
     CourseId:
       name: courseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MediaId:
+      name: mediaId
       in: path
       required: true
       schema:
@@ -674,6 +931,45 @@ components:
             traceId: 2f6c8c3b98f14a9c
             timestamp: '2026-07-16T10:00:00Z'
             path: /api/v1/courses
+            fieldErrors: []
+    MediaNotFound:
+      description: The upload or media asset does not exist or is not owned by the authenticated caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: MEDIA.NOT_FOUND
+            message: 媒体资源不存在或不可见
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-01T10:00:00Z'
+            path: /api/v1/media/0198f434-215d-7abc-9123-123456789abc
+            fieldErrors: []
+    MediaConflict:
+      description: The idempotency key, upload state, completion metadata or media state conflicts with the requested operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: MEDIA.IDEMPOTENCY_CONFLICT
+            message: clientRequestId 已用于不同的上传请求
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-01T10:00:00Z'
+            path: /api/v1/media/uploads
+            fieldErrors: []
+    MediaDependencyUnavailable:
+      description: OSS is unavailable for an operation that must complete synchronously. RabbitMQ outages do not use this response after media facts have committed; pending Outbox records are retried.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: MEDIA.STORAGE_UNAVAILABLE
+            message: 媒体存储暂时不可用，请稍后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-01T10:00:00Z'
+            path: /api/v1/media/uploads
             fieldErrors: []
   schemas:
     LoginRequest:
@@ -1101,6 +1397,285 @@ components:
           minimum: 0
           format: int64
         updatedAt:
+          type: string
+          format: date-time
+    MediaPurpose:
+      type: string
+      description: Stable business purpose. T07 enables COURSE_COVER and LESSON_VIDEO; later domain tasks enable the remaining values without inventing a second upload protocol.
+      enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
+    MediaUploadMode:
+      type: string
+      enum: [SINGLE_PUT, MULTIPART]
+    MediaUploadStatus:
+      type: string
+      enum: [CREATED, UPLOADING, UPLOADED, VERIFYING, PROCESSING, READY, REJECTED, FAILED, EXPIRED, CANCELED]
+    MediaAssetStatus:
+      type: string
+      enum: [UPLOADED, VERIFYING, PROCESSING, READY, REJECTED, FAILED, EXPIRED, DELETING, DELETED]
+    MediaProcessingStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED]
+    CreateMediaUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, purpose, fileName, size, mimeType, sha256]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/MediaPurpose'
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Original display name only. It is never used as the OSS object key.
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+        mimeType:
+          type: string
+          minLength: 3
+          maxLength: 127
+        sha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+    AuthorizeMediaPartRequest:
+      type: object
+      additionalProperties: false
+      required: [partNumber, contentLength]
+      properties:
+        partNumber:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        contentLength:
+          type: integer
+          format: int64
+          minimum: 1
+        contentMd5:
+          type: [string, 'null']
+          pattern: '^[A-Za-z0-9+/]{22}==$'
+    CompleteMediaUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [sha256, parts]
+      properties:
+        sha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+        parts:
+          type: array
+          maxItems: 10000
+          description: Empty for SINGLE_PUT. Required, unique and ascending for MULTIPART.
+          items:
+            $ref: '#/components/schemas/CompletedMediaPart'
+    CompletedMediaPart:
+      type: object
+      additionalProperties: false
+      required: [partNumber, etag]
+      properties:
+        partNumber:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        etag:
+          type: string
+          minLength: 1
+          maxLength: 128
+    MediaUploadGrant:
+      type: object
+      additionalProperties: false
+      required: [method, url, headers, expiresAt]
+      properties:
+        method:
+          type: string
+          const: PUT
+        url:
+          type: string
+          format: uri
+          description: Short-lived bearer URL. Never persist or log it.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Exact headers that must accompany the direct OSS request.
+        expiresAt:
+          type: string
+          format: date-time
+    MediaMultipartUpload:
+      type: object
+      additionalProperties: false
+      required: [partSize, maxParts, uploadedParts]
+      properties:
+        partSize:
+          type: integer
+          format: int64
+          minimum: 5242880
+        maxParts:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        uploadedParts:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadedMediaPart'
+    UploadedMediaPart:
+      type: object
+      additionalProperties: false
+      required: [partNumber, etag, size]
+      properties:
+        partNumber:
+          type: integer
+        etag:
+          type: string
+        size:
+          type: integer
+          format: int64
+    MediaUploadSession:
+      type: object
+      additionalProperties: false
+      required: [uploadId, clientRequestId, purpose, mode, status, fileName, size, mimeType, sha256, expiresAt, createdAt]
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        clientRequestId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/MediaPurpose'
+        mode:
+          $ref: '#/components/schemas/MediaUploadMode'
+        status:
+          $ref: '#/components/schemas/MediaUploadStatus'
+        fileName:
+          type: string
+        size:
+          type: integer
+          format: int64
+        mimeType:
+          type: string
+        sha256:
+          type: string
+        uploadGrant:
+          oneOf:
+            - $ref: '#/components/schemas/MediaUploadGrant'
+            - type: 'null'
+        multipart:
+          oneOf:
+            - $ref: '#/components/schemas/MediaMultipartUpload'
+            - type: 'null'
+        mediaId:
+          type: [string, 'null']
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    MediaVariant:
+      type: object
+      additionalProperties: false
+      required: [variant, mimeType, size]
+      properties:
+        variant:
+          type: string
+          maxLength: 80
+          example: baseline-mp4-v1
+        mimeType:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+    MediaAsset:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, status, processingStatus, originalFileName, mimeType, size, sha256, variants, createdAt, updatedAt]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/MediaPurpose'
+        status:
+          $ref: '#/components/schemas/MediaAssetStatus'
+        processingStatus:
+          $ref: '#/components/schemas/MediaProcessingStatus'
+        originalFileName:
+          type: string
+        mimeType:
+          type: string
+        size:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaVariant'
+        errorCode:
+          type: [string, 'null']
+        errorMessage:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MediaAssetPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaAsset'
+        page:
+          type: integer
+          minimum: 1
+        size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+    CreateMediaAccessGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [variant, disposition]
+      properties:
+        variant:
+          type: string
+          maxLength: 80
+          description: Use `ORIGINAL` for the verified private source object or a listed variant name.
+        disposition:
+          type: string
+          enum: [INLINE, ATTACHMENT]
+    MediaAccessGrant:
+      type: object
+      additionalProperties: false
+      required: [method, url, headers, expiresAt]
+      properties:
+        method:
+          type: string
+          const: GET
+        url:
+          type: string
+          format: uri
+          description: Short-lived bearer URL. Never persist or log it.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
           type: string
           format: date-time
     ApiError:

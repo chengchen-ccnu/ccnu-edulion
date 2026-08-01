@@ -1,10 +1,10 @@
 # Local development environment
 
-T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储选择阿里云 OSS，消息队列已由 [ADR-0005](../adr/0005-rabbitmq-messaging.md) 选定为 RabbitMQ。当前代码仍只有 T02 留下的禁用 RocketMQ 占位，T07 才会迁移为 RabbitMQ；在此之前不应把它描述为已接通。本地基础构建不依赖 Docker 或新系统软件。
+T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储使用阿里云 OSS，消息队列由 [ADR-0005](../adr/0005-rabbitmq-messaging.md) 统一为 RabbitMQ。T07 已实现 `media-service` 的 OSS、RabbitMQ 和 FFmpeg 链路；本地基础构建仍不依赖 Docker 或外部服务。
 
 ## 配置约定
 
-Java 服务仅在显式设置 `SPRING_PROFILES_ACTIVE=local` 时加载各模块的 `application-local.yml`。非 local profile 会关闭 JDBC/Redis 自动配置，继续支持不依赖外部服务的骨架启动；local profile 才启用连接和健康组件。所有地址、端口、凭据、Schema、Redis DB、OSS 和 RabbitMQ 参数都由环境变量覆盖；仓库中的 `.env.example` 只有空值或安全示例。当前存在的 `ROCKETMQ_*` 变量是遗留占位，不应继续用于新实现。
+Java 服务仅在显式设置 `SPRING_PROFILES_ACTIVE=local` 时加载各模块的 `application-local.yml`。非 local profile 会关闭 JDBC/Redis 自动配置，继续支持不依赖外部服务的基础启动；local profile 才启用连接和健康组件。所有地址、端口、凭据、Schema、Redis DB、OSS 和 RabbitMQ 参数都由环境变量覆盖；仓库中的 `.env.example` 只有空值或安全示例。
 
 多个 Codex 任务或 Git Worktree 不共享对话上下文，也不应复制明文密码。Windows 开发机首次配置时运行：
 
@@ -65,9 +65,9 @@ Invoke-RestMethod http://127.0.0.1:8081/actuator/health
 
 验证完成后用 `Remove-Item Env:MYSQL_PASSWORD` 清除当前进程变量。其他服务替换 Maven 模块名和对应 Schema 变量；端口依次为 Gateway 8080、IAM 8081、Course 8082、Media 8083、Learning 8084、Operation 8085。
 
-## T07 的 OSS、RabbitMQ 与转码前置条件
+## T07 的 OSS、RabbitMQ 与转码环境
 
-`media-service` 只预留 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`、AccessKey/临时安全令牌和 STS 角色变量。T02 没有 OSS SDK、上传接口或真实 Bucket 测试。T07 将把这些配置用于统一的业务资产上传能力，课程封面/视频、题目附件、AI 图片、头像/资质、运营图片和导入导出文件均不得由各领域服务另接 OSS。生产优先使用运行时身份或服务端 STS 短期凭据；浏览器只能获得后端按对象和操作范围签发的短期授权，不能获得长期 AccessKey。资产用途、访问等级和后续任务见 [ADR-0004](../adr/0004-oss-media-asset-lifecycle.md)。
+`media-service` 是唯一使用 OSS SDK 的业务服务。它根据用途生成不可猜测 Object Key，只向浏览器签发单对象、单操作、短时效的上传或访问 URL。Gateway 和领域服务不代理文件字节，也不获得服务端 AccessKey。资产用途、访问等级和后续任务见 [ADR-0004](../adr/0004-oss-media-asset-lifecycle.md)。
 
 T07 可以先使用 OSS/MQ 适配器 Mock 完成契约、单元测试和不依赖外部服务的构建，因此开始编码前不强制安装 RabbitMQ、FFmpeg 或申请真实 OSS Bucket。真实端到端验收按能力分层准备：
 
@@ -79,12 +79,12 @@ T07 可以先使用 OSS/MQ 适配器 Mock 完成契约、单元测试和不依�
 | Redis | 本地缓存、短期会话或限流链路需要时使用 | 复用 `127.0.0.1:6379`，`media-service` 默认逻辑 DB 3；Redis 不是媒体资产事实源 |
 | RabbitMQ 4.x + 兼容 Erlang/OTP | 真实发布、消费、重试、死信和重启恢复验收必需 | Windows 推荐 RabbitMQ 4.3.x 与 Erlang/OTP 27.x；应用端口 `5672`，管理 UI `15672` 仅本机使用 |
 | 阿里云 OSS 专用开发/测试 Bucket | 真实直传、Multipart、HEAD 校验和短期访问验收必需 | 使用独立前缀和最小权限 RAM/STS；没有明确授权时必须使用 Mock，不读取个人或生产 Bucket |
-| FFmpeg | 本机真实视频转码/HLS/截图验收时才需要 | T07 基础上传、图片和 Worker 边界测试不依赖 FFmpeg；也可在后续改用阿里云媒体处理 |
-| 内容安全/病毒扫描服务 | 上线前真实安全处理验收需要 | T07 先冻结端口、状态和失败语义；未接真实服务必须标为未验收，不能直接把资产标记 `READY` |
+| FFmpeg | 本机真实视频转码验收需要 | T07 产生 `baseline-mp4-v1`、无音频的 MP4 派生资产；HLS、截图和多清晰度不在本轮范围 |
+| 内容安全/病毒扫描服务 | 生产公开前需要 | T07 的 OSS HEAD/哈希复核与 FFmpeg 可解码验证不等价于内容安全或病毒扫描；这是已知上线依赖 |
 
 Windows 原生 RabbitMQ 的建议准备顺序是：安装一个受 RabbitMQ 支持的 64 位 Erlang/OTP 27.x，再安装 RabbitMQ 4.3.x；安装目录使用 ASCII 且尽量不含空格，以管理员权限安装服务。管理插件是可选的，可用于本机查看 Exchange、Queue 和死信。只对本机开放应用端口 `5672` 和可选管理端口 `15672`，不要把集群/CLI 端口暴露到公网。建议创建专用 vhost `/edu-platform` 和最小权限本地用户，不直接沿用默认 `guest` 作为共享或生产账号。
 
-T07 计划使用 `RABBITMQ_ENABLED`、`RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_VHOST`、`RABBITMQ_USERNAME`、`RABBITMQ_PASSWORD` 和可选 TLS 变量；具体名称由 T07 配置实现和 `.env.example` 同步冻结。RabbitMQ 密码、OSS AccessKey/STS 凭据不得明文写入 `local.env`，T07 必须扩展现有安全加载方式或使用同等级的本机密钥存储。现有 `ROCKETMQ_*` 配置会在 T07 一次性移除，不能同时保留两套生效开关。
+T07 使用 `RABBITMQ_ENABLED`、`RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_VHOST`、`RABBITMQ_USERNAME` 和 `RABBITMQ_PASSWORD`。纯本机的 RabbitMQ/Redis 开发密码可保存在仓库外 `.ccnu-edulion/local.env`；OSS AccessKey、Security Token 及其他远程 API 凭据只能由调用进程环境或同等密钥管理注入，禁止写入 `local.env` 或仓库。
 
 安装后可用 RabbitMQ 自带命令做不包含凭据的只读健康确认：
 
@@ -95,6 +95,18 @@ Test-NetConnection 127.0.0.1 -Port 5672
 ```
 
 RabbitMQ 仍可在本地保持 `RABBITMQ_ENABLED=false`。此时 T07 应能完成基础构建与 Mock 测试，但发布确认、重试、死信、重启恢复和 Outbox 补投必须明确记录为尚未执行的真实集成验收。
+
+T07 真实验收由 `MediaRealEnvironmentAcceptanceTest` 显式开启，测试在启动前会校验 `MEDIA_MYSQL_DATABASE` 严格等于 `edu_platform_media_dev`，OSS 只使用 `t07-acceptance/<runId>/` 唯一前缀，不列举 Bucket，最终只删除本轮精确 Object Key 和固定测试 owner 的记录：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:MEDIA_REAL_ACCEPTANCE = 'true'
+    $env:RABBITMQ_ENABLED = 'true'
+    $env:OSS_ENABLED = 'true'
+    $env:MEDIA_WORKER_ENABLED = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl media-service -am '-Dtest=MediaRealEnvironmentAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+```
 
 ## T04 IAM 迁移与测试账号
 
