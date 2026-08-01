@@ -9,7 +9,7 @@ web-apps/        学生端、教师端、管理端与共享 packages
 docs/            OpenAPI、事件、前端、ADR 与路线图事实来源
 ```
 
-仓库级规则和完整验证命令见 `AGENTS.md`，本地 MySQL/Redis/OSS/RocketMQ 配置约定见 `docs/development/local-environment.md`，首版 API 见 `docs/api/openapi.yaml`。当前没有实现登录、课程或视频上传业务，也没有引入 MinIO、Docker、支付、Elasticsearch 或 Kubernetes。
+仓库级规则和完整验证命令见 `AGENTS.md`，本地 MySQL/Redis/OSS/RocketMQ 配置约定见 `docs/development/local-environment.md`，当前 API 见 `docs/api/openapi.yaml`。登录权限和课程/目录纵向切片已经实现；视频、封面及其他业务文件的阿里云 OSS 上传仍由 T07/T08 等后续任务完成。当前没有引入 MinIO、Docker、支付、Elasticsearch 或 Kubernetes。
 
 ## Python Agent（精简拆分版）
 
