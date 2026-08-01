@@ -1,6 +1,7 @@
 package com.eduplatform.course.persistence;
 
 import com.eduplatform.course.domain.ChapterEntity;
+import com.eduplatform.course.domain.CategoryEntity;
 import com.eduplatform.course.domain.CourseEntity;
 import com.eduplatform.course.domain.CourseListRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
@@ -22,7 +23,14 @@ public interface CourseMapper {
 
     CourseVersionEntity findVersion(String versionId);
 
+    List<CategoryEntity> listActiveCategories();
+
     CourseEntity findOwnedCourse(@Param("courseId") String courseId, @Param("teacherId") String teacherId);
+
+    long countOwnedCourses(String teacherId);
+
+    List<CourseEntity> listOwnedCourses(@Param("teacherId") String teacherId,
+            @Param("offset") long offset, @Param("limit") int limit);
 
     CourseEntity lockOwnedCourse(@Param("courseId") String courseId, @Param("teacherId") String teacherId);
 

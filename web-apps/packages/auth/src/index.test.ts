@@ -75,6 +75,33 @@ describe("shared authentication store", () => {
     expect(meCalls).toBe(3);
   });
 
+  it("retries an authorized domain request once after refreshing its access token", async () => {
+    let courseCalls = 0;
+    let refreshCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestUrl(input).pathname;
+      if (path.endsWith("/auth/login")) return json({ tokenType: "Bearer", accessToken: "access-1", expiresIn: 900 });
+      if (path.endsWith("/auth/refresh")) { refreshCalls += 1; return json({ tokenType: "Bearer", accessToken: "access-2", expiresIn: 900 }); }
+      if (path.endsWith("/users/me")) return json(user(["TEACHER"], ["teaching:access"]));
+      if (path.endsWith("/teacher/courses")) {
+        courseCalls += 1;
+        return courseCalls === 1 ? json(apiError("IAM.UNAUTHORIZED"), 401) : json({ items: [], page: 1, size: 20, total: 0 });
+      }
+      throw new Error(`unexpected request: ${path}`);
+    }));
+    const client = createGatewayClient("http://gateway.test");
+    const store = createAuthStore(client);
+    expect(await store.login("teacher_test_01", "correct-password")).toBe(true);
+
+    const result = await store.authorizedRequest(authorization => client.GET("/api/v1/teacher/courses", {
+      headers: { Authorization: authorization }, params: { query: { page: 1, size: 20 } }
+    }));
+
+    expect(result.response.status).toBe(200);
+    expect(refreshCalls).toBe(1);
+    expect(courseCalls).toBe(2);
+  });
+
   it("surfaces validation and rate-limit failures", async () => {
     let limited = false;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

@@ -121,6 +121,8 @@ public final class CourseDtos {
             Instant createdAt,
             Instant updatedAt) {}
 
+    public record TeacherCoursePage(List<TeacherCourse> items, int page, int size, long total) {}
+
     public record CoursePublication(
             String id,
             PublicationStatus status,

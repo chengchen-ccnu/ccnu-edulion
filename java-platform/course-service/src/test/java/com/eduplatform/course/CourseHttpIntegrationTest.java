@@ -41,6 +41,15 @@ class CourseHttpIntegrationTest {
 
     @Test
     void teacherHttpApiReturnsContractResponseAndUnifiedRoleError() throws Exception {
+        HttpResponse<String> categories = client.send(HttpRequest.newBuilder()
+                        .uri(URI.create("http://127.0.0.1:" + port + "/api/v1/courses/categories"))
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(categories.statusCode()).isEqualTo(200);
+        assertThat(objectMapper.readTree(categories.body())).singleElement()
+                .satisfies(category -> assertThat(category.get("id").asString()).isEqualTo(CATEGORY_ID));
+
         String body = """
                 {
                   "clientRequestId": "00000000-0000-4000-8000-000000009701",
@@ -68,6 +77,17 @@ class CourseHttpIntegrationTest {
         assertThat(created.headers().firstValue("Location")).hasValueSatisfying(
                 location -> assertThat(location).startsWith("/api/v1/teacher/courses/"));
         assertThat(objectMapper.readTree(created.body()).get("publicationStatus").asString()).isEqualTo("DRAFT");
+
+        HttpResponse<String> listed = client.send(HttpRequest.newBuilder()
+                        .uri(URI.create("http://127.0.0.1:" + port + "/api/v1/teacher/courses?page=1&size=10"))
+                        .header("X-User-Id", TEACHER_ID)
+                        .header("X-User-Roles", "TEACHER")
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(listed.statusCode()).isEqualTo(200);
+        assertThat(objectMapper.readTree(listed.body()).get("items")).hasSize(1);
+        assertThat(objectMapper.readTree(listed.body()).get("total").asLong()).isEqualTo(1);
 
         HttpResponse<String> forbidden = client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + "/api/v1/teacher/courses"))

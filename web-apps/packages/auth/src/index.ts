@@ -34,6 +34,7 @@ export interface AuthStore {
   restore(): Promise<boolean>;
   ensureCurrentUser(): Promise<boolean>;
   logout(): Promise<void>;
+  authorizedRequest<T extends { response: Response }>(request: (authorization: string) => Promise<T>): Promise<T>;
   hasRole(role: PlatformRole): boolean;
   hasPermission(permission: string): boolean;
   canAccess(role: PlatformRole): boolean;
@@ -84,7 +85,10 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     role: "TEACHER",
     permission: "teaching:access",
     path: "/teacher/dashboard",
-    accepts: path => path === "/teacher/dashboard" || path === "/teacher/courses"
+    accepts: path => path === "/teacher/dashboard"
+      || path === "/teacher/courses"
+      || path === "/teacher/courses/new"
+      || /^\/teacher\/courses\/[0-9A-Za-z-]+\/(edit|curriculum)$/.test(path)
   },
   {
     id: "admin",
@@ -256,6 +260,19 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
     }
   }
 
+  async function authorizedRequest<T extends { response: Response }>(
+      request: (authorization: string) => Promise<T>): Promise<T> {
+    if (!accessToken && !(await refreshAccessToken())) {
+      throw new Error("AUTHENTICATION_REQUIRED");
+    }
+    let result = await request(`Bearer ${accessToken}`);
+    if (result.response.status === 401) {
+      if (!(await refreshAccessToken())) throw new Error("AUTHENTICATION_REQUIRED");
+      result = await request(`Bearer ${accessToken}`);
+    }
+    return result;
+  }
+
   function hasRole(role: PlatformRole): boolean {
     return state.currentUser?.roles.includes(role) ?? false;
   }
@@ -286,7 +303,7 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
     state.failure = failure;
   }
 
-  return { state: readonly(state) as Readonly<AuthState>, login, restore, ensureCurrentUser, logout,
+  return { state: readonly(state) as Readonly<AuthState>, login, restore, ensureCurrentUser, logout, authorizedRequest,
     hasRole, hasPermission, canAccess };
 }
 

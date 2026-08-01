@@ -64,6 +64,13 @@ public class CourseCatalogService {
                 curriculum(version.getId()));
     }
 
+    @Transactional(readOnly = true)
+    public List<CourseDtos.CategorySummary> listActiveCategories() {
+        return mapper.listActiveCategories().stream()
+                .map(category -> new CourseDtos.CategorySummary(category.getId(), category.getName()))
+                .toList();
+    }
+
     @Transactional
     public CreateResult create(String teacherId, CourseDtos.CreateCourseRequest request) {
         CourseEntity existing = mapper.findByOwnerAndRequest(teacherId, request.clientRequestId().toString());
@@ -104,6 +111,16 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.TeacherCourse getTeacherCourse(String courseId, String teacherId) {
         return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
+    }
+
+    @Transactional(readOnly = true)
+    public CourseDtos.TeacherCoursePage listTeacherCourses(String teacherId, int page, int size) {
+        long total = mapper.countOwnedCourses(teacherId);
+        List<CourseDtos.TeacherCourse> items = mapper.listOwnedCourses(
+                        teacherId, ((long) page - 1L) * size, size).stream()
+                .map(this::toTeacherCourse)
+                .toList();
+        return new CourseDtos.TeacherCoursePage(items, page, size, total);
     }
 
     @Transactional
