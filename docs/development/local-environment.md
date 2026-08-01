@@ -67,7 +67,7 @@ Invoke-RestMethod http://127.0.0.1:8081/actuator/health
 
 ## OSS 与 RocketMQ
 
-`media-service` 只预留 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`、AccessKey/临时安全令牌和 STS 角色变量。T02 没有 OSS SDK、上传接口或真实 Bucket 测试。生产优先使用运行时身份或服务端 STS 短期凭据；浏览器只能获得后端按对象和操作范围签发的短期授权，不能获得长期 AccessKey。
+`media-service` 只预留 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`、AccessKey/临时安全令牌和 STS 角色变量。T02 没有 OSS SDK、上传接口或真实 Bucket 测试。T07 将把这些配置用于统一的业务资产上传能力，课程封面/视频、题目附件、AI 图片、头像/资质、运营图片和导入导出文件均不得由各领域服务另接 OSS。生产优先使用运行时身份或服务端 STS 短期凭据；浏览器只能获得后端按对象和操作范围签发的短期授权，不能获得长期 AccessKey。资产用途、访问等级和后续任务见 [ADR-0004](../adr/0004-oss-media-asset-lifecycle.md)。
 
 `ROCKETMQ_ENABLED` 默认是 `false`。当前开发机没有 RocketMQ，T02 不安装、不启动客户端、不执行消息健康检查；只有后续具备本地或托管实例后，才可配置 NameServer、Namespace 和凭据并引入实际集成。
 
