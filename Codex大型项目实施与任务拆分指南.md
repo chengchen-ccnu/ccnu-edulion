@@ -307,7 +307,7 @@ Mock：必须由同一 Schema 生成或校验，禁止维护另一套 DTO
 
 ## 12. 当前阶段建议给 Codex 的下一条实现指令
 
-T01～T05 已合并，T06 正在验收。T06 合并后先完成 T07，不要让 T08、T10、T15、T17 各自发明上传接口：
+T01～T06 已合并。下一步先完成 T07，不要让 T08、T10、T15、T17 各自发明上传接口：
 
 ```text
 任务编号：T07
@@ -318,15 +318,17 @@ T01～T05 已合并，T06 正在验收。T06 合并后先完成 T07，不要让 
 - 在线网课平台工业架构设计.md 的 5.4、6.5、7.1、10、11、18 节
 - docs/adr/0002-local-infrastructure-and-object-storage.md
 - docs/adr/0004-oss-media-asset-lifecycle.md
+- docs/adr/0005-rabbitmq-messaging.md
 - docs/api/openapi.yaml 与 docs/events/*
 
 范围：
 1. 先更新并冻结媒体 OpenAPI、事件、用途枚举和状态机；
 2. media-service 实现上传会话、用途策略、对象 Key 生成、单对象/Multipart 直传授权、幂等完成确认、OSS 元数据复核、资产查询、短期访问授权、引用事件台账和过期回收；
 3. 首个可验证用途至少覆盖 COURSE_COVER 与 LESSON_VIDEO，但通用表不得保存课程实体；
-4. 视频处理接口保留可替换 Worker 边界；没有 RocketMQ/真实转码环境时明确降级和未验收项，不伪造成功；
+4. 使用 RabbitMQ + Spring AMQP 实现媒体异步处理边界，包含 Outbox、发布确认、有限重试、死信和按 eventId 幂等消费；删除 T02 的 RocketMQ 遗留占位，不保留第二套 MQ；
 5. 没有明确授权的专用测试 Bucket 时使用 OSS 适配器 Mock 完成单元/集成测试，不读取真实 Bucket；
-6. 提供 docs/delivery/T07-media-backend.md，更新 backlog、verification、OpenAPI、事件和本地环境文档。
+6. 没有 RabbitMQ/FFmpeg/真实转码环境时允许关闭外部适配器完成基础构建与 Mock 测试，但必须明确降级和未验收项，不得伪造真实发布、死信或转码成功；
+7. 提供 docs/delivery/T07-media-backend.md，更新 backlog、verification、OpenAPI、事件和本地环境文档。
 
 非目标：
 - 本任务不修改 T06 课程页面，不提前实现 T08；
