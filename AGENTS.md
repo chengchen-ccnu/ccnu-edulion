@@ -14,6 +14,7 @@
 - `edu_agent_app`：现有 Python 数学智能体，负责检索、推理和讲解；不得直连或写入 Java 业务数据库。不要在平台任务中重新实现它。
 - `web-apps/apps/*`：学生、教师、管理三个独立应用；共享技术包位于 `web-apps/packages/*`，禁止共享带角色业务判断的整页组件。
 - `docs/api/openapi.yaml` 是外部 REST API 字段的唯一事实来源；`docs/events/*` 是事件事实来源。
+- 平台消息队列统一使用 RabbitMQ 与 Spring AMQP。跨服务可靠事件必须采用 Outbox、发布确认、有限重试、死信和按 `eventId` 幂等消费；不得依赖 RabbitMQ 提供“恰好一次”，不得在各服务并行引入 RocketMQ/Kafka 第二套实现。
 
 ## 构建与测试命令
 

@@ -87,7 +87,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据：没有新增迁移、持久数据库、表或 Seed；自动化测试只在 H2 内存 `course_test`/`course_seed_test` 中重建 T05 表和最小合成课程数据，进程退出后释放。
 - 人工验收：用户于 2026-08-01 确认按 T06 交付文档完成学生课程列表/筛选/分页/详情目录、教师课程创建/编辑/编排/发布/重新发布/下架、统一登录权限以及桌面和窄屏布局验收；真实 Gateway/MySQL 端到端流程由用户确认通过。
 - 证据边界：人工验收结果来自用户确认；Codex 未重新访问本机数据库、未读取或输出本地凭据，也未采集人工验收截图或浏览器日志。自动化证据仍由 Maven、OpenAPI、Vitest、类型检查、生产构建和 GitHub CI 提供。
-- 发布：PR [#6](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6) 已创建；验收记录提交后转为 Ready for review，并仅在最新提交的全部必需检查通过后按用户授权合并。
+- 发布：PR [#6](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6) 已合并，`main` 中对应 merge commit 为 `c293d9c`。
 
 ## 2026-08-01 OSS 阶段性占位设计审计
 
@@ -96,3 +96,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 关键决策：T07 提供唯一通用 OSS 媒体后端；领域服务只保存稳定资产 ID，展示 URL 为授权投影；小文件单对象直传、大文件 Multipart 直传，私有对象短期授权，未绑定/过期对象延迟回收。
 - 文档验证：执行 `git diff --check`，并使用 `rg` 检查 `coverUrl`、`avatarUrl`、上传、附件、导入/导出、Banner 和 OSS 相关描述是否存在未映射占位。文档任务没有运行 Java、Python 或前端构建，不能把本次结果作为 T07/T08 功能已实现的证据。
 - 数据：没有连接、创建或修改任何数据库、表、OSS Bucket 或伪数据。
+
+## 2026-08-01 RabbitMQ 选型与 T07 前置条件审计
+
+- 范围：仅更新仓库规则、README、架构技术栈、ADR、本地环境、任务拆分和 backlog；没有修改 Java/Python/前端生产代码、OpenAPI、事件 Schema、数据库迁移或运行时配置。
+- 现状：所有 Java 模块均未引入 RocketMQ 或 RabbitMQ 客户端；各服务 `application-local.yml` 与 `.env.example` 中只有 T02 留下且默认禁用的 `ROCKETMQ_*` 占位。因此本次把 RabbitMQ 记录为后续实现选型，不把消息链路描述成已经可用。
+- 决策：T07 使用 RabbitMQ 4.x + Spring AMQP，可靠事件采用 Outbox、publisher confirm/return、有限重试、死信和按 `eventId` 幂等消费；T07 同时删除 RocketMQ 遗留占位，禁止保留两套 MQ。
+- 环境分层：契约、基础构建和适配器 Mock 不要求安装 RabbitMQ、FFmpeg 或配置真实 OSS；真实消息验收才要求 RabbitMQ + 兼容 Erlang，真实 OSS 直传验收要求明确授权的专用 Bucket，真实本机视频转码才要求 FFmpeg。
+- 验证：执行文档关键词审计和 `git diff --check`；未运行 Java、Python 或前端构建，本记录不能作为 T07 功能实现或 RabbitMQ/OSS/FFmpeg 真实联调成功的证据。
+- 数据：没有连接、创建或修改任何数据库、Schema、表、队列、Exchange、RabbitMQ 用户/vhost、OSS Bucket、OSS 对象或伪数据。

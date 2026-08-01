@@ -1,10 +1,10 @@
 # Local development environment
 
-T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储选择阿里云 OSS；当前没有 RocketMQ，只保留禁用配置。本地环境不依赖 Docker，也不要求安装新的系统软件。
+T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储选择阿里云 OSS，消息队列已由 [ADR-0005](../adr/0005-rabbitmq-messaging.md) 选定为 RabbitMQ。当前代码仍只有 T02 留下的禁用 RocketMQ 占位，T07 才会迁移为 RabbitMQ；在此之前不应把它描述为已接通。本地基础构建不依赖 Docker 或新系统软件。
 
 ## 配置约定
 
-Java 服务仅在显式设置 `SPRING_PROFILES_ACTIVE=local` 时加载各模块的 `application-local.yml`。非 local profile 会关闭 JDBC/Redis 自动配置，继续支持不依赖外部服务的骨架启动；local profile 才启用连接和健康组件。所有地址、端口、凭据、Schema、Redis DB、OSS 和 RocketMQ 参数都由环境变量覆盖；仓库中的 `.env.example` 只有空值或安全示例。
+Java 服务仅在显式设置 `SPRING_PROFILES_ACTIVE=local` 时加载各模块的 `application-local.yml`。非 local profile 会关闭 JDBC/Redis 自动配置，继续支持不依赖外部服务的骨架启动；local profile 才启用连接和健康组件。所有地址、端口、凭据、Schema、Redis DB、OSS 和 RabbitMQ 参数都由环境变量覆盖；仓库中的 `.env.example` 只有空值或安全示例。当前存在的 `ROCKETMQ_*` 变量是遗留占位，不应继续用于新实现。
 
 多个 Codex 任务或 Git Worktree 不共享对话上下文，也不应复制明文密码。Windows 开发机首次配置时运行：
 
@@ -65,11 +65,36 @@ Invoke-RestMethod http://127.0.0.1:8081/actuator/health
 
 验证完成后用 `Remove-Item Env:MYSQL_PASSWORD` 清除当前进程变量。其他服务替换 Maven 模块名和对应 Schema 变量；端口依次为 Gateway 8080、IAM 8081、Course 8082、Media 8083、Learning 8084、Operation 8085。
 
-## OSS 与 RocketMQ
+## T07 的 OSS、RabbitMQ 与转码前置条件
 
 `media-service` 只预留 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`、AccessKey/临时安全令牌和 STS 角色变量。T02 没有 OSS SDK、上传接口或真实 Bucket 测试。T07 将把这些配置用于统一的业务资产上传能力，课程封面/视频、题目附件、AI 图片、头像/资质、运营图片和导入导出文件均不得由各领域服务另接 OSS。生产优先使用运行时身份或服务端 STS 短期凭据；浏览器只能获得后端按对象和操作范围签发的短期授权，不能获得长期 AccessKey。资产用途、访问等级和后续任务见 [ADR-0004](../adr/0004-oss-media-asset-lifecycle.md)。
 
-`ROCKETMQ_ENABLED` 默认是 `false`。当前开发机没有 RocketMQ，T02 不安装、不启动客户端、不执行消息健康检查；只有后续具备本地或托管实例后，才可配置 NameServer、Namespace 和凭据并引入实际集成。
+T07 可以先使用 OSS/MQ 适配器 Mock 完成契约、单元测试和不依赖外部服务的构建，因此开始编码前不强制安装 RabbitMQ、FFmpeg 或申请真实 OSS Bucket。真实端到端验收按能力分层准备：
+
+| 前置项 | 何时需要 | 本地约定 |
+|---|---|---|
+| JDK 17+、Maven 3.6.3+ | T07 开发与 Java 验证必需 | 当前仓库基线；Spring AMQP 与 OSS SDK 作为 Maven 依赖，不需要全局安装 |
+| Node 20.19+、pnpm | 修改 OpenAPI 后生成客户端、类型检查和 Mock 验证必需 | 使用仓库现有 `web-apps` 命令，不在 T07 开发媒体页面 |
+| MySQL | 真实 `media-service` 本地验收必需 | 只连接用途明确的 `edu_platform_media_dev`；T07 通过向前 Flyway 迁移创建媒体域表，不得跨 Schema 建外键 |
+| Redis | 本地缓存、短期会话或限流链路需要时使用 | 复用 `127.0.0.1:6379`，`media-service` 默认逻辑 DB 3；Redis 不是媒体资产事实源 |
+| RabbitMQ 4.x + 兼容 Erlang/OTP | 真实发布、消费、重试、死信和重启恢复验收必需 | Windows 推荐 RabbitMQ 4.3.x 与 Erlang/OTP 27.x；应用端口 `5672`，管理 UI `15672` 仅本机使用 |
+| 阿里云 OSS 专用开发/测试 Bucket | 真实直传、Multipart、HEAD 校验和短期访问验收必需 | 使用独立前缀和最小权限 RAM/STS；没有明确授权时必须使用 Mock，不读取个人或生产 Bucket |
+| FFmpeg | 本机真实视频转码/HLS/截图验收时才需要 | T07 基础上传、图片和 Worker 边界测试不依赖 FFmpeg；也可在后续改用阿里云媒体处理 |
+| 内容安全/病毒扫描服务 | 上线前真实安全处理验收需要 | T07 先冻结端口、状态和失败语义；未接真实服务必须标为未验收，不能直接把资产标记 `READY` |
+
+Windows 原生 RabbitMQ 的建议准备顺序是：安装一个受 RabbitMQ 支持的 64 位 Erlang/OTP 27.x，再安装 RabbitMQ 4.3.x；安装目录使用 ASCII 且尽量不含空格，以管理员权限安装服务。管理插件是可选的，可用于本机查看 Exchange、Queue 和死信。只对本机开放应用端口 `5672` 和可选管理端口 `15672`，不要把集群/CLI 端口暴露到公网。建议创建专用 vhost `/edu-platform` 和最小权限本地用户，不直接沿用默认 `guest` 作为共享或生产账号。
+
+T07 计划使用 `RABBITMQ_ENABLED`、`RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_VHOST`、`RABBITMQ_USERNAME`、`RABBITMQ_PASSWORD` 和可选 TLS 变量；具体名称由 T07 配置实现和 `.env.example` 同步冻结。RabbitMQ 密码、OSS AccessKey/STS 凭据不得明文写入 `local.env`，T07 必须扩展现有安全加载方式或使用同等级的本机密钥存储。现有 `ROCKETMQ_*` 配置会在 T07 一次性移除，不能同时保留两套生效开关。
+
+安装后可用 RabbitMQ 自带命令做不包含凭据的只读健康确认：
+
+```powershell
+rabbitmq-diagnostics.bat ping
+rabbitmqctl.bat status
+Test-NetConnection 127.0.0.1 -Port 5672
+```
+
+RabbitMQ 仍可在本地保持 `RABBITMQ_ENABLED=false`。此时 T07 应能完成基础构建与 Mock 测试，但发布确认、重试、死信、重启恢复和 Outbox 补投必须明确记录为尚未执行的真实集成验收。
 
 ## T04 IAM 迁移与测试账号
 
@@ -107,4 +132,4 @@ source java-platform/course-service/src/main/resources/db/seed/cleanup-course-se
 
 ## 全量验证
 
-仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RocketMQ。
+仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。
