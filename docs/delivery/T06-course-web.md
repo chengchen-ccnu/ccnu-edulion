@@ -116,7 +116,7 @@ pnpm.cmd --dir web-apps run build
 
 最终变更检查、完整 Java 回归、OpenAPI 一致性和前端回归均已完成。
 
-浏览器视觉检查未完成：Prism、学生端和教师端本地服务在宿主机可访问，但 Codex 内置浏览器无法连接宿主机本地服务，外部 Chrome 连接不可用。没有把构建通过标记为视觉验收；需要按下述人工步骤补验桌面与窄屏布局。
+2026-08-01，用户确认已按下述人工演示步骤完成 T06 验收，包括学生课程筛选、分页、详情目录，教师课程创建、元数据编辑、目录编排、发布/重新发布/下架，统一登录权限以及桌面与窄屏页面检查。该结论属于用户人工验收记录；Codex 未重新访问本机数据库、未读取本地凭据，也未采集人工验收截图或浏览器日志。自动化证据仍以上述 Maven、OpenAPI、Vitest、类型检查、生产构建及 GitHub CI 为准。
 
 ## 人工演示步骤
 
@@ -136,11 +136,11 @@ pnpm.cmd --dir web-apps run build
 
 - 教师列表返回完整编辑快照和目录，当前页面大小为 10；大目录课程的载荷和服务端 N+1 查询需要后续以摘要投影或批量查询优化。
 - 分类只有只读列表；分类管理、停用影响评估仍不在 T06 范围。
-- 浏览器视觉与真实 MySQL/Gateway 端到端演示尚需人工补验，自动化证据覆盖契约、类型、API 封装、认证重试、Java HTTP/持久化和生产构建。
+- 浏览器视觉与真实 Gateway/MySQL 端到端流程已由用户人工确认验收通过；Codex 未留存截图或数据库日志，后续回归仍应结合自动化证据和人工演示步骤。
 - `ASSESSMENT` 和 `VIDEO` 只是目录类型。实际题目、媒体资源、播放授权、报名与进度分别依赖后续 T07/T09/T11 等任务。
 
 ## 分支、PR 与关键提交
 
 - 分支：`feat/t06-course-web`
-- Draft PR：[#6 feat: implement T06 course web](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6)。
+- PR：[#6 feat: implement T06 course web](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6)。
 - 关键实现提交：`f1e3b139c3f6355013b1ff0b96fc3278454bfa7c`（`feat: implement T06 course web`）。
