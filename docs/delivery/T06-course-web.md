@@ -100,6 +100,7 @@ T06 未新增 Seed、Fixture 文件或持久伪数据。真实联调可继续使
 mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl course-service -am test
 mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify
 pnpm.cmd --dir web-apps run generate:api
+pnpm.cmd --dir web-apps run check:api
 pnpm.cmd --dir web-apps run typecheck
 pnpm.cmd --dir web-apps run test
 pnpm.cmd --dir web-apps run build
@@ -110,10 +111,10 @@ pnpm.cmd --dir web-apps run build
 - Java：完整 `clean verify` 的 8 个 Reactor 模块全部成功；Gateway 8 项、IAM 9 项、Course 8 项、shared-kernel 1 项测试通过。Course 覆盖启用分类读取、教师所有权分页、HTTP 契约、既有筛选/详情/创建/编排/发布链路。
 - 前端：全部 workspace 类型检查通过；4 个 Vitest 文件共 20 项测试通过，新增覆盖学生筛选参数、分类/详情路径、教师授权列表、发布请求和领域请求 401 单次刷新重试。
 - 生产构建：学生、教师、管理三端均成功。受限沙箱内 Vitest/Vite 首次因 `esbuild spawn EPERM` 失败，获准在沙箱外复跑后通过。
-- OpenAPI：0.4.0 成功生成 TypeScript 客户端，生成文件纳入版本控制。
+- OpenAPI：0.4.0 成功生成 TypeScript 客户端；提交后执行 `check:api`，生成结果与 `HEAD` 一致且生成文件已纳入版本控制。
 - Mock：Prism 成功加载 0.4.0；启用分类和携带 Bearer 头的教师课程列表均返回 200。
 
-`check:api` 会在生成文件随实现提交后执行，因为该命令会比较生成文件与当前 `HEAD`；最终变更检查和前端回归会在发布前完成。
+最终变更检查、完整 Java 回归、OpenAPI 一致性和前端回归均已完成。
 
 浏览器视觉检查未完成：Prism、学生端和教师端本地服务在宿主机可访问，但 Codex 内置浏览器无法连接宿主机本地服务，外部 Chrome 连接不可用。没有把构建通过标记为视觉验收；需要按下述人工步骤补验桌面与窄屏布局。
 
@@ -142,4 +143,4 @@ pnpm.cmd --dir web-apps run build
 
 - 分支：`feat/t06-course-web`
 - Draft PR：提交并推送后创建，随后回填链接。
-- 关键提交：提交后回填。
+- 关键实现提交：`f1e3b139c3f6355013b1ff0b96fc3278454bfa7c`（`feat: implement T06 course web`）。
