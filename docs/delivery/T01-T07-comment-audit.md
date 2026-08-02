@@ -39,7 +39,7 @@
 - `python -m compileall -q edu_agent_app server.py`：通过。
 - `python -m unittest discover -s tests -v`：通过；8 项测试全部成功。
 - `pnpm.cmd --dir web-apps run generate:api`：通过；合法更新 `packages/api-client/src/generated/schema.d.ts` 中的 OpenAPI description 注释。
-- `pnpm.cmd --dir web-apps run check:api`：首次按设计失败，因为生成文件相对尚未提交的 HEAD 存在预期差异；提交生成文件后必须复跑。
+- `pnpm.cmd --dir web-apps run check:api`：首次按设计失败，因为生成文件相对尚未提交的 HEAD 存在预期差异；提交生成文件后复跑通过，确认生成结果与 HEAD 一致且文件已跟踪。
 - `pnpm.cmd --dir web-apps run typecheck`：通过；8 个相关 workspace 全部成功。
 - `pnpm.cmd --dir web-apps run test`：受限沙箱首次因 `esbuild spawn EPERM` 失败；获准在沙箱外复跑通过，4 个文件共 20 项测试成功。
 - `pnpm.cmd --dir web-apps run build`：受限沙箱首次因 `esbuild spawn EPERM` 失败；获准在沙箱外复跑通过，学生、教师、管理三端均完成生产构建。
@@ -60,5 +60,5 @@
 ## 分支、提交与 PR
 
 - 分支：`codex/t01-t07-comment-audit`
-- 提交：计划使用 `docs(code): audit comments for T01 through T07`；提交完成后补充哈希。
-- PR：创建 Ready for review 后补充地址；不得自动合并。
+- 关键提交：`48cfb5d docs(code): audit comments for T01 through T07`
+- PR：[#11](https://github.com/chengchen-ccnu/ccnu-edulion/pull/11)，Ready for review；不得自动合并。
