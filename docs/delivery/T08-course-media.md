@@ -89,7 +89,7 @@ OpenAPI 更新到 `0.6.0`：
 - `pnpm.cmd --dir web-apps run typecheck`：OpenAPI 重新生成及全部 workspace 类型检查通过。
 - `pnpm.cmd --dir web-apps run test`：沙箱内因 Vite/esbuild `spawn EPERM` 无法启动；按批准在沙箱外复跑，6 个文件 34 项全部通过。
 - `pnpm.cmd --dir web-apps run build`：沙箱内因同一 `spawn EPERM` 失败；按批准在沙箱外复跑，学生、教师、管理三端生产构建全部通过。
-- `pnpm.cmd --dir web-apps run check:api`：提交前会按设计报告生成文件相对 `HEAD` 有本任务差异；生成器本身成功且重复生成稳定。提交后必须复跑并记录最终一致性结果。
+- `pnpm.cmd --dir web-apps run check:api`：主提交后复跑通过，生成文件与 OpenAPI 0.6.0 一致且已被 Git 跟踪。
 - `git diff --check`：文档完成后的最终结果在提交前复核。
 
 真实 OSS/RabbitMQ/FFmpeg 验收本轮未执行，因为当前进程未显式提供 `MEDIA_REAL_ACCEPTANCE=true` 和专用外部环境授权；不能把跳过记为成功。用例已演进为实际验证 HLS 清单及切片、confirm/return、有限重试/DLQ、未 ACK 重投、Broker 不可用 Outbox 保留与精确清理，运行命令见本地环境文档。
@@ -121,5 +121,5 @@ OpenAPI 更新到 `0.6.0`：
 
 - 分支：`codex/t08a-course-media-contract-binding`
 - 基线：`origin/main` 的 `eb17ed228efb1779ffc5761e18e43d1f2733f339`，包含已合并 PR #9、#11、#12。
-- 关键提交：提交后补记。
-- Ready PR：创建后补记；不得自行合并。
+- 关键提交：`2f2697882394a5194a48e1756c8d05cd1a3780ea`（功能、迁移、测试与首版交付文档）。
+- Ready PR：[PR #13](https://github.com/chengchen-ccnu/ccnu-edulion/pull/13)，目标 `main`，`draft=false`、`mergeable=true`；未自行合并。
