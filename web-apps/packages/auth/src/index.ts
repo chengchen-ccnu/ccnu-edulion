@@ -57,7 +57,22 @@ export interface WorkspaceLink {
   href: string;
 }
 
-export interface InternalRedirect extends WorkspaceLink {
+/** 通过安全白名单解析出的公共目标或受保护工作台目标。 */
+export type InternalRedirect = PublicInternalRedirect | WorkspaceInternalRedirect;
+
+/** 无需任何角色或权限即可到达的站内 redirect。 */
+export interface PublicInternalRedirect {
+  access: "public";
+  id: "student";
+  label: "课程中心";
+  path: string;
+  href: string;
+  requestedPath: string;
+}
+
+/** 只有匹配角色和最小权限才能到达的工作台 redirect。 */
+export interface WorkspaceInternalRedirect extends WorkspaceLink {
+  access: "workspace";
   requestedPath: string;
 }
 
@@ -70,7 +85,23 @@ interface WorkspaceDefinition extends Omit<WorkspaceLink, "href"> {
   accepts(path: string): boolean;
 }
 
+interface PublicTargetDefinition {
+  id: "student";
+  label: "课程中心";
+  path: "/courses";
+  accepts(path: string): boolean;
+}
+
 const runtimeEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+
+const PUBLIC_TARGETS: readonly PublicTargetDefinition[] = [
+  {
+    id: "student",
+    label: "课程中心",
+    path: "/courses",
+    accepts: path => path === "/courses" || /^\/courses\/[0-9A-Za-z-]+$/.test(path)
+  }
+];
 
 const WORKSPACES: readonly WorkspaceDefinition[] = [
   {
@@ -79,7 +110,7 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     role: "STUDENT",
     permission: "learning:access",
     path: "/",
-    accepts: path => path === "/" || path === "/courses" || /^\/courses\/[0-9A-Za-z-]+$/.test(path)
+    accepts: path => path === "/"
   },
   {
     id: "teacher",
@@ -110,6 +141,14 @@ export function getPlatformUrls(): PlatformUrls {
   };
 }
 
+/**
+ * 使用可选的平台 URL 配置构造 student-web 承载的公共课程中心地址。
+ * @returns 可直接用于跨应用导航的绝对 `/courses` URL。
+ */
+export function buildCourseCenterUrl(urls: PlatformUrls = getPlatformUrls()): string {
+  return new URL("/courses", `${urls.student}/`).toString();
+}
+
 export function availableWorkspaces(user: CurrentUser | null, urls: PlatformUrls = getPlatformUrls()): WorkspaceLink[] {
   if (!user) return [];
   return WORKSPACES.filter(workspace => userCanAccess(user, workspace))
@@ -131,14 +170,19 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
     return null;
   }
   if (parsed.origin !== "https://platform.invalid") return null;
+  const requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  const publicTarget = PUBLIC_TARGETS.find(item => item.accepts(parsed.pathname));
+  if (publicTarget) {
+    return { access: "public", id: publicTarget.id, label: publicTarget.label, path: requestedPath, requestedPath,
+      href: new URL(requestedPath, `${urls.student}/`).toString() };
+  }
   const workspace = WORKSPACES.find(item => item.accepts(parsed.pathname));
   if (!workspace) return null;
-  const requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  return { ...toWorkspaceLink(workspace, urls), path: requestedPath, requestedPath,
+  return { ...toWorkspaceLink(workspace, urls), access: "workspace", path: requestedPath, requestedPath,
     href: new URL(requestedPath, `${originFor(workspace.role, urls)}/`).toString() };
 }
 
-/** 生成统一学生端登录地址，只携带通过白名单校验的站内 redirect。 */
+/** 生成由 student-web 物理承载的统一登录地址，只携带通过白名单校验的站内 redirect。 */
 export function buildUnifiedLoginUrl(redirect?: string, urls: PlatformUrls = getPlatformUrls()): string {
   const loginUrl = new URL("/login", `${urls.student}/`);
   const safeRedirect = resolveInternalRedirect(redirect, urls);
@@ -159,7 +203,7 @@ export function selectPostLoginDestination(user: CurrentUser, redirect?: string,
   const workspaces = availableWorkspaces(user, urls);
   const safeRedirect = resolveInternalRedirect(redirect, urls);
   if (safeRedirect) {
-    return userCanAccess(user, safeRedirect)
+    return safeRedirect.access === "public" || userCanAccess(user, safeRedirect)
       ? { kind: "target", target: safeRedirect }
       : { kind: "forbidden", workspaces };
   }
@@ -330,11 +374,19 @@ export interface AuthGuardOptions {
 
 /**
  * 安装路由守卫：恢复当前用户、校验目标工作台角色与权限，并安全跳转到统一登录页。
- * 未要求认证的公开路由不触发刷新请求；权限不足进入 forbidden 页面。
+ * 标记 restoreSession 的公开路由只在后台尝试恢复一次会话，不等待结果也不阻断匿名访问；
+ * 受保护路由必须完成身份恢复，权限不足进入 forbidden 页面。
  */
 export function installAuthGuard(router: Router, store: AuthStore, options: AuthGuardOptions = {}): void {
+  let publicRestoreStarted = false;
   router.beforeEach(async to => {
-    if (!to.meta.requiresAuth) return true;
+    if (!to.meta.requiresAuth) {
+      if (to.meta.restoreSession && store.state.status === "unknown" && !publicRestoreStarted) {
+        publicRestoreStarted = true;
+        void store.restore();
+      }
+      return true;
+    }
     if (!(await store.ensureCurrentUser())) {
       const loginUrl = buildUnifiedLoginUrl(to.fullPath);
       if (options.onLoginRedirect) {
