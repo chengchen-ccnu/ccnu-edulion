@@ -171,4 +171,6 @@ pnpm.cmd --dir web-apps run build
 - 分支：`feat/t06-course-web`
 - PR：[#6 feat: implement T06 course web](https://github.com/chengchen-ccnu/ccnu-edulion/pull/6)。
 - 关键实现提交：`f1e3b139c3f6355013b1ff0b96fc3278454bfa7c`（`feat: implement T06 course web`）。
-- 本次修复分支：`codex/t06-course-navigation-auth-fix`；PR 和关键提交将在推送后补充。
+- 本次修复分支：`codex/t06-course-navigation-auth-fix`。
+- 本次修复 PR：[#12 fix: separate public course navigation and unified auth](https://github.com/chengchen-ccnu/ccnu-edulion/pull/12)，Ready for review，未合并。
+- 本次关键实现提交：`a7b78173e5f244b8239e7d92c2fdef093c695fd8`（`fix: separate public courses from teaching management`）。
