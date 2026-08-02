@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 学生端公开课程详情页；按路由 courseId 调用 GET /api/v1/courses/{courseId}。
+ * 成功展示当前发布版本和目录，资源不存在/下架或网络失败时展示错误，不读取教师草稿。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CourseAccessType, CourseDetail, CourseLevel } from "@edu/api-client";
 import { ref, watch } from "vue";

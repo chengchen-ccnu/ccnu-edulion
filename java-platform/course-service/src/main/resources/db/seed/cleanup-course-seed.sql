@@ -1,3 +1,5 @@
+-- 只可在已核对名称的 course local/test Schema 执行；按外键逆序清理固定 T05 seed 课程链路。
+
 UPDATE course
 SET current_draft_version_id = NULL,
     published_version_id = NULL

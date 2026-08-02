@@ -1,4 +1,4 @@
--- Run only against a dedicated IAM local/test schema after verifying the target database name.
+-- 只可在已核对名称的 IAM local/test Schema 执行；仅清理固定 seed 身份，不得用于生产数据。
 DELETE FROM login_audit WHERE account IN ('student_test_01', 'teacher_test_01', 'admin_test_01');
 DELETE FROM refresh_session WHERE user_id IN ('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000102', '00000000-0000-4000-8000-000000000103');
 DELETE FROM user_role WHERE user_id IN ('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000102', '00000000-0000-4000-8000-000000000103');

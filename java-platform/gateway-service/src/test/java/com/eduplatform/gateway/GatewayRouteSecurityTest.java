@@ -149,6 +149,7 @@ class GatewayRouteSecurityTest {
     }
 
     @Test
+    /** Given 普通或教师 JWT；Then 教师路由分别拒绝或转发令牌中重建的可信身份。 */
     void teacherCourseRoutesRequireTeacherRoleAndForwardTrustedIdentity() {
         Instant now = Instant.now();
         client.get().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")

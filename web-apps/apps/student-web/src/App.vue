@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/** 学生应用根壳；提供公开课程导航及统一退出，登录恢复和受保护页面由路由守卫处理。 */
 import { availableWorkspaces } from "@edu/auth";
 import { AppShell } from "@edu/ui";
 import { computed } from "vue";

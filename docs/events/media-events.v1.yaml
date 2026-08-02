@@ -26,6 +26,7 @@ envelope:
       description: Global idempotency key persisted by every consumer.
     eventType:
       type: string
+      description: Stable event name used with eventVersion to select the consumer handler.
       enum:
         - MediaUploaded
         - MediaReady
@@ -37,6 +38,7 @@ envelope:
     eventVersion:
       type: integer
       const: 1
+      description: Envelope and payload semantics version; incompatible changes require a new version and routing key.
     aggregateId:
       type: string
       format: uuid
@@ -44,17 +46,21 @@ envelope:
     occurredAt:
       type: string
       format: date-time
+      description: UTC time when the media fact committed, not the later RabbitMQ publish or consume time.
     traceId:
       type: string
       minLength: 8
       maxLength: 64
+      description: Correlates the originating request, local transaction, Outbox delivery and consumer logs.
     payload:
       type: object
+      description: Event-specific projection; credentials, object keys and signed URLs are forbidden.
 
 events:
   MediaUploaded:
     routingKey: media.uploaded.v1
     aggregate: media_asset
+    description: Emitted after OSS metadata verification and media/upload/processing-job facts commit in one local transaction.
     payload:
       type: object
       additionalProperties: false
@@ -68,6 +74,7 @@ events:
         ownerId:
           type: string
           format: uuid
+          description: Uploader identity for audit only; consumers must not infer domain visibility from it.
         mimeType:
           type: string
         size:
@@ -77,9 +84,11 @@ events:
         sha256:
           type: string
           pattern: '^[a-fA-F0-9]{64}$'
+          description: Client-declared and server-verified content digest; never a credential or object key.
   MediaReady:
     routingKey: media.ready.v1
     aggregate: media_asset
+    description: Emitted once processing succeeds and the original asset plus derived variants are ready for authorized projection.
     payload:
       type: object
       additionalProperties: false
@@ -100,6 +109,7 @@ events:
   MediaRejected:
     routingKey: media.rejected.v1
     aggregate: media_asset
+    description: Permanent validation rejection after upload confirmation; repeating the source event is deduplicated by eventId.
     payload:
       type: object
       additionalProperties: false
@@ -119,6 +129,7 @@ events:
   MediaFailed:
     routingKey: media.failed.v1
     aggregate: media_asset
+    description: Processing failure after finite retries; retryable indicates whether operators may repair and replay the source event.
     payload:
       type: object
       additionalProperties: false
@@ -140,6 +151,7 @@ events:
   MediaDeleted:
     routingKey: media.deleted.v1
     aggregate: media_asset
+    description: Emitted after exact recorded object keys are deleted and the asset reaches the terminal DELETED state.
     payload:
       type: object
       additionalProperties: false
@@ -157,6 +169,7 @@ events:
     routingKey: media.reference.bound.v1
     aggregate: media_asset
     producer: owning-domain-service
+    description: Idempotently records that one domain entity retains a stable mediaId; it does not grant read access by itself.
     payload:
       type: object
       additionalProperties: false
@@ -179,6 +192,7 @@ events:
     routingKey: media.reference.released.v1
     aggregate: media_asset
     producer: owning-domain-service
+    description: Idempotently removes one exact domain reference; retention expiry, not this event alone, controls reclamation.
     payload:
       type: object
       additionalProperties: false
@@ -201,6 +215,7 @@ events:
 definitions:
   MediaPurpose:
     type: string
+    description: Stable business usage that selects upload policy; it never authorizes domain visibility.
     enum:
       - COURSE_COVER
       - LESSON_VIDEO
@@ -220,9 +235,11 @@ definitions:
       - REPORT_EXPORT
   OwnerService:
     type: string
+    description: Domain owning the referencing entity; combined with referenceType/referenceId as the idempotency tuple.
     enum: [course-service, learning-service, iam-service, agent-access, operation-service]
   MediaVariant:
     type: object
+    description: Safe metadata for one processed derivative; object keys and access URLs remain internal to media-service.
     additionalProperties: false
     required: [variant, mimeType, size]
     properties:

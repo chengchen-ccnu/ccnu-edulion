@@ -1,5 +1,6 @@
 package com.eduplatform.course.domain;
 
+/** 属于单个章节的课时投影；仅保存课时元数据，不拥有媒体文件或学习进度。 */
 public class LessonEntity {
     private String id;
     private String chapterId;

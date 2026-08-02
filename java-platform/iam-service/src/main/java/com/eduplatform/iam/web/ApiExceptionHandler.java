@@ -17,6 +17,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
+/**
+ * 把 IAM 认证、校验和未知异常转换为含 Trace ID 的统一错误信封。
+ * 刷新令牌无效或重放时同时清除 Cookie；未知异常不返回内部堆栈或敏感信息。
+ */
 public class ApiExceptionHandler {
     private final IamProperties properties;
 

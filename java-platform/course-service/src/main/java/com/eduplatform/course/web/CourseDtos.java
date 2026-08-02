@@ -12,6 +12,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * course-service 的 HTTP 契约适配记录；字段必须与 docs/api/openapi.yaml 一致。
+ * 自动生成的前端类型从 OpenAPI 获取，本类不作为跨服务共享 DTO。
+ */
 public final class CourseDtos {
     private static final String HTTP_URL = "https?://[^\\s]+";
 

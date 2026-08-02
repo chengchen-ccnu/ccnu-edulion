@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 统一登录表单，面向所有平台角色；通过 AuthStore 调用 IAM 登录接口。
+ * props.store 提供认证状态与字段错误，成功时 emit authenticated，失败时保留 IAM 错误和限流提示。
+ */
 import type { AuthStore } from "./index";
 import { reactive } from "vue";
 

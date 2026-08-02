@@ -13,6 +13,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 @Profile({"local", "test"})
 @ConditionalOnProperty(prefix = "platform.iam.seed", name = "enabled", havingValue = "true")
+/**
+ * 仅在 local/test 且显式开启时幂等写入三类演示身份、角色和最小权限。
+ *
+ * <p>密码来自未跟踪环境变量并在写库前哈希；配置不足会阻止启动。重复执行更新固定测试
+ * 标识，不无限追加用户；生产 profile 不会装配本初始化器。</p>
+ */
 public class IamSeedInitializer implements ApplicationRunner {
     private static final SeedUser[] USERS = {
         new SeedUser("00000000-0000-4000-8000-000000000101", "student_test_01", "测试学生", "STUDENT", "learning:access"),
@@ -32,6 +38,7 @@ public class IamSeedInitializer implements ApplicationRunner {
 
     @Override
     @Transactional
+    /** 在单一事务中生成角色、权限、测试用户及关联，任一步失败则整体回滚。 */
     public void run(ApplicationArguments args) {
         String password = properties.seed().password();
         if (password == null || password.length() < 12) {

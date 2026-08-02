@@ -22,6 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1")
+/**
+ * IAM 浏览器接口适配器：访问令牌放在 JSON 响应，刷新令牌只放入 HttpOnly Cookie。
+ *
+ * <p>控制器不自行判断角色；当前用户接口依赖 Gateway/资源服务器验证后的 JWT。</p>
+ */
 public class AuthController {
     static final String REFRESH_COOKIE = "EDU_REFRESH";
 
@@ -34,6 +39,7 @@ public class AuthController {
     }
 
     @PostMapping("/auth/login")
+    /** 校验登录请求并设置刷新 Cookie；认证失败由统一异常处理器返回错误信封。 */
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest body,
             HttpServletRequest request) {
         TokenPair tokens = authService.login(body.account(), body.password(), request.getRemoteAddr(),
@@ -42,12 +48,14 @@ public class AuthController {
     }
 
     @PostMapping("/auth/refresh")
+    /** 轮换 Cookie 中的刷新令牌，并用新 Cookie 覆盖旧值。 */
     public ResponseEntity<LoginResponse> refresh(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
         return withRefreshCookie(authService.refresh(refreshToken));
     }
 
     @PostMapping("/auth/logout")
+    /** 撤销当前刷新会话并立即清除浏览器 Cookie；缺少 Cookie 仍返回成功。 */
     public ResponseEntity<Void> logout(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
         authService.logout(refreshToken);
@@ -56,6 +64,7 @@ public class AuthController {
     }
 
     @GetMapping("/users/me")
+    /** 返回 JWT subject 对应用户的实时角色和权限，用于前端恢复登录态。 */
     public CurrentUserResponse currentUser(JwtAuthenticationToken authentication) {
         AuthenticatedUser user = authService.currentUser(authentication.getToken().getSubject());
         return new CurrentUserResponse(user.id(), user.displayName(), user.avatarUrl(),

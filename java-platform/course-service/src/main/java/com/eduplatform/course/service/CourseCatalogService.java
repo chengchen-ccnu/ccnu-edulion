@@ -23,6 +23,12 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+/**
+ * 提供公开课程目录读取和教师课程草稿、版本、目录及发布状态管理。
+ *
+ * <p>所有写操作限定在 course-service Schema 内；教师身份由控制器传入并在查询条件中再次
+ * 约束。已发布版本保持只读，后续编辑通过复制新草稿完成，不拥有封面媒体对象。</p>
+ */
 public class CourseCatalogService {
     private final CourseMapper mapper;
     private final ObjectMapper objectMapper;
@@ -33,6 +39,7 @@ public class CourseCatalogService {
     }
 
     @Transactional(readOnly = true)
+    /** 按可选筛选条件分页读取已发布课程，不返回草稿或已下架版本。 */
     public CourseDtos.CoursePage listPublished(String keyword, String categoryId, String level,
             String accessType, int page, int size) {
         String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
@@ -45,6 +52,10 @@ public class CourseCatalogService {
     }
 
     @Transactional(readOnly = true)
+    /**
+     * 读取单门课程当前公开版本及目录。
+     * @throws CourseException 课程不存在、未发布或已下架时统一按不可见处理
+     */
     public CourseDtos.CourseDetail getPublished(String courseId) {
         CourseVersionEntity version = mapper.findPublicVersion(courseId);
         if (version == null) {
@@ -65,6 +76,7 @@ public class CourseCatalogService {
     }
 
     @Transactional(readOnly = true)
+    /** @return 可用于课程编辑与筛选的启用分类，不包含已停用分类。 */
     public List<CourseDtos.CategorySummary> listActiveCategories() {
         return mapper.listActiveCategories().stream()
                 .map(category -> new CourseDtos.CategorySummary(category.getId(), category.getName()))
@@ -72,6 +84,13 @@ public class CourseCatalogService {
     }
 
     @Transactional
+    /**
+     * 创建课程聚合及首个 v1 草稿。
+     *
+     * @param teacherId 当前教师用户 ID，同时成为课程所有者
+     * @param request 带客户端请求 ID 的课程元数据
+     * @return 课程快照和是否本次新建；同一教师重复请求返回既有课程
+     */
     public CreateResult create(String teacherId, CourseDtos.CreateCourseRequest request) {
         CourseEntity existing = mapper.findByOwnerAndRequest(teacherId, request.clientRequestId().toString());
         if (existing != null) {
@@ -109,11 +128,13 @@ public class CourseCatalogService {
     }
 
     @Transactional(readOnly = true)
+    /** 读取当前教师拥有的课程编辑快照；他人课程按不存在处理。 */
     public CourseDtos.TeacherCourse getTeacherCourse(String courseId, String teacherId) {
         return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
     }
 
     @Transactional(readOnly = true)
+    /** 分页读取当前教师自己的课程，包含草稿和发布状态但不跨教师泄露数据。 */
     public CourseDtos.TeacherCoursePage listTeacherCourses(String teacherId, int page, int size) {
         long total = mapper.countOwnedCourses(teacherId);
         List<CourseDtos.TeacherCourse> items = mapper.listOwnedCourses(
@@ -124,6 +145,11 @@ public class CourseCatalogService {
     }
 
     @Transactional
+    /**
+     * 以乐观版本号更新课程元数据；已发布课程会先复制为新草稿，原公开版本不变。
+     *
+     * <p>内容完全相同视为幂等成功；版本号落后时抛出冲突并回滚事务。</p>
+     */
     public CourseDtos.TeacherCourse updateMetadata(String courseId, String teacherId,
             CourseDtos.UpdateCourseRequest request) {
         requireActiveCategory(request.categoryId().toString());
@@ -144,6 +170,11 @@ public class CourseCatalogService {
     }
 
     @Transactional
+    /**
+     * 原子替换草稿的整套章节课时，并用规范化内容哈希识别重复请求。
+     *
+     * <p>先校验序号连续性，再锁定所属课程并预占乐观版本；任一插入失败会回滚删除与新增。</p>
+     */
     public CourseDtos.TeacherCourse replaceCurriculum(String courseId, String teacherId,
             CourseDtos.ReplaceCurriculumRequest request) {
         validateSequences(request.chapters());
@@ -166,6 +197,12 @@ public class CourseCatalogService {
     }
 
     @Transactional
+    /**
+     * 在发布或下架目标间转换课程状态。
+     *
+     * <p>发布要求非空目录并把草稿固化为公开版本；下架保留版本数据但停止公开读取。请求携带
+     * 的 revision 过期时不改变状态并返回冲突。</p>
+     */
     public CourseDtos.CoursePublication updatePublication(String courseId, String teacherId,
             CourseDtos.UpdatePublicationRequest request) {
         CourseEntity course = requireOwnedCourse(courseId, teacherId, true);
@@ -190,6 +227,7 @@ public class CourseCatalogService {
         return toPublication(current, currentVersion);
     }
 
+    /** 校验目录后把当前草稿固化为发布版本，并归档先前发布版本；调用方事务负责整体回滚。 */
     private void publish(CourseEntity course, CourseVersionEntity editable) {
         if (course.getCurrentDraftVersionId() != null) {
             if (mapper.countChapters(editable.getId()) == 0 || mapper.countEmptyChapters(editable.getId()) > 0) {
@@ -208,6 +246,7 @@ public class CourseCatalogService {
         }
     }
 
+    /** 将已发布课程切为不可公开读取；版本及目录仍保留，未发布课程重复下架返回冲突。 */
     private void unpublish(CourseEntity course) {
         if (course.getPublishedVersionId() == null) {
             throw new CourseException(HttpStatus.CONFLICT, "COURSE.NOT_PUBLISHED", "课程尚未发布，无法下架");
@@ -215,6 +254,7 @@ public class CourseCatalogService {
         mapper.updatePublicationStatus(course.getId(), CourseDtos.PublicationStatus.UNPUBLISHED.name());
     }
 
+    /** 返回现有草稿，或从已发布版本完整复制新草稿；没有任何可复制版本时按不存在处理。 */
     private CourseVersionEntity ensureDraft(CourseEntity course) {
         if (course.getCurrentDraftVersionId() != null) {
             return mapper.findVersion(course.getCurrentDraftVersionId());
@@ -244,6 +284,7 @@ public class CourseCatalogService {
         return copy;
     }
 
+    /** 复制章节课时并生成新 ID，使后续草稿编辑不会修改已发布目录。 */
     private void copyCurriculum(String sourceVersionId, String targetVersionId) {
         for (ChapterEntity sourceChapter : mapper.listChapters(sourceVersionId)) {
             ChapterEntity chapter = new ChapterEntity();
@@ -376,6 +417,7 @@ public class CourseCatalogService {
         }
     }
 
+    /** 校验章节和各章课时序号唯一且从 1 连续，失败时在任何数据库写入前终止。 */
     private void validateSequences(List<CourseDtos.ChapterInput> chapters) {
         Set<Integer> chapterSequences = new HashSet<>();
         for (CourseDtos.ChapterInput chapter : chapters) {
@@ -406,6 +448,7 @@ public class CourseCatalogService {
                 "COMMON.VALIDATION_FAILED", "请求参数不合法", List.of(new FieldError(field, reason)));
     }
 
+    /** 对 OpenAPI 顺序化目录生成稳定摘要，用于识别完整目录替换的重复请求。 */
     private String curriculumHash(List<CourseDtos.ChapterInput> chapters) {
         try {
             byte[] canonical = objectMapper.writeValueAsBytes(chapters);
@@ -446,5 +489,6 @@ public class CourseCatalogService {
         return new CourseException(HttpStatus.CONFLICT, "COURSE.VERSION_CONFLICT", "课程已被更新，请刷新后重试");
     }
 
+    /** 课程创建结果；created=false 表示命中同一教师/clientRequestId 的既有幂等结果。 */
     public record CreateResult(CourseDtos.TeacherCourse course, boolean created) {}
 }

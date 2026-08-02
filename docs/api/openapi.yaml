@@ -20,6 +20,7 @@ paths:
       tags: [Authentication]
       operationId: login
       summary: Log in with a platform account
+      description: Validates credentials with account/IP rate limiting, records a login audit, returns a short-lived access token and sets a rotating HttpOnly refresh cookie. Failed credentials never reveal whether the account exists.
       security: []
       requestBody:
         required: true
@@ -93,6 +94,7 @@ paths:
       tags: [Authentication]
       operationId: logout
       summary: Revoke the current refresh session and clear its cookie
+      description: Missing or previously revoked refresh cookies are treated as idempotent success; the response always expires the browser cookie.
       security: []
       responses:
         '204':
@@ -111,6 +113,7 @@ paths:
       tags: [Users]
       operationId: getCurrentUser
       summary: Get the authenticated user summary
+      description: Re-reads the active IAM account, roles and permissions for the JWT subject so frontends can restore current authorization without trusting persisted browser profile data.
       responses:
         '200':
           description: Current user
@@ -142,6 +145,7 @@ paths:
       tags: [Courses]
       operationId: listCourses
       summary: List published courses
+      description: Returns only the current public version of published courses. Draft and unpublished versions are never projected, and all filters are optional.
       security: []
       parameters:
         - $ref: '#/components/parameters/Page'
@@ -231,6 +235,7 @@ paths:
       tags: [Courses]
       operationId: getCourse
       summary: Get a published course detail
+      description: Returns the immutable public version and ordered curriculum. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
       security: []
       parameters:
         - $ref: '#/components/parameters/CourseId'
@@ -566,6 +571,7 @@ paths:
       tags: [Media]
       operationId: getMediaUpload
       summary: Get an owned upload session and resumable part state
+      description: Ownership is derived from the authenticated Gateway identity. A session owned by another user is indistinguishable from a missing session.
       parameters:
         - $ref: '#/components/parameters/UploadId'
       responses:
@@ -585,6 +591,7 @@ paths:
       tags: [Media]
       operationId: cancelMediaUpload
       summary: Idempotently cancel an unfinished upload session
+      description: Cancels the exact recorded single-object upload or multipart provider upload. Terminal sessions are returned unchanged and no bucket listing or broad deletion is performed.
       parameters:
         - $ref: '#/components/parameters/UploadId'
       responses:
@@ -708,6 +715,7 @@ paths:
       tags: [Media]
       operationId: getMedia
       summary: Get owned media metadata and processing status
+      description: Returns stable media metadata and processing state only for the uploader. It does not grant domain visibility and never exposes an object key or signed URL.
       parameters:
         - $ref: '#/components/parameters/MediaId'
       responses:

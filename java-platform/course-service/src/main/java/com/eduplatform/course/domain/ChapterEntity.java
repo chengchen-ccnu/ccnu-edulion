@@ -1,5 +1,6 @@
 package com.eduplatform.course.domain;
 
+/** 属于单个课程版本的章节投影；position 在版本内唯一并由服务层保证连续。 */
 public class ChapterEntity {
     private String id;
     private String courseVersionId;

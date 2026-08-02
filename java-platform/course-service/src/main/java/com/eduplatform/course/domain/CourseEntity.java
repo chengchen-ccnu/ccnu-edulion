@@ -2,6 +2,7 @@ package com.eduplatform.course.domain;
 
 import java.time.Instant;
 
+/** 课程聚合根持久化投影，保存所有者及当前草稿/发布版本指针，不承载版本正文。 */
 public class CourseEntity {
     private String id;
     private String createRequestId;

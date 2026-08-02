@@ -10,12 +10,17 @@ import type {
   ListCoursesQuery
 } from "@edu/api-client";
 
+/** 学生端只读课程目录 API；所有请求经 Gateway，数据结构来自 OpenAPI。 */
 export interface StudentCourseApi {
   list(query: ListCoursesQuery): Promise<CoursePage>;
   categories(): Promise<CategorySummary[]>;
   detail(courseId: string): Promise<CourseDetail>;
 }
 
+/**
+ * 构造公开课程 API 适配器。
+ * @returns 分页目录、启用分类与公开详情；非成功响应统一抛出 GatewayRequestError。
+ */
 export function createStudentCourseApi(client: GatewayClient = createGatewayClient()): StudentCourseApi {
   return {
     async list(query) {

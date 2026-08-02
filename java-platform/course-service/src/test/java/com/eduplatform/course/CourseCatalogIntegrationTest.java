@@ -100,6 +100,7 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
+    /** Given 已发布 v1；When 教师编辑形成草稿；Then 公共目录仍读 v1，直到新草稿显式发布。 */
     void publishedVersionRemainsImmutableUntilNewDraftIsPublished() {
         CourseDtos.TeacherCourse draft = service.create(
                 TEACHER_ID, createRequest(UUID.randomUUID(), "线上标题")).course();
@@ -128,6 +129,7 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
+    /** Given 已保存目录与发布状态；When 重放相同写请求；Then ID/revision 稳定且不产生重复章节。 */
     void curriculumReplacementAndPublicationStatusAreIdempotent() {
         CourseDtos.TeacherCourse draft = service.create(
                 TEACHER_ID, createRequest(UUID.randomUUID(), "状态课程")).course();
@@ -164,6 +166,7 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
+    /** Given 过期 revision 或不连续目录序号；Then 事务拒绝写入并保留当前课程快照。 */
     void rejectsStaleRevisionAndInvalidCurriculumSequence() {
         CourseDtos.TeacherCourse draft = service.create(
                 TEACHER_ID, createRequest(UUID.randomUUID(), "并发课程")).course();

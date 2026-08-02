@@ -1,3 +1,5 @@
+"""读取数学智能体配置，并构造模型、嵌入模型与只读 FAISS 资源。"""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +19,7 @@ def _resolve_path(value: str, base: Path) -> Path:
 
 @dataclass(frozen=True)
 class Settings:
+    """启动期配置快照；路径均解析为绝对路径，秘密只从进程环境读取。"""
     project_root: Path
     asset_root: Path
     bge_model_path: Path
@@ -43,6 +46,11 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    """从环境变量读取配置，缺省路径相对项目根目录解析。
+
+    返回值只保存本进程所需设置，不创建目录或外部资源；数值格式错误会在启动期直接抛出，
+    避免以含糊的回退值运行。
+    """
     project_root = Path(__file__).resolve().parents[1]
     asset_root = _resolve_path(
         os.getenv("EDU_AGENT_ASSET_ROOT", "../edu_agent/智能体项目"),
@@ -72,12 +80,14 @@ def load_settings() -> Settings:
 
 
 def create_llm(settings: Settings):
+    """创建确定性聊天模型客户端；实际网络调用发生在工作流节点执行时。"""
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(model=settings.model_name, temperature=0)
 
 
 def create_embeddings(settings: Settings):
+    """从本地模型目录加载归一化嵌入模型，并按可用性选择 CUDA 或 CPU。"""
     import torch
     from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -90,6 +100,11 @@ def create_embeddings(settings: Settings):
 
 
 def load_faiss(path: Path, embeddings):
+    """加载受信任的本地 FAISS 索引，索引缺失时终止启动且不自动重建。
+
+    ``allow_dangerous_deserialization`` 仅因历史索引包含 pickle 而开启，因此调用方必须保证
+    ``path`` 指向项目维护者提供的可信本地资产，不能用于用户上传文件。
+    """
     from langchain_community.vectorstores import FAISS
 
     if not path.exists():

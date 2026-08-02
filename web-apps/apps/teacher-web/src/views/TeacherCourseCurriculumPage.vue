@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 教师章节课时与发布管理页；数据来自教师课程详情、目录替换和发布接口。
+ * 页面在提交前重排连续 sequence，保存整套目录并携带 revision；权限、发布校验或并发冲突均显示错误。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { ChapterInput, LessonInput, TeacherCourse } from "@edu/api-client";
 import { computed, onMounted, ref } from "vue";

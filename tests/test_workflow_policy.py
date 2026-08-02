@@ -39,6 +39,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertFalse(should_handoff_after_feedback(state))
 
     def test_llm_budget_is_hard_limit(self):
+        """Given 仅余一次额度，When 连续调用两次，Then 第二次在模型调用前被拒绝。"""
         async def scenario():
             budget = CallBudget({"llm_call_count": 1, "max_llm_calls": 2}, 30)
             await budget.invoke(FakeRunnable(), "ok")

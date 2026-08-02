@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 全平台统一登录入口；登录成功后依据 /users/me 角色权限和安全 redirect 选择工作台。
+ * 无权限进入拒绝页，多角色进入选择页，非法外部 redirect 会被丢弃。
+ */
 import { AuthLoginForm, selectPostLoginDestination } from "@edu/auth";
 import { useRoute, useRouter } from "vue-router";
 import { authStore } from "../auth";

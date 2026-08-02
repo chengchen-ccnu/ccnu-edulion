@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/** 教师应用根壳；导航面向 TEACHER 工作台，退出调用 IAM 后跳转统一学生端登录入口。 */
 import { availableWorkspaces, buildUnifiedLoginUrl, buildWorkspaceChooserUrl } from "@edu/auth";
 import { AppShell } from "@edu/ui";
 import { computed } from "vue";

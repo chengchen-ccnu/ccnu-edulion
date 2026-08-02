@@ -11,6 +11,7 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.stereotype.Service;
 
 @Service
+/** 使用 IAM 配置签发短期 HS256 访问令牌，不负责刷新令牌持久化或校验。 */
 public class JwtTokenService {
     private final JwtEncoder encoder;
     private final IamProperties properties;
@@ -20,6 +21,10 @@ public class JwtTokenService {
         this.properties = properties;
     }
 
+    /**
+     * 把已从数据库读取的用户 ID、角色和权限写入短期 JWT。
+     * @return 完整紧凑令牌；调用本方法不会写数据库
+     */
     public String issue(AuthenticatedUser user) {
         Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
@@ -35,6 +40,7 @@ public class JwtTokenService {
         return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
 
+    /** @return OpenAPI 登录响应使用的访问令牌有效秒数。 */
     public long expiresInSeconds() {
         return properties.jwt().accessTtl().toSeconds();
     }

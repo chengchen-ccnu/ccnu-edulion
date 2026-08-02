@@ -19,6 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+/**
+ * 处理账号登录、Refresh Token 轮换、退出和当前用户读取。
+ *
+ * <p>登录会写登录审计与刷新会话；刷新令牌只以 SHA-256 摘要入库。刷新采用令牌族轮换，
+ * 已轮换令牌被再次使用时会撤销整个族，阻止重放。服务不保存课程或学习数据。</p>
+ */
 public class AuthService {
     private final IamMapper mapper;
     private final PasswordEncoder passwordEncoder;
@@ -37,6 +43,16 @@ public class AuthService {
     }
 
     @Transactional(noRollbackFor = AuthException.class)
+    /**
+     * 校验账号密码及账号/IP 时间窗限流，成功后签发访问令牌并创建刷新会话。
+     *
+     * @param account 登录账号，按去空格和小写规则归一化
+     * @param password 明文仅用于本次哈希比对，不会持久化
+     * @param remoteAddress 登录来源地址，用于限流和审计
+     * @param traceId Gateway 传入的请求追踪 ID
+     * @return 访问令牌、有效秒数和仅返回一次的刷新令牌
+     * @throws AuthException 凭据错误、账号不可用或限流时抛出；失败审计仍提交
+     */
     public TokenPair login(String account, String password, String remoteAddress, String traceId) {
         String normalized = account.trim().toLowerCase();
         Instant now = Instant.now();
@@ -72,6 +88,13 @@ public class AuthService {
     }
 
     @Transactional(noRollbackFor = AuthException.class)
+    /**
+     * 原子轮换有效刷新令牌并签发新的令牌对。
+     *
+     * @param refreshToken HttpOnly Cookie 中的原始刷新令牌
+     * @return 新访问令牌和替换后的刷新令牌
+     * @throws AuthException 令牌缺失、过期或重放时抛出；可疑重放会撤销同族全部会话
+     */
     public TokenPair refresh(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw unauthorizedRefresh();
@@ -105,12 +128,19 @@ public class AuthService {
     }
 
     @Transactional
+    /**
+     * 撤销当前刷新令牌；空令牌视为幂等成功，重复退出不会产生额外状态变化。
+     */
     public void logout(String refreshToken) {
         if (refreshToken != null && !refreshToken.isBlank()) {
             mapper.revokeByTokenHash(hash(refreshToken));
         }
     }
 
+    /**
+     * 根据 JWT subject 重新读取启用用户及实时角色权限。
+     * @throws AuthException 用户不存在或已停用时要求重新登录
+     */
     public AuthenticatedUser currentUser(String userId) {
         UserAccount user = mapper.findUserById(userId);
         if (user == null || !"ACTIVE".equals(user.getStatus())) {

@@ -1,3 +1,4 @@
+/** 跨学生、教师、管理应用共享的登录恢复、工作台授权和安全跳转策略。 */
 import { createGatewayClient } from "@edu/api-client";
 import type { ApiError, CurrentUser, GatewayClient } from "@edu/api-client";
 import { reactive, readonly } from "vue";
@@ -29,6 +30,7 @@ export interface AuthState {
 }
 
 export interface AuthStore {
+  /** 只读认证快照；访问令牌不会暴露给组件或持久化存储。 */
   state: Readonly<AuthState>;
   login(account: string, password: string): Promise<boolean>;
   restore(): Promise<boolean>;
@@ -114,6 +116,10 @@ export function availableWorkspaces(user: CurrentUser | null, urls: PlatformUrls
     .map(workspace => toWorkspaceLink(workspace, urls));
 }
 
+/**
+ * 校验登录后的站内 redirect，并映射到负责该路径的独立前端应用。
+ * @returns 安全的同平台目标；外部 URL、协议相对 URL、控制字符和未知路径返回 null。
+ */
 export function resolveInternalRedirect(candidate: string | null | undefined,
     urls: PlatformUrls = getPlatformUrls()): InternalRedirect | null {
   if (!candidate || candidate.length > 2048 || !candidate.startsWith("/") || candidate.startsWith("//")
@@ -132,6 +138,7 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
     href: new URL(requestedPath, `${originFor(workspace.role, urls)}/`).toString() };
 }
 
+/** 生成统一学生端登录地址，只携带通过白名单校验的站内 redirect。 */
 export function buildUnifiedLoginUrl(redirect?: string, urls: PlatformUrls = getPlatformUrls()): string {
   const loginUrl = new URL("/login", `${urls.student}/`);
   const safeRedirect = resolveInternalRedirect(redirect, urls);
@@ -143,6 +150,10 @@ export function buildWorkspaceChooserUrl(urls: PlatformUrls = getPlatformUrls())
   return new URL("/workspaces", `${urls.student}/`).toString();
 }
 
+/**
+ * 根据实时角色与权限选择登录后的唯一目标、工作台选择页或无权限状态。
+ * 指定 redirect 但无权访问时不会静默降级到其他应用，避免权限意图被掩盖。
+ */
 export function selectPostLoginDestination(user: CurrentUser, redirect?: string,
     urls: PlatformUrls = getPlatformUrls()): PostLoginDestination {
   const workspaces = availableWorkspaces(user, urls);
@@ -157,6 +168,12 @@ export function selectPostLoginDestination(user: CurrentUser, redirect?: string,
   return { kind: "forbidden", workspaces };
 }
 
+/**
+ * 创建浏览器认证状态机。
+ *
+ * 访问令牌仅保存在闭包内存；HttpOnly 刷新 Cookie 由 IAM 设置。并发刷新共享同一 Promise，
+ * 受保护请求遇到 401 最多轮换一次并重放一次，失败后清空本地身份，不做无界重试。
+ */
 export function createAuthStore(client: GatewayClient = createGatewayClient()): AuthStore {
   const state = reactive<AuthState>({ status: "unknown", loading: false, currentUser: null, failure: null });
   let accessToken: string | null = null;
@@ -311,6 +328,10 @@ export interface AuthGuardOptions {
   onLoginRedirect?: (url: string) => void;
 }
 
+/**
+ * 安装路由守卫：恢复当前用户、校验目标工作台角色与权限，并安全跳转到统一登录页。
+ * 未要求认证的公开路由不触发刷新请求；权限不足进入 forbidden 页面。
+ */
 export function installAuthGuard(router: Router, store: AuthStore, options: AuthGuardOptions = {}): void {
   router.beforeEach(async to => {
     if (!to.meta.requiresAuth) return true;

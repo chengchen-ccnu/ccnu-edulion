@@ -1,3 +1,5 @@
+"""构建“检索—分步讲解—反馈判断—补救/移交”的数学教学状态机。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,12 +32,14 @@ from .state import (
 
 @dataclass
 class WorkflowServices:
+    """工作流运行期依赖；包含模型、只读检索服务和不可变配置快照。"""
     llm: Any
     retrieval: RetrievalServices
     settings: Settings
 
 
 def _last_human_text(state: AgentState) -> str:
+    """读取会话中最近一条学生消息；没有学生消息时返回空字符串。"""
     for message in reversed(state.get("messages", [])):
         if isinstance(message, HumanMessage):
             return str(message.content)
@@ -48,6 +52,7 @@ async def _select_knowledge(
     question: str,
     candidates: list[str],
 ) -> list[str]:
+    """让模型只从候选集合中选择至多五个知识点，并丢弃越界输出。"""
     candidates = list(dict.fromkeys(candidates))[:40]
     if not candidates:
         return []
@@ -73,6 +78,7 @@ async def _hypothesize_knowledge(
     budget: CallBudget,
     question: str,
 ) -> list[str]:
+    """题库无可靠命中时生成第二阶段知识点检索词，不直接作为最终结论。"""
     model = services.llm.with_structured_output(KnowledgeHypotheses)
     result = await budget.invoke(
         model,
@@ -94,6 +100,7 @@ async def _classify_domain(
     budget: CallBudget,
     question: str,
 ) -> DomainDecision:
+    """在两阶段检索均失败后判断是否为数学问题，避免把新题型误判成闲聊。"""
     model = services.llm.with_structured_output(DomainDecision)
     return await budget.invoke(
         model,
@@ -118,6 +125,7 @@ async def _plan_problem(
     prerequisites: list[str],
     context: str,
 ) -> ProblemPlan:
+    """结合题目、可选图片、知识点与检索上下文生成单步拆分的解题计划。"""
     model = services.llm.with_structured_output(ProblemPlan)
     prompt_text = (
         f"学生问题：{question}\n"
@@ -143,6 +151,7 @@ async def _plan_problem(
 
 
 def _context_from_hits(hits: list, limit: int = 5) -> str:
+    """截取有限候选内容供模型参考，控制提示词长度且不修改原始文档。"""
     snippets = []
     for hit in hits[:limit]:
         content = str(getattr(hit.document, "page_content", ""))
@@ -151,7 +160,14 @@ def _context_from_hits(hits: list, limit: int = 5) -> str:
 
 
 def create_workflow(services: WorkflowServices):
+    """创建尚未编译的 LangGraph 教学状态机。
+
+    图首先完成双路检索与题目规划，再逐步展示并在每步等待学生反馈。未理解时按固定顺序
+    补救；超过步骤重试或全局 LLM 预算后移交人工。节点只写回检查点状态并调用模型/检索，
+    不写 Java 业务数据库；调用方负责选择内存或 PostgreSQL 检查点并设置中断点。
+    """
     async def prepare_problem(state: AgentState) -> dict:
+        """准备题目与解题计划；检索失败可降级讲解，预算或异常则写入终止原因。"""
         budget = CallBudget(state, services.settings.max_llm_calls)
         question = _last_human_text(state)
         image_url = state.get("user_image_url")
@@ -243,9 +259,11 @@ def create_workflow(services: WorkflowServices):
             }
 
     def route_after_prepare(state: AgentState) -> str:
+        """有终止原因时进入统一终点，否则展示首个讲解步骤。"""
         return "terminal" if state.get("stop_reason") else "present_step"
 
     async def present_step(state: AgentState) -> dict:
+        """展示当前步骤并请求反馈；索引越界表示全部步骤已经完成。"""
         index = int(state.get("current_step_index", 0))
         steps = state.get("solution_steps", [])
         if index >= len(steps):
@@ -264,6 +282,7 @@ def create_workflow(services: WorkflowServices):
         }
 
     async def assess_feedback(state: AgentState) -> dict:
+        """调用结构化模型判断学生是否理解，并记录具体疑问和累计预算。"""
         budget = CallBudget(state, services.settings.max_llm_calls)
         feedback = _last_human_text(state)
         try:
@@ -299,6 +318,7 @@ def create_workflow(services: WorkflowServices):
             }
 
     def route_after_feedback(state: AgentState) -> str:
+        """按理解状态、模型预算和步骤重试上限选择前进、补救或人工移交。"""
         if state.get("stop_reason") == "llm_budget":
             return "handoff"
         if state.get("feedback_understood"):
@@ -312,6 +332,7 @@ def create_workflow(services: WorkflowServices):
         return "remediate"
 
     async def remediate(state: AgentState) -> dict:
+        """只针对当前障碍执行一次补救讲解；无论成功与否都受全局调用预算约束。"""
         budget = CallBudget(state, services.settings.max_llm_calls)
         retry_count = int(state.get("step_retry_count", 0))
         strategy_name, strategy_instruction = remediation_strategy(
@@ -355,6 +376,7 @@ def create_workflow(services: WorkflowServices):
             }
 
     async def advance_step(state: AgentState) -> dict:
+        """推进到下一讲解步骤，并清空只属于上一阶段的反馈与重试状态。"""
         return {
             "current_step_index": int(state.get("current_step_index", 0)) + 1,
             "step_retry_count": 0,
@@ -362,6 +384,7 @@ def create_workflow(services: WorkflowServices):
         }
 
     def route_after_advance(state: AgentState) -> str:
+        """最后一步之后进入完成节点，否则继续展示下一步。"""
         return (
             "complete"
             if int(state.get("current_step_index", 0)) >= len(state.get("solution_steps", []))
@@ -369,6 +392,7 @@ def create_workflow(services: WorkflowServices):
         )
 
     async def handoff(state: AgentState) -> dict:
+        """以稳定提示结束自动教学；不会自动联系教师或继续调用模型。"""
         if state.get("stop_reason") == "llm_budget":
             message = "本会话已达到模型调用上限，建议稍后继续，或把当前步骤交给老师协助。"
         else:
@@ -379,12 +403,14 @@ def create_workflow(services: WorkflowServices):
         return {"stop_reason": "handoff", "messages": [AIMessage(content=message)]}
 
     async def complete(_state: AgentState) -> dict:
+        """写入正常完成终态和学生可见提示。"""
         return {
             "stop_reason": "complete",
             "messages": [AIMessage(content="你已经完成了本题的全部步骤，做得很好！")],
         }
 
     async def terminal(state: AgentState) -> dict:
+        """把准备阶段产生的非数学、失败或预算提示转换成最终 AI 消息。"""
         return {
             "messages": [
                 AIMessage(content=state.get("terminal_message", "本轮学习已结束。"))

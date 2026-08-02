@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/courses")
 @Validated
+/** 面向匿名学生和已登录用户的公开课程目录接口，只投影当前可见发布版本。 */
 public class CourseController {
     static final String UUID_PATTERN =
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -27,6 +28,7 @@ public class CourseController {
     }
 
     @GetMapping
+    /** 按 OpenAPI 约定的筛选项和页码返回公开课程；空筛选表示全部。 */
     CourseDtos.CoursePage list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
@@ -38,11 +40,13 @@ public class CourseController {
     }
 
     @GetMapping("/{courseId}")
+    /** 返回公开课程详情与章节课时，不暴露教师草稿。 */
     CourseDtos.CourseDetail detail(@PathVariable @Pattern(regexp = UUID_PATTERN) String courseId) {
         return service.getPublished(courseId);
     }
 
     @GetMapping("/categories")
+    /** 返回启用课程分类，供学生筛选器和教师编辑表单共用。 */
     List<CourseDtos.CategorySummary> categories() {
         return service.listActiveCategories();
     }

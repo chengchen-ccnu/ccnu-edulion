@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 教师课程创建/编辑共享的元数据字段组；props 接收 OpenAPI 请求字段和分类，update:* emits 回写表单。
+ * 组件只负责输入与展示，不调用 API、不判断教师权限，也不持久化封面 URL。
+ */
 import type { CategorySummary, CourseAccessType, CourseLevel } from "@edu/api-client";
 
 defineProps<{

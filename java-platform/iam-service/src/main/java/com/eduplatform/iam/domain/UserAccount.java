@@ -1,5 +1,6 @@
 package com.eduplatform.iam.domain;
 
+/** IAM 账号持久化投影；密码字段只保存单向哈希，角色和权限由关联表另行读取。 */
 public class UserAccount {
     private String id;
     private String account;

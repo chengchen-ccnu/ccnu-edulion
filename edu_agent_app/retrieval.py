@@ -1,3 +1,5 @@
+"""提供本地题库/知识点的混合检索、可审计轨迹和只读知识图谱查询。"""
+
 from __future__ import annotations
 
 import heapq
@@ -24,7 +26,7 @@ _STOP_WORDS = {
 
 
 def tokenize(text: str) -> list[str]:
-    """面向中文数学文本的轻量关键词切分，不额外引入分词依赖。"""
+    """把中文数学文本切为二元词片和拉丁/数字词元，供内存 BM25 使用。"""
     tokens: list[str] = []
     for part in _TEXT_PART_RE.findall((text or "").lower()):
         if "\u4e00" <= part[0] <= "\u9fff":
@@ -40,6 +42,7 @@ def tokenize(text: str) -> list[str]:
 
 
 def _document_key(doc: Any) -> str:
+    """优先用稳定业务元数据去重；无标识时使用正文摘要，且不修改文档。"""
     metadata = getattr(doc, "metadata", {}) or {}
     identity = (
         metadata.get("exercise_id")
@@ -53,9 +56,10 @@ def _document_key(doc: Any) -> str:
 
 
 class BM25Index:
-    """小型内存 BM25 索引，用于与已有 FAISS 结果做混合检索。"""
+    """小型只读内存 BM25 索引，用于补充已有 FAISS 的精确关键词召回。"""
 
     def __init__(self, documents: Sequence[Any], *, k1: float = 1.5, b: float = 0.75):
+        """预计算文档词频、倒排表和 IDF；仅占用进程内存，不回写 FAISS 文件。"""
         self.documents = list(documents)
         self.k1 = k1
         self.b = b
@@ -81,6 +85,7 @@ class BM25Index:
         }
 
     def search(self, query: str, k: int) -> list[tuple[Any, float]]:
+        """返回分数大于零的前 ``k`` 个文档；空查询或空索引直接返回空列表。"""
         query_terms = tokenize(query)
         if not query_terms or not self.documents:
             return []
@@ -106,6 +111,7 @@ class BM25Index:
 
 @dataclass(frozen=True)
 class HybridHit:
+    """一次混合检索命中及其总分、向量分、关键词分和查询词覆盖率。"""
     document: Any
     score: float
     vector_score: float
@@ -114,7 +120,7 @@ class HybridHit:
 
 
 class HybridRetriever:
-    """FAISS 向量召回 + BM25 关键词召回 + 确定性重排。"""
+    """组合 FAISS 向量召回与 BM25 关键词召回，并执行确定性去重和重排。"""
 
     def __init__(
         self,
@@ -126,6 +132,7 @@ class HybridRetriever:
         rerank_top_k: int = 10,
         documents: Sequence[Any] | None = None,
     ):
+        """从既有向量库提取文档建立内存索引，并保存召回上限和最低总分。"""
         self.vector_store = vector_store
         self.score_threshold = score_threshold
         self.vector_k = vector_k
@@ -136,6 +143,7 @@ class HybridRetriever:
 
     @staticmethod
     def _documents_from_store(vector_store: Any) -> list[Any]:
+        """读取 LangChain FAISS docstore 中的文档；不支持时安全返回空集合。"""
         docstore = getattr(vector_store, "docstore", None)
         mapping = getattr(vector_store, "index_to_docstore_id", {}) or {}
         if docstore is None:
@@ -148,6 +156,7 @@ class HybridRetriever:
         return documents
 
     def _vector_search(self, query: str) -> list[tuple[Any, float]]:
+        """把向量库结果统一为越大越相关的零到一分数。"""
         try:
             results = self.vector_store.similarity_search_with_relevance_scores(
                 query,
@@ -160,6 +169,11 @@ class HybridRetriever:
             return [(doc, 1.0 / (1.0 + max(float(distance), 0.0))) for doc, distance in results]
 
     def search(self, query: str) -> list[HybridHit]:
+        """合并两路候选并按稳定规则重排，过滤阈值以下结果后返回前若干项。
+
+        同一业务文档只保留一项；重复调用不会修改向量库或知识库，排序在相同输入下保持
+        确定性，便于测试和记录检索轨迹。
+        """
         vector_results = self._vector_search(query)
         keyword_results = self.keyword_index.search(query, self.keyword_k)
         max_keyword = max((score for _, score in keyword_results), default=1.0)
@@ -211,6 +225,7 @@ class HybridRetriever:
 
 
 def extract_knowledge_names(hits: Iterable[HybridHit]) -> list[str]:
+    """从命中元数据或约定正文标记中提取知识点名称，并保持顺序去重。"""
     names: list[str] = []
     for hit in hits:
         doc = hit.document
@@ -231,6 +246,7 @@ def extract_knowledge_names(hits: Iterable[HybridHit]) -> list[str]:
 
 
 def retrieval_trace(stage: str, hits: Iterable[HybridHit]) -> dict:
+    """生成不含正文的检索审计摘要，供会话记录阶段、来源标识和各项分数。"""
     hit_list = list(hits)
     return {
         "stage": stage,
@@ -248,9 +264,10 @@ def retrieval_trace(stage: str, hits: Iterable[HybridHit]) -> dict:
 
 
 class KnowledgeGraph:
-    """可选的 Neo4j 前置知识查询；未配置密码时自动降级为空结果。"""
+    """按知识点名称查询前置关系的 Neo4j 只读适配器；未配置密码时禁用。"""
 
     def __init__(self, uri: str, user: str, password: str | None):
+        """配置存在时创建异步驱动；不创建节点、关系或数据库结构。"""
         self._driver = None
         if password:
             from neo4j import AsyncGraphDatabase
@@ -258,6 +275,7 @@ class KnowledgeGraph:
             self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     async def prerequisites(self, knowledge_names: Iterable[str]) -> list[str]:
+        """查询候选知识点的一跳前置知识；禁用时返回空列表且不建立连接。"""
         if self._driver is None:
             return []
         query = """
@@ -271,12 +289,14 @@ class KnowledgeGraph:
         return [record["name"] for record in records if record.get("name")]
 
     async def close(self) -> None:
+        """关闭已创建的 Neo4j 驱动；禁用状态下重复调用无副作用。"""
         if self._driver is not None:
             await self._driver.close()
 
 
 @dataclass
 class RetrievalServices:
+    """工作流使用的题目检索器、知识点检索器和前置知识图谱集合。"""
     question: HybridRetriever
     knowledge: HybridRetriever
     graph: KnowledgeGraph

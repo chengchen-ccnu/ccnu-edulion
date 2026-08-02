@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 多角色用户的工作台选择组件；根据 /users/me 返回的角色与权限只展示可访问应用。
+ * props.store 是只读认证状态，本组件不修改身份，也不接受调用方提供任意跳转 URL。
+ */
 import type { AuthStore } from "./index";
 import { availableWorkspaces } from "./index";
 import { computed } from "vue";
