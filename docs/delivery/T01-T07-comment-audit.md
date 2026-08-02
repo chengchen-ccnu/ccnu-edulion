@@ -19,7 +19,7 @@
 - `packages/auth`：审计访问令牌内存保存、HttpOnly Refresh Cookie、并发刷新合并、401 单次重试、安全 redirect、跨应用工作台选择和路由守卫；补充 TSDoc 与组件 props/emits 说明。
 - `packages/api-client`：只审计人工适配层，说明唯一 Gateway、生成 DTO 来源和统一异常；生成目录不手工修改。
 - `packages/ui`：说明 AppShell 只提供无角色判断布局，权限仍由各应用负责。`design-tokens`、`test-utils` 的常量和简单辅助函数保持自解释。
-- Flyway/Seed：为 IAM、课程 V1 迁移补充所属服务、不可逆性、令牌摘要/令牌族、创建幂等、版本/目录唯一约束原因；清理脚本强调仅限已核对的 local/test Schema 和固定 Fixture。
+- Flyway/Seed：IAM、课程 V1 已在开发环境执行，后续复核发现直接补充 SQL 注释会改变 Flyway checksum，因此恢复为各自首次发布提交的精确内容，并将所属服务、不可逆性、令牌摘要/令牌族、创建幂等、版本/目录唯一约束等说明迁移到持久化包 `package-info.java`；清理脚本继续强调仅限已核对的 local/test Schema 和固定 Fixture。
 - OpenAPI/事件：为登录、退出、当前用户、公开课程、媒体会话/资产补充权限、幂等和不可枚举语义；为媒体事件补充触发时机、版本、Trace、敏感字段、引用与回收边界。
 - 测试：只给 Refresh Token 重放、登录限流、课程发布版本隔离、目录幂等、revision 冲突、Gateway 教师身份和 LLM 硬预算等复杂场景补充 Given/When/Then 说明。
 
@@ -29,7 +29,7 @@
 
 ## API、数据库与环境
 
-本任务没有新增或改变 API 字段、响应码、数据库表、迁移结构、环境变量或启动方式。OpenAPI 只新增 operation description；媒体事件只新增 description。IAM/课程已合并 V1 迁移只增加 SQL 注释，不改变执行语义。
+本任务没有新增或改变 API 字段、响应码、数据库表、迁移结构、环境变量或启动方式。OpenAPI 只新增 operation description；媒体事件只新增 description。IAM/课程 V1 最终保持与 T04/T05 首次发布提交逐字节一致，相关说明由 Java 包级 Javadoc 承载，不再回写已执行的迁移。
 
 没有连接或修改真实 MySQL、Redis、OSS、RabbitMQ、Neo4j 或外部模型。没有创建数据库、业务表或伪数据，也没有清理或重新生成真实数据。Maven 自动化测试只临时创建 H2 内存 Schema 和既有固定 Fixture，测试进程结束后自动释放。
 
