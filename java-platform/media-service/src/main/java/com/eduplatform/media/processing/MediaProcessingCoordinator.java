@@ -3,6 +3,7 @@ package com.eduplatform.media.processing;
 import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.MediaVariant;
+import com.eduplatform.media.domain.MediaVariantComponent;
 import com.eduplatform.media.domain.ProcessingStatus;
 import com.eduplatform.media.domain.UploadStatus;
 import com.eduplatform.media.messaging.MediaDomainEvent;
@@ -83,6 +84,15 @@ public class MediaProcessingCoordinator {
             for (ProcessingResult.VariantResult variant : result.variants()) {
                 repository.insertVariant(new MediaVariant(UUID.randomUUID().toString(), asset.mediaId(),
                         variant.name(), variant.objectKey(), variant.mimeType(), variant.size(), variant.etag(), completed));
+                MediaVariant saved = repository.findVariant(asset.mediaId(), variant.name()).orElseThrow();
+                List<MediaVariantComponent> components = new java.util.ArrayList<>();
+                for (int index = 0; index < variant.components().size(); index++) {
+                    ProcessingResult.ComponentResult component = variant.components().get(index);
+                    components.add(new MediaVariantComponent(UUID.randomUUID().toString(), saved.variantId(),
+                            asset.mediaId(), component.name(), index + 1, component.objectKey(), component.mimeType(),
+                            component.size(), component.etag(), completed));
+                }
+                repository.replaceVariantComponents(saved.variantId(), asset.mediaId(), components);
             }
             repository.completeProcessing(asset.mediaId(), MediaAssetService.PROCESS_JOB,
                     MediaAssetService.PRESET_VERSION, completed);
@@ -95,6 +105,7 @@ public class MediaProcessingCoordinator {
                 item.put("variant", value.name());
                 item.put("mimeType", value.mimeType());
                 item.put("size", value.size());
+                if (!value.components().isEmpty()) item.put("componentCount", value.components().size());
                 return item;
             }).toList();
             repository.insertOutbox(events.create("MediaReady", asset.mediaId(), "media.ready.v1", event.traceId(),

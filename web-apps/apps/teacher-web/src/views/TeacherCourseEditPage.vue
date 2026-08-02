@@ -20,7 +20,7 @@ const errorMessage = ref("");
 const successMessage = ref(route.query.created === "1" ? "课程草稿已创建，请继续完善信息。" : "");
 const fieldErrors = ref<Record<string, string>>({});
 const form = reactive<UpdateCourseRequest>({ expectedRevision: 0, title: "", summary: "", description: "",
-  coverUrl: "", instructorDisplayName: "", categoryId: "", level: "BEGINNER", accessType: "PUBLIC" });
+  coverMediaId: null, instructorDisplayName: "", categoryId: "", level: "BEGINNER", accessType: "PUBLIC" });
 
 onMounted(load);
 
@@ -62,7 +62,7 @@ async function submit() {
 
 function syncForm(snapshot: TeacherCourse) {
   Object.assign(form, { expectedRevision: snapshot.revision, title: snapshot.title, summary: snapshot.summary,
-    description: snapshot.description, coverUrl: snapshot.coverUrl,
+    description: snapshot.description, coverMediaId: snapshot.coverMediaId,
     instructorDisplayName: snapshot.instructorDisplayName, categoryId: snapshot.category.id,
     level: snapshot.level, accessType: snapshot.accessType });
 }
@@ -89,7 +89,7 @@ function messageFor(error: unknown, fallback: string): string {
     <p v-if="successMessage" class="feedback feedback--success" role="status">{{ successMessage }}</p>
     <form @submit.prevent="submit">
       <CourseMetadataFields v-model:title="form.title" v-model:summary="form.summary"
-        v-model:description="form.description" v-model:cover-url="form.coverUrl"
+        v-model:description="form.description"
         v-model:instructor-display-name="form.instructorDisplayName" v-model:category-id="form.categoryId"
         v-model:level="form.level" v-model:access-type="form.accessType"
         :categories="categories" :field-errors="fieldErrors" />

@@ -1,6 +1,7 @@
 package com.eduplatform.media;
 
 import com.eduplatform.media.storage.ObjectStorage;
+import com.eduplatform.media.processing.FfmpegCommandRunner;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -12,5 +13,11 @@ class MediaTestConfiguration {
     @Primary
     FakeObjectStorage fakeObjectStorage() {
         return new FakeObjectStorage();
+    }
+
+    @Bean
+    @Primary
+    FakeFfmpegCommandRunner fakeFfmpegCommandRunner() {
+        return new FakeFfmpegCommandRunner();
     }
 }

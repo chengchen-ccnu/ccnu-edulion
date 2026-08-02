@@ -53,8 +53,8 @@ public class MediaAssetService {
     private static final Logger LOG = LoggerFactory.getLogger(MediaAssetService.class);
     static final long OWNER_ACTIVE_QUOTA = 20L * 1024 * 1024 * 1024;
     static final int OWNER_ACTIVE_SESSION_LIMIT = 20;
-    public static final String PROCESS_JOB = "BASELINE_PROCESSING";
-    public static final String PRESET_VERSION = "v1";
+    public static final String PROCESS_JOB = "COURSE_MEDIA_PROCESSING";
+    public static final String PRESET_VERSION = "hls-v1";
 
     private final MediaRepository repository;
     private final MediaPurposePolicy policy;
@@ -63,10 +63,11 @@ public class MediaAssetService {
     private final MediaProperties properties;
     private final MediaEventFactory events;
     private final TransactionTemplate transactions;
+    private final HlsAccessGrantService hlsAccess;
 
     public MediaAssetService(MediaRepository repository, MediaPurposePolicy policy, ObjectStorage storage,
             ObjectKeyFactory keyFactory, MediaProperties properties, MediaEventFactory events,
-            TransactionTemplate transactions) {
+            TransactionTemplate transactions, HlsAccessGrantService hlsAccess) {
         this.repository = repository;
         this.policy = policy;
         this.storage = storage;
@@ -74,6 +75,7 @@ public class MediaAssetService {
         this.properties = properties;
         this.events = events;
         this.transactions = transactions;
+        this.hlsAccess = hlsAccess;
     }
 
     /**
@@ -255,6 +257,23 @@ public class MediaAssetService {
     }
 
     /**
+     * 绑定前验证资产的 owner、精确用途和 READY 状态，不返回 Object Key 或签名 URL。
+     *
+     * @throws MediaException 他人/不存在资产按 404，错用途按 422，未就绪按 409
+     */
+    public MediaDtos.BindingValidation validateBinding(String mediaId, String ownerId,
+            MediaDtos.BindingValidationRequest request) {
+        MediaAsset asset = requireAssetOwned(mediaId, ownerId);
+        if (asset.purpose() != request.purpose()) {
+            invalid("purpose", "媒体用途与绑定字段不匹配");
+        }
+        if (asset.status() != MediaStatus.READY) {
+            conflict("MEDIA.NOT_READY", "媒体尚未处理完成");
+        }
+        return new MediaDtos.BindingValidation(mediaId, asset.purpose(), asset.status(), true);
+    }
+
+    /**
      * 为当前上传者的 READY 资产签发短期读授权并写入审计。
      * <p>T07 不接受客户端声明课程可见性；后续领域访问必须通过服务端授权链路扩展。</p>
      */
@@ -270,6 +289,9 @@ public class MediaAssetService {
         } else {
             MediaVariant variant = repository.findVariant(mediaId, request.variant())
                     .orElseThrow(() -> new MediaException(HttpStatus.NOT_FOUND, "MEDIA.VARIANT_NOT_FOUND", "媒体派生版本不存在"));
+            if (HlsAccessGrantService.HLS_MIME.equals(variant.mimeType())) {
+                return storageCall(() -> hlsAccess.issue(asset, variant, ownerId, request.disposition(), traceId));
+            }
             objectKey = variant.objectKey();
             downloadName = request.variant();
         }
@@ -359,7 +381,8 @@ public class MediaAssetService {
 
     private MediaDtos.Asset toAsset(MediaAsset asset) {
         List<MediaDtos.Variant> variants = repository.listVariants(asset.mediaId()).stream()
-                .map(value -> new MediaDtos.Variant(value.variantName(), value.mimeType(), value.size())).toList();
+                .map(value -> new MediaDtos.Variant(value.variantName(), value.mimeType(), value.size(),
+                        repository.listVariantComponents(value.variantId()).size())).toList();
         return new MediaDtos.Asset(asset.mediaId(), asset.purpose(), asset.status(), asset.processingStatus(),
                 asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), variants,
                 asset.failureCode(), asset.failureMessage(), asset.createdAt(), asset.updatedAt());

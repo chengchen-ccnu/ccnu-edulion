@@ -5,6 +5,7 @@ public class CourseListRow {
     private String id;
     private String title;
     private String summary;
+    private String coverMediaId;
     private String coverUrl;
     private String teacherId;
     private String teacherDisplayName;
@@ -19,6 +20,8 @@ public class CourseListRow {
     public void setTitle(String title) { this.title = title; }
     public String getSummary() { return summary; }
     public void setSummary(String summary) { this.summary = summary; }
+    public String getCoverMediaId() { return coverMediaId; }
+    public void setCoverMediaId(String coverMediaId) { this.coverMediaId = coverMediaId; }
     public String getCoverUrl() { return coverUrl; }
     public void setCoverUrl(String coverUrl) { this.coverUrl = coverUrl; }
     public String getTeacherId() { return teacherId; }

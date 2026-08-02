@@ -13,7 +13,6 @@ defineProps<{
 const title = defineModel<string>("title", { required: true });
 const summary = defineModel<string>("summary", { required: true });
 const description = defineModel<string>("description", { required: true });
-const coverUrl = defineModel<string>("coverUrl", { required: true });
 const instructorDisplayName = defineModel<string>("instructorDisplayName", { required: true });
 const categoryId = defineModel<string>("categoryId", { required: true });
 const level = defineModel<CourseLevel>("level", { required: true });
@@ -36,12 +35,6 @@ const accessType = defineModel<CourseAccessType>("accessType", { required: true 
       <span>课程介绍</span>
       <textarea v-model="description" maxlength="20000" rows="8" placeholder="支持保存 Markdown 文本；学生端按安全纯文本展示" />
       <small v-if="fieldErrors?.description" class="field-error">{{ fieldErrors.description }}</small>
-    </label>
-    <label class="editor-field editor-field--wide">
-      <span>封面地址 <em>*</em></span>
-      <input v-model="coverUrl" required maxlength="512" type="url" placeholder="https://cdn.example.test/courses/cover.jpg">
-      <small>仅编辑课程封面元数据；本任务不提供文件上传。</small>
-      <small v-if="fieldErrors?.coverUrl" class="field-error">{{ fieldErrors.coverUrl }}</small>
     </label>
     <label class="editor-field">
       <span>讲师展示名 <em>*</em></span>

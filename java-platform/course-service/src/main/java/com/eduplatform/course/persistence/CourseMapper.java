@@ -6,6 +6,9 @@ import com.eduplatform.course.domain.CourseEntity;
 import com.eduplatform.course.domain.CourseListRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
+import com.eduplatform.course.domain.LessonMediaResourceEntity;
+import com.eduplatform.course.messaging.CourseOutboxEvent;
+import java.time.Instant;
 import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -58,15 +61,23 @@ public interface CourseMapper {
 
     int deleteLessonsByVersion(String versionId);
 
+    int deleteLessonMediaByVersion(String versionId);
+
     int deleteChaptersByVersion(String versionId);
 
     int insertChapter(ChapterEntity chapter);
 
     int insertLesson(LessonEntity lesson);
 
+    int insertLessonMediaResource(LessonMediaResourceEntity resource);
+
     List<ChapterEntity> listChapters(String versionId);
 
     List<LessonEntity> listLessons(String chapterId);
+
+    List<LessonMediaResourceEntity> listLessonMediaResources(String lessonId);
+
+    List<LessonMediaResourceEntity> listVersionMediaResources(String versionId);
 
     int countChapters(String versionId);
 
@@ -79,4 +90,14 @@ public interface CourseMapper {
     int publishDraft(@Param("courseId") String courseId, @Param("versionId") String versionId);
 
     int updatePublicationStatus(@Param("courseId") String courseId, @Param("status") String status);
+
+    int insertOutbox(CourseOutboxEvent event);
+
+    List<CourseOutboxEvent> pendingOutbox(@Param("now") Instant now, @Param("limit") int limit);
+
+    int markOutboxPublished(@Param("eventId") String eventId, @Param("now") Instant now);
+
+    int markOutboxFailure(@Param("eventId") String eventId, @Param("attempts") int attempts,
+            @Param("terminal") boolean terminal, @Param("nextAttemptAt") Instant nextAttemptAt,
+            @Param("lastError") String lastError, @Param("now") Instant now);
 }

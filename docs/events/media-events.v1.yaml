@@ -3,17 +3,19 @@ contractVersion: 1
 contentType: application/json
 exchange: edu.media.events.v1
 compatibility: backward
-producer: media-service
+producer: media-service and version-compatible owning domain services
 consumers:
   - media-service processing worker
   - media-service reference ledger
   - version-compatible downstream domain services
 deliverySemantics: at-least-once; consumers persist eventId before ACK
 description: |
-  T07 media-domain events. Producers may add optional payload fields in version 1,
+  T07/T08A media-domain events. Producers may add optional payload fields in version 1,
   but removing/renaming fields, changing required fields or changing semantics requires
   a new eventVersion and routing key. Events are created in the same local transaction as
   the media fact via Outbox; storage keys, credentials and signed URLs are forbidden.
+  Course-service produces reference events from its own Outbox only after media-service has
+  validated owner, exact purpose and READY state through the versioned REST contract.
 
 envelope:
   type: object
@@ -169,7 +171,7 @@ events:
     routingKey: media.reference.bound.v1
     aggregate: media_asset
     producer: owning-domain-service
-    description: Idempotently records that one domain entity retains a stable mediaId; it does not grant read access by itself.
+    description: Idempotently records that one domain entity retains a stable mediaId; it does not grant read access by itself. T08A course references use COURSE_VERSION_COVER or LESSON_RESOURCE and a referenceId stable for that exact course-version row.
     payload:
       type: object
       additionalProperties: false
@@ -184,6 +186,7 @@ events:
           type: string
           minLength: 1
           maxLength: 80
+          description: T08A course-service emits COURSE_VERSION_COVER for a course_version row and LESSON_RESOURCE for a lesson_media_resource row.
         referenceId:
           type: string
           minLength: 1
@@ -192,7 +195,7 @@ events:
     routingKey: media.reference.released.v1
     aggregate: media_asset
     producer: owning-domain-service
-    description: Idempotently removes one exact domain reference; retention expiry, not this event alone, controls reclamation.
+    description: Idempotently removes one exact domain reference; retention expiry, not this event alone, controls reclamation. The tuple must exactly match the earlier bound event.
     payload:
       type: object
       additionalProperties: false
@@ -207,6 +210,7 @@ events:
           type: string
           minLength: 1
           maxLength: 80
+          description: Must retain the original reference type so release remains idempotent across retries.
         referenceId:
           type: string
           minLength: 1
@@ -252,3 +256,7 @@ definitions:
         type: integer
         format: int64
         minimum: 0
+      componentCount:
+        type: integer
+        minimum: 0
+        description: Optional count of private HLS segment objects; object keys and signed URLs remain internal to media-service.

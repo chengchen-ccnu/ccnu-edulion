@@ -76,3 +76,11 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 T07 已按本 ADR 落地上传会话、单对象/Multipart 直传、私有原件、OSS HEAD 复核、统一资产与处理状态、短期访问授权、引用事件台账、Outbox/RabbitMQ 可靠事件、幂等回收和可替换 FFmpeg Worker，首期只启用 `COURSE_COVER` 与 `LESSON_VIDEO`。实现没有修改课程或 IAM 业务表，也没有把短期签名 URL 写入数据库或事件。
 
 当前的安全复核只包含对象存在性、大小/MIME/SHA 元数据和视频可解码性；病毒、恶意文档与内容安全仍需接入外部服务，接入前不得把首期能力解释为完整生产级内容审核。
+
+## T08A 实施状态
+
+T08A 将课程写事实收口为版本级 `cover_media_id` 与 `lesson_media_resource.media_id`。绑定前，`course-service` 只通过 media-service 的版本化 JSON 契约核验上传者、精确用途与 `READY` 状态；两服务不跨库查表、不建跨 Schema 外键。创建草稿副本时复制并新建媒体引用，因此后续草稿替换不会解除或污染已发布版本的引用。
+
+课程绑定、替换和解除与课程事务一起写入本域 Outbox，再以 `MediaReferenceBound`/`MediaReferenceReleased` v1 发布到既有媒体事件 Exchange。发布采用 mandatory、publisher confirm、有限退避与失败留痕；media-service 继续按 `eventId` 幂等维护引用台账。数据库和事件只保存稳定 ID，不保存 Bucket、Object Key 或签名 URL。
+
+T08A 显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 的教师上传策略；其他冻结枚举仍拒绝上传。`LESSON_VIDEO` 的派生由单机有界并发 FFmpeg Worker 输出私有 `hls-v1` 播放清单与切片。授权时 media-service 为每个已登记切片签发短期 GET，生成同期限临时清单并在到期后按精确 Object Key 清理；课程表仍只保存 `mediaId`。多码率、自适应音轨、DRM、病毒/内容安全与最终 Vue 播放器不属于 T08A。

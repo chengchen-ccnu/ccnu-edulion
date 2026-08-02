@@ -13,6 +13,7 @@ public class CourseVersionEntity {
     private String title;
     private String summary;
     private String description;
+    private String coverMediaId;
     private String coverUrl;
     private String instructorDisplayName;
     private String categoryId;
@@ -42,6 +43,8 @@ public class CourseVersionEntity {
     public void setSummary(String summary) { this.summary = summary; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+    public String getCoverMediaId() { return coverMediaId; }
+    public void setCoverMediaId(String coverMediaId) { this.coverMediaId = coverMediaId; }
     public String getCoverUrl() { return coverUrl; }
     public void setCoverUrl(String coverUrl) { this.coverUrl = coverUrl; }
     public String getInstructorDisplayName() { return instructorDisplayName; }

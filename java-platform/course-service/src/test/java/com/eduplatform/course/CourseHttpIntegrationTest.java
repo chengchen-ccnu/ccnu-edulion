@@ -30,6 +30,8 @@ class CourseHttpIntegrationTest {
     @BeforeEach
     void resetData() {
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
+        jdbc.update("DELETE FROM outbox_event");
+        jdbc.update("DELETE FROM lesson_media_resource");
         jdbc.update("DELETE FROM lesson");
         jdbc.update("DELETE FROM chapter");
         jdbc.update("DELETE FROM course_version");
@@ -56,7 +58,7 @@ class CourseHttpIntegrationTest {
                   "title": "HTTP 课程",
                   "summary": "契约集成测试",
                   "description": "## HTTP",
-                  "coverUrl": "https://cdn.example.test/courses/http.jpg",
+                  "coverMediaId": null,
                   "instructorDisplayName": "测试教师",
                   "categoryId": "%s",
                   "level": "BEGINNER",

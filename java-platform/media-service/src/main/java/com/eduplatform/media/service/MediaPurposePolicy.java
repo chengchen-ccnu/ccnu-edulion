@@ -13,7 +13,8 @@ import org.springframework.stereotype.Component;
 /**
  * 媒体用途白名单，统一校验上传角色、MIME、扩展名、大小与直传模式。
  *
- * <p>T07 只启用课程封面和课时视频；其他已冻结枚举在对应消费任务落地前返回未启用。</p>
+ * <p>T08A 显式启用课程封面、视频、海报、字幕、课件与图文附件；其余冻结枚举仍返回未启用，
+ * 避免仅因枚举存在就绕过所属领域的权限和文件策略评审。</p>
  */
 @Component
 public class MediaPurposePolicy {
@@ -23,7 +24,19 @@ public class MediaPurposePolicy {
                     Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
             MediaPurpose.LESSON_VIDEO, new Policy(Set.of("TEACHER"),
                     Set.of("video/mp4", "video/quicktime", "video/webm"),
-                    Set.of("mp4", "mov", "webm"), 10L * 1024 * 1024 * 1024, true));
+                    Set.of("mp4", "mov", "webm"), 10L * 1024 * 1024 * 1024, true),
+            MediaPurpose.VIDEO_POSTER, new Policy(Set.of("TEACHER"),
+                    Set.of("image/jpeg", "image/png", "image/webp"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
+            MediaPurpose.SUBTITLE, new Policy(Set.of("TEACHER"),
+                    Set.of("text/vtt", "application/x-subrip", "text/plain"),
+                    Set.of("vtt", "srt"), 5L * 1024 * 1024, false),
+            MediaPurpose.COURSEWARE, new Policy(Set.of("TEACHER"),
+                    Set.of("application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+                    Set.of("pdf", "pptx"), 200L * 1024 * 1024, true),
+            MediaPurpose.ARTICLE_ATTACHMENT, new Policy(Set.of("TEACHER"),
+                    Set.of("application/pdf", "text/plain", "image/jpeg", "image/png", "image/webp"),
+                    Set.of("pdf", "txt", "jpg", "jpeg", "png", "webp"), 50L * 1024 * 1024, true));
 
     /**
      * 校验客户端声明并选择上传模式。

@@ -4,6 +4,8 @@ import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.domain.MediaPurpose;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.MediaVariant;
+import com.eduplatform.media.domain.MediaVariantComponent;
+import com.eduplatform.media.domain.TemporaryAccessObject;
 import com.eduplatform.media.domain.ProcessingStatus;
 import com.eduplatform.media.domain.UploadMode;
 import com.eduplatform.media.domain.UploadSession;
@@ -216,6 +218,32 @@ public class MediaRepository {
         }
     }
 
+    /** 用稳定 variantId 替换一次 HLS 处理得到的组件清单；调用方事务保证列表不会部分生效。 */
+    public void replaceVariantComponents(String variantId, String mediaId, List<MediaVariantComponent> components) {
+        jdbc.update("DELETE FROM media_variant_component WHERE variant_id = ?", variantId);
+        for (MediaVariantComponent component : components) {
+            jdbc.update("""
+                    INSERT INTO media_variant_component(component_id, variant_id, media_id, component_name,
+                        position, object_key, mime_type, size_bytes, etag, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, component.componentId(), variantId, mediaId, component.componentName(),
+                    component.position(), component.objectKey(), component.mimeType(), component.size(),
+                    component.etag(), timestamp(component.createdAt()));
+        }
+    }
+
+    /** 按播放顺序返回一个 HLS 变体的私有切片元数据。 */
+    public List<MediaVariantComponent> listVariantComponents(String variantId) {
+        return jdbc.query("SELECT * FROM media_variant_component WHERE variant_id = ? ORDER BY position",
+                COMPONENT_MAPPER, variantId);
+    }
+
+    /** 返回资产全部切片，用于资产回收时逐个精确删除。 */
+    public List<MediaVariantComponent> listAssetComponents(String mediaId) {
+        return jdbc.query("SELECT * FROM media_variant_component WHERE media_id = ? ORDER BY variant_id, position",
+                COMPONENT_MAPPER, mediaId);
+    }
+
     /** 创建 PENDING 处理任务；mediaId/jobType/presetVersion 组合唯一。 */
     public void insertProcessingJob(ProcessingJob job) {
         jdbc.update("""
@@ -416,6 +444,30 @@ public class MediaRepository {
                 """, grantId, mediaId, actorId, variant, disposition, timestamp(expiresAt), traceId, timestamp(now));
     }
 
+    /** 与授权审计同事务保存临时 HLS 清单的精确键，供过期回收。 */
+    public void insertTemporaryAccessObject(TemporaryAccessObject value) {
+        jdbc.update("""
+                INSERT INTO temporary_access_object(grant_id, media_id, variant_name, object_key,
+                    expires_at, deleted_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, value.grantId(), value.mediaId(), value.variantName(), value.objectKey(),
+                timestamp(value.expiresAt()), timestamp(value.deletedAt()), timestamp(value.createdAt()));
+    }
+
+    /** 有限批量返回已过期且未清理的临时授权清单。 */
+    public List<TemporaryAccessObject> expiredTemporaryAccessObjects(Instant now, int limit) {
+        return jdbc.query("""
+                SELECT * FROM temporary_access_object
+                WHERE deleted_at IS NULL AND expires_at <= ?
+                ORDER BY expires_at, grant_id LIMIT ?
+                """, TEMPORARY_ACCESS_MAPPER, timestamp(now), limit);
+    }
+
+    /** 精确对象删除成功后幂等记录清理时间。 */
+    public void markTemporaryAccessObjectDeleted(String grantId, Instant now) {
+        jdbc.update("UPDATE temporary_access_object SET deleted_at = ? WHERE grant_id = ? AND deleted_at IS NULL",
+                timestamp(now), grantId);
+    }
+
     private <T> Optional<T> one(String sql, RowMapper<T> mapper, Object... args) {
         List<T> values = jdbc.query(sql, mapper, args);
         return values.stream().findFirst();
@@ -448,6 +500,17 @@ public class MediaRepository {
             rs.getString("variant_id"), rs.getString("media_id"), rs.getString("variant_name"),
             rs.getString("object_key"), rs.getString("mime_type"), rs.getLong("size_bytes"),
             rs.getString("etag"), instant(rs, "created_at"));
+
+    private static final RowMapper<MediaVariantComponent> COMPONENT_MAPPER = (rs, row) ->
+            new MediaVariantComponent(rs.getString("component_id"), rs.getString("variant_id"),
+                    rs.getString("media_id"), rs.getString("component_name"), rs.getInt("position"),
+                    rs.getString("object_key"), rs.getString("mime_type"), rs.getLong("size_bytes"),
+                    rs.getString("etag"), instant(rs, "created_at"));
+
+    private static final RowMapper<TemporaryAccessObject> TEMPORARY_ACCESS_MAPPER = (rs, row) ->
+            new TemporaryAccessObject(rs.getString("grant_id"), rs.getString("media_id"),
+                    rs.getString("variant_name"), rs.getString("object_key"), instant(rs, "expires_at"),
+                    nullableInstant(rs, "deleted_at"), instant(rs, "created_at"));
 
     private static final RowMapper<ProcessingJob> JOB_MAPPER = (rs, row) -> new ProcessingJob(
             rs.getString("job_id"), rs.getString("media_id"), rs.getString("job_type"),

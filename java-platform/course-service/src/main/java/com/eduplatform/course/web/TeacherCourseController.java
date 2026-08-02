@@ -1,6 +1,8 @@
 package com.eduplatform.course.web;
 
 import com.eduplatform.course.service.CourseCatalogService;
+import com.eduplatform.course.config.TraceFilter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -18,14 +20,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@RestController
-@RequestMapping("/api/v1/teacher/courses")
-@Validated
 /**
  * 教师课程管理接口，消费 Gateway 注入的可信用户头并把所有读写限定到该教师。
  *
- * <p>创建支持客户端请求 ID 幂等；更新、目录替换和发布都由服务层事务与乐观版本控制保护。</p>
+ * <p>创建支持客户端请求 ID 幂等；媒体写入只接受稳定 ID，绑定校验、引用 Outbox、目录替换和发布
+ * 都由服务层事务与乐观版本控制保护。</p>
  */
+@RestController
+@RequestMapping("/api/v1/teacher/courses")
+@Validated
 public class TeacherCourseController {
     private final CourseCatalogService service;
 
@@ -49,9 +52,11 @@ public class TeacherCourseController {
     ResponseEntity<CourseDtos.TeacherCourse> create(
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
-            @Valid @RequestBody CourseDtos.CreateCourseRequest request) {
+            @Valid @RequestBody CourseDtos.CreateCourseRequest request,
+            HttpServletRequest servletRequest) {
         TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
-        CourseCatalogService.CreateResult result = service.create(teacher.userId(), request);
+        CourseCatalogService.CreateResult result = service.create(
+                teacher.userId(), request, trace(servletRequest));
         if (!result.created()) {
             return ResponseEntity.ok(result.course());
         }
@@ -75,9 +80,10 @@ public class TeacherCourseController {
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
-            @Valid @RequestBody CourseDtos.UpdateCourseRequest request) {
+            @Valid @RequestBody CourseDtos.UpdateCourseRequest request,
+            HttpServletRequest servletRequest) {
         TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
-        return service.updateMetadata(courseId, teacher.userId(), request);
+        return service.updateMetadata(courseId, teacher.userId(), request, trace(servletRequest));
     }
 
     @PutMapping("/{courseId}/curriculum")
@@ -86,9 +92,10 @@ public class TeacherCourseController {
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
-            @Valid @RequestBody CourseDtos.ReplaceCurriculumRequest request) {
+            @Valid @RequestBody CourseDtos.ReplaceCurriculumRequest request,
+            HttpServletRequest servletRequest) {
         TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
-        return service.replaceCurriculum(courseId, teacher.userId(), request);
+        return service.replaceCurriculum(courseId, teacher.userId(), request, trace(servletRequest));
     }
 
     @PutMapping("/{courseId}/publication")
@@ -100,5 +107,9 @@ public class TeacherCourseController {
             @Valid @RequestBody CourseDtos.UpdatePublicationRequest request) {
         TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
         return service.updatePublication(courseId, teacher.userId(), request);
+    }
+
+    private static String trace(HttpServletRequest request) {
+        return (String) request.getAttribute(TraceFilter.ATTRIBUTE);
     }
 }

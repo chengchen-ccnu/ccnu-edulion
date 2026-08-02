@@ -5,6 +5,9 @@ import com.eduplatform.course.domain.CourseEntity;
 import com.eduplatform.course.domain.CourseListRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
+import com.eduplatform.course.domain.LessonMediaResourceEntity;
+import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.messaging.CourseMediaEventFactory;
 import com.eduplatform.course.persistence.CourseMapper;
 import com.eduplatform.course.web.CourseDtos;
 import com.eduplatform.shared.api.FieldError;
@@ -14,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -32,10 +36,15 @@ import tools.jackson.databind.ObjectMapper;
 public class CourseCatalogService {
     private final CourseMapper mapper;
     private final ObjectMapper objectMapper;
+    private final MediaBindingClient mediaBindingClient;
+    private final CourseMediaEventFactory mediaEvents;
 
-    public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper) {
+    public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
+            MediaBindingClient mediaBindingClient, CourseMediaEventFactory mediaEvents) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
+        this.mediaBindingClient = mediaBindingClient;
+        this.mediaEvents = mediaEvents;
     }
 
     @Transactional(readOnly = true)
@@ -66,6 +75,7 @@ public class CourseCatalogService {
                 version.getTitle(),
                 version.getSummary(),
                 version.getDescription(),
+                version.getCoverMediaId(),
                 version.getCoverUrl(),
                 new CourseDtos.TeacherSummary(version.getOwnerTeacherId(), version.getInstructorDisplayName()),
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
@@ -92,11 +102,19 @@ public class CourseCatalogService {
      * @return 课程快照和是否本次新建；同一教师重复请求返回既有课程
      */
     public CreateResult create(String teacherId, CourseDtos.CreateCourseRequest request) {
+        return create(teacherId, request, newTraceId());
+    }
+
+    /** 与 HTTP Trace 关联地创建课程；媒体校验成功后才写课程版本与同事务 Outbox。 */
+    @Transactional
+    public CreateResult create(String teacherId, CourseDtos.CreateCourseRequest request, String traceId) {
         CourseEntity existing = mapper.findByOwnerAndRequest(teacherId, request.clientRequestId().toString());
         if (existing != null) {
             return new CreateResult(toTeacherCourse(existing), false);
         }
         requireActiveCategory(request.categoryId().toString());
+        String coverMediaId = id(request.coverMediaId());
+        requireBindable(coverMediaId, "COURSE_COVER", teacherId, traceId);
 
         CourseEntity course = new CourseEntity();
         course.setId(UUID.randomUUID().toString());
@@ -116,12 +134,13 @@ public class CourseCatalogService {
         version.setVersionNumber(1);
         version.setVersionLabel("v1");
         version.setLifecycleStatus("DRAFT");
-        applyMetadata(version, request.title(), request.summary(), request.description(), request.coverUrl(),
+        applyMetadata(version, request.title(), request.summary(), request.description(), coverMediaId, null,
                 request.instructorDisplayName(), request.categoryId().toString(),
                 request.level().name(), request.accessType().name());
         version.setRowVersion(0);
         mapper.insertCourseVersion(version);
         mapper.setDraftVersion(course.getId(), version.getId());
+        bindCover(version, traceId);
 
         CourseEntity created = requireOwnedCourse(course.getId(), teacherId, false);
         return new CreateResult(toTeacherCourse(created), true);
@@ -152,19 +171,36 @@ public class CourseCatalogService {
      */
     public CourseDtos.TeacherCourse updateMetadata(String courseId, String teacherId,
             CourseDtos.UpdateCourseRequest request) {
+        return updateMetadata(courseId, teacherId, request, newTraceId());
+    }
+
+    /** 更新课程元数据与封面引用；替换/解除事件和版本修改在同一课程事务中提交。 */
+    @Transactional
+    public CourseDtos.TeacherCourse updateMetadata(String courseId, String teacherId,
+            CourseDtos.UpdateCourseRequest request, String traceId) {
         requireActiveCategory(request.categoryId().toString());
         CourseEntity course = requireOwnedCourse(courseId, teacherId, true);
-        CourseVersionEntity draft = ensureDraft(course);
+        CourseVersionEntity draft = ensureDraft(course, traceId);
         if (metadataEquals(draft, request)) {
             return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
         }
+        String nextCoverMediaId = id(request.coverMediaId());
+        if (!Objects.equals(draft.getCoverMediaId(), nextCoverMediaId)) {
+            requireBindable(nextCoverMediaId, "COURSE_COVER", teacherId, traceId);
+        }
         CourseVersionEntity updated = new CourseVersionEntity();
         updated.setId(draft.getId());
-        applyMetadata(updated, request.title(), request.summary(), request.description(), request.coverUrl(),
+        String compatibleCoverUrl = nextCoverMediaId == null ? draft.getCoverUrl() : null;
+        applyMetadata(updated, request.title(), request.summary(), request.description(),
+                nextCoverMediaId, compatibleCoverUrl,
                 request.instructorDisplayName(), request.categoryId().toString(),
                 request.level().name(), request.accessType().name());
         if (mapper.updateMetadata(updated, request.expectedRevision()) != 1) {
             throw versionConflict();
+        }
+        if (!Objects.equals(draft.getCoverMediaId(), nextCoverMediaId)) {
+            releaseCover(draft, traceId);
+            bindCover(updated, traceId);
         }
         return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
     }
@@ -177,22 +213,32 @@ public class CourseCatalogService {
      */
     public CourseDtos.TeacherCourse replaceCurriculum(String courseId, String teacherId,
             CourseDtos.ReplaceCurriculumRequest request) {
+        return replaceCurriculum(courseId, teacherId, request, newTraceId());
+    }
+
+    /** 在写课程目录前验证全部媒体，并把资源替换及引用 Outbox 原子提交。 */
+    @Transactional
+    public CourseDtos.TeacherCourse replaceCurriculum(String courseId, String teacherId,
+            CourseDtos.ReplaceCurriculumRequest request, String traceId) {
         validateSequences(request.chapters());
         CourseEntity course = requireOwnedCourse(courseId, teacherId, true);
-        CourseVersionEntity draft = ensureDraft(course);
+        CourseVersionEntity draft = ensureDraft(course, traceId);
         String hash = curriculumHash(request.chapters());
         if (Objects.equals(hash, draft.getCurriculumHash())) {
             return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
         }
+        validateLessonMedia(request.chapters(), teacherId, traceId);
         if (draft.getRowVersion() != request.expectedRevision()) {
             throw versionConflict();
         }
         if (mapper.reserveCurriculum(draft.getId(), hash, request.expectedRevision()) != 1) {
             throw versionConflict();
         }
+        releaseLessonMedia(draft.getId(), traceId);
+        mapper.deleteLessonMediaByVersion(draft.getId());
         mapper.deleteLessonsByVersion(draft.getId());
         mapper.deleteChaptersByVersion(draft.getId());
-        insertCurriculum(draft.getId(), request.chapters());
+        insertCurriculum(draft.getId(), request.chapters(), traceId);
         return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
     }
 
@@ -255,7 +301,7 @@ public class CourseCatalogService {
     }
 
     /** 返回现有草稿，或从已发布版本完整复制新草稿；没有任何可复制版本时按不存在处理。 */
-    private CourseVersionEntity ensureDraft(CourseEntity course) {
+    private CourseVersionEntity ensureDraft(CourseEntity course, String traceId) {
         if (course.getCurrentDraftVersionId() != null) {
             return mapper.findVersion(course.getCurrentDraftVersionId());
         }
@@ -265,7 +311,8 @@ public class CourseCatalogService {
         CourseVersionEntity source = mapper.findVersion(course.getPublishedVersionId());
         CourseVersionEntity draft = copyVersion(source);
         mapper.insertCourseVersion(draft);
-        copyCurriculum(source.getId(), draft.getId());
+        bindCover(draft, traceId);
+        copyCurriculum(source.getId(), draft.getId(), traceId);
         mapper.setDraftVersion(course.getId(), draft.getId());
         return mapper.findVersion(draft.getId());
     }
@@ -277,7 +324,8 @@ public class CourseCatalogService {
         copy.setVersionNumber(source.getVersionNumber() + 1);
         copy.setVersionLabel("v" + copy.getVersionNumber());
         copy.setLifecycleStatus("DRAFT");
-        applyMetadata(copy, source.getTitle(), source.getSummary(), source.getDescription(), source.getCoverUrl(),
+        applyMetadata(copy, source.getTitle(), source.getSummary(), source.getDescription(),
+                source.getCoverMediaId(), source.getCoverUrl(),
                 source.getInstructorDisplayName(), source.getCategoryId(), source.getLevel(), source.getAccessType());
         copy.setCurriculumHash(source.getCurriculumHash());
         copy.setRowVersion(source.getRowVersion());
@@ -285,7 +333,7 @@ public class CourseCatalogService {
     }
 
     /** 复制章节课时并生成新 ID，使后续草稿编辑不会修改已发布目录。 */
-    private void copyCurriculum(String sourceVersionId, String targetVersionId) {
+    private void copyCurriculum(String sourceVersionId, String targetVersionId, String traceId) {
         for (ChapterEntity sourceChapter : mapper.listChapters(sourceVersionId)) {
             ChapterEntity chapter = new ChapterEntity();
             chapter.setId(UUID.randomUUID().toString());
@@ -302,11 +350,22 @@ public class CourseCatalogService {
                 lesson.setPosition(sourceLesson.getPosition());
                 lesson.setPreviewable(sourceLesson.isPreviewable());
                 mapper.insertLesson(lesson);
+                for (LessonMediaResourceEntity sourceResource : mapper.listLessonMediaResources(sourceLesson.getId())) {
+                    LessonMediaResourceEntity resource = new LessonMediaResourceEntity();
+                    resource.setId(UUID.randomUUID().toString());
+                    resource.setLessonId(lesson.getId());
+                    resource.setMediaId(sourceResource.getMediaId());
+                    resource.setPurpose(sourceResource.getPurpose());
+                    resource.setPosition(sourceResource.getPosition());
+                    mapper.insertLessonMediaResource(resource);
+                    reference(CourseMediaEventFactory.BOUND, resource.getMediaId(),
+                            "LESSON_RESOURCE", resource.getId(), traceId);
+                }
             }
         }
     }
 
-    private void insertCurriculum(String versionId, List<CourseDtos.ChapterInput> inputs) {
+    private void insertCurriculum(String versionId, List<CourseDtos.ChapterInput> inputs, String traceId) {
         for (CourseDtos.ChapterInput chapterInput : inputs) {
             ChapterEntity chapter = new ChapterEntity();
             chapter.setId(UUID.randomUUID().toString());
@@ -323,6 +382,17 @@ public class CourseCatalogService {
                 lesson.setPosition(lessonInput.sequence());
                 lesson.setPreviewable(lessonInput.previewable());
                 mapper.insertLesson(lesson);
+                for (CourseDtos.LessonMediaResourceInput input : resources(lessonInput)) {
+                    LessonMediaResourceEntity resource = new LessonMediaResourceEntity();
+                    resource.setId(UUID.randomUUID().toString());
+                    resource.setLessonId(lesson.getId());
+                    resource.setMediaId(input.mediaId().toString());
+                    resource.setPurpose(input.purpose().name());
+                    resource.setPosition(input.sequence());
+                    mapper.insertLessonMediaResource(resource);
+                    reference(CourseMediaEventFactory.BOUND, resource.getMediaId(),
+                            "LESSON_RESOURCE", resource.getId(), traceId);
+                }
             }
         }
     }
@@ -345,6 +415,7 @@ public class CourseCatalogService {
                 version.getTitle(),
                 version.getSummary(),
                 version.getDescription(),
+                version.getCoverMediaId(),
                 version.getCoverUrl(),
                 version.getInstructorDisplayName(),
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
@@ -379,7 +450,13 @@ public class CourseCatalogService {
                             lesson.getTitle(),
                             CourseDtos.LessonType.valueOf(lesson.getLessonType()),
                             lesson.getPosition(),
-                            lesson.isPreviewable()))
+                            lesson.isPreviewable(),
+                            mapper.listLessonMediaResources(lesson.getId()).stream()
+                                    .map(resource -> new CourseDtos.LessonMediaResource(
+                                            resource.getId(), resource.getMediaId(),
+                                            CourseDtos.LessonMediaPurpose.valueOf(resource.getPurpose()),
+                                            resource.getPosition()))
+                                    .toList()))
                     .toList();
             chapters.add(new CourseDtos.Chapter(
                     chapter.getId(), chapter.getTitle(), chapter.getPosition(), lessons));
@@ -392,6 +469,7 @@ public class CourseCatalogService {
                 row.getId(),
                 row.getTitle(),
                 row.getSummary(),
+                row.getCoverMediaId(),
                 row.getCoverUrl(),
                 new CourseDtos.TeacherSummary(row.getTeacherId(), row.getTeacherDisplayName()),
                 new CourseDtos.CategorySummary(row.getCategoryId(), row.getCategoryName()),
@@ -429,10 +507,62 @@ public class CourseCatalogService {
                 if (!lessonSequences.add(lesson.sequence())) {
                     throw curriculumSequenceError("chapters.lessons", "同一章节内的课时序号不能重复");
                 }
+                validateLessonResourceSequences(lesson);
             }
             requireContiguous(lessonSequences, chapter.lessons().size(), "chapters.lessons", "课时序号必须从 1 连续排列");
         }
         requireContiguous(chapterSequences, chapters.size(), "chapters", "章节序号必须从 1 连续排列");
+    }
+
+    /** 校验课时类型、资源用途、重复 mediaId 与同用途连续序号，避免把未定义策略写入课程表。 */
+    private void validateLessonResourceSequences(CourseDtos.LessonInput lesson) {
+        Map<CourseDtos.LessonMediaPurpose, Set<Integer>> positions = new java.util.EnumMap<>(
+                CourseDtos.LessonMediaPurpose.class);
+        Set<UUID> mediaIds = new HashSet<>();
+        for (CourseDtos.LessonMediaResourceInput resource : resources(lesson)) {
+            if (!allowed(lesson.type(), resource.purpose())) {
+                throw curriculumSequenceError("chapters.lessons.resources", "课时类型与媒体用途不匹配");
+            }
+            if (!mediaIds.add(resource.mediaId())) {
+                throw curriculumSequenceError("chapters.lessons.resources", "同一课时不能重复绑定同一媒体");
+            }
+            Set<Integer> purposePositions = positions.computeIfAbsent(resource.purpose(), key -> new HashSet<>());
+            if (!purposePositions.add(resource.sequence())) {
+                throw curriculumSequenceError("chapters.lessons.resources", "同一用途的资源序号不能重复");
+            }
+        }
+        for (Map.Entry<CourseDtos.LessonMediaPurpose, Set<Integer>> entry : positions.entrySet()) {
+            requireContiguous(entry.getValue(), entry.getValue().size(), "chapters.lessons.resources",
+                    "同一用途的资源序号必须从 1 连续排列");
+            if (Set.of(CourseDtos.LessonMediaPurpose.LESSON_VIDEO, CourseDtos.LessonMediaPurpose.VIDEO_POSTER)
+                    .contains(entry.getKey()) && entry.getValue().size() > 1) {
+                throw curriculumSequenceError("chapters.lessons.resources", "每个课时最多绑定一个视频或海报");
+            }
+        }
+    }
+
+    private boolean allowed(CourseDtos.LessonType lessonType, CourseDtos.LessonMediaPurpose purpose) {
+        return switch (lessonType) {
+            case VIDEO -> Set.of(CourseDtos.LessonMediaPurpose.LESSON_VIDEO,
+                    CourseDtos.LessonMediaPurpose.VIDEO_POSTER,
+                    CourseDtos.LessonMediaPurpose.SUBTITLE,
+                    CourseDtos.LessonMediaPurpose.COURSEWARE).contains(purpose);
+            case ARTICLE -> Set.of(CourseDtos.LessonMediaPurpose.COURSEWARE,
+                    CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT).contains(purpose);
+            case ASSESSMENT -> false;
+        };
+    }
+
+    /** 在任何课程目录写入前逐项调用 media-service，拒绝他人、错用途、未就绪或不存在资产。 */
+    private void validateLessonMedia(List<CourseDtos.ChapterInput> chapters, String teacherId, String traceId) {
+        for (CourseDtos.ChapterInput chapter : chapters) {
+            for (CourseDtos.LessonInput lesson : chapter.lessons()) {
+                for (CourseDtos.LessonMediaResourceInput resource : resources(lesson)) {
+                    mediaBindingClient.requireBindable(resource.mediaId().toString(), resource.purpose().name(),
+                            teacherId, traceId);
+                }
+            }
+        }
     }
 
     private void requireContiguous(Set<Integer> values, int size, String field, String reason) {
@@ -459,10 +589,12 @@ public class CourseCatalogService {
     }
 
     private void applyMetadata(CourseVersionEntity version, String title, String summary, String description,
-            String coverUrl, String instructorDisplayName, String categoryId, String level, String accessType) {
+            String coverMediaId, String coverUrl, String instructorDisplayName, String categoryId,
+            String level, String accessType) {
         version.setTitle(title.trim());
         version.setSummary(summary.trim());
         version.setDescription(description);
+        version.setCoverMediaId(coverMediaId);
         version.setCoverUrl(coverUrl);
         version.setInstructorDisplayName(instructorDisplayName.trim());
         version.setCategoryId(categoryId);
@@ -474,11 +606,53 @@ public class CourseCatalogService {
         return Objects.equals(version.getTitle(), request.title().trim())
                 && Objects.equals(version.getSummary(), request.summary().trim())
                 && Objects.equals(version.getDescription(), request.description())
-                && Objects.equals(version.getCoverUrl(), request.coverUrl())
+                && Objects.equals(version.getCoverMediaId(), id(request.coverMediaId()))
                 && Objects.equals(version.getInstructorDisplayName(), request.instructorDisplayName().trim())
                 && Objects.equals(version.getCategoryId(), request.categoryId().toString())
                 && Objects.equals(version.getLevel(), request.level().name())
                 && Objects.equals(version.getAccessType(), request.accessType().name());
+    }
+
+    private void requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
+        if (mediaId != null) mediaBindingClient.requireBindable(mediaId, purpose, teacherId, traceId);
+    }
+
+    private void bindCover(CourseVersionEntity version, String traceId) {
+        if (version.getCoverMediaId() != null) {
+            reference(CourseMediaEventFactory.BOUND, version.getCoverMediaId(),
+                    "COURSE_VERSION_COVER", version.getId(), traceId);
+        }
+    }
+
+    private void releaseCover(CourseVersionEntity version, String traceId) {
+        if (version.getCoverMediaId() != null) {
+            reference(CourseMediaEventFactory.RELEASED, version.getCoverMediaId(),
+                    "COURSE_VERSION_COVER", version.getId(), traceId);
+        }
+    }
+
+    private void releaseLessonMedia(String versionId, String traceId) {
+        for (LessonMediaResourceEntity resource : mapper.listVersionMediaResources(versionId)) {
+            reference(CourseMediaEventFactory.RELEASED, resource.getMediaId(),
+                    "LESSON_RESOURCE", resource.getId(), traceId);
+        }
+    }
+
+    private void reference(String eventType, String mediaId, String referenceType,
+            String referenceId, String traceId) {
+        mapper.insertOutbox(mediaEvents.create(eventType, mediaId, referenceType, referenceId, traceId));
+    }
+
+    private static List<CourseDtos.LessonMediaResourceInput> resources(CourseDtos.LessonInput lesson) {
+        return lesson.resources() == null ? List.of() : lesson.resources();
+    }
+
+    private static String id(UUID value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static String newTraceId() {
+        return UUID.randomUUID().toString().replace("-", "");
     }
 
     private CourseException notFound() {

@@ -109,7 +109,7 @@ function messageFor(error: unknown, fallback: string): string {
   <div v-if="loading" class="teacher-loading">正在加载你的课程…</div>
   <div v-else-if="page?.items.length" class="teacher-course-list">
     <article v-for="course in page.items" :key="course.id" class="teacher-course-card">
-      <img :src="course.coverUrl" :alt="`${course.title}封面`">
+      <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
       <div class="teacher-course-card__content">
         <div class="teacher-course-card__status">
           <span :class="`status-pill status-pill--${course.publicationStatus.toLowerCase()}`">

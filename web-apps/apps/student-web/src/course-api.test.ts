@@ -28,7 +28,7 @@ describe("student course API", () => {
       calls.push(path);
       if (path.endsWith("/categories")) return json([{ id: "00000000-0000-4000-8000-000000000501", name: "初中数学" }]);
       return json({ id: "00000000-0000-4000-8000-000000000201", title: "代数", summary: "摘要",
-        description: "介绍", coverUrl: "https://cdn.example.test/cover.jpg",
+        description: "介绍", coverMediaId: null, coverUrl: "https://cdn.example.test/cover.jpg",
         teacher: { id: "00000000-0000-4000-8000-000000000101", displayName: "测试教师" },
         category: { id: "00000000-0000-4000-8000-000000000501", name: "初中数学" },
         level: "BEGINNER", accessType: "PUBLIC", publishedVersion: "v1", chapters: [] });

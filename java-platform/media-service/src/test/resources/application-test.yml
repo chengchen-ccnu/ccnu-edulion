@@ -30,9 +30,11 @@ platform:
       fixed-delay: 1h
       unbound-retention: 24h
     worker:
-      enabled: false
+      enabled: true
       ffmpeg-path: ffmpeg
       timeout: 30s
+      max-concurrent-jobs: 1
+      hls-segment-duration: 2s
     oss:
       enabled: false
       endpoint: ""
