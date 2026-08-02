@@ -1,0 +1,70 @@
+package com.eduplatform.media.service;
+
+import com.eduplatform.media.domain.MediaPurpose;
+import com.eduplatform.media.domain.UploadMode;
+import com.eduplatform.media.web.MediaDtos;
+import com.eduplatform.shared.api.FieldError;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+
+/**
+ * 媒体用途白名单，统一校验上传角色、MIME、扩展名、大小与直传模式。
+ *
+ * <p>T07 只启用课程封面和课时视频；其他已冻结枚举在对应消费任务落地前返回未启用。</p>
+ */
+@Component
+public class MediaPurposePolicy {
+    private static final Map<MediaPurpose, Policy> ENABLED = Map.of(
+            MediaPurpose.COURSE_COVER, new Policy(Set.of("TEACHER"),
+                    Set.of("image/jpeg", "image/png", "image/webp"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
+            MediaPurpose.LESSON_VIDEO, new Policy(Set.of("TEACHER"),
+                    Set.of("video/mp4", "video/quicktime", "video/webm"),
+                    Set.of("mp4", "mov", "webm"), 10L * 1024 * 1024 * 1024, true));
+
+    /**
+     * 校验客户端声明并选择上传模式。
+     * @param request 不可变的文件声明
+     * @param roles Gateway 传入的已认证角色集合
+     * @param multipartThreshold 触发 Multipart 的字节阈值
+     * @return 规范化 MIME/扩展名与已选模式
+     * @throws MediaException 用途未启用、角色不允许或文件声明不合法时抛出
+     */
+    public ValidatedUpload validate(MediaDtos.CreateUploadRequest request, Set<String> roles, long multipartThreshold) {
+        Policy policy = ENABLED.get(request.purpose());
+        if (policy == null) {
+            throw new MediaException(HttpStatus.UNPROCESSABLE_CONTENT, "MEDIA.PURPOSE_NOT_ENABLED",
+                    "该媒体用途尚未启用");
+        }
+        if (roles.stream().noneMatch(policy.roles()::contains)) {
+            throw new MediaException(HttpStatus.FORBIDDEN, "MEDIA.PURPOSE_FORBIDDEN", "当前角色不能上传该用途的媒体");
+        }
+        String filename = request.fileName().trim();
+        if (filename.contains("/") || filename.contains("\\") || filename.indexOf('\0') >= 0) {
+            invalid("fileName", "文件名不能包含路径");
+        }
+        int dot = filename.lastIndexOf('.');
+        String extension = dot > 0 && dot < filename.length() - 1
+                ? filename.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+        String mime = request.mimeType().trim().toLowerCase(Locale.ROOT);
+        if (!policy.extensions().contains(extension)) invalid("fileName", "文件扩展名与用途不匹配");
+        if (!policy.mimeTypes().contains(mime)) invalid("mimeType", "MIME 类型与用途不匹配");
+        if (request.size() > policy.maxBytes()) invalid("size", "文件大小超过该用途限制");
+        UploadMode mode = policy.multipartCapable() && request.size() >= multipartThreshold
+                ? UploadMode.MULTIPART : UploadMode.SINGLE_PUT;
+        return new ValidatedUpload(filename, extension, mime, mode, policy.maxBytes());
+    }
+
+    private static void invalid(String field, String reason) {
+        throw new MediaException(HttpStatus.UNPROCESSABLE_CONTENT, "COMMON.VALIDATION_FAILED", "请求参数不合法",
+                java.util.List.of(new FieldError(field, reason)));
+    }
+
+    public record ValidatedUpload(String filename, String extension, String mimeType, UploadMode mode, long maxBytes) {}
+
+    private record Policy(Set<String> roles, Set<String> mimeTypes, Set<String> extensions,
+            long maxBytes, boolean multipartCapable) {}
+}

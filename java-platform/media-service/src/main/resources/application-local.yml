@@ -12,6 +12,9 @@ spring:
       minimum-idle: ${MYSQL_MINIMUM_IDLE:0}
       connection-timeout: ${MYSQL_CONNECTION_TIMEOUT_MS:3000}
       validation-timeout: ${MYSQL_VALIDATION_TIMEOUT_MS:2000}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -23,6 +26,22 @@ spring:
       timeout: ${REDIS_TIMEOUT:2s}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        concurrency: ${MEDIA_RABBITMQ_CONCURRENCY:1}
+        max-concurrency: ${MEDIA_RABBITMQ_MAX_CONCURRENCY:2}
 
 management:
   endpoint:
@@ -37,23 +56,33 @@ management:
       enabled: true
 
 platform:
-  messaging:
-    rocketmq:
-      enabled: ${ROCKETMQ_ENABLED:false}
-      name-server: ${ROCKETMQ_NAME_SERVER:}
-      namespace: ${ROCKETMQ_NAMESPACE:}
-      access-key: ${ROCKETMQ_ACCESS_KEY:}
-      secret-key: ${ROCKETMQ_SECRET_KEY:}
-  storage:
+  media:
+    enabled: true
+    messaging:
+      enabled: ${RABBITMQ_ENABLED:false}
+      outbox-poll-delay: ${MEDIA_OUTBOX_POLL_DELAY:2s}
+      confirm-timeout: ${MEDIA_RABBITMQ_CONFIRM_TIMEOUT:10s}
+      max-publish-attempts: ${MEDIA_OUTBOX_MAX_ATTEMPTS:20}
+    upload:
+      grant-ttl: ${MEDIA_UPLOAD_GRANT_TTL:15m}
+      session-ttl: ${MEDIA_UPLOAD_SESSION_TTL:24h}
+      multipart-threshold: ${MEDIA_MULTIPART_THRESHOLD_BYTES:10485760}
+      part-size: ${MEDIA_MULTIPART_PART_SIZE_BYTES:5242880}
+    maintenance:
+      enabled: ${MEDIA_MAINTENANCE_ENABLED:true}
+      fixed-delay: ${MEDIA_MAINTENANCE_DELAY:1h}
+      unbound-retention: ${MEDIA_UNBOUND_RETENTION:24h}
+    worker:
+      enabled: ${MEDIA_WORKER_ENABLED:true}
+      ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+      timeout: ${MEDIA_FFMPEG_TIMEOUT:2m}
     oss:
       enabled: ${OSS_ENABLED:false}
       endpoint: ${OSS_ENDPOINT:}
       region: ${OSS_REGION:}
       bucket: ${OSS_BUCKET:}
+      key-prefix: ${OSS_KEY_PREFIX:quarantine}
+      access-grant-ttl: ${MEDIA_ACCESS_GRANT_TTL:10m}
       access-key-id: ${OSS_ACCESS_KEY_ID:}
       access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
       security-token: ${OSS_SECURITY_TOKEN:}
-      sts:
-        endpoint: ${OSS_STS_ENDPOINT:}
-        role-arn: ${OSS_STS_ROLE_ARN:}
-        role-session-name: ${OSS_STS_ROLE_SESSION_NAME:edu-platform-local}

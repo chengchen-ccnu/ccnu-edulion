@@ -35,6 +35,7 @@ class GatewayRouteSecurityTest {
     private static final String SECRET = "test-only-secret-with-at-least-32-bytes";
     private static HttpServer iamStub;
     private static HttpServer courseStub;
+    private static HttpServer mediaStub;
 
     @DynamicPropertySource
     static void iamServiceUrl(DynamicPropertyRegistry registry) {
@@ -47,6 +48,10 @@ class GatewayRouteSecurityTest {
             courseStub.createContext("/", GatewayRouteSecurityTest::handleCourseRequest);
             courseStub.start();
             registry.add("COURSE_SERVICE_URL", () -> "http://127.0.0.1:" + courseStub.getAddress().getPort());
+            mediaStub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            mediaStub.createContext("/", GatewayRouteSecurityTest::handleMediaRequest);
+            mediaStub.start();
+            registry.add("MEDIA_SERVICE_URL", () -> "http://127.0.0.1:" + mediaStub.getAddress().getPort());
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
@@ -56,6 +61,7 @@ class GatewayRouteSecurityTest {
     static void stopIamStub() {
         if (iamStub != null) iamStub.stop(0);
         if (courseStub != null) courseStub.stop(0);
+        if (mediaStub != null) mediaStub.stop(0);
     }
 
     @Value("${local.server.port}") int port;
@@ -107,6 +113,14 @@ class GatewayRouteSecurityTest {
                 .expectStatus().isOk()
                 .expectHeader().valueEquals("Access-Control-Allow-Origin", "http://localhost:5174")
                 .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("PUT"));
+
+        client.options().uri("/api/v1/media/uploads/00000000-0000-4000-8000-000000000701")
+                .header("Origin", "http://localhost:5174")
+                .header("Access-Control-Request-Method", "DELETE")
+                .header("Access-Control-Request-Headers", "authorization")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("DELETE"));
     }
 
     @Test
@@ -147,6 +161,26 @@ class GatewayRouteSecurityTest {
                         "TEACHER", "teaching:access")))
                 .exchange().expectStatus().isOk()
                 .expectBody()
+                .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001")
+                .jsonPath("$.roles").isEqualTo("TEACHER");
+    }
+
+    @Test
+    /** 验证媒体 API 必须登录，且 Gateway 会移除客户端伪造身份头后注入 Token 中的可信身份。 */
+    void mediaRoutesRequireAuthenticationAndForwardOnlyTrustedIdentity() {
+        client.post().uri("/api/v1/media/uploads").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .exchange().expectStatus().isUnauthorized();
+
+        Instant now = Instant.now();
+        client.post().uri("/api/v1/media/uploads").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .header("X-User-Id", "00000000-0000-4000-8000-000000009999")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300),
+                        "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.route").isEqualTo("media")
                 .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001")
                 .jsonPath("$.roles").isEqualTo("TEACHER");
     }
@@ -203,6 +237,19 @@ class GatewayRouteSecurityTest {
             exchange.close();
             return;
         }
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    /** 本地媒体下游替身，只回显 Gateway 注入的身份头，不处理文件字节。 */
+    private static void handleMediaRequest(HttpExchange exchange) throws IOException {
+        exchange.getRequestBody().readAllBytes();
+        String userId = exchange.getRequestHeaders().getFirst("X-User-Id");
+        String roles = exchange.getRequestHeaders().getFirst("X-User-Roles");
+        String body = "{\"route\":\"media\",\"userId\":\"" + userId + "\",\"roles\":\"" + roles + "\"}";
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, bytes.length);

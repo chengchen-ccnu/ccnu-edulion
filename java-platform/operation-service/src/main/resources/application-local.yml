@@ -35,12 +35,3 @@ management:
       enabled: true
     redis:
       enabled: true
-
-platform:
-  messaging:
-    rocketmq:
-      enabled: ${ROCKETMQ_ENABLED:false}
-      name-server: ${ROCKETMQ_NAME_SERVER:}
-      namespace: ${ROCKETMQ_NAMESPACE:}
-      access-key: ${ROCKETMQ_ACCESS_KEY:}
-      secret-key: ${ROCKETMQ_SECRET_KEY:}
