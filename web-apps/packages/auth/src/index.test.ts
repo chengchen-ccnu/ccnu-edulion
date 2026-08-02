@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   availableWorkspaces,
+  buildCourseCenterUrl,
   buildUnifiedLoginUrl,
   createAuthStore,
   installAuthGuard,
@@ -147,6 +148,18 @@ describe("post-login routing", () => {
       target: { href: "http://admin.test/admin/reviews?status=pending" } });
   });
 
+  it.each([
+    ["STUDENT", "learning:access"],
+    ["TEACHER", "teaching:access"],
+    ["ADMIN", "administration:access"]
+  ] as const)("allows %s to redirect to the public course center", (role, permission) => {
+    const destination = selectPostLoginDestination(user([role], [permission]), "/courses", urls);
+
+    expect(destination).toMatchObject({ kind: "target", target: {
+      access: "public", href: "http://student.test/courses"
+    } });
+  });
+
   it("shows 403 for a valid workspace redirect without its role", () => {
     const currentUser = user(["STUDENT"], ["learning:access"]);
     const destination = selectPostLoginDestination(currentUser, "/teacher/dashboard", urls);
@@ -155,16 +168,58 @@ describe("post-login routing", () => {
   });
 
   it("rejects external and non-whitelisted redirects", () => {
+    expect(resolveInternalRedirect("https://evil.example/steal", urls)).toBeNull();
     expect(resolveInternalRedirect("//evil.example/steal", urls)).toBeNull();
+    expect(resolveInternalRedirect("/\\evil.example/steal", urls)).toBeNull();
     expect(resolveInternalRedirect("/login?redirect=https://evil.example", urls)).toBeNull();
+    expect(resolveInternalRedirect("/unknown", urls)).toBeNull();
     expect(buildUnifiedLoginUrl("//evil.example/steal", urls)).toBe("http://student.test/login");
     const destination = selectPostLoginDestination(user(["STUDENT"], ["learning:access"]),
       "//evil.example/steal", urls);
     expect(destination).toMatchObject({ kind: "target", target: { href: "http://student.test/" } });
   });
+
+  it("builds the public course URL from shared platform configuration", () => {
+    expect(buildCourseCenterUrl(urls)).toBe("http://student.test/courses");
+    expect(resolveInternalRedirect("/courses/00000000-0000-4000-8000-000000000201?from=teacher", urls))
+      .toMatchObject({ access: "public",
+        href: "http://student.test/courses/00000000-0000-4000-8000-000000000201?from=teacher" });
+  });
 });
 
 describe("application route guard", () => {
+  it("opens public course list and detail anonymously while restoring at most once in the background", async () => {
+    let finishRestore: ((value: boolean) => void) | undefined;
+    const restore = vi.fn().mockImplementation(() => new Promise<boolean>(resolve => { finishRestore = resolve; }));
+    const store = publicGuardStore(null, "unknown", restore);
+    const router = publicCourseRouter();
+    installAuthGuard(router, store);
+
+    await router.push("/courses");
+    expect(router.currentRoute.value.name).toBe("courses");
+    expect(restore).toHaveBeenCalledTimes(1);
+    await router.push("/courses/00000000-0000-4000-8000-000000000201");
+    expect(router.currentRoute.value.name).toBe("course-detail");
+    expect(restore).toHaveBeenCalledTimes(1);
+    finishRestore?.(false);
+  });
+
+  it.each([
+    ["STUDENT", "learning:access"],
+    ["TEACHER", "teaching:access"],
+    ["ADMIN", "administration:access"]
+  ] as const)("opens the public course center for an authenticated %s", async (role, permission) => {
+    const store = publicGuardStore(user([role], [permission]), "authenticated");
+    const router = publicCourseRouter();
+    installAuthGuard(router, store);
+
+    await router.push("/courses");
+
+    expect(router.currentRoute.value.name).toBe("courses");
+    expect(store.ensureCurrentUser).not.toHaveBeenCalled();
+    expect(store.canAccess).not.toHaveBeenCalled();
+  });
+
   it("redirects an anonymous teacher visit to the unified login with a safe redirect", async () => {
     const router = testRouter("/teacher/dashboard", "TEACHER");
     const onLoginRedirect = vi.fn();
@@ -189,6 +244,16 @@ describe("application route guard", () => {
     expect(router.currentRoute.value.name).toBe("forbidden");
   });
 
+  it("keeps teacher course management forbidden to a student", async () => {
+    const router = testRouter("/teacher/courses", "TEACHER");
+    const store = guardStore(true, false);
+    installAuthGuard(router, store);
+
+    await router.push("/teacher/courses");
+
+    expect(router.currentRoute.value.name).toBe("forbidden");
+  });
+
   it("allows an authenticated role and permission pair", async () => {
     const router = testRouter("/teacher/dashboard", "TEACHER");
     const store = guardStore(true, true);
@@ -206,6 +271,22 @@ function testRouter(path: string, role: PlatformRole) {
     { path: "/forbidden", name: "forbidden", component: {} },
     { path, name: "protected", component: {}, meta: { requiresAuth: true, requiredRole: role } }
   ] });
+}
+
+function publicCourseRouter() {
+  return createRouter({ history: createMemoryHistory(), routes: [
+    { path: "/courses", name: "courses", component: {}, meta: { restoreSession: true } },
+    { path: "/courses/:courseId", name: "course-detail", component: {}, meta: { restoreSession: true } }
+  ] });
+}
+
+function publicGuardStore(currentUser: CurrentUser | null, status: "unknown" | "authenticated",
+    restore = vi.fn().mockResolvedValue(true)): AuthStore {
+  return {
+    state: { status, loading: false, currentUser, failure: null },
+    login: vi.fn(), restore, logout: vi.fn(), ensureCurrentUser: vi.fn(),
+    hasRole: vi.fn(), hasPermission: vi.fn(), canAccess: vi.fn(), authorizedRequest: vi.fn()
+  } as unknown as AuthStore;
 }
 
 function guardStore(authenticated: boolean, authorized: boolean): AuthStore {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 学生端公开课程详情页；按路由 courseId 调用 GET /api/v1/courses/{courseId}。
+ * 公共课程详情页；按路由 courseId 调用 GET /api/v1/courses/{courseId}。
  * 成功展示当前发布版本和目录，资源不存在/下架或网络失败时展示错误，不读取教师草稿。
  */
 import { GatewayRequestError } from "@edu/api-client";
@@ -47,7 +47,7 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
 </script>
 
 <template>
-  <RouterLink class="back-link" to="/courses">← 返回课程列表</RouterLink>
+  <RouterLink class="back-link" to="/courses">← 返回课程中心</RouterLink>
   <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
   <div v-if="loading" class="detail-loading">正在读取课程线上版本…</div>
   <template v-else-if="course">

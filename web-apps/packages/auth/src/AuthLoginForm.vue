@@ -26,17 +26,17 @@ async function submit() {
           <span>EDU PLATFORM</span>
         </div>
         <div class="auth-login__intro-copy">
-          <span class="auth-login__kicker">EDU LEARNING SPACE</span>
-          <h2>让学习与成长，自然发生</h2>
-          <p>使用一个账号，轻松进入属于你的学习空间。</p>
+          <span class="auth-login__kicker">EDU LION ONLINE EDUCATION</span>
+          <h2>Edu Lion 在线教育平台</h2>
+          <p>学生、教师和管理员使用同一账号登录。</p>
         </div>
       </aside>
 
       <div class="auth-login__panel">
         <div class="auth-login__heading">
           <span class="badge">安全登录</span>
-          <h2 id="login-heading">欢迎回来</h2>
-          <p>请输入平台账号，登录后将自动进入你有权访问的工作台。</p>
+          <h2 id="login-heading">统一登录门户</h2>
+          <p>请输入平台账号，登录后将自动进入你有权访问的学习中心或工作台。</p>
         </div>
 
         <form @submit.prevent="submit">
