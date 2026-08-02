@@ -34,7 +34,9 @@ async function load() {
       title: chapter.title,
       sequence: chapter.sequence,
       lessons: chapter.lessons.map(lesson => ({ title: lesson.title, type: lesson.type,
-        sequence: lesson.sequence, previewable: lesson.previewable }))
+        sequence: lesson.sequence, previewable: lesson.previewable,
+        resources: lesson.resources.map(resource => ({ mediaId: resource.mediaId,
+          purpose: resource.purpose, sequence: resource.sequence })) }))
     }));
     dirty.value = false;
   } catch (error) {
@@ -67,7 +69,7 @@ function moveChapter(index: number, delta: number) {
 
 function addLesson(chapter: ChapterInput) {
   chapter.lessons.push({ title: `第 ${chapter.lessons.length + 1} 课`, type: "VIDEO",
-    sequence: chapter.lessons.length + 1, previewable: false });
+    sequence: chapter.lessons.length + 1, previewable: false, resources: [] });
   dirty.value = true;
 }
 

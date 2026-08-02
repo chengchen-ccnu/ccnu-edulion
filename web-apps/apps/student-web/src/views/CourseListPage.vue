@@ -166,7 +166,7 @@ function accessLabel(accessType: CourseAccessType): string {
     <RouterLink v-for="course in result.items" :key="course.id"
       class="course-card" :to="{ name: 'course-detail', params: { courseId: course.id } }">
       <div class="course-card__cover">
-        <img :src="course.coverUrl" :alt="`${course.title}封面`">
+        <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
         <span>{{ course.category.name }}</span>
       </div>
       <div class="course-card__body">

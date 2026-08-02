@@ -43,6 +43,14 @@ public class MediaReclaimer {
     /** 扫描一个有限批次并执行回收；单条失败不阻断其他对象，失败项留待下轮重试。 */
     public void reclaim() {
         Instant now = Instant.now();
+        repository.expiredTemporaryAccessObjects(now, 100).forEach(value -> {
+            try {
+                storage.delete(value.objectKey());
+                repository.markTemporaryAccessObjectDeleted(value.grantId(), now);
+            } catch (RuntimeException ignored) {
+                // 精确对象键保留在数据库，下一轮继续幂等清理。
+            }
+        });
         repository.expiredUploads(now, 100).forEach(session -> expire(session, now));
         repository.reclaimableAssets(now, 100).forEach(asset -> delete(asset, now));
     }
@@ -66,6 +74,7 @@ public class MediaReclaimer {
     private void delete(MediaAsset asset, Instant now) {
         try {
             repository.markAssetDeleting(asset.mediaId(), now);
+            repository.listAssetComponents(asset.mediaId()).forEach(component -> storage.delete(component.objectKey()));
             for (MediaVariant variant : repository.listVariants(asset.mediaId())) storage.delete(variant.objectKey());
             storage.delete(asset.objectKey());
             transactions.executeWithoutResult(status -> {

@@ -51,6 +51,8 @@ platform:
       enabled: false
       ffmpeg-path: ffmpeg
       timeout: 2m
+      max-concurrent-jobs: 1
+      hls-segment-duration: 6s
     maintenance:
       enabled: false
       fixed-delay: 1h

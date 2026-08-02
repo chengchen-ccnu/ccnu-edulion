@@ -4,7 +4,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
@@ -17,8 +16,6 @@ import java.util.UUID;
  * 自动生成的前端类型从 OpenAPI 获取，本类不作为跨服务共享 DTO。
  */
 public final class CourseDtos {
-    private static final String HTTP_URL = "https?://[^\\s]+";
-
     private CourseDtos() {}
 
     public enum CourseLevel { BEGINNER, INTERMEDIATE, ADVANCED }
@@ -27,6 +24,8 @@ public final class CourseDtos {
 
     public enum LessonType { VIDEO, ARTICLE, ASSESSMENT }
 
+    public enum LessonMediaPurpose { LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT }
+
     public enum PublicationStatus { DRAFT, PUBLISHED, UNPUBLISHED }
 
     public record CreateCourseRequest(
@@ -34,7 +33,7 @@ public final class CourseDtos {
             @NotBlank @Size(max = 120) String title,
             @NotNull @Size(max = 300) String summary,
             @NotNull @Size(max = 20000) String description,
-            @NotBlank @Size(max = 512) @Pattern(regexp = HTTP_URL) String coverUrl,
+            UUID coverMediaId,
             @NotBlank @Size(max = 80) String instructorDisplayName,
             @NotNull UUID categoryId,
             @NotNull CourseLevel level,
@@ -45,7 +44,7 @@ public final class CourseDtos {
             @NotBlank @Size(max = 120) String title,
             @NotNull @Size(max = 300) String summary,
             @NotNull @Size(max = 20000) String description,
-            @NotBlank @Size(max = 512) @Pattern(regexp = HTTP_URL) String coverUrl,
+            UUID coverMediaId,
             @NotBlank @Size(max = 80) String instructorDisplayName,
             @NotNull UUID categoryId,
             @NotNull CourseLevel level,
@@ -64,7 +63,13 @@ public final class CourseDtos {
             @NotBlank @Size(max = 120) String title,
             @NotNull LessonType type,
             @Positive @Max(200) int sequence,
-            boolean previewable) {}
+            boolean previewable,
+            @Size(max = 100) List<@Valid LessonMediaResourceInput> resources) {}
+
+    public record LessonMediaResourceInput(
+            @NotNull UUID mediaId,
+            @NotNull LessonMediaPurpose purpose,
+            @Positive @Max(100) int sequence) {}
 
     public record UpdatePublicationRequest(
             @NotNull PublishTarget status,
@@ -78,6 +83,7 @@ public final class CourseDtos {
             String id,
             String title,
             String summary,
+            String coverMediaId,
             String coverUrl,
             TeacherSummary teacher,
             CategorySummary category,
@@ -89,6 +95,7 @@ public final class CourseDtos {
             String title,
             String summary,
             String description,
+            String coverMediaId,
             String coverUrl,
             TeacherSummary teacher,
             CategorySummary category,
@@ -103,7 +110,10 @@ public final class CourseDtos {
 
     public record Chapter(String id, String title, int sequence, List<LessonSummary> lessons) {}
 
-    public record LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable) {}
+    public record LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable,
+            List<LessonMediaResource> resources) {}
+
+    public record LessonMediaResource(String id, String mediaId, LessonMediaPurpose purpose, int sequence) {}
 
     public record TeacherCourse(
             String id,
@@ -116,6 +126,7 @@ public final class CourseDtos {
             String title,
             String summary,
             String description,
+            String coverMediaId,
             String coverUrl,
             String instructorDisplayName,
             CategorySummary category,

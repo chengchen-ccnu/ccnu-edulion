@@ -29,6 +29,7 @@
         SELECT c.id,
                cv.title,
                cv.summary,
+               cv.cover_media_id,
                cv.cover_url,
                c.owner_teacher_id AS teacher_id,
                cv.instructor_display_name AS teacher_display_name,
@@ -123,11 +124,11 @@
     <insert id="insertCourseVersion">
         INSERT INTO course_version (
             id, course_id, version_number, version_label, lifecycle_status,
-            title, summary, description, cover_url, instructor_display_name,
+            title, summary, description, cover_media_id, cover_url, instructor_display_name,
             category_id, level, access_type, curriculum_hash, row_version
         ) VALUES (
             #{id}, #{courseId}, #{versionNumber}, #{versionLabel}, #{lifecycleStatus},
-            #{title}, #{summary}, #{description}, #{coverUrl}, #{instructorDisplayName},
+            #{title}, #{summary}, #{description}, #{coverMediaId}, #{coverUrl}, #{instructorDisplayName},
             #{categoryId}, #{level}, #{accessType}, #{curriculumHash}, #{rowVersion}
         )
     </insert>
@@ -144,6 +145,7 @@
         SET title = #{version.title},
             summary = #{version.summary},
             description = #{version.description},
+            cover_media_id = #{version.coverMediaId},
             cover_url = #{version.coverUrl},
             instructor_display_name = #{version.instructorDisplayName},
             category_id = #{version.categoryId},
@@ -171,6 +173,16 @@
         )
     </delete>
 
+    <delete id="deleteLessonMediaByVersion">
+        DELETE FROM lesson_media_resource
+        WHERE lesson_id IN (
+            SELECT l.id
+            FROM lesson l
+            JOIN chapter ch ON ch.id = l.chapter_id
+            WHERE ch.course_version_id = #{versionId}
+        )
+    </delete>
+
     <delete id="deleteChaptersByVersion">
         DELETE FROM chapter WHERE course_version_id = #{versionId}
     </delete>
@@ -185,6 +197,11 @@
         VALUES (#{id}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable})
     </insert>
 
+    <insert id="insertLessonMediaResource">
+        INSERT INTO lesson_media_resource (id, lesson_id, media_id, purpose, position)
+        VALUES (#{id}, #{lessonId}, #{mediaId}, #{purpose}, #{position})
+    </insert>
+
     <select id="listChapters" resultType="com.eduplatform.course.domain.ChapterEntity">
         SELECT id, course_version_id, title, position
         FROM chapter
@@ -197,6 +214,22 @@
         FROM lesson
         WHERE chapter_id = #{chapterId}
         ORDER BY position, id
+    </select>
+
+    <select id="listLessonMediaResources" resultType="com.eduplatform.course.domain.LessonMediaResourceEntity">
+        SELECT id, lesson_id, media_id, purpose, position
+        FROM lesson_media_resource
+        WHERE lesson_id = #{lessonId}
+        ORDER BY purpose, position, id
+    </select>
+
+    <select id="listVersionMediaResources" resultType="com.eduplatform.course.domain.LessonMediaResourceEntity">
+        SELECT r.id, r.lesson_id, r.media_id, r.purpose, r.position
+        FROM lesson_media_resource r
+        JOIN lesson l ON l.id = r.lesson_id
+        JOIN chapter ch ON ch.id = l.chapter_id
+        WHERE ch.course_version_id = #{versionId}
+        ORDER BY ch.position, l.position, r.purpose, r.position, r.id
     </select>
 
     <select id="countChapters" resultType="int">
@@ -239,5 +272,37 @@
             row_version = row_version + 1
         WHERE id = #{courseId}
           AND publication_status &lt;&gt; #{status}
+    </update>
+
+    <insert id="insertOutbox">
+        INSERT INTO outbox_event (
+            event_id, event_type, event_version, aggregate_id, routing_key, trace_id, payload_json,
+            status, attempts, next_attempt_at, published_at, last_error, created_at, updated_at
+        ) VALUES (
+            #{eventId}, #{eventType}, #{eventVersion}, #{aggregateId}, #{routingKey}, #{traceId}, #{payloadJson},
+            #{status}, #{attempts}, #{nextAttemptAt}, #{publishedAt}, #{lastError}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <select id="pendingOutbox" resultType="com.eduplatform.course.messaging.CourseOutboxEvent">
+        SELECT event_id, event_type, event_version, aggregate_id, routing_key, trace_id, payload_json,
+               status, attempts, next_attempt_at, published_at, last_error, created_at, updated_at
+        FROM outbox_event
+        WHERE status = 'PENDING' AND next_attempt_at &lt;= #{now}
+        ORDER BY created_at, event_id
+        LIMIT #{limit}
+    </select>
+
+    <update id="markOutboxPublished">
+        UPDATE outbox_event
+        SET status = 'PUBLISHED', published_at = #{now}, updated_at = #{now}, last_error = NULL
+        WHERE event_id = #{eventId} AND status = 'PENDING'
+    </update>
+
+    <update id="markOutboxFailure">
+        UPDATE outbox_event
+        SET status = CASE WHEN #{terminal} THEN 'FAILED' ELSE 'PENDING' END,
+            attempts = #{attempts}, next_attempt_at = #{nextAttemptAt}, last_error = #{lastError}, updated_at = #{now}
+        WHERE event_id = #{eventId} AND status = 'PENDING'
     </update>
 </mapper>

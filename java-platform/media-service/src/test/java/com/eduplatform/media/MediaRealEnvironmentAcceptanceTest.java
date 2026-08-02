@@ -42,10 +42,10 @@ import tools.jackson.databind.ObjectMapper;
 
 @EnabledIfEnvironmentVariable(named = "MEDIA_REAL_ACCEPTANCE", matches = "true")
 /**
- * 只在显式开启时运行的 T07 真实环境验收。
+ * 只在显式开启时运行的 T07/T08A 真实环境验收。
  *
  * <p>测试先强制确认目标为 {@code edu_platform_media_dev}，OSS 只使用本轮 UUID 前缀并只删除已记录精确键。
- * 它覆盖单对象/Multipart、HEAD、读授权、FFmpeg、confirm/return、有限重试/DLQ、幂等、未 ACK 重投和 MQ 故障 Outbox。</p>
+ * 它覆盖单对象/Multipart、HEAD、HLS 播放授权、FFmpeg、confirm/return、有限重试/DLQ、幂等、未 ACK 重投和 MQ 故障 Outbox。</p>
  */
 class MediaRealEnvironmentAcceptanceTest {
     private static final String OWNER = "00000000-0000-4000-8000-000000007901";
@@ -110,7 +110,19 @@ class MediaRealEnvironmentAcceptanceTest {
                 JsonNode readyVideo = awaitStatus(port, mapper, videoId, "READY", 60);
                 assertThat(readyVideo.get("processingStatus").asString()).isEqualTo("SUCCEEDED");
                 assertThat(readyVideo.get("variants")).anySatisfy(node ->
-                        assertThat(node.get("variant").asString()).isEqualTo("baseline-mp4-v1"));
+                        assertThat(node.get("variant").asString()).isEqualTo("hls-v1"));
+                JsonNode hlsGrant = mapper.readTree(send(port, "POST", "/api/v1/media/" + videoId
+                        + "/access-grants", "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}").body());
+                HttpResponse<String> playlist = http.send(HttpRequest.newBuilder(
+                                URI.create(hlsGrant.get("url").asString())).GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                assertThat(playlist.statusCode()).isEqualTo(200);
+                String segmentUrl = playlist.body().lines().filter(line -> !line.isBlank() && !line.startsWith("#"))
+                        .findFirst().orElseThrow();
+                HttpResponse<byte[]> segment = http.send(HttpRequest.newBuilder(URI.create(segmentUrl)).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(segment.statusCode()).isEqualTo(200);
+                assertThat(segment.body()).isNotEmpty();
 
                 rabbit.convertAndSend(MediaRabbitTopology.EVENTS_EXCHANGE, "media.uploaded.v1", videoUploaded.payloadJson());
                 TimeUnit.MILLISECONDS.sleep(800);
@@ -306,17 +318,28 @@ class MediaRealEnvironmentAcceptanceTest {
     private void cleanupExact(ObjectStorage storage, MediaRepository repository, JdbcTemplate jdbc, List<String> eventIds) {
         List<MediaAsset> assets = repository.listAssetsOwned(OWNER, null, null, 0, 100);
         for (MediaAsset asset : assets) {
-            repository.listVariants(asset.mediaId()).forEach(variant -> storage.delete(variant.objectKey()));
+            repository.listVariants(asset.mediaId()).forEach(variant -> {
+                repository.listVariantComponents(variant.variantId())
+                        .forEach(component -> storage.delete(component.objectKey()));
+                storage.delete(variant.objectKey());
+            });
             storage.delete(asset.objectKey());
         }
+        jdbc.queryForList("SELECT object_key FROM temporary_access_object WHERE media_id IN "
+                        + "(SELECT media_id FROM media_asset WHERE owner_id = ?)", String.class, OWNER)
+                .forEach(storage::delete);
         jdbc.update("DELETE FROM consumed_event WHERE event_id IN (SELECT event_id FROM outbox_event "
                 + "WHERE aggregate_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?))", OWNER);
         for (String eventId : eventIds) jdbc.update("DELETE FROM consumed_event WHERE event_id = ?", eventId);
+        jdbc.update("DELETE FROM temporary_access_object WHERE media_id IN "
+                + "(SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM access_grant_audit WHERE actor_id = ?", OWNER);
         jdbc.update("DELETE FROM media_audit_record WHERE actor_id = ? OR media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER, OWNER);
         jdbc.update("DELETE FROM outbox_event WHERE aggregate_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM media_reference WHERE media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM processing_job WHERE media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
+        jdbc.update("DELETE FROM media_variant_component WHERE media_id IN "
+                + "(SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM media_variant WHERE media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM media_asset WHERE owner_id = ?", OWNER);
         jdbc.update("DELETE FROM upload_part WHERE upload_id IN (SELECT upload_id FROM upload_session WHERE owner_id = ?)", OWNER);
@@ -324,10 +347,11 @@ class MediaRealEnvironmentAcceptanceTest {
 
         // 该专用 Schema 只允许承载 T07 验收数据；逐表归零断言可及时暴露异步消费或新增表遗漏的清理缺口。
         for (String table : List.of("upload_session", "upload_part", "media_asset", "media_variant",
+                "media_variant_component", "temporary_access_object",
                 "processing_job", "media_reference", "outbox_event", "consumed_event",
                 "media_audit_record", "access_grant_audit")) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class))
-                    .as("T07 acceptance cleanup table %s", table)
+                    .as("T07/T08A acceptance cleanup table %s", table)
                     .isZero();
         }
     }

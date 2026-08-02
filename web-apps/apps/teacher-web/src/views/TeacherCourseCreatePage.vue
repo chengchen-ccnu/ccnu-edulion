@@ -22,7 +22,7 @@ const form = reactive<CreateCourseRequest>({
   title: "",
   summary: "",
   description: "",
-  coverUrl: "",
+  coverMediaId: null,
   instructorDisplayName: authStore.state.currentUser?.displayName ?? "",
   categoryId: "",
   level: "BEGINNER",
@@ -69,7 +69,7 @@ function messageFor(error: unknown, fallback: string): string {
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
     <form @submit.prevent="submit">
       <CourseMetadataFields v-model:title="form.title" v-model:summary="form.summary"
-        v-model:description="form.description" v-model:cover-url="form.coverUrl"
+        v-model:description="form.description"
         v-model:instructor-display-name="form.instructorDisplayName" v-model:category-id="form.categoryId"
         v-model:level="form.level" v-model:access-type="form.accessType"
         :categories="categories" :field-errors="fieldErrors" />

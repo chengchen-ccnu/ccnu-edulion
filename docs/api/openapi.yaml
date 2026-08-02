@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.5.0
-  description: T07 Gateway contract. Authentication uses short-lived bearer access tokens and a rotating HttpOnly refresh cookie. Media uploads are authorized through Gateway, transferred directly to private OSS objects, and completed idempotently before asynchronous processing.
+  version: 0.6.0
+  description: T08A Gateway contract. Course writes bind stable media IDs, while media upload, HLS processing and short-lived delivery authorization remain owned by media-service. Historical course cover URLs are read-only compatibility projections and are never accepted as new business facts.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -185,6 +185,7 @@ paths:
                       - id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6201
                         title: 七年级代数基础
                         summary: 从有理数到一元一次方程
+                        coverMediaId: null
                         coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
                         teacher:
                           id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6101
@@ -256,6 +257,7 @@ paths:
                     title: 七年级代数基础
                     summary: 从有理数到一元一次方程
                     description: "## 课程介绍\n循序渐进掌握代数基础。"
+                    coverMediaId: null
                     coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
                     teacher:
                       id: 0195d9c2-1c3f-7b6e-a9dd-7367730a6101
@@ -276,6 +278,7 @@ paths:
                             type: VIDEO
                             sequence: 1
                             previewable: true
+                            resources: []
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -314,6 +317,7 @@ paths:
                         title: 七年级代数基础
                         summary: 从有理数到一元一次方程
                         description: "## 课程介绍\n循序渐进掌握代数基础。"
+                        coverMediaId: null
                         coverUrl: https://cdn.example.test/courses/algebra-cover.jpg
                         instructorDisplayName: 王老师
                         category:
@@ -736,7 +740,7 @@ paths:
       tags: [Media]
       operationId: createMediaAccessGrant
       summary: Issue a short-lived, object-level read grant
-      description: T07 permits the uploader to preview an owned READY asset. Domain-authorized viewers are added by later consumer tasks; the client cannot assert course, question, AI-session or review visibility. Signed URLs are transient projections and must not be persisted.
+      description: The uploader may preview an owned READY asset. HLS grants point to an expiring rewritten playlist whose segment URLs expire with the grant. The client cannot assert course, question, AI-session or review visibility, and signed URLs must never be persisted.
       parameters:
         - $ref: '#/components/parameters/MediaId'
       requestBody:
@@ -766,6 +770,37 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/media/{mediaId}/binding-validations:
+    post:
+      tags: [Media]
+      operationId: validateMediaBinding
+      summary: Validate that an owned media asset can be bound by a domain service
+      description: Validates uploader ownership, exact purpose and READY state without exposing storage metadata. Course-service calls this versioned contract before committing a local media reference; a successful validation does not itself create the reference.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MediaBindingValidationRequest'
+      responses:
+        '200':
+          description: The asset exists, belongs to the authenticated caller, matches the requested purpose and is READY.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaBindingValidation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 components:
   securitySchemes:
     bearerAuth:
@@ -1058,7 +1093,7 @@ components:
     CourseSummary:
       type: object
       additionalProperties: false
-      required: [id, title, summary, coverUrl, teacher, category, level, accessType]
+      required: [id, title, summary, coverMediaId, coverUrl, teacher, category, level, accessType]
       properties:
         id:
           type: string
@@ -1070,9 +1105,15 @@ components:
         summary:
           type: string
           maxLength: 300
+        coverMediaId:
+          type: [string, 'null']
+          format: uuid
+          description: Stable COURSE_COVER media reference for the immutable published version; null only for legacy or intentionally unbound courses.
         coverUrl:
-          type: string
+          type: [string, 'null']
           format: uri
+          readOnly: true
+          description: Read-only display projection. Historical external URLs may appear during migration; signed URLs are transient and must not be persisted.
         teacher:
           $ref: '#/components/schemas/TeacherSummary'
         category:
@@ -1084,7 +1125,7 @@ components:
     CourseDetail:
       type: object
       additionalProperties: false
-      required: [id, title, summary, description, coverUrl, teacher, category, level, accessType, publishedVersion, chapters]
+      required: [id, title, summary, description, coverMediaId, coverUrl, teacher, category, level, accessType, publishedVersion, chapters]
       properties:
         id:
           type: string
@@ -1099,9 +1140,15 @@ components:
         description:
           type: string
           description: Markdown course description.
+        coverMediaId:
+          type: [string, 'null']
+          format: uuid
+          description: Stable COURSE_COVER media reference frozen into this published course version.
         coverUrl:
-          type: string
+          type: [string, 'null']
           format: uri
+          readOnly: true
+          description: Historical or authorized display projection; never a course write fact.
         teacher:
           $ref: '#/components/schemas/TeacherSummary'
         category:
@@ -1171,7 +1218,7 @@ components:
     LessonSummary:
       type: object
       additionalProperties: false
-      required: [id, title, type, sequence, previewable]
+      required: [id, title, type, sequence, previewable, resources]
       properties:
         id:
           type: string
@@ -1188,10 +1235,15 @@ components:
           minimum: 1
         previewable:
           type: boolean
+        resources:
+          type: array
+          description: Stable media references frozen into the same course version. Signed playback/download URLs are obtained separately and are never stored here.
+          items:
+            $ref: '#/components/schemas/LessonMediaResource'
     CreateCourseRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, title, summary, description, coverUrl, instructorDisplayName, categoryId, level, accessType]
+      required: [clientRequestId, title, summary, description, coverMediaId, instructorDisplayName, categoryId, level, accessType]
       properties:
         clientRequestId:
           type: string
@@ -1206,10 +1258,10 @@ components:
         description:
           type: string
           maxLength: 20000
-        coverUrl:
-          type: string
-          format: uri
-          maxLength: 512
+        coverMediaId:
+          type: [string, 'null']
+          format: uuid
+          description: READY COURSE_COVER owned by the current teacher. Null creates a course without a cover; coverUrl is intentionally not accepted for writes.
         instructorDisplayName:
           type: string
           minLength: 1
@@ -1225,7 +1277,7 @@ components:
     UpdateCourseRequest:
       type: object
       additionalProperties: false
-      required: [expectedRevision, title, summary, description, coverUrl, instructorDisplayName, categoryId, level, accessType]
+      required: [expectedRevision, title, summary, description, coverMediaId, instructorDisplayName, categoryId, level, accessType]
       properties:
         expectedRevision:
           type: integer
@@ -1241,10 +1293,10 @@ components:
         description:
           type: string
           maxLength: 20000
-        coverUrl:
-          type: string
-          format: uri
-          maxLength: 512
+        coverMediaId:
+          type: [string, 'null']
+          format: uuid
+          description: Replacement READY COURSE_COVER media ID. Null atomically releases the draft cover reference; historical coverUrl is not writable.
         instructorDisplayName:
           type: string
           minLength: 1
@@ -1304,6 +1356,50 @@ components:
           minimum: 1
         previewable:
           type: boolean
+        resources:
+          type: array
+          maxItems: 100
+          default: []
+          description: Stable media bindings for this lesson. Omission is equivalent to an empty list for T05 client compatibility.
+          items:
+            $ref: '#/components/schemas/LessonMediaResourceInput'
+    LessonMediaPurpose:
+      type: string
+      description: Course-owned lesson purposes enabled by an explicit T08A upload and binding policy.
+      enum: [LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT]
+    LessonMediaResourceInput:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, sequence]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+          description: READY asset owned by the current teacher and validated by media-service before the course transaction commits.
+        purpose:
+          $ref: '#/components/schemas/LessonMediaPurpose'
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Ordering within the same purpose; values must be unique and contiguous from 1.
+    LessonMediaResource:
+      type: object
+      additionalProperties: false
+      required: [id, mediaId, purpose, sequence]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Course-domain reference row ID, not a media-service asset ID.
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/LessonMediaPurpose'
+        sequence:
+          type: integer
+          minimum: 1
     UpdatePublicationRequest:
       type: object
       additionalProperties: false
@@ -1319,7 +1415,7 @@ components:
     TeacherCourse:
       type: object
       additionalProperties: false
-      required: [id, publicationStatus, hasUnpublishedChanges, version, revision, title, summary, description, coverUrl, instructorDisplayName, category, level, accessType, chapters, createdAt, updatedAt]
+      required: [id, publicationStatus, hasUnpublishedChanges, version, revision, title, summary, description, coverMediaId, coverUrl, instructorDisplayName, category, level, accessType, chapters, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -1344,9 +1440,15 @@ components:
           type: string
         description:
           type: string
+        coverMediaId:
+          type: [string, 'null']
+          format: uuid
+          description: Stable COURSE_COVER reference of the editable version.
         coverUrl:
-          type: string
+          type: [string, 'null']
           format: uri
+          readOnly: true
+          description: Historical read compatibility or an authorized display projection; never accepted by create/update writes.
         instructorDisplayName:
           type: string
         category:
@@ -1409,7 +1511,7 @@ components:
           format: date-time
     MediaPurpose:
       type: string
-      description: Stable business purpose. T07 enables COURSE_COVER and LESSON_VIDEO; later domain tasks enable the remaining values without inventing a second upload protocol.
+      description: Stable business purpose. T08A enables COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE and ARTICLE_ATTACHMENT through explicit per-purpose policies; every other frozen value remains disabled until its owning domain supplies policy and authorization.
       enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
     MediaUploadMode:
       type: string
@@ -1599,6 +1701,10 @@ components:
           type: integer
           format: int64
           minimum: 0
+        componentCount:
+          type: integer
+          minimum: 0
+          description: Number of private HLS segment components; zero for a single-object variant.
     MediaAsset:
       type: object
       additionalProperties: false
@@ -1663,7 +1769,7 @@ components:
         variant:
           type: string
           maxLength: 80
-          description: Use `ORIGINAL` for the verified private source object or a listed variant name.
+          description: Use `ORIGINAL` for the verified private source object or a listed variant name. HLS playlist variants return a signed temporary rewritten playlist whose segment URLs share the same expiry.
         disposition:
           type: string
           enum: [INLINE, ATTACHMENT]
@@ -1686,6 +1792,30 @@ components:
         expiresAt:
           type: string
           format: date-time
+    MediaBindingValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose]
+      properties:
+        purpose:
+          $ref: '#/components/schemas/MediaPurpose'
+    MediaBindingValidation:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, status, bindable]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/MediaPurpose'
+        status:
+          type: string
+          const: READY
+        bindable:
+          type: boolean
+          const: true
+          description: True only after media-service has verified owner, exact purpose and READY state for this request.
     ApiError:
       type: object
       additionalProperties: false

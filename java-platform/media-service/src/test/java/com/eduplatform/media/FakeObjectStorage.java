@@ -125,6 +125,13 @@ class FakeObjectStorage implements ObjectStorage {
 
     synchronized boolean hasObject(String key) { return objects.containsKey(key); }
 
+    synchronized String readSigned(String signedUrl) {
+        String token = signedUrl.substring(signedUrl.lastIndexOf('/') + 1);
+        GrantTarget target = grants.get(token);
+        if (target == null || !objects.containsKey(target.key())) throw new IllegalArgumentException("grant missing");
+        return new String(objects.get(target.key()).bytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private static String token() { return UUID.randomUUID().toString(); }
 
     private static String digest(byte[] value) {

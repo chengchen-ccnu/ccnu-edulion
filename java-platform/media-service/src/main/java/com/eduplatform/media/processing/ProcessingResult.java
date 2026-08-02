@@ -8,6 +8,14 @@ public record ProcessingResult(List<VariantResult> variants) {
         variants = List.copyOf(variants);
     }
 
-    /** 一个已上传派生对象的内部元数据。 */
-    public record VariantResult(String name, String objectKey, String mimeType, long size, String etag) {}
+    /** 一个已上传派生对象及其私有 HLS 组件的内部元数据。 */
+    public record VariantResult(String name, String objectKey, String mimeType, long size, String etag,
+            List<ComponentResult> components) {
+        public VariantResult {
+            components = List.copyOf(components);
+        }
+    }
+
+    /** HLS 播放清单引用的一个切片对象；组件名必须与清单中的相对 URI 完全一致。 */
+    public record ComponentResult(String name, String objectKey, String mimeType, long size, String etag) {}
 }

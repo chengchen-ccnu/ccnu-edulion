@@ -16,6 +16,16 @@ management:
     web:
       exposure:
         include: health,info
+platform:
+  course:
+    media:
+      base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
+      request-timeout: ${COURSE_MEDIA_REQUEST_TIMEOUT:3s}
+      messaging:
+        enabled: false
+        outbox-poll-delay: 2s
+        confirm-timeout: 10s
+        max-publish-attempts: 20
 
 ---
 spring:

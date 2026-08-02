@@ -76,6 +76,8 @@ platform:
       enabled: ${MEDIA_WORKER_ENABLED:true}
       ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
       timeout: ${MEDIA_FFMPEG_TIMEOUT:2m}
+      max-concurrent-jobs: ${MEDIA_WORKER_MAX_CONCURRENT_JOBS:1}
+      hls-segment-duration: ${MEDIA_HLS_SEGMENT_DURATION:6s}
     oss:
       enabled: ${OSS_ENABLED:false}
       endpoint: ${OSS_ENDPOINT:}

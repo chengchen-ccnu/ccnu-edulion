@@ -37,6 +37,21 @@ public class ObjectKeyFactory {
                 + variant + "." + extension;
     }
 
+    /** 为一个 HLS 变体的切片生成稳定键，重试会覆盖同名切片而不扩散对象。 */
+    public String derivedComponent(String mediaId, String variant, String componentName) {
+        if (!componentName.matches("[A-Za-z0-9._-]{1,120}")) {
+            throw new IllegalArgumentException("HLS component name is unsafe");
+        }
+        return normalizePrefix(properties.oss().keyPrefix()) + "/derived/" + mediaId + "/"
+                + variant + "/" + componentName;
+    }
+
+    /** 为一次短期 HLS 授权生成不可猜测且可精确清理的临时播放清单键。 */
+    public String temporaryManifest(String mediaId, String grantId) {
+        return normalizePrefix(properties.oss().keyPrefix()) + "/temporary-access/" + mediaId + "/"
+                + grantId + ".m3u8";
+    }
+
     private static String normalizePrefix(String value) {
         String normalized = value == null ? "quarantine" : value.trim().replace('\\', '/');
         while (normalized.startsWith("/")) normalized = normalized.substring(1);

@@ -358,9 +358,29 @@ export interface paths {
         put?: never;
         /**
          * Issue a short-lived, object-level read grant
-         * @description T07 permits the uploader to preview an owned READY asset. Domain-authorized viewers are added by later consumer tasks; the client cannot assert course, question, AI-session or review visibility. Signed URLs are transient projections and must not be persisted.
+         * @description The uploader may preview an owned READY asset. HLS grants point to an expiring rewritten playlist whose segment URLs expire with the grant. The client cannot assert course, question, AI-session or review visibility, and signed URLs must never be persisted.
          */
         post: operations["createMediaAccessGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{mediaId}/binding-validations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate that an owned media asset can be bound by a domain service
+         * @description Validates uploader ownership, exact purpose and READY state without exposing storage metadata. Course-service calls this versioned contract before committing a local media reference; a successful validation does not itself create the reference.
+         */
+        post: operations["validateMediaBinding"];
         delete?: never;
         options?: never;
         head?: never;
@@ -405,8 +425,16 @@ export interface components {
             id: string;
             title: string;
             summary: string;
-            /** Format: uri */
-            coverUrl: string;
+            /**
+             * Format: uuid
+             * @description Stable COURSE_COVER media reference for the immutable published version; null only for legacy or intentionally unbound courses.
+             */
+            coverMediaId: string | null;
+            /**
+             * Format: uri
+             * @description Read-only display projection. Historical external URLs may appear during migration; signed URLs are transient and must not be persisted.
+             */
+            readonly coverUrl: string | null;
             teacher: components["schemas"]["TeacherSummary"];
             category: components["schemas"]["CategorySummary"];
             level: components["schemas"]["CourseLevel"];
@@ -419,8 +447,16 @@ export interface components {
             summary: string;
             /** @description Markdown course description. */
             description: string;
-            /** Format: uri */
-            coverUrl: string;
+            /**
+             * Format: uuid
+             * @description Stable COURSE_COVER media reference frozen into this published course version.
+             */
+            coverMediaId: string | null;
+            /**
+             * Format: uri
+             * @description Historical or authorized display projection; never a course write fact.
+             */
+            readonly coverUrl: string | null;
             teacher: components["schemas"]["TeacherSummary"];
             category: components["schemas"]["CategorySummary"];
             level: components["schemas"]["CourseLevel"];
@@ -459,6 +495,8 @@ export interface components {
             type: "VIDEO" | "ARTICLE" | "ASSESSMENT";
             sequence: number;
             previewable: boolean;
+            /** @description Stable media references frozen into the same course version. Signed playback/download URLs are obtained separately and are never stored here. */
+            resources: components["schemas"]["LessonMediaResource"][];
         };
         CreateCourseRequest: {
             /** Format: uuid */
@@ -466,8 +504,11 @@ export interface components {
             title: string;
             summary: string;
             description: string;
-            /** Format: uri */
-            coverUrl: string;
+            /**
+             * Format: uuid
+             * @description READY COURSE_COVER owned by the current teacher. Null creates a course without a cover; coverUrl is intentionally not accepted for writes.
+             */
+            coverMediaId: string | null;
             /** @description Course byline content; ownership is always taken from the trusted authenticated user ID. */
             instructorDisplayName: string;
             /** Format: uuid */
@@ -481,8 +522,11 @@ export interface components {
             title: string;
             summary: string;
             description: string;
-            /** Format: uri */
-            coverUrl: string;
+            /**
+             * Format: uuid
+             * @description Replacement READY COURSE_COVER media ID. Null atomically releases the draft cover reference; historical coverUrl is not writable.
+             */
+            coverMediaId: string | null;
             instructorDisplayName: string;
             /** Format: uuid */
             categoryId: string;
@@ -505,6 +549,37 @@ export interface components {
             type: "VIDEO" | "ARTICLE" | "ASSESSMENT";
             sequence: number;
             previewable: boolean;
+            /**
+             * @description Stable media bindings for this lesson. Omission is equivalent to an empty list for T05 client compatibility.
+             * @default []
+             */
+            resources: components["schemas"]["LessonMediaResourceInput"][];
+        };
+        /**
+         * @description Course-owned lesson purposes enabled by an explicit T08A upload and binding policy.
+         * @enum {string}
+         */
+        LessonMediaPurpose: "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT";
+        LessonMediaResourceInput: {
+            /**
+             * Format: uuid
+             * @description READY asset owned by the current teacher and validated by media-service before the course transaction commits.
+             */
+            mediaId: string;
+            purpose: components["schemas"]["LessonMediaPurpose"];
+            /** @description Ordering within the same purpose; values must be unique and contiguous from 1. */
+            sequence: number;
+        };
+        LessonMediaResource: {
+            /**
+             * Format: uuid
+             * @description Course-domain reference row ID, not a media-service asset ID.
+             */
+            id: string;
+            /** Format: uuid */
+            mediaId: string;
+            purpose: components["schemas"]["LessonMediaPurpose"];
+            sequence: number;
         };
         UpdatePublicationRequest: {
             /** @enum {string} */
@@ -525,8 +600,16 @@ export interface components {
             title: string;
             summary: string;
             description: string;
-            /** Format: uri */
-            coverUrl: string;
+            /**
+             * Format: uuid
+             * @description Stable COURSE_COVER reference of the editable version.
+             */
+            coverMediaId: string | null;
+            /**
+             * Format: uri
+             * @description Historical read compatibility or an authorized display projection; never accepted by create/update writes.
+             */
+            readonly coverUrl: string | null;
             instructorDisplayName: string;
             category: components["schemas"]["CategorySummary"];
             level: components["schemas"]["CourseLevel"];
@@ -557,7 +640,7 @@ export interface components {
             updatedAt: string;
         };
         /**
-         * @description Stable business purpose. T07 enables COURSE_COVER and LESSON_VIDEO; later domain tasks enable the remaining values without inventing a second upload protocol.
+         * @description Stable business purpose. T08A enables COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE and ARTICLE_ATTACHMENT through explicit per-purpose policies; every other frozen value remains disabled until its owning domain supplies policy and authorization.
          * @enum {string}
          */
         MediaPurpose: "COURSE_COVER" | "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT" | "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "AI_QUESTION_IMAGE" | "USER_AVATAR" | "TEACHER_QUALIFICATION" | "BANNER_IMAGE" | "TOPIC_COVER" | "REPORT_EXPORT";
@@ -650,6 +733,8 @@ export interface components {
             mimeType: string;
             /** Format: int64 */
             size: number;
+            /** @description Number of private HLS segment components; zero for a single-object variant. */
+            componentCount?: number;
         };
         MediaAsset: {
             /** Format: uuid */
@@ -678,7 +763,7 @@ export interface components {
             total: number;
         };
         CreateMediaAccessGrantRequest: {
-            /** @description Use `ORIGINAL` for the verified private source object or a listed variant name. */
+            /** @description Use `ORIGINAL` for the verified private source object or a listed variant name. HLS playlist variants return a signed temporary rewritten playlist whose segment URLs share the same expiry. */
             variant: string;
             /** @enum {string} */
             disposition: "INLINE" | "ATTACHMENT";
@@ -696,6 +781,21 @@ export interface components {
             };
             /** Format: date-time */
             expiresAt: string;
+        };
+        MediaBindingValidationRequest: {
+            purpose: components["schemas"]["MediaPurpose"];
+        };
+        MediaBindingValidation: {
+            /** Format: uuid */
+            mediaId: string;
+            purpose: components["schemas"]["MediaPurpose"];
+            /** @constant */
+            status: "READY";
+            /**
+             * @description True only after media-service has verified owner, exact purpose and READY state for this request.
+             * @constant
+             */
+            bindable: true;
         };
         ApiError: {
             /** @example COMMON.VALIDATION_FAILED */
@@ -1585,6 +1685,37 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    validateMediaBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaBindingValidationRequest"];
+            };
+        };
+        responses: {
+            /** @description The asset exists, belongs to the authenticated caller, matches the requested purpose and is READY. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaBindingValidation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["MediaNotFound"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
 }

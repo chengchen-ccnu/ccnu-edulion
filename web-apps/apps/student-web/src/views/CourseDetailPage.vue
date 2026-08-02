@@ -52,7 +52,7 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
   <div v-if="loading" class="detail-loading">正在读取课程线上版本…</div>
   <template v-else-if="course">
     <section class="detail-hero">
-      <img :src="course.coverUrl" :alt="`${course.title}封面`">
+      <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
       <div class="detail-hero__content">
         <div class="meta-row">
           <span>{{ course.category.name }}</span>

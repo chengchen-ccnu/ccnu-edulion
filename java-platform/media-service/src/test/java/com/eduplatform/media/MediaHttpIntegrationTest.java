@@ -8,11 +8,15 @@ import com.eduplatform.media.messaging.MediaReferenceListener;
 import com.eduplatform.media.persistence.MediaRepository;
 import com.eduplatform.media.processing.MediaProcessingCoordinator;
 import com.eduplatform.media.service.MediaReclaimer;
+import com.eduplatform.media.messaging.MediaMessageRecoverer;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
+import org.springframework.amqp.core.Message;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -48,20 +52,120 @@ class MediaHttpIntegrationTest {
     @Autowired MediaReferenceListener references;
     @Autowired TransactionTemplate transactions;
     @Autowired MediaProcessingCoordinator coordinator;
+    @Autowired MediaMessageRecoverer recoverer;
+    @Autowired FakeFfmpegCommandRunner ffmpeg;
     private final HttpClient client = HttpClient.newHttpClient();
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM temporary_access_object");
         jdbc.update("DELETE FROM access_grant_audit");
         jdbc.update("DELETE FROM media_audit_record");
         jdbc.update("DELETE FROM consumed_event");
         jdbc.update("DELETE FROM outbox_event");
         jdbc.update("DELETE FROM media_reference");
         jdbc.update("DELETE FROM processing_job");
+        jdbc.update("DELETE FROM media_variant_component");
         jdbc.update("DELETE FROM media_variant");
         jdbc.update("DELETE FROM media_asset");
         jdbc.update("DELETE FROM upload_part");
         jdbc.update("DELETE FROM upload_session");
+    }
+
+    @Test
+    /** Given READY 封面，When 校验 owner/用途/状态，Then 仅精确匹配成功且不暴露存储字段。 */
+    void bindingValidationRejectsOtherOwnerWrongPurposeMissingAndNotReady() throws Exception {
+        CompletedTestAsset ready = createReadyCover("00000000-0000-4000-8000-000000007207", "bind-cover");
+        HttpResponse<String> valid = send("POST", "/api/v1/media/" + ready.mediaId() + "/binding-validations",
+                "{\"purpose\":\"COURSE_COVER\"}", "TEACHER");
+        assertThat(valid.statusCode()).isEqualTo(200);
+        assertThat(valid.body()).contains("\"bindable\":true", "\"status\":\"READY\"")
+                .doesNotContain("objectKey", "url");
+        assertThat(send("POST", "/api/v1/media/" + ready.mediaId() + "/binding-validations",
+                "{\"purpose\":\"LESSON_VIDEO\"}", "TEACHER").statusCode()).isEqualTo(422);
+        assertThat(sendAs("POST", "/api/v1/media/" + ready.mediaId() + "/binding-validations",
+                "{\"purpose\":\"COURSE_COVER\"}", "TEACHER",
+                "00000000-0000-4000-8000-000000007199").statusCode()).isEqualTo(404);
+        assertThat(send("POST", "/api/v1/media/00000000-0000-4000-8000-000000007999/binding-validations",
+                "{\"purpose\":\"COURSE_COVER\"}", "TEACHER").statusCode()).isEqualTo(404);
+
+        byte[] bytes = "pending".getBytes(StandardCharsets.UTF_8);
+        String sha = sha256(bytes);
+        JsonNode session = mapper.readTree(send("POST", "/api/v1/media/uploads", """
+                {"clientRequestId":"00000000-0000-4000-8000-000000007208","purpose":"COURSE_COVER",
+                 "fileName":"pending.png","size":%d,"mimeType":"image/png","sha256":"%s"}
+                """.formatted(bytes.length, sha), "TEACHER").body());
+        storage.upload(session.get("uploadGrant").get("url").asString(), bytes, "image/png", sha);
+        JsonNode pending = mapper.readTree(send("POST", "/api/v1/media/uploads/" + session.get("uploadId").asString()
+                + "/complete", "{\"sha256\":\"" + sha + "\",\"parts\":[]}", "TEACHER").body());
+        assertThat(send("POST", "/api/v1/media/" + pending.get("mediaId").asString() + "/binding-validations",
+                "{\"purpose\":\"COURSE_COVER\"}", "TEACHER").statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    /** Given 最小视频，When 处理并授权 HLS，Then 清单/切片就绪、URL 短期签发且临时对象到期清理。 */
+    void videoProducesAuthorizedHlsAndCleansTemporaryManifest() throws Exception {
+        CompletedTestAsset video = createUploadedAsset("00000000-0000-4000-8000-000000007209",
+                "LESSON_VIDEO", "lesson.mp4", "video/mp4", "video123".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(video.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+
+        JsonNode ready = mapper.readTree(send("GET", "/api/v1/media/" + video.mediaId(), null, "TEACHER").body());
+        assertThat(ready.get("status").asString()).isEqualTo("READY");
+        assertThat(ready.get("variants")).anySatisfy(value ->
+                assertThat(value.get("variant").asString()).isEqualTo("hls-v1"));
+        assertThat(ready.get("variants").get(0).get("componentCount").asInt()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant_component", Integer.class)).isEqualTo(1);
+        assertThat(ffmpeg.lastScratch()).isNotNull();
+        assertThat(Files.exists(ffmpeg.lastScratch())).isFalse();
+
+        JsonNode grant = mapper.readTree(send("POST", "/api/v1/media/" + video.mediaId() + "/access-grants",
+                "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}", "TEACHER").body());
+        String authorizedPlaylist = storage.readSigned(grant.get("url").asString());
+        assertThat(authorizedPlaylist).contains("#EXTM3U", "https://oss.test/read/")
+                .doesNotContain("segment-00000.ts\n");
+        String temporaryKey = jdbc.queryForObject("SELECT object_key FROM temporary_access_object", String.class);
+        jdbc.update("UPDATE temporary_access_object SET expires_at = ?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)));
+        new MediaReclaimer(repository, storage, events, transactions).reclaim();
+        assertThat(storage.hasObject(temporaryKey)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT deleted_at IS NOT NULL FROM temporary_access_object", Boolean.class))
+                .isTrue();
+    }
+
+    @Test
+    /** Given Worker 首次失败，When 同事件重试后成功及另一消息耗尽，Then 状态可重试且 Recoverer 拒绝进 DLQ。 */
+    void videoFailureRetriesAndExhaustionCreatesFailedEventForDlq() throws Exception {
+        CompletedTestAsset retry = createUploadedAsset("00000000-0000-4000-8000-000000007210",
+                "LESSON_VIDEO", "retry.mp4", "video/mp4", "retry123".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent retryEvent = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(retry.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        ffmpeg.failNext(1);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> coordinator.process(parser.parse(retryEvent.payloadJson())))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(Files.exists(ffmpeg.lastScratch())).isFalse();
+        assertThat(jdbc.queryForObject("SELECT status FROM processing_job WHERE media_id = ?", String.class,
+                retry.mediaId())).isEqualTo("FAILED");
+        coordinator.process(parser.parse(retryEvent.payloadJson()));
+        assertThat(jdbc.queryForObject("SELECT status FROM media_asset WHERE media_id = ?", String.class,
+                retry.mediaId())).isEqualTo("READY");
+
+        CompletedTestAsset dead = createUploadedAsset("00000000-0000-4000-8000-000000007211",
+                "LESSON_VIDEO", "dead.mp4", "video/mp4", "dead1234".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent deadEvent = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(dead.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> recoverer.recover(
+                        new Message(deadEvent.payloadJson().getBytes(StandardCharsets.UTF_8)),
+                        new IllegalStateException("exhausted")))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+        assertThat(jdbc.queryForObject("SELECT status FROM media_asset WHERE media_id = ?", String.class,
+                dead.mediaId())).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_event WHERE aggregate_id = ? AND event_type = 'MediaFailed'",
+                Integer.class, dead.mediaId())).isEqualTo(1);
     }
 
     @Test
@@ -227,26 +331,37 @@ class MediaHttpIntegrationTest {
     }
 
     private CompletedTestAsset createReadyCover(String clientRequestId, String content) throws Exception {
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        String sha = sha256(bytes);
-        JsonNode session = mapper.readTree(send("POST", "/api/v1/media/uploads", """
-                {"clientRequestId":"%s","purpose":"COURSE_COVER","fileName":"cover.png",
-                 "size":%d,"mimeType":"image/png","sha256":"%s"}
-                """.formatted(clientRequestId, bytes.length, sha), "TEACHER").body());
-        storage.upload(session.get("uploadGrant").get("url").asString(), bytes, "image/png", sha);
-        JsonNode asset = mapper.readTree(send("POST", "/api/v1/media/uploads/" + session.get("uploadId").asString()
-                + "/complete", "{\"sha256\":\"" + sha + "\",\"parts\":[]}", "TEACHER").body());
+        CompletedTestAsset completed = createUploadedAsset(clientRequestId, "COURSE_COVER",
+                "cover.png", "image/png", content.getBytes(StandardCharsets.UTF_8));
         MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
-                .filter(event -> event.aggregateId().equals(asset.get("mediaId").asString())
+                .filter(event -> event.aggregateId().equals(completed.mediaId())
                         && event.eventType().equals("MediaUploaded"))
                 .findFirst().orElseThrow();
         coordinator.process(parser.parse(uploaded.payloadJson()));
+        return completed;
+    }
+
+    private CompletedTestAsset createUploadedAsset(String clientRequestId, String purpose,
+            String fileName, String mimeType, byte[] bytes) throws Exception {
+        String sha = sha256(bytes);
+        JsonNode session = mapper.readTree(send("POST", "/api/v1/media/uploads", """
+                {"clientRequestId":"%s","purpose":"%s","fileName":"%s",
+                 "size":%d,"mimeType":"%s","sha256":"%s"}
+                """.formatted(clientRequestId, purpose, fileName, bytes.length, mimeType, sha), "TEACHER").body());
+        storage.upload(session.get("uploadGrant").get("url").asString(), bytes, mimeType, sha);
+        JsonNode asset = mapper.readTree(send("POST", "/api/v1/media/uploads/" + session.get("uploadId").asString()
+                + "/complete", "{\"sha256\":\"" + sha + "\",\"parts\":[]}", "TEACHER").body());
         return new CompletedTestAsset(session.get("uploadId").asString(), asset.get("mediaId").asString());
     }
 
     private HttpResponse<String> send(String method, String path, String body, String role) throws Exception {
+        return sendAs(method, path, body, role, TEACHER);
+    }
+
+    private HttpResponse<String> sendAs(String method, String path, String body, String role, String userId)
+            throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
-                .header("X-User-Id", TEACHER).header("X-User-Roles", role).header("X-Trace-Id", "trace-t07-test");
+                .header("X-User-Id", userId).header("X-User-Roles", role).header("X-Trace-Id", "trace-t08a-test");
         if (body != null) request.header("Content-Type", "application/json");
         request.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());

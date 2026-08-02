@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * OpenAPI v0.5 媒体 HTTP 适配器。只接收 Gateway 传递的身份头与 JSON 元数据，
+ * OpenAPI v0.6 媒体 HTTP 适配器。只接收 Gateway 或受信领域服务传递的身份头与 JSON 元数据，
  * 不接收或转发文件字节；文件 I/O 由浏览器使用短期 OSS 授权完成。
  */
 @RestController
@@ -121,6 +121,15 @@ public class MediaController {
         MediaDtos.AccessGrant grant = service.access(mediaId, MediaIdentity.require(userId, roles).userId(),
                 request, trace(servletRequest));
         return ResponseEntity.status(201).body(grant);
+    }
+
+    @PostMapping("/{mediaId}/binding-validations")
+    /** 供领域服务绑定前验证当前教师拥有、用途匹配且 READY；成功不直接创建引用。 */
+    MediaDtos.BindingValidation validateBinding(@PathVariable String mediaId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @Valid @RequestBody MediaDtos.BindingValidationRequest request) {
+        return service.validateBinding(mediaId, MediaIdentity.require(userId, roles).userId(), request);
     }
 
     private static String trace(HttpServletRequest request) {

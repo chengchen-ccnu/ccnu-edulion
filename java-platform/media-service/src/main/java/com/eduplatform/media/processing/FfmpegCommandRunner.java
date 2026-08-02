@@ -1,0 +1,55 @@
+package com.eduplatform.media.processing;
+
+import com.eduplatform.media.config.MediaProperties;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import org.springframework.stereotype.Component;
+
+/**
+ * 执行单个 FFmpeg HLS 子进程的可替换边界，便于自动化测试不依赖真实 FFmpeg 或 OSS。
+ */
+@Component
+public class FfmpegCommandRunner {
+    /**
+     * 把一个已下载视频转为 VOD HLS 清单与切片。
+     *
+     * @param input Worker 临时目录中的原始视频
+     * @param playlist 输出 m3u8 文件
+     * @param segmentPattern FFmpeg 使用的切片文件模板
+     * @param properties 超时、可执行文件和切片时长配置
+     * @throws RuntimeException 超时、退出码非零或输出缺失时抛出，交由 MQ 有限重试
+     */
+    public void run(Path input, Path playlist, Path segmentPattern, MediaProperties.Worker properties) {
+        Path error = playlist.getParent().resolve("ffmpeg-error.log");
+        List<String> command = List.of(properties.ffmpegPath(), "-hide_banner", "-loglevel", "error", "-y",
+                "-i", input.toString(), "-map", "0:v:0", "-c:v", "libx264", "-preset", "veryfast", "-an",
+                "-f", "hls", "-hls_time", Long.toString(Math.max(1, properties.hlsSegmentDuration().toSeconds())),
+                "-hls_playlist_type", "vod", "-hls_segment_filename", segmentPattern.toString(), playlist.toString());
+        try {
+            Process process = new ProcessBuilder(command)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(error.toFile())
+                    .start();
+            boolean completed = process.waitFor(properties.timeout().toMillis(), TimeUnit.MILLISECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new IllegalStateException("FFmpeg processing timed out");
+            }
+            if (process.exitValue() != 0 || !Files.isRegularFile(playlist) || Files.size(playlist) == 0) {
+                String diagnostic = Files.exists(error)
+                        ? Files.readString(error, StandardCharsets.UTF_8).replaceAll("[\\r\\n]+", " ") : "";
+                if (diagnostic.length() > 300) diagnostic = diagnostic.substring(0, 300);
+                throw new IllegalStateException("FFmpeg HLS processing failed: " + diagnostic);
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("FFmpeg process could not start", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("FFmpeg worker interrupted", exception);
+        }
+    }
+}

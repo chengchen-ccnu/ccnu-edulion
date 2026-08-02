@@ -23,7 +23,9 @@ public record MediaProperties(
 
     public record Maintenance(boolean enabled, Duration fixedDelay, Duration unboundRetention) {}
 
-    public record Worker(boolean enabled, String ffmpegPath, Duration timeout) {}
+    /** FFmpeg HLS 处理参数；maxConcurrentJobs 是单实例硬上限，防止大视频无限并发耗尽本机资源。 */
+    public record Worker(boolean enabled, String ffmpegPath, Duration timeout,
+            int maxConcurrentJobs, Duration hlsSegmentDuration) {}
 
     public record Oss(boolean enabled, String endpoint, String region, String bucket, String keyPrefix,
             String accessKeyId, String accessKeySecret, String securityToken, Duration accessGrantTtl) {}

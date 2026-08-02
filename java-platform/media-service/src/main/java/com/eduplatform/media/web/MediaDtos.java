@@ -68,7 +68,13 @@ public final class MediaDtos {
             Instant expiresAt,
             Instant createdAt) {}
 
-    public record Variant(String variant, String mimeType, long size) {}
+    /** 派生对象摘要；HLS 的 componentCount 是已登记私有切片数，单对象变体为 0。 */
+    public record Variant(String variant, String mimeType, long size, int componentCount) {}
+
+    public record BindingValidationRequest(@NotNull MediaPurpose purpose) {}
+
+    /** 成功响应本身证明 owner、用途和 READY 状态均已由 media-service 校验。 */
+    public record BindingValidation(String mediaId, MediaPurpose purpose, MediaStatus status, boolean bindable) {}
 
     public record Asset(
             String mediaId,

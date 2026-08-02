@@ -16,3 +16,11 @@ platform:
   course:
     seed:
       enabled: false
+    media:
+      base-url: http://127.0.0.1:8083
+      request-timeout: 1s
+      messaging:
+        enabled: false
+        outbox-poll-delay: 2s
+        confirm-timeout: 1s
+        max-publish-attempts: 3
