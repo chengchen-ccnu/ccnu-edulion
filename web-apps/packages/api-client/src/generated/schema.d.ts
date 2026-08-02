@@ -13,7 +13,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Log in with a platform account */
+        /**
+         * Log in with a platform account
+         * @description Validates credentials with account/IP rate limiting, records a login audit, returns a short-lived access token and sets a rotating HttpOnly refresh cookie. Failed credentials never reveal whether the account exists.
+         */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -50,7 +53,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Revoke the current refresh session and clear its cookie */
+        /**
+         * Revoke the current refresh session and clear its cookie
+         * @description Missing or previously revoked refresh cookies are treated as idempotent success; the response always expires the browser cookie.
+         */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -65,7 +71,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the authenticated user summary */
+        /**
+         * Get the authenticated user summary
+         * @description Re-reads the active IAM account, roles and permissions for the JWT subject so frontends can restore current authorization without trusting persisted browser profile data.
+         */
         get: operations["getCurrentUser"];
         put?: never;
         post?: never;
@@ -82,7 +91,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List published courses */
+        /**
+         * List published courses
+         * @description Returns only the current public version of published courses. Draft and unpublished versions are never projected, and all filters are optional.
+         */
         get: operations["listCourses"];
         put?: never;
         post?: never;
@@ -116,7 +128,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a published course detail */
+        /**
+         * Get a published course detail
+         * @description Returns the immutable public version and ordered curriculum. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
+         */
         get: operations["getCourse"];
         put?: never;
         post?: never;
@@ -235,11 +250,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get an owned upload session and resumable part state */
+        /**
+         * Get an owned upload session and resumable part state
+         * @description Ownership is derived from the authenticated Gateway identity. A session owned by another user is indistinguishable from a missing session.
+         */
         get: operations["getMediaUpload"];
         put?: never;
         post?: never;
-        /** Idempotently cancel an unfinished upload session */
+        /**
+         * Idempotently cancel an unfinished upload session
+         * @description Cancels the exact recorded single-object upload or multipart provider upload. Terminal sessions are returned unchanged and no bucket listing or broad deletion is performed.
+         */
         delete: operations["cancelMediaUpload"];
         options?: never;
         head?: never;
@@ -313,7 +334,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get owned media metadata and processing status */
+        /**
+         * Get owned media metadata and processing status
+         * @description Returns stable media metadata and processing state only for the uploader. It does not grant domain visibility and never exposes an object key or signed URL.
+         */
         get: operations["getMedia"];
         put?: never;
         post?: never;

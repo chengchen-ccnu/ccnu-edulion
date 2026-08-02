@@ -29,13 +29,19 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 @EnableConfigurationProperties(IamProperties.class)
+/**
+ * IAM 服务的密码哈希、JWT 编解码和无状态 HTTP 访问边界。
+ * 登录/刷新/退出公开，其他接口必须持有效 JWT；认证失败使用统一错误信封。
+ */
 public class SecurityConfig {
     @Bean
+    /** 使用固定成本 BCrypt 哈希账号密码；原始密码不写入数据库或日志。 */
     PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
     }
 
     @Bean
+    /** 校验 HMAC 密钥最低 32 字节，配置不足时阻止 IAM 启动。 */
     SecretKey jwtSecretKey(IamProperties properties) {
         String secret = properties.jwt().secret();
         if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
@@ -50,6 +56,7 @@ public class SecurityConfig {
     }
 
     @Bean
+    /** 创建同时校验签发者、受众、签名和时间声明的 JWT 解码器。 */
     NimbusJwtDecoder jwtDecoder(SecretKey key, IamProperties properties) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key).build();
         OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
@@ -60,6 +67,7 @@ public class SecurityConfig {
     }
 
     @Bean
+    /** 构建无服务器 Session 的安全过滤链；状态只来自 JWT 和刷新 Cookie。 */
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(

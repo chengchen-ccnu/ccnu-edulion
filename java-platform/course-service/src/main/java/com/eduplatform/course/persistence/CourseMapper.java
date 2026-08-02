@@ -11,6 +11,12 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 @Mapper
+/**
+ * course-service Schema 的课程目录持久化边界。
+ *
+ * <p>公开查询只选择可见发布版本；教师查询始终带 owner ID。锁定、revision 条件更新和内容
+ * 哈希预占由服务层组合成事务，用于防止并发覆盖与重复目录写入。</p>
+ */
 public interface CourseMapper {
     long countPublished(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
             @Param("level") String level, @Param("accessType") String accessType);

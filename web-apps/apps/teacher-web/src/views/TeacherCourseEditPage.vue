@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 教师课程元数据编辑页；读取和更新当前教师拥有的课程编辑快照。
+ * 提交携带 expectedRevision，服务端冲突时要求重新加载；已发布课程的首次编辑由后端复制新草稿。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CategorySummary, TeacherCourse, UpdateCourseRequest } from "@edu/api-client";
 import { onMounted, reactive, ref } from "vue";

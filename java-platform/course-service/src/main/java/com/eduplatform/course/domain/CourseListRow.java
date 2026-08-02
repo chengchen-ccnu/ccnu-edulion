@@ -1,5 +1,6 @@
 package com.eduplatform.course.domain;
 
+/** 公开目录联表查询的只读行投影，只包含当前可见发布版本和展示所需关联名称。 */
 public class CourseListRow {
     private String id;
     private String title;

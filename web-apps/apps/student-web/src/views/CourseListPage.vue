@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 学生端公开课程目录页；数据来自 GET /api/v1/courses 与 /courses/categories。
+ * 筛选和页码与路由查询参数双向同步，成功显示公开课程，失败显示 Gateway 错误；本页无需登录权限。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CategorySummary, CourseAccessType, CourseLevel, CoursePage, ListCoursesQuery } from "@edu/api-client";
 import { computed, onMounted, reactive, ref, watch } from "vue";

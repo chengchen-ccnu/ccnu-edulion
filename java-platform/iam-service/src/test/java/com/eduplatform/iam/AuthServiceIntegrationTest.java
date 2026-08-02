@@ -76,6 +76,7 @@ class AuthServiceIntegrationTest {
     }
 
     @Test
+    /** Given 一个有效会话，轮换后重放旧令牌；Then 整个令牌族被撤销且新令牌也不能继续使用。 */
     void rotatesRefreshTokenAndRejectsReuse() {
         TokenPair login = authService.login("student_test_01", "correct-password", "127.0.0.1", "trace1234");
         TokenPair rotated = authService.refresh(login.refreshToken());
@@ -104,6 +105,7 @@ class AuthServiceIntegrationTest {
     }
 
     @Test
+    /** Given 同账号/IP 连续密码失败；When 超过时间窗阈值；Then 后续登录被限流并保留审计。 */
     void rateLimitsRepeatedFailures() {
         for (int attempt = 0; attempt < 5; attempt++) {
             try { authService.login("student_test_01", "wrong-password", "127.0.0.3", "trace1234"); }

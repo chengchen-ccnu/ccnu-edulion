@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 教师新建课程页；分类来自公开分类 API，提交到 POST /api/v1/teacher/courses。
+ * clientRequestId 保证重复提交返回同一草稿；成功跳转编辑页，校验、权限和网络失败保留表单并提示。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CategorySummary, CreateCourseRequest } from "@edu/api-client";
 import { onMounted, reactive, ref } from "vue";

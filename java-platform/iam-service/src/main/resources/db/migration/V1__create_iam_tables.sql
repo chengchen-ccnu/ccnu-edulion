@@ -1,3 +1,6 @@
+-- T04 iam-service 首个向前迁移：创建账号、角色权限、刷新会话与登录审计表。
+-- 迁移不可逆且只在 IAM Schema 内建外键；后续结构变化必须新增 Flyway 版本，不能回写本文件。
+
 CREATE TABLE `user` (
     id CHAR(36) NOT NULL,
     account VARCHAR(128) NOT NULL,
@@ -56,7 +59,9 @@ CREATE TABLE refresh_session (
     rotated_at TIMESTAMP(6) NULL,
     revoked_at TIMESTAMP(6) NULL,
     PRIMARY KEY (id),
+    -- 原始 Refresh Token 不落库；摘要唯一键同时支持查找与重放/并发轮换判定。
     UNIQUE KEY uk_refresh_token_hash (token_hash),
+    -- family_id 把连续轮换会话串成令牌族，发现旧令牌重放时可整体撤销。
     KEY idx_refresh_family (family_id),
     KEY idx_refresh_user (user_id),
     CONSTRAINT fk_refresh_user FOREIGN KEY (user_id) REFERENCES `user` (id),
@@ -73,6 +78,7 @@ CREATE TABLE login_audit (
     trace_id VARCHAR(64) NOT NULL,
     occurred_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
+    -- 登录限流按归一化账号、来源地址和时间窗统计失败次数。
     KEY idx_login_audit_rate_limit (account, remote_address, occurred_at),
     CONSTRAINT fk_login_audit_user FOREIGN KEY (user_id) REFERENCES `user` (id)
 );

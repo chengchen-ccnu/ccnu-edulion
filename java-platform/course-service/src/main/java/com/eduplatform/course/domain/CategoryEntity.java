@@ -1,5 +1,6 @@
 package com.eduplatform.course.domain;
 
+/** course-service 内部课程分类投影；只有 ACTIVE 分类可用于公开筛选和课程编辑。 */
 public class CategoryEntity {
     private String id;
     private String name;

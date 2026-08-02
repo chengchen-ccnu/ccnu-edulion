@@ -1,3 +1,6 @@
+-- T05 course-service 首个向前迁移：创建分类、课程聚合、不可变版本、章节和课时目录表。
+-- 迁移不可逆且不跨 Schema 建外键；后续结构变化必须新增 Flyway 版本，不能回写本文件。
+
 CREATE TABLE category (
     id CHAR(36) NOT NULL,
     code VARCHAR(50) NOT NULL,
@@ -23,6 +26,7 @@ CREATE TABLE course (
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     row_version BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
+    -- 教师与客户端请求 ID 共同保证创建重放只产生一门课程。
     UNIQUE KEY uk_course_owner_request (owner_teacher_id, create_request_id),
     KEY idx_course_publication (publication_status, published_at),
     KEY idx_course_owner (owner_teacher_id, updated_at),
@@ -48,6 +52,7 @@ CREATE TABLE course_version (
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     row_version BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
+    -- 每门课程的版本号单调且唯一，已发布版本不会被后续编辑覆盖。
     UNIQUE KEY uk_course_version_number (course_id, version_number),
     KEY idx_course_version_category (category_id),
     CONSTRAINT fk_course_version_course FOREIGN KEY (course_id) REFERENCES course (id),
@@ -66,6 +71,7 @@ CREATE TABLE chapter (
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     row_version BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
+    -- 同一版本内章节位置唯一，服务层另行校验必须从 1 连续排列。
     UNIQUE KEY uk_chapter_position (course_version_id, position),
     CONSTRAINT fk_chapter_course_version FOREIGN KEY (course_version_id) REFERENCES course_version (id)
 );
@@ -81,12 +87,14 @@ CREATE TABLE lesson (
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     row_version BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
+    -- 同一章节内课时位置唯一，目录整体替换在一个事务内完成。
     UNIQUE KEY uk_lesson_position (chapter_id, position),
     CONSTRAINT fk_lesson_chapter FOREIGN KEY (chapter_id) REFERENCES chapter (id),
     CONSTRAINT chk_lesson_type CHECK (lesson_type IN ('VIDEO', 'ARTICLE', 'ASSESSMENT'))
 );
 
 ALTER TABLE course
+    -- 聚合只保存当前草稿/发布版本指针，避免公开查询误读其他历史版本。
     ADD CONSTRAINT fk_course_draft_version FOREIGN KEY (current_draft_version_id) REFERENCES course_version (id);
 
 ALTER TABLE course

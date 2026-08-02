@@ -10,11 +10,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
+/** 复用合法入口 Trace ID 或生成新值，并提供给响应头、错误信封和登录审计。 */
 public class TraceFilter extends OncePerRequestFilter {
     public static final String ATTRIBUTE = TraceFilter.class.getName() + ".traceId";
     public static final String HEADER = "X-Trace-Id";
 
     @Override
+    /** 非法外部值不会进入日志链路；本过滤器不写数据库。 */
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String incoming = request.getHeader(HEADER);

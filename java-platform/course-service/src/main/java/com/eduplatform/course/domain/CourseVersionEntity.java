@@ -2,6 +2,7 @@ package com.eduplatform.course.domain;
 
 import java.time.Instant;
 
+/** 一次课程内容版本投影；PUBLISHED/ARCHIVED 版本不原地编辑，新修改写入 DRAFT。 */
 public class CourseVersionEntity {
     private String id;
     private String courseId;

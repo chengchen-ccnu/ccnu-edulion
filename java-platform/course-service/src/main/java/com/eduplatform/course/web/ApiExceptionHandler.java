@@ -16,6 +16,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
+/**
+ * 把课程业务错误、参数校验和不可读请求统一转换为平台错误信封。
+ * 他人课程与不存在资源沿用相同业务错误，未知异常不会泄露 SQL 或内部实现。
+ */
 public class ApiExceptionHandler {
     @ExceptionHandler(CourseException.class)
     ResponseEntity<ApiError> handleCourse(CourseException exception, HttpServletRequest request) {

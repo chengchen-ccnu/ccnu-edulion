@@ -11,6 +11,11 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 @Mapper
+/**
+ * IAM Schema 的 MyBatis 持久化边界，包含账号读取、刷新令牌轮换、登录审计和本地 seed 写入。
+ *
+ * <p>调用方负责事务与权限语义；轮换/撤销方法用受影响行数支持并发重放判定。</p>
+ */
 public interface IamMapper {
     @Select("SELECT id, account, display_name, password_hash, status, avatar_url FROM `user` WHERE account = #{account}")
     UserAccount findUserByAccount(String account);

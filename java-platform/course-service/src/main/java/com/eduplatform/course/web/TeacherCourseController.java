@@ -21,6 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/teacher/courses")
 @Validated
+/**
+ * 教师课程管理接口，消费 Gateway 注入的可信用户头并把所有读写限定到该教师。
+ *
+ * <p>创建支持客户端请求 ID 幂等；更新、目录替换和发布都由服务层事务与乐观版本控制保护。</p>
+ */
 public class TeacherCourseController {
     private final CourseCatalogService service;
 
@@ -29,6 +34,7 @@ public class TeacherCourseController {
     }
 
     @GetMapping
+    /** 返回当前教师自己的课程分页，不接受请求参数指定其他所有者。 */
     CourseDtos.TeacherCoursePage list(
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
@@ -39,6 +45,7 @@ public class TeacherCourseController {
     }
 
     @PostMapping
+    /** 创建课程草稿；重复客户端请求返回 200，首次创建返回 201 与资源地址。 */
     ResponseEntity<CourseDtos.TeacherCourse> create(
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
@@ -53,6 +60,7 @@ public class TeacherCourseController {
     }
 
     @GetMapping("/{courseId}")
+    /** 读取当前教师拥有的单门课程编辑快照。 */
     CourseDtos.TeacherCourse get(
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
@@ -62,6 +70,7 @@ public class TeacherCourseController {
     }
 
     @PutMapping("/{courseId}")
+    /** 更新元数据；请求 revision 过期时返回冲突且不覆盖新版本。 */
     CourseDtos.TeacherCourse update(
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
@@ -72,6 +81,7 @@ public class TeacherCourseController {
     }
 
     @PutMapping("/{courseId}/curriculum")
+    /** 原子替换草稿目录；重复内容视为幂等成功。 */
     CourseDtos.TeacherCourse replaceCurriculum(
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
@@ -82,6 +92,7 @@ public class TeacherCourseController {
     }
 
     @PutMapping("/{courseId}/publication")
+    /** 发布或下架课程，并返回转换后的发布状态。 */
     CourseDtos.CoursePublication updatePublication(
             @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,

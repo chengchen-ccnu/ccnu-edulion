@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/** 管理应用根壳；导航面向 ADMIN，页面访问仍由共享守卫校验角色与 administration:access 权限。 */
 import { availableWorkspaces, buildUnifiedLoginUrl, buildWorkspaceChooserUrl } from "@edu/auth";
 import { AppShell } from "@edu/ui";
 import { computed } from "vue";

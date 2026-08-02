@@ -2,6 +2,7 @@ package com.eduplatform.iam.domain;
 
 import java.time.Instant;
 
+/** Refresh Token 会话投影；tokenHash 用于轮换查找，familyId 用于重放后的整族撤销。 */
 public class RefreshSession {
     private String id;
     private String familyId;

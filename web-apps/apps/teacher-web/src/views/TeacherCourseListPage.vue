@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 教师课程工作台列表；数据来自受保护的 /api/v1/teacher/courses，只展示当前教师拥有的课程。
+ * 支持分页和发布/下架，revision 冲突或权限/网络失败时显示错误且不在本地伪造成功状态。
+ */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CourseAccessType, CourseLevel, CoursePublicationStatus, TeacherCoursePage } from "@edu/api-client";
 import { computed, ref, watch } from "vue";

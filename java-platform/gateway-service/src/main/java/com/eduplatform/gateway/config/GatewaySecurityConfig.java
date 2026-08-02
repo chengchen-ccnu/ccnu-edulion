@@ -33,8 +33,15 @@ import reactor.core.publisher.Flux;
 
 @Configuration
 @EnableConfigurationProperties(GatewayProperties.class)
+/**
+ * 定义浏览器统一入口的 JWT 校验、角色路由和 CORS 边界。
+ *
+ * <p>公开课程与登录端点允许匿名访问；教师写接口必须具备 TEACHER 角色，其余请求至少要求
+ * 有效访问令牌。认证和权限失败统一返回共享错误信封，不把内部异常暴露给浏览器。</p>
+ */
 public class GatewaySecurityConfig {
     @Bean
+    /** 校验本地 HMAC 密钥最低强度并创建仅供 JWT 编解码使用的密钥对象。 */
     SecretKey gatewayJwtSecretKey(GatewayProperties properties) {
         String secret = properties.jwt().secret();
         if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
@@ -44,6 +51,7 @@ public class GatewaySecurityConfig {
     }
 
     @Bean
+    /** 创建同时校验签发者、受众、有效期和签名的响应式 JWT 解码器。 */
     ReactiveJwtDecoder gatewayJwtDecoder(SecretKey key, GatewayProperties properties) {
         NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withSecretKey(key).build();
         OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
@@ -54,6 +62,7 @@ public class GatewaySecurityConfig {
     }
 
     @Bean
+    /** 构建路由级访问规则；拒绝请求不会进入任何领域服务。 */
     SecurityWebFilterChain gatewaySecurity(ServerHttpSecurity http, ObjectMapper objectMapper) {
         ReactiveJwtAuthenticationConverter converter = new ReactiveJwtAuthenticationConverter();
         JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
@@ -78,6 +87,7 @@ public class GatewaySecurityConfig {
     }
 
     @Bean
+    /** 仅允许配置中的前端源携带凭据，并暴露追踪与限流响应头。 */
     CorsWebFilter corsWebFilter(GatewayProperties properties) {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOrigins());

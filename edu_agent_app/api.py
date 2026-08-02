@@ -1,3 +1,5 @@
+"""数学智能体的 HTTP/SSE 适配层，负责初始化本地模型资产并恢复多轮会话状态。"""
+
 from __future__ import annotations
 
 import json
@@ -24,6 +26,11 @@ runtime: dict[str, Any] = {}
 
 
 def _build_retrieval(settings, embeddings) -> RetrievalServices:
+    """从只读 FAISS 索引和 Neo4j 连接配置组装检索服务。
+
+    启动时索引或图数据库配置不可用会直接导致应用初始化失败；本函数不创建、覆盖索引，
+    也不向 Java 平台数据库写入数据。
+    """
     question_store = load_faiss(settings.question_index_path, embeddings)
     knowledge_store = load_faiss(settings.knowledge_index_path, embeddings)
     return RetrievalServices(
@@ -51,6 +58,11 @@ def _build_retrieval(settings, embeddings) -> RetrievalServices:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    """在应用生命周期内初始化工作流、检查点存储和知识图谱连接。
+
+    配置了 ``DATABASE_URL`` 时会由 LangGraph 在该 PostgreSQL 中维护会话检查点；否则仅使用
+    进程内存。退出时清空运行时引用并关闭 Neo4j 驱动，不修改 FAISS 文件。
+    """
     settings = load_settings()
     embeddings = create_embeddings(settings)
     retrieval = _build_retrieval(settings, embeddings)
@@ -101,6 +113,7 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
+    """一次学生输入；``thread_id`` 是恢复 LangGraph 检查点的会话幂等键。"""
     prompt: str = Field(min_length=1, max_length=10_000)
     thread_id: str = Field(min_length=1, max_length=128)
     image_url: str | None = None
@@ -108,10 +121,12 @@ class ChatRequest(BaseModel):
 
 @app.get("/health")
 async def health() -> dict:
+    """返回工作流是否完成初始化，不探测外部模型或索引的实时健康状态。"""
     return {"status": "ok" if runtime.get("agent") else "starting"}
 
 
 def _ai_messages(output: Any) -> list[str]:
+    """从单个节点更新中提取非空 AI 消息，忽略状态字段和学生消息。"""
     if not isinstance(output, dict):
         return []
     messages = output.get("messages") or []
@@ -124,6 +139,12 @@ def _ai_messages(output: Any) -> list[str]:
 
 @app.post("/generate_stream")
 async def generate_stream(request: ChatRequest):
+    """继续或创建一个教学会话，并以 SSE 逐节点返回完整 AI 消息。
+
+    当 ``thread_id`` 对应快照停在反馈中断点时，请求被视为学生对当前步骤的反馈；否则创建
+    新一轮题目输入。检查点写入由 LangGraph 后端负责，重复使用同一会话 ID 会继续既有状态，
+    而不是重新开始。初始化未完成返回 503，运行期异常则转换为 SSE ``error`` 事件。
+    """
     agent = runtime.get("agent")
     settings = runtime.get("settings")
     if agent is None or settings is None:
@@ -154,6 +175,7 @@ async def generate_stream(request: ChatRequest):
         }
 
     async def event_generator():
+        """把 LangGraph 节点更新转换为 SSE 数据帧，并始终给出结束或错误事件。"""
         try:
             async for event in agent.astream(
                 run_input,

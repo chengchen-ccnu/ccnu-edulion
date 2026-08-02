@@ -18,6 +18,7 @@ import type { AuthStore } from "@edu/auth";
 
 import { authStore } from "./auth";
 
+/** 教师课程管理 API；写请求携带内存访问令牌并使用 OpenAPI revision 契约。 */
 export interface TeacherCourseApi {
   list(query: ListTeacherCoursesQuery): Promise<TeacherCoursePage>;
   categories(): Promise<CategorySummary[]>;
@@ -28,6 +29,12 @@ export interface TeacherCourseApi {
   updatePublication(courseId: string, body: UpdatePublicationRequest): Promise<CoursePublication>;
 }
 
+/**
+ * 构造教师课程 API 适配器。
+ *
+ * 除公开分类外，请求都通过 AuthStore 自动恢复令牌；401 最多刷新并重放一次。409 revision
+ * 冲突原样转换为 GatewayRequestError，页面必须提示刷新而不能覆盖服务端新版本。
+ */
 export function createTeacherCourseApi(
     store: AuthStore = authStore,
     client: GatewayClient = createGatewayClient()): TeacherCourseApi {
