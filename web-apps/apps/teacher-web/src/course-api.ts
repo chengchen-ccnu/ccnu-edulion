@@ -4,6 +4,7 @@ import {
 } from "@edu/api-client";
 import type {
   CategorySummary,
+  CourseMediaPlaybackGrant,
   CoursePublication,
   CreateCourseRequest,
   GatewayClient,
@@ -27,6 +28,8 @@ export interface TeacherCourseApi {
   update(courseId: string, body: UpdateCourseRequest): Promise<TeacherCourse>;
   replaceCurriculum(courseId: string, body: ReplaceCurriculumRequest): Promise<TeacherCourse>;
   updatePublication(courseId: string, body: UpdatePublicationRequest): Promise<CoursePublication>;
+  playbackGrant(courseId: string, lessonId: string, resourceId: string,
+    signal?: AbortSignal): Promise<CourseMediaPlaybackGrant>;
 }
 
 /**
@@ -86,6 +89,14 @@ export function createTeacherCourseApi(
       const result = await authorized(Authorization => client.PUT("/api/v1/teacher/courses/{courseId}/publication", {
         headers: { Authorization }, params: { path: { courseId } }, body
       }));
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async playbackGrant(courseId, lessonId, resourceId, signal) {
+      const result = await authorized(Authorization => client.POST(
+        "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants", {
+          headers: { Authorization }, params: { path: { courseId, lessonId, resourceId } }, signal
+        }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     }

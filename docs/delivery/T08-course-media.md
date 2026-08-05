@@ -1,16 +1,16 @@
-# T08A/T08A.1 课程媒体绑定、HLS 与播放授权闭环交付
+# T08A/T08A.1/T08B 课程媒体绑定、上传与播放闭环交付
 
 ## 任务目标与边界
 
 T08A 将课程封面和课时资源的写事实从 URL 收口为稳定 `mediaId`，并把 T07 的最小视频派生演进为可授权播放的私有 HLS。课程服务只拥有课程版本与媒体引用，不接入 OSS SDK、不保存 Bucket、Object Key 或短期签名 URL；媒体服务只拥有上传、对象、处理和授权事实，不保存课程实体或决定课程可见性。
 
-本任务完成 `COURSE_COVER`、`LESSON_VIDEO` 领域绑定，并显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 上传策略。最终 Vue 上传器、处理状态交互和播放器属于 T08B；报名、学习进度、“我的学习”、题库和 Agent 均未实现。
+T08A 完成 `COURSE_COVER`、`LESSON_VIDEO` 领域绑定，并显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 上传策略。T08B 已完成课程封面/课时视频 Vue 上传器、处理状态交互与播放器；报名、学习进度、“我的学习”、题库和 Agent 均未实现。
 
-T08A.1 在既有绑定与 HLS 之上补齐播放授权闭环：course-service 决定课程/版本/课时/资源可见性，media-service 只验证一次性服务授权并签发 READY 媒体的短期 OSS/HLS 凭证。T11 前不创建或伪造报名，报名制课程的非试看课时固定返回 403；T08B 才实现浏览器播放器、授权刷新和页面交互。
+T08A.1 在既有绑定与 HLS 之上补齐播放授权闭环：course-service 决定课程/版本/课时/资源可见性，media-service 只验证一次性服务授权并签发 READY 媒体的短期 OSS/HLS 凭证。T11 前不创建或伪造报名，报名制课程的非试看课时固定返回 403；T08B 只消费这两条课程域授权，不扩展该临时权限边界。
 
 ## 架构与调用流程
 
-1. 浏览器或后续 T08B 页面经 Gateway 使用 T07 上传会话把对象直传 OSS，并轮询到 `READY`。
+1. T08B 浏览器页面经 Gateway 使用 T07 上传会话，把对象字节直传 OSS，并轮询到 `READY`。
 2. 教师创建/编辑课程时只提交 `coverMediaId`；目录写入只提交课时资源的 `mediaId`、用途和顺序。
 3. `course-service` 在本地写事务前调用 `POST /api/v1/media/{mediaId}/binding-validations`，media-service 校验上传者、精确用途和 `READY` 状态。失败时课程不落库；没有跨库查询。
 4. 课程事务保存版本级 `cover_media_id` 或 `lesson_media_resource`，同时写本域 Outbox。绑定、替换和解除分别发布已有 `MediaReferenceBound`/`MediaReferenceReleased` v1；mandatory、publisher confirm、有限退避和失败留痕用于可靠补投。
@@ -39,7 +39,7 @@ T08A 将 OpenAPI 更新到 `0.6.0`：
 
 前端 TypeScript 类型由同一 OpenAPI 重新生成。为保持契约编译兼容，现有页面仅停止提交 `coverUrl`、保存目录时透传既有 `resources`，并兼容历史封面为空；没有实现上传和播放交互。
 
-T08A.1 将 OpenAPI 更新到 `0.7.0`，新增两个课程域播放授权 POST。外部契约只暴露课程/课时/课程资源 ID 和短期 `CourseMediaPlaybackGrant`；内部服务 API 不属于 Gateway 外部契约。404 用于资源不存在、版本/绑定不匹配和 owner 不匹配，报名制非试看使用明确 403，READY 冲突为 409，媒体依赖不可用为 503。生成的 TypeScript 客户端已同步；页面仍未调用接口。
+T08A.1 将 OpenAPI 更新到 `0.7.0`，新增两个课程域播放授权 POST。外部契约只暴露课程/课时/课程资源 ID 和短期 `CourseMediaPlaybackGrant`；内部服务 API 不属于 Gateway 外部契约。404 用于资源不存在、版本/绑定不匹配和 owner 不匹配，报名制非试看使用明确 403，READY 冲突为 409，媒体依赖不可用为 503。T08B 直接复用生成的 TypeScript 字段和路径调用这些接口，没有修改 OpenAPI，也没有手写重复 DTO。
 
 ## 数据库表与向前迁移
 
@@ -139,7 +139,7 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 
 ## 已知风险与后续依赖
 
-- T08B 尚未实现最终上传页、状态轮询、资源编排控件、播放器和授权刷新；新上传媒体目前只能通过 API/验收脚本绑定和播放。
+- T08B 的真实媒体后端环境验收已通过，但本次未在浏览器中执行带真实教师凭据、Gateway、course-service 与专用课程 Fixture 的上传—绑定—学生 HLS 全链路；自动化和 Mock 结果不能替代该人工 E2E。
 - T11 尚未实现报名与学习权限查询；报名制非试看固定返回 403。T08A.1 不伪造报名，也不把该临时边界解释为最终授权模型。
 - 首期播放接口只接受 `LESSON_VIDEO`；封面继续使用展示投影，字幕/课件保持绑定但不堆积未评审的播放/下载授权实现。
 - 当前 HLS 是单清晰度视频、显式关闭音频；多码率自适应、音轨/字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
@@ -151,4 +151,49 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 ## 分支、提交与 PR
 
 - T08A：分支 `codex/t08a-course-media-contract-binding`，关键提交 `2f2697882394a5194a48e1756c8d05cd1a3780ea`；[PR #13](https://github.com/chengchen-ccnu/ccnu-edulion/pull/13) 已合并，当前基线 merge commit 为 `55b30d52493e84038da59f7a6789e43b8de6e716`。
-- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，基于最新 `origin/main` 的 `55b30d52493e84038da59f7a6789e43b8de6e716`；实现提交 `f2e1d972e828759089d2192227366ddb4985059b`，Ready [PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已创建，未自行合并。
+- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，实现提交 `f2e1d972e828759089d2192227366ddb4985059b`；[PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已合并，主线 merge commit 为 `2f40b762d41f780509ab388928aff84614d6b62c`。
+
+## T08B 前端实现（2026-08-05）
+
+### 功能与前端边界
+
+- 教师创建/编辑课程不再出现手填图片 URL。`MediaUploadField` 支持封面选择、本地 Blob 预览、真实字节进度、校验/处理状态、成功、失败、取消、有限重试、替换和移除；只有上传器轮询到 `READY` 才向课程表单回写 `coverMediaId`。
+- 课程目录的 `VIDEO` 课时在首次保存、取得稳定 lesson ID 后可上传 `LESSON_VIDEO`。状态机按服务端 `SINGLE_PUT`/`MULTIPART` 选择协议，Multipart 使用返回的 `partSize`、每片单独申请授权、最多 3 路并发、最多 3 次传输尝试，并向完成接口提交 OSS 实际 ETag。
+- SHA-256 使用 `@noble/hashes` 增量状态和 4 MiB `Blob.slice()` 计算，任一时刻不把整段视频读入内存。上传用 `XMLHttpRequest.upload` 的真实字节事件聚合进度，不显示模拟进度。
+- 同一运行中重复点击复用一个 Promise；创建会话的 429/503 有限重试固定复用同一 `clientRequestId`。`sessionStorage` 检查点只保存 uploadId、幂等键、用途和不可变文件摘要等稳定字段，不保存签名 URL、授权头或 Token；刷新后查询服务端会话并明确要求重选同一 File。
+- 目录写请求显式投影为 `mediaId`、`purpose`、`sequence`，UI 使用的 lesson/resource ID 与 `uiKey` 不会进入请求。新 READY 视频保存后取得课程域 resource ID，教师才可调用 owner 预览接口；发布版本不可变性继续由 T08A 后端保证。
+- 学生只调用发布课程资源播放授权；教师只调用 owner 预览授权。共享 `HlsVideoPlayer` 优先使用浏览器原生 HLS，其他支持 MSE 的浏览器按需加载 `hls.js 1.6.16`，切换/卸载会销毁实例、移除 source、中止请求和清除定时器。
+- 播放授权根据 `expiresAt` 最多提前 30 秒刷新。429 最多退避两次，刷新失败后停止自动循环并显示 401/403/404/409/429/503 中文提示；短期 URL 和授权头只在组件内存存在，不写持久化状态或日志。
+
+### 环境、数据与清理
+
+T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有创建数据库。自动化继续只使用随 Maven 测试进程释放的 H2 Schema。真实验收通过凭据包装脚本连接既有专用 `edu_platform_media_dev`（已处于 V3），使用固定测试 owner 和唯一 `t07-acceptance/<runId>/` 前缀验证 OSS、RabbitMQ 与 FFmpeg；用例结束后按精确 Object Key 删除原件、HLS/临时清单和切片，定向清理测试消息与记录，并逐表断言验收数据为 0。没有操作 course/IAM Schema，也没有创建虚假报名。
+
+浏览器直传环境必须允许教师 Web Origin 对专用 OSS Bucket 执行短期 `PUT`，允许签名要求的请求头，并通过 `Access-Control-Expose-Headers: ETag` 暴露分片实际 ETag。生产 Origin 必须使用精确白名单，不能用 `*` 扩大带凭证边界。
+
+### 测试与实际结果
+
+- `pnpm.cmd --dir web-apps install --frozen-lockfile`：通过，锁文件可复现。
+- `generate:api`、`check:api`、全 workspace `typecheck`：通过；OpenAPI 保持 0.7.0，生成文件相对 HEAD 一致。
+- Vitest：受限沙箱首次因已知 `esbuild spawn EPERM` 无法启动；获准沙箱外复跑后 8 个文件 48 项全部通过。新增覆盖单对象、Multipart 已上传分片恢复、实际 ETag、真实字节聚合、取消、增量哈希、固定幂等键有限重试、FAILED/REJECTED/超时、学生/教师路径隔离、授权刷新时机和 429 重试上限。
+- 三端生产构建：获准沙箱外执行并通过；`hls.js` 只在非原生 HLS 浏览器按需加载。
+- Java：`gateway-service,course-service,media-service -am verify` 的 5 个 Reactor 模块全部成功；Gateway 10 项、Course 14 项、Media 12 项（真实环境 1 项默认跳过）及 shared-kernel 1 项均无失败。
+- 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该后端用例没有经过 Vue 页面，不能记录为真实浏览器上传/播放 E2E。
+- 浏览器响应式检查：指向同一 OpenAPI Mock 的学生课程详情在 1440×900 与 390×844 均无横向溢出，窄屏信息和目录正确单列，控制台无错误。Mock 详情没有课时资源，教师页又需要真实登录，因此没有把 Mock 页面描述成上传/HLS 播放通过。
+- `git diff --check`、敏感信息与构建产物审计在提交前执行；未发现签名 URL 持久化、日志输出、AccessKey、密码或应提交的 dist/target。
+
+### 人工演示步骤
+
+1. 通过安全环境包装脚本依次启动 media-service、course-service、IAM 与 Gateway，确认只使用专用 dev Schema；启动 teacher/student Web，OSS CORS 精确允许本地 Origin 并暴露 ETag。
+2. 教师创建课程，选择 JPG/PNG/WebP 封面，观察 SHA、真实上传、校验/处理到 READY；保存后刷新，确认展示来自课程 `coverUrl` 投影。替换和移除后再次保存，确认线上已发布版本未被直接改变。
+3. 保存一个 VIDEO 课时取得稳定 ID，分别选择小视频和超过 Multipart 阈值的视频；检查分片进度、取消/恢复提示、处理状态和 READY 后的目录绑定。保存请求只应包含稳定媒体三字段。
+4. 保存目录后在教师页 owner 预览；发布课程后，以已登录访问者在学生详情选择同一课程域资源。公开或试看课时可播放；报名制非试看在 T11 前显示 403 文案。
+5. 等待授权刷新，确认到期前重新签发；模拟 429/503 或停止依赖，确认有限重试后停止。切换资源或离开页面，确认播放器、定时器、授权请求和 Blob URL 已清理。
+
+### 注释覆盖、风险与发布
+
+新增/修改的上传 API、上传状态机、增量哈希、OSS 直传、分片并发/重试/取消、会话检查点、播放授权刷新、HLS 生命周期和页面职责均补充中文 TSDoc/JSDoc/Vue 注释；生成客户端未手工修改。人工可读性检查未发现注释与实现不一致或注释泄露敏感信息。
+
+剩余风险：完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+
+T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`。提交与 Ready PR 在创建后回填，PR 不自行合并。

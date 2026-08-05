@@ -12,5 +12,8 @@
   },
   "peerDependencies": {
     "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "hls.js": "1.6.16"
   }
 }

@@ -5,6 +5,7 @@
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CourseAccessType, CourseDetail, CourseLevel } from "@edu/api-client";
+import { HlsVideoPlayer } from "@edu/ui";
 import { ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
@@ -14,6 +15,9 @@ const route = useRoute();
 const course = ref<CourseDetail | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+type CourseLesson = CourseDetail["chapters"][number]["lessons"][number];
+type VideoSelection = { lessonId: string; resourceId: string; title: string };
+const selectedVideo = ref<VideoSelection | null>(null);
 
 watch(() => route.params.courseId, loadCourse, { immediate: true });
 
@@ -21,6 +25,7 @@ async function loadCourse(courseId: unknown) {
   if (typeof courseId !== "string") return;
   loading.value = true;
   course.value = null;
+  selectedVideo.value = null;
   errorMessage.value = "";
   try {
     course.value = await studentCourseApi.detail(courseId);
@@ -31,6 +36,17 @@ async function loadCourse(courseId: unknown) {
   } finally {
     loading.value = false;
   }
+}
+
+/** 学生只能用课程域资源行申请授权；函数不接收也不推导 mediaId，短期 URL 交给播放器内存管理。 */
+function getStudentGrant(signal: AbortSignal) {
+  if (!course.value || !selectedVideo.value) throw new Error("VIDEO_NOT_SELECTED");
+  return studentCourseApi.playbackGrant(course.value.id, selectedVideo.value.lessonId,
+    selectedVideo.value.resourceId, signal);
+}
+
+function selectVideo(lesson: CourseLesson, resourceId: string) {
+  selectedVideo.value = { lessonId: lesson.id, resourceId, title: lesson.title };
 }
 
 function levelLabel(level: CourseLevel): string {
@@ -97,13 +113,25 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
                 <strong>{{ lesson.title }}</strong>
                 <small>{{ lessonTypeLabel(lesson.type) }}</small>
                 <em v-if="lesson.previewable">可试看</em>
+                <button v-for="resource in lesson.resources.filter(item => item.purpose === 'LESSON_VIDEO')"
+                  :key="resource.id" class="lesson-play" type="button"
+                  :aria-pressed="selectedVideo?.resourceId === resource.id"
+                  @click="selectVideo(lesson, resource.id)">
+                  {{ selectedVideo?.resourceId === resource.id ? "正在预览" : "播放视频" }}
+                </button>
               </li>
             </ol>
           </li>
         </ol>
         <div v-else class="empty-inline">该课程暂未提供目录。</div>
-        <p class="scope-note">本页仅展示课程营销信息与目录，不包含视频播放、报名、进度、题目或智能答疑。</p>
+        <p class="scope-note">当前只播放已发布版本的课时视频；不记录进度，也不实现报名、题目或智能答疑。</p>
       </section>
     </div>
+    <section v-if="selectedVideo" class="course-player-panel">
+      <header><div><span class="section-kicker">LESSON VIDEO</span><h3>{{ selectedVideo.title }}</h3></div>
+        <button type="button" aria-label="关闭播放器" @click="selectedVideo = null">关闭</button></header>
+      <HlsVideoPlayer :grant-key="`${course.id}:${selectedVideo.lessonId}:${selectedVideo.resourceId}`"
+        :title="`${selectedVideo.title}视频`" :grant-provider="getStudentGrant" />
+    </section>
   </template>
 </template>

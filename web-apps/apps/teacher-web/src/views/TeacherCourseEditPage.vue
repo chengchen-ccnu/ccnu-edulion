@@ -9,6 +9,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import CourseMetadataFields from "../components/CourseMetadataFields.vue";
+import MediaUploadField from "../components/MediaUploadField.vue";
 import { teacherCourseApi } from "../course-api";
 
 const route = useRoute();
@@ -16,6 +17,7 @@ const course = ref<TeacherCourse | null>(null);
 const categories = ref<CategorySummary[]>([]);
 const loading = ref(true);
 const saving = ref(false);
+const coverBusy = ref(false);
 const errorMessage = ref("");
 const successMessage = ref(route.query.created === "1" ? "课程草稿已创建，请继续完善信息。" : "");
 const fieldErrors = ref<Record<string, string>>({});
@@ -88,6 +90,9 @@ function messageFor(error: unknown, fallback: string): string {
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
     <p v-if="successMessage" class="feedback feedback--success" role="status">{{ successMessage }}</p>
     <form @submit.prevent="submit">
+      <MediaUploadField v-model="form.coverMediaId" purpose="COURSE_COVER" accept="image/jpeg,image/png,image/webp"
+        label="课程封面" :current-url="course.coverUrl"
+        :checkpoint-key="`teacher-course-cover:${course.id}`" @busy-change="coverBusy = $event" />
       <CourseMetadataFields v-model:title="form.title" v-model:summary="form.summary"
         v-model:description="form.description"
         v-model:instructor-display-name="form.instructorDisplayName" v-model:category-id="form.categoryId"
@@ -95,7 +100,7 @@ function messageFor(error: unknown, fallback: string): string {
         :categories="categories" :field-errors="fieldErrors" />
       <footer class="editor-actions">
         <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">下一步：编排目录</RouterLink>
-        <button class="button button--primary" type="submit" :disabled="saving">{{ saving ? "保存中…" : "保存元数据" }}</button>
+        <button class="button button--primary" type="submit" :disabled="saving || coverBusy">{{ saving ? "保存中…" : "保存元数据" }}</button>
       </footer>
     </form>
   </section>

@@ -37,6 +37,22 @@ describe("teacher course API", () => {
     await expect(api.updatePublication("00000000-0000-4000-8000-000000000201",
       { status: "UNPUBLISHED", expectedRevision: 3 })).resolves.toMatchObject({ status: "UNPUBLISHED" });
   });
+
+  it("uses only the teacher owner course resource path for preview", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      expect(new URL(request.url).pathname).toBe("/api/v1/teacher/courses/course-1/lessons/lesson-1/resources/resource-1/playback-grants");
+      expect(request.headers.get("Authorization")).toBe("Bearer teacher-token");
+      return json({ method: "GET", url: "https://oss.example.test/playlist", headers: {},
+        expiresAt: "2099-01-01T00:00:00Z" }, 201);
+    }));
+    const store = { authorizedRequest: (request: (authorization: string) => Promise<unknown>) =>
+      request("Bearer teacher-token") } as unknown as AuthStore;
+    const api = createTeacherCourseApi(store, createGatewayClient("http://gateway.test"));
+
+    await expect(api.playbackGrant("course-1", "lesson-1", "resource-1"))
+      .resolves.toMatchObject({ method: "GET" });
+  });
 });
 
 function json(body: unknown, status = 200): Response {

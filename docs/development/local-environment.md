@@ -134,6 +134,8 @@ T08A 不增加 Seed，也不会自动给 T05 固定课程绑定媒体。若人�
 
 浏览器只经 Gateway 调用 course-service 的课程资源播放授权接口；Gateway 不配置 `/internal/**` 路由。course-service 根据当前发布/可编辑版本、课程访问类型、课时试看标志、课程 owner 和资源绑定作出决定，再使用短时一次性服务 JWT 调用 media-service。media-service 不查询 course/learning Schema，并继续只对用途匹配且 `READY` 的资产签发短期 OSS/HLS 授权。
 
+T08B 浏览器直传要求专用 OSS Bucket 配置精确 CORS：只允许实际部署的 teacher Web Origin（本地为 `http://localhost:5174`）使用 `PUT`，允许签名授权返回的请求头，并在响应中暴露 `ETag`，否则 Multipart 无法收集服务端实际分片标签并安全完成。生产环境不得用 `*` 放宽 Origin；短期 PUT/GET URL、授权请求头和 HLS 清单 URL 只能保存在组件运行时内存，不得写入 `localStorage`、日志或业务表。
+
 Media V3 新增 `consumed_service_authorization`，以 jti 主键拒绝服务令牌重放并在到期后由维护任务清理。表中不保存 JWT、签名 URL、课程 ID、课时 ID、Object Key 或 Bucket。应用不会创建 `edu_platform_media_dev` 数据库；只在用途明确的 media dev/test Schema 中由 Flyway 向前迁移。T08A.1 没有 Course 迁移、Seed 或报名数据。
 
 ## T04 IAM 迁移与测试账号
