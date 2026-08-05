@@ -109,6 +109,20 @@ public class TeacherCourseController {
         return service.updatePublication(courseId, teacher.userId(), request);
     }
 
+    @PostMapping("/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants")
+    /** 仅课程所有者可预览当前草稿或未发布版本中的视频资源。 */
+    CourseDtos.CourseMediaPlaybackGrant playback(
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String lessonId,
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String resourceId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            HttpServletRequest servletRequest) {
+        TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
+        return service.createTeacherPlaybackGrant(
+                courseId, lessonId, resourceId, teacher.userId(), trace(servletRequest));
+    }
+
     private static String trace(HttpServletRequest request) {
         return (String) request.getAttribute(TraceFilter.ATTRIBUTE);
     }

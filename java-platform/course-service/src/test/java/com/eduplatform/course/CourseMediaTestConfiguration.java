@@ -1,11 +1,14 @@
 package com.eduplatform.course;
 
 import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.service.CourseException;
+import com.eduplatform.course.web.CourseDtos;
 import com.eduplatform.shared.api.FieldError;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -18,6 +21,12 @@ class CourseMediaTestConfiguration {
     @Primary
     FakeMediaBindingClient fakeMediaBindingClient() {
         return new FakeMediaBindingClient();
+    }
+
+    @Bean
+    @Primary
+    FakeMediaPlaybackClient fakeMediaPlaybackClient() {
+        return new FakeMediaPlaybackClient();
     }
 
     /**
@@ -45,5 +54,29 @@ class CourseMediaTestConfiguration {
         }
 
         private record Asset(String ownerId, String purpose, String status) {}
+    }
+
+    /** 记录课程域交给媒体域的可信事实，并返回不含真实 OSS 数据的确定性短期授权。 */
+    static final class FakeMediaPlaybackClient implements MediaPlaybackClient {
+        private PlaybackRequest lastRequest;
+
+        void clear() {
+            lastRequest = null;
+        }
+
+        PlaybackRequest lastRequest() {
+            return lastRequest;
+        }
+
+        @Override
+        public CourseDtos.CourseMediaPlaybackGrant issuePlayback(
+                String mediaId, String purpose, String visitorId, String traceId) {
+            lastRequest = new PlaybackRequest(mediaId, purpose, visitorId, traceId);
+            return new CourseDtos.CourseMediaPlaybackGrant(
+                    "GET", "https://oss.example.test/temporary-playlist", Map.of(),
+                    Instant.parse("2026-08-05T10:10:00Z"));
+        }
+
+        record PlaybackRequest(String mediaId, String purpose, String visitorId, String traceId) {}
     }
 }

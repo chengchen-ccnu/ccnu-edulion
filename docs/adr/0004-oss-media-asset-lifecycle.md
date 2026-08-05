@@ -84,3 +84,13 @@ T08A 将课程写事实收口为版本级 `cover_media_id` 与 `lesson_media_res
 课程绑定、替换和解除与课程事务一起写入本域 Outbox，再以 `MediaReferenceBound`/`MediaReferenceReleased` v1 发布到既有媒体事件 Exchange。发布采用 mandatory、publisher confirm、有限退避与失败留痕；media-service 继续按 `eventId` 幂等维护引用台账。数据库和事件只保存稳定 ID，不保存 Bucket、Object Key 或签名 URL。
 
 T08A 显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 的教师上传策略；其他冻结枚举仍拒绝上传。`LESSON_VIDEO` 的派生由单机有界并发 FFmpeg Worker 输出私有 `hls-v1` 播放清单与切片。授权时 media-service 为每个已登记切片签发短期 GET，生成同期限临时清单并在到期后按精确 Object Key 清理；课程表仍只保存 `mediaId`。多码率、自适应音轨、DRM、病毒/内容安全与最终 Vue 播放器不属于 T08A。
+
+T08A 已通过 PR #13 合并。2026-08-02 的人工验收已确认真实 OSS、RabbitMQ、FFmpeg HLS 与课程媒体绑定链路通过；验收使用专用开发 Schema 和唯一 OSS 前缀，结束后按精确记录清理。
+
+## T08A.1 实施状态
+
+T08A.1 将课程可见性判断与媒体签发连接成服务端闭环。浏览器只按课程、课时和课程域资源行申请播放授权，不能提交 `mediaId`、用途或 `allowAccess`。`course-service` 从当前发布版本的绑定关系解析 `LESSON_VIDEO`：`PUBLIC` 课程允许已登录访问者播放；`ENROLLMENT_REQUIRED` 在 T11 前只允许 `previewable=true` 的课时，非试看内容明确返回 403。草稿、未发布内容只通过教师 owner 路径预览，历史版本、错课时和错资源统一不可见。
+
+课程域批准后签发只发往 media-service 的短时 HMAC JWT，绑定 issuer/audience、访问者、mediaId、用途、`COURSE_PLAYBACK`、`hls-v1`、`INLINE`、有效期、traceId 与一次性 jti。Gateway 不路由 `/internal/**`；media-service 校验全部字段并在 `consumed_service_authorization` 以唯一 jti 原子拒绝重放，再独立复核资产用途和 `READY` 状态。密钥只由 DPAPI/CI Secret 注入，令牌和短期 URL 均不写数据库、事件或日志。
+
+首期只完整开放 `LESSON_VIDEO` 播放；封面继续走已授权展示投影，字幕与课件保持稳定绑定但不被播放接口当作视频授权。T08B 负责 Vue 播放器与授权刷新，T11 负责真实报名/学习权限；media-service 仍不查询课程或学习 Schema。

@@ -50,9 +50,9 @@ public class HlsAccessGrantService {
     /**
      * 生成短期 HLS 授权并记录审计/临时对象。
      *
-     * @param asset 已确认属于调用者且 READY 的视频资产
+     * @param asset 已通过 owner 预览或可信领域授权且 READY 的视频资产
      * @param variant HLS 播放清单派生对象
-     * @param actorId 当前上传者身份
+     * @param actorId 实际访问者身份；owner 预览时为上传者，课程播放时为学生/教师访问者
      * @param disposition 只影响最终清单响应头；切片固定 INLINE
      * @param traceId 调用链标识
      * @return 临时播放清单的短期 GET 授权

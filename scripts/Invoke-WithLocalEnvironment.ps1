@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
+$serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $commandExitCode = 0
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
@@ -20,6 +21,10 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
     throw "Missing encrypted MySQL credential. Run scripts/Initialize-LocalEnvironment.ps1 first."
+}
+
+if (-not (Test-Path -LiteralPath $serviceCredentialPath -PathType Leaf)) {
+    throw "Missing encrypted course/media service authorization secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
 }
 
 $originalEnvironment = @{}
@@ -74,6 +79,13 @@ try {
     Set-ScopedEnvironmentVariable -Name "MYSQL_USERNAME" -Value $networkCredential.UserName
     Set-ScopedEnvironmentVariable -Name "MYSQL_PASSWORD" -Value $networkCredential.Password
 
+    $serviceCredential = Import-Clixml -LiteralPath $serviceCredentialPath
+    if ($serviceCredential -isnot [PSCredential] -or $serviceCredential.UserName -ne "course-media-service") {
+        throw "The encrypted course/media service authorization credential has an unexpected format."
+    }
+    $serviceNetworkCredential = $serviceCredential.GetNetworkCredential()
+    Set-ScopedEnvironmentVariable -Name "COURSE_MEDIA_AUTH_SECRET" -Value $serviceNetworkCredential.Password
+
     & $ScriptBlock
     if (Test-Path Variable:LASTEXITCODE) {
         $commandExitCode = $LASTEXITCODE
@@ -92,6 +104,8 @@ finally {
 
     $networkCredential = $null
     $credential = $null
+    $serviceNetworkCredential = $null
+    $serviceCredential = $null
 }
 
 if ($null -ne $commandExitCode -and $commandExitCode -ne 0) {

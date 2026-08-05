@@ -280,6 +280,36 @@ public class MediaAssetService {
     public MediaDtos.AccessGrant access(String mediaId, String ownerId,
             MediaDtos.CreateAccessGrantRequest request, String traceId) {
         MediaAsset asset = requireAssetOwned(mediaId, ownerId);
+        return issueAccess(asset, ownerId, request, traceId);
+    }
+
+    /**
+     * 为已通过领域服务令牌验证的访问者签发短期授权，不再使用上传者身份冒充访问者。
+     *
+     * <p>输入 mediaId、purpose、variant 和 visitorId 已由一次性令牌强绑定；本方法仍独立校验
+     * 资产存在、精确用途与 READY 状态，media-service 不查询课程或报名数据库。</p>
+     *
+     * @param mediaId 课程绑定解析出的稳定媒体 ID
+     * @param visitorId 实际播放访问者，用于安全审计
+     * @param purpose 令牌绑定且必须与媒体资产一致的用途
+     * @param variant 令牌绑定的派生版本，课程播放固定为 hls-v1
+     * @param disposition 令牌绑定的读取处置方式
+     * @param traceId 课程请求链路 ID
+     * @return 短期对象或 HLS 清单授权
+     */
+    public MediaDtos.AccessGrant accessAuthorized(String mediaId, String visitorId, MediaPurpose purpose,
+            String variant, MediaDtos.Disposition disposition, String traceId) {
+        MediaAsset asset = repository.findAsset(mediaId).orElseThrow(this::notFound);
+        if (asset.purpose() != purpose) {
+            throw new MediaException(HttpStatus.NOT_FOUND, "MEDIA.NOT_FOUND", "媒体资源不存在或不可见");
+        }
+        return issueAccess(asset, visitorId,
+                new MediaDtos.CreateAccessGrantRequest(variant, disposition), traceId);
+    }
+
+    /** 统一执行 owner 预览和可信领域访问的 READY/变体校验、OSS 签发与无 URL 审计。 */
+    private MediaDtos.AccessGrant issueAccess(MediaAsset asset, String actorId,
+            MediaDtos.CreateAccessGrantRequest request, String traceId) {
         if (asset.status() != MediaStatus.READY) conflict("MEDIA.NOT_READY", "媒体尚未处理完成");
         String objectKey;
         String downloadName;
@@ -287,17 +317,17 @@ public class MediaAssetService {
             objectKey = asset.objectKey();
             downloadName = asset.originalFilename();
         } else {
-            MediaVariant variant = repository.findVariant(mediaId, request.variant())
+            MediaVariant variant = repository.findVariant(asset.mediaId(), request.variant())
                     .orElseThrow(() -> new MediaException(HttpStatus.NOT_FOUND, "MEDIA.VARIANT_NOT_FOUND", "媒体派生版本不存在"));
             if (HlsAccessGrantService.HLS_MIME.equals(variant.mimeType())) {
-                return storageCall(() -> hlsAccess.issue(asset, variant, ownerId, request.disposition(), traceId));
+                return storageCall(() -> hlsAccess.issue(asset, variant, actorId, request.disposition(), traceId));
             }
             objectKey = variant.objectKey();
             downloadName = request.variant();
         }
         StorageGrant grant = storageCall(() -> storage.authorizeGet(objectKey, downloadName,
                 request.disposition().name(), properties.oss().accessGrantTtl()));
-        repository.insertAccessAudit(UUID.randomUUID().toString(), mediaId, ownerId, request.variant(),
+        repository.insertAccessAudit(UUID.randomUUID().toString(), asset.mediaId(), actorId, request.variant(),
                 request.disposition().name(), grant.expiresAt(), traceId, Instant.now());
         return new MediaDtos.AccessGrant(grant.method(), grant.url().toString(), grant.headers(), grant.expiresAt());
     }

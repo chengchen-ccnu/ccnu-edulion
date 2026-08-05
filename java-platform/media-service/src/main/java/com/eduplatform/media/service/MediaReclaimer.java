@@ -43,6 +43,7 @@ public class MediaReclaimer {
     /** 扫描一个有限批次并执行回收；单条失败不阻断其他对象，失败项留待下轮重试。 */
     public void reclaim() {
         Instant now = Instant.now();
+        repository.deleteExpiredServiceAuthorizations(now);
         repository.expiredTemporaryAccessObjects(now, 100).forEach(value -> {
             try {
                 storage.delete(value.objectKey());

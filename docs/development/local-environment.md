@@ -13,7 +13,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 & .\scripts\Initialize-LocalEnvironment.ps1
 ```
 
-脚本会显示 Windows 安全凭据输入框，将非敏感配置保存到当前用户目录的 `.ccnu-edulion/local.env`，并使用 Windows DPAPI 将 MySQL 凭据加密为同目录下的 `mysql.credential.clixml`。加密文件只能由同一台计算机上的同一 Windows 用户解密，不会进入 Git。
+脚本会显示 Windows 安全凭据输入框，将非敏感配置保存到当前用户目录的 `.ccnu-edulion/local.env`，并使用 Windows DPAPI 将 MySQL 凭据加密为同目录下的 `mysql.credential.clixml`。T08A.1 起还会自动生成独立 256-bit 课程/媒体服务授权密钥并加密为 `course-media-auth.credential.clixml`。已有本地环境缺少该文件时可直接重跑初始化脚本，它只补齐服务密钥，不覆盖 MySQL 凭据或 `local.env`；加密文件只能由同一台计算机上的同一 Windows 用户解密，不会进入 Git。
 
 需要凭据的命令通过受控脚本执行，例如：
 
@@ -25,6 +25,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 ```
 
 `Set-ExecutionPolicy` 只对当前 PowerShell 进程生效，不修改用户级或系统级执行策略。加载脚本只在子命令执行期间注入环境变量，结束后恢复原值，并且不会打印凭据。不要直接读取或输出凭据文件，也不要把密码、JWT 密钥或云资源密钥写入 `local.env`、PowerShell 历史、命令参数、日志或提交内容。非 Windows 环境应改用操作系统密钥管理工具或 CI Secret，并保持相同的环境变量接口。
+
+T08A.1 的加载脚本把 DPAPI 服务密钥临时注入为 `COURSE_MEDIA_AUTH_SECRET`，同时供 course-service 签发和 media-service 验证。生产/CI 必须通过各自 Secret 管理提供同名变量，不能复用 `IAM_JWT_SECRET`。非敏感参数 `COURSE_MEDIA_AUTH_ISSUER`、`COURSE_MEDIA_AUTH_AUDIENCE`、`COURSE_MEDIA_AUTH_TOKEN_TTL`、`MEDIA_SERVICE_AUTH_MAX_TOKEN_TTL` 和 `MEDIA_SERVICE_AUTH_CLOCK_SKEW` 可由环境覆盖；默认分别为 `edu-platform-course-service`、`edu-platform-media-service`、`30s`、`1m` 和 `5s`。
 
 五个领域服务的 MySQL Schema 变量分别是 `IAM_MYSQL_DATABASE`、`COURSE_MYSQL_DATABASE`、`MEDIA_MYSQL_DATABASE`、`LEARNING_MYSQL_DATABASE` 和 `OPERATION_MYSQL_DATABASE`。T02 不创建 Schema 或业务表；后续任务应保持每服务独立 Schema/账号。当前本地管理员账号只作为临时开发约定，通过 `MYSQL_USERNAME` 和 `MYSQL_PASSWORD` 注入，不能成为生产配置。
 
@@ -127,6 +129,12 @@ T08A 只在用途明确的 `edu_platform_course_dev` 与 `edu_platform_media_dev
 HLS 清单、切片和授权临时清单均为私有 OSS 对象。访问授权只返回短期 URL；数据库仅保留精确 Object Key 以便到期清理。真实环境验收继续使用上方 `MediaRealEnvironmentAcceptanceTest` 开关，该用例现在还验证 HLS 清单与首个切片可读取、重试/死信及最终精确清理。若未提供真实环境条件，测试会明确跳过，不能记录为已执行。
 
 T08A 不增加 Seed，也不会自动给 T05 固定课程绑定媒体。若人工使用 T05 固定课程进行验收，仍可执行 `cleanup-course-seed.sql`；脚本已按外键逆序清理该固定课程的课时媒体引用及对应课程 Outbox。重新生成方式仍是显式设置 `COURSE_SEED_ENABLED=true` 后重启 course-service。
+
+## T08A.1 课程播放授权参数与迁移
+
+浏览器只经 Gateway 调用 course-service 的课程资源播放授权接口；Gateway 不配置 `/internal/**` 路由。course-service 根据当前发布/可编辑版本、课程访问类型、课时试看标志、课程 owner 和资源绑定作出决定，再使用短时一次性服务 JWT 调用 media-service。media-service 不查询 course/learning Schema，并继续只对用途匹配且 `READY` 的资产签发短期 OSS/HLS 授权。
+
+Media V3 新增 `consumed_service_authorization`，以 jti 主键拒绝服务令牌重放并在到期后由维护任务清理。表中不保存 JWT、签名 URL、课程 ID、课时 ID、Object Key 或 Bucket。应用不会创建 `edu_platform_media_dev` 数据库；只在用途明确的 media dev/test Schema 中由 Flyway 向前迁移。T08A.1 没有 Course 迁移、Seed 或报名数据。
 
 ## T04 IAM 迁移与测试账号
 

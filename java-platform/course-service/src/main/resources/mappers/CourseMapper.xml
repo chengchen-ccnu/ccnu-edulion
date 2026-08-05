@@ -61,6 +61,53 @@
         WHERE cv.id = #{versionId}
     </select>
 
+    <!-- 只从 course 当前公开且生命周期为 PUBLISHED 的不可变版本解析媒体绑定，避免历史/草稿资源被枚举。 -->
+    <select id="findPublishedMediaAccess" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
+        SELECT c.id AS course_id,
+               c.owner_teacher_id,
+               cv.id AS version_id,
+               cv.lifecycle_status,
+               cv.access_type,
+               l.id AS lesson_id,
+               l.previewable,
+               r.id AS resource_id,
+               r.media_id,
+               r.purpose
+        FROM course c
+        JOIN course_version cv ON cv.id = c.published_version_id
+        JOIN chapter ch ON ch.course_version_id = cv.id
+        JOIN lesson l ON l.chapter_id = ch.id
+        JOIN lesson_media_resource r ON r.lesson_id = l.id
+        WHERE c.id = #{courseId}
+          AND c.publication_status = 'PUBLISHED'
+          AND cv.lifecycle_status = 'PUBLISHED'
+          AND l.id = #{lessonId}
+          AND r.id = #{resourceId}
+    </select>
+
+    <!-- 教师预览始终限定 owner，并只解析当前草稿或没有草稿时的当前发布版本。 -->
+    <select id="findOwnedEditableMediaAccess" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
+        SELECT c.id AS course_id,
+               c.owner_teacher_id,
+               cv.id AS version_id,
+               cv.lifecycle_status,
+               cv.access_type,
+               l.id AS lesson_id,
+               l.previewable,
+               r.id AS resource_id,
+               r.media_id,
+               r.purpose
+        FROM course c
+        JOIN course_version cv ON cv.id = COALESCE(c.current_draft_version_id, c.published_version_id)
+        JOIN chapter ch ON ch.course_version_id = cv.id
+        JOIN lesson l ON l.chapter_id = ch.id
+        JOIN lesson_media_resource r ON r.lesson_id = l.id
+        WHERE c.id = #{courseId}
+          AND c.owner_teacher_id = #{teacherId}
+          AND l.id = #{lessonId}
+          AND r.id = #{resourceId}
+    </select>
+
     <select id="listActiveCategories" resultType="com.eduplatform.course.domain.CategoryEntity">
         SELECT id, name
         FROM category

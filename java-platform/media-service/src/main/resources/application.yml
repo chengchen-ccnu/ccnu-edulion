@@ -12,6 +12,14 @@ management:
     web:
       exposure:
         include: health,info
+platform:
+  media:
+    service-authorization:
+      issuer: ${COURSE_MEDIA_AUTH_ISSUER:edu-platform-course-service}
+      audience: ${COURSE_MEDIA_AUTH_AUDIENCE:edu-platform-media-service}
+      max-token-ttl: ${MEDIA_SERVICE_AUTH_MAX_TOKEN_TTL:1m}
+      clock-skew: ${MEDIA_SERVICE_AUTH_CLOCK_SKEW:5s}
+      secret: ${COURSE_MEDIA_AUTH_SECRET:}
 
 ---
 spring:

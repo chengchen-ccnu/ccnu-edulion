@@ -149,6 +149,26 @@ class GatewayRouteSecurityTest {
     }
 
     @Test
+    /** 播放授权 POST 必须登录并只路由到课程域；media-service 的 internal 路径不会被 Gateway 暴露。 */
+    void coursePlaybackGrantRequiresLoginAndInternalMediaRouteIsNotExposed() {
+        String path = "/api/v1/courses/00000000-0000-4000-8000-000000000201"
+                + "/lessons/00000000-0000-4000-8000-000000000202"
+                + "/resources/00000000-0000-4000-8000-000000000203/playback-grants";
+        client.post().uri(path).exchange().expectStatus().isUnauthorized();
+
+        Instant now = Instant.now();
+        client.post().uri(path)
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.route").isEqualTo("course")
+                .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001");
+
+        client.post().uri("/internal/v1/media/00000000-0000-4000-8000-000000000701/access-grants")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
     /** Given 普通或教师 JWT；Then 教师路由分别拒绝或转发令牌中重建的可信身份。 */
     void teacherCourseRoutesRequireTeacherRoleAndForwardTrustedIdentity() {
         Instant now = Instant.now();
