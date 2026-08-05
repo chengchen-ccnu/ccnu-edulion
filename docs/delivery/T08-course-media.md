@@ -196,4 +196,4 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 剩余风险：完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
 
-T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`。提交与 Ready PR 在创建后回填，PR 不自行合并。
+T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。
