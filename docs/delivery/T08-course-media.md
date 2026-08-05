@@ -107,7 +107,7 @@ T08A/T08A.1 都没有新增 Seed 或正式伪数据，也没有创建数据库�
 - `pnpm.cmd --dir web-apps run typecheck`：OpenAPI 重新生成及全部 workspace 类型检查通过。
 - `pnpm.cmd --dir web-apps run test`：沙箱内因 Vite/esbuild `spawn EPERM` 无法启动；按批准在沙箱外复跑，6 个文件 34 项全部通过。
 - `pnpm.cmd --dir web-apps run build`：沙箱内因同一 `spawn EPERM` 失败；按批准在沙箱外复跑，学生、教师、管理三端生产构建全部通过。
-- `pnpm.cmd --dir web-apps run check:api`：主提交后复跑通过，生成文件与 OpenAPI 0.6.0 一致且已被 Git 跟踪。
+- `pnpm.cmd --dir web-apps run check:api`：主提交后复跑通过，生成文件与 OpenAPI 0.7.0 一致且已被 Git 跟踪。
 - `git diff --check`：文档完成后的最终结果在提交前复核。
 
 T08A 分支开发时自动化曾跳过真实环境用例；随后用户于 2026-08-02 按教程完成并确认真实 OSS、RabbitMQ、FFmpeg HLS 验收通过。PR #13 已合并到 `main`，不能再保留“待合并/未验收”的旧状态。
@@ -151,4 +151,4 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 ## 分支、提交与 PR
 
 - T08A：分支 `codex/t08a-course-media-contract-binding`，关键提交 `2f2697882394a5194a48e1756c8d05cd1a3780ea`；[PR #13](https://github.com/chengchen-ccnu/ccnu-edulion/pull/13) 已合并，当前基线 merge commit 为 `55b30d52493e84038da59f7a6789e43b8de6e716`。
-- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，基于最新 `origin/main` 的 `55b30d52493e84038da59f7a6789e43b8de6e716`。提交与 Ready PR 在发布后补记；不会自行合并。
+- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，基于最新 `origin/main` 的 `55b30d52493e84038da59f7a6789e43b8de6e716`；实现提交 `f2e1d972e828759089d2192227366ddb4985059b`，Ready [PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已创建，未自行合并。
