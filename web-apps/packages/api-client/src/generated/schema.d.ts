@@ -141,6 +141,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize playback of one published lesson video resource
+         * @description Course-service resolves the resource from the current immutable published version and derives its media ID and purpose server-side. An authenticated visitor may play a PUBLIC course or a previewable lesson. Until T11 supplies enrollment facts, a non-preview lesson in an ENROLLMENT_REQUIRED course returns `COURSE.ENROLLMENT_REQUIRED`. Missing, draft, archived, historical-version and mismatched resources share the same not-found response. The returned OSS/HLS URL is short-lived and must not be persisted or logged.
+         */
+        post: operations["createCourseLessonPlaybackGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/courses": {
         parameters: {
             query?: never;
@@ -217,6 +237,26 @@ export interface paths {
          */
         put: operations["updateTeacherCoursePublication"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview one lesson video resource owned by the current teacher
+         * @description Resolves the current editable version (the draft when present, otherwise the published version) and permits preview only when the authenticated TEACHER owns the course. The browser cannot submit a media ID, purpose, visibility decision or service credential. Other owners, stale resource IDs and non-video resources are indistinguishable from missing resources.
+         */
+        post: operations["createTeacherCourseLessonPlaybackGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -782,6 +822,22 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
         };
+        /** @description Short-lived playback projection returned by course-service after domain authorization. It contains no Bucket, Object Key, permanent URL or service credential. */
+        CourseMediaPlaybackGrant: {
+            /** @constant */
+            method: "GET";
+            /**
+             * Format: uri
+             * @description Expiring OSS URL for an HLS temporary playlist. Playlist segment URLs expire at the same time; never persist or log this value.
+             */
+            url: string;
+            /** @description Headers required by the authorized GET request; currently empty for OSS signed URLs. */
+            headers: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expiresAt: string;
+        };
         MediaBindingValidationRequest: {
             purpose: components["schemas"]["MediaPurpose"];
         };
@@ -845,6 +901,25 @@ export interface components {
                  *       "traceId": "2f6c8c3b98f14a9c",
                  *       "timestamp": "2026-07-16T10:00:00Z",
                  *       "path": "/api/v1/users/me",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The published course exists, but T11 enrollment/learning permission is required for this non-preview lesson. */
+        CoursePlaybackForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "COURSE.ENROLLMENT_REQUIRED",
+                 *       "message": "该课时需要报名后观看",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-05T10:00:00Z",
+                 *       "path": "/api/v1/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201/lessons/0195d9c2-1c3f-7b6e-a9dd-7367730a6501/resources/0195d9c2-1c3f-7b6e-a9dd-7367730a6601/playback-grants",
                  *       "fieldErrors": []
                  *     }
                  */
@@ -1034,6 +1109,10 @@ export interface components {
         Page: number;
         Size: number;
         CourseId: string;
+        /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+        LessonId: string;
+        /** @description Course-domain lesson media reference ID. The client never substitutes a media-service asset ID here. */
+        ResourceId: string;
         UploadId: string;
         MediaId: string;
     };
@@ -1235,6 +1314,39 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createCourseLessonPlaybackGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+                /** @description Course-domain lesson media reference ID. The client never substitutes a media-service asset ID here. */
+                resourceId: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Short-lived playback grant for the bound READY LESSON_VIDEO resource. */
+            201: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseMediaPlaybackGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CoursePlaybackForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["MediaConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
     listTeacherCourses: {
         parameters: {
             query?: {
@@ -1434,6 +1546,39 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    createTeacherCourseLessonPlaybackGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+                /** @description Course-domain lesson media reference ID. The client never substitutes a media-service asset ID here. */
+                resourceId: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Short-lived owner preview grant for the bound READY LESSON_VIDEO resource. */
+            201: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseMediaPlaybackGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["MediaConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
     createMediaUpload: {

@@ -19,6 +19,11 @@ platform:
     media:
       base-url: http://127.0.0.1:8083
       request-timeout: 1s
+      service-authorization:
+        issuer: edu-platform-course-service-test
+        audience: edu-platform-media-service-test
+        token-ttl: 30s
+        secret: test-only-course-media-auth-secret-32-bytes
       messaging:
         enabled: false
         outbox-poll-delay: 2s

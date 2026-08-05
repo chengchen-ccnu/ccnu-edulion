@@ -17,8 +17,53 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
+$serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
+
+function New-ServiceAuthorizationCredential {
+    $bytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+        $secret = [Convert]::ToBase64String($bytes)
+        return [PSCredential]::new(
+            "course-media-service",
+            (ConvertTo-SecureString $secret -AsPlainText -Force)
+        )
+    }
+    finally {
+        $generator.Dispose()
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        $secret = $null
+    }
+}
 
 if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $credentialPath))) {
+    $existingBaseConfiguration = (Test-Path -LiteralPath $configPath -PathType Leaf) `
+        -and (Test-Path -LiteralPath $credentialPath -PathType Leaf)
+    $serviceCredentialValid = $false
+    if (Test-Path -LiteralPath $serviceCredentialPath -PathType Leaf) {
+        try {
+            $existingServiceCredential = Import-Clixml -LiteralPath $serviceCredentialPath
+            if ($existingServiceCredential -is [PSCredential] `
+                    -and $existingServiceCredential.UserName -eq "course-media-service") {
+                $existingServiceNetworkCredential = $existingServiceCredential.GetNetworkCredential()
+                $serviceCredentialValid = $existingServiceNetworkCredential.Password.Length -ge 32
+            }
+        }
+        catch {
+            $serviceCredentialValid = $false
+        }
+        finally {
+            $existingServiceNetworkCredential = $null
+            $existingServiceCredential = $null
+        }
+    }
+    if ($existingBaseConfiguration -and -not $serviceCredentialValid) {
+        New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
+        New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
+        Write-Host "Added the DPAPI-encrypted course/media service authorization secret."
+        return
+    }
     throw "Local configuration already exists. Re-run with -Force only when you intend to replace it."
 }
 
@@ -126,10 +171,11 @@ if ($null -eq $credential) {
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
 
 $credential | Export-Clixml -LiteralPath $credentialPath -Force
+New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
 
 @(
     "# Non-secret local configuration for ccnu-edulion."
-    "# The MySQL credential is stored separately with Windows DPAPI."
+    "# MySQL and course/media service credentials are stored separately with Windows DPAPI."
     "SPRING_PROFILES_ACTIVE=local"
     "MYSQL_HOST=127.0.0.1"
     "MYSQL_PORT=3306"
@@ -155,4 +201,4 @@ $credential | Export-Clixml -LiteralPath $credentialPath -Force
 ) | Set-Content -LiteralPath $configPath -Encoding UTF8
 
 Write-Host "Local environment initialized in $ConfigDirectory."
-Write-Host "The MySQL password was encrypted for the current Windows user and was not written to the repository."
+Write-Host "The MySQL password and service authorization secret were encrypted for the current Windows user."

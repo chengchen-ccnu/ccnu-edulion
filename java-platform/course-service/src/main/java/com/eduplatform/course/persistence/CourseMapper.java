@@ -4,6 +4,7 @@ import com.eduplatform.course.domain.ChapterEntity;
 import com.eduplatform.course.domain.CategoryEntity;
 import com.eduplatform.course.domain.CourseEntity;
 import com.eduplatform.course.domain.CourseListRow;
+import com.eduplatform.course.domain.CourseMediaAccessRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
 import com.eduplatform.course.domain.LessonMediaResourceEntity;
@@ -31,6 +32,15 @@ public interface CourseMapper {
     CourseVersionEntity findPublicVersion(String courseId);
 
     CourseVersionEntity findVersion(String versionId);
+
+    /** 查询当前发布版本中的精确课时资源；草稿、归档和历史版本不会命中。 */
+    CourseMediaAccessRow findPublishedMediaAccess(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId, @Param("resourceId") String resourceId);
+
+    /** 查询当前教师拥有课程的可编辑版本资源；优先草稿，没有草稿时使用已发布版本。 */
+    CourseMediaAccessRow findOwnedEditableMediaAccess(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId, @Param("resourceId") String resourceId,
+            @Param("teacherId") String teacherId);
 
     List<CategoryEntity> listActiveCategories();
 

@@ -14,7 +14,8 @@ public record MediaProperties(
         Upload upload,
         Maintenance maintenance,
         Worker worker,
-        Oss oss) {
+        Oss oss,
+        ServiceAuthorization serviceAuthorization) {
 
     public record Messaging(boolean enabled, Duration outboxPollDelay, Duration confirmTimeout,
             int maxPublishAttempts) {}
@@ -29,4 +30,8 @@ public record MediaProperties(
 
     public record Oss(boolean enabled, String endpoint, String region, String bucket, String keyPrefix,
             String accessKeyId, String accessKeySecret, String securityToken, Duration accessGrantTtl) {}
+
+    /** 可信领域服务令牌的验证参数；secret 不得通过 HTTP、日志或数据库传播。 */
+    public record ServiceAuthorization(String issuer, String audience, Duration maxTokenTtl,
+            Duration clockSkew, String secret) {}
 }

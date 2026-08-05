@@ -3,10 +3,12 @@ package com.eduplatform.course.service;
 import com.eduplatform.course.domain.ChapterEntity;
 import com.eduplatform.course.domain.CourseEntity;
 import com.eduplatform.course.domain.CourseListRow;
+import com.eduplatform.course.domain.CourseMediaAccessRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
 import com.eduplatform.course.domain.LessonMediaResourceEntity;
 import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
 import com.eduplatform.course.persistence.CourseMapper;
 import com.eduplatform.course.web.CourseDtos;
@@ -37,13 +39,16 @@ public class CourseCatalogService {
     private final CourseMapper mapper;
     private final ObjectMapper objectMapper;
     private final MediaBindingClient mediaBindingClient;
+    private final MediaPlaybackClient mediaPlaybackClient;
     private final CourseMediaEventFactory mediaEvents;
 
     public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
-            MediaBindingClient mediaBindingClient, CourseMediaEventFactory mediaEvents) {
+            MediaBindingClient mediaBindingClient, MediaPlaybackClient mediaPlaybackClient,
+            CourseMediaEventFactory mediaEvents) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.mediaBindingClient = mediaBindingClient;
+        this.mediaPlaybackClient = mediaPlaybackClient;
         this.mediaEvents = mediaEvents;
     }
 
@@ -83,6 +88,55 @@ public class CourseCatalogService {
                 CourseDtos.CourseAccessType.valueOf(version.getAccessType()),
                 version.getVersionLabel(),
                 curriculum(version.getId()));
+    }
+
+    /**
+     * 为当前发布版本中的视频资源申请播放授权。
+     *
+     * <p>PUBLIC 课程允许已登录用户播放；ENROLLMENT_REQUIRED 课程在 T11 前只允许试看课时。
+     * 课程、课时、资源和版本不匹配统一按不可见处理。通过后才调用 media-service，且不会
+     * 把短期 URL 写入课程数据库、Outbox 或日志。</p>
+     *
+     * @param courseId 浏览器请求的课程 ID
+     * @param lessonId 浏览器请求的课时 ID
+     * @param resourceId 浏览器请求的课程域资源行 ID，而非 mediaId
+     * @param visitorId Gateway 验证后的访问者 ID
+     * @param traceId 当前请求追踪 ID
+     * @return 短期 hls-v1 播放授权
+     * @throws CourseException 资源不可见、尚需报名或媒体未就绪时抛出
+     */
+    @Transactional(readOnly = true)
+    public CourseDtos.CourseMediaPlaybackGrant createPublishedPlaybackGrant(
+            String courseId, String lessonId, String resourceId, String visitorId, String traceId) {
+        CourseMediaAccessRow access = mapper.findPublishedMediaAccess(courseId, lessonId, resourceId);
+        requireVideoResource(access);
+        if (!"PUBLIC".equals(access.getAccessType()) && !access.isPreviewable()) {
+            throw new CourseException(HttpStatus.FORBIDDEN, "COURSE.ENROLLMENT_REQUIRED",
+                    "该课时需要报名后观看");
+        }
+        return mediaPlaybackClient.issuePlayback(
+                access.getMediaId(), access.getPurpose(), visitorId, traceId);
+    }
+
+    /**
+     * 为课程所有者预览当前草稿或未发布版本中的视频资源申请授权。
+     *
+     * @param courseId 教师拥有的课程 ID
+     * @param lessonId 当前可编辑版本中的课时 ID
+     * @param resourceId 当前可编辑版本中的课程域资源行 ID
+     * @param teacherId Gateway 验证且具备 TEACHER 角色的用户 ID
+     * @param traceId 当前请求追踪 ID
+     * @return 短期 hls-v1 owner 预览授权
+     * @throws CourseException 非所有者、历史资源或非视频用途统一按不可见处理
+     */
+    @Transactional(readOnly = true)
+    public CourseDtos.CourseMediaPlaybackGrant createTeacherPlaybackGrant(
+            String courseId, String lessonId, String resourceId, String teacherId, String traceId) {
+        CourseMediaAccessRow access = mapper.findOwnedEditableMediaAccess(
+                courseId, lessonId, resourceId, teacherId);
+        requireVideoResource(access);
+        return mediaPlaybackClient.issuePlayback(
+                access.getMediaId(), access.getPurpose(), teacherId, traceId);
     }
 
     @Transactional(readOnly = true)
@@ -485,6 +539,13 @@ public class CourseCatalogService {
             throw notFound();
         }
         return course;
+    }
+
+    /** 只允许绑定用途为 LESSON_VIDEO 的精确资源进入播放链路，其他情况统一为不可见。 */
+    private void requireVideoResource(CourseMediaAccessRow access) {
+        if (access == null || !"LESSON_VIDEO".equals(access.getPurpose())) {
+            throw notFound();
+        }
     }
 
     private void requireActiveCategory(String categoryId) {

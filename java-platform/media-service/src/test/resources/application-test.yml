@@ -29,6 +29,12 @@ platform:
       enabled: false
       fixed-delay: 1h
       unbound-retention: 24h
+    service-authorization:
+      issuer: edu-platform-course-service-test
+      audience: edu-platform-media-service-test
+      max-token-ttl: 1m
+      clock-skew: 5s
+      secret: test-only-course-media-auth-secret-32-bytes
     worker:
       enabled: true
       ffmpeg-path: ffmpeg

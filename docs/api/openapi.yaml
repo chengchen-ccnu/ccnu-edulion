@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.6.0
-  description: T08A Gateway contract. Course writes bind stable media IDs, while media upload, HLS processing and short-lived delivery authorization remain owned by media-service. Historical course cover URLs are read-only compatibility projections and are never accepted as new business facts.
+  version: 0.7.0
+  description: T08A.1 Gateway contract. Course-service decides published, preview and owner visibility from trusted course facts before media-service issues a short-lived OSS/HLS grant. Browsers identify only the course lesson resource and can neither assert a media ID or purpose nor call the internal service authorization endpoint.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -285,6 +285,39 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants:
+    post:
+      tags: [Courses]
+      operationId: createCourseLessonPlaybackGrant
+      summary: Authorize playback of one published lesson video resource
+      description: |
+        Course-service resolves the resource from the current immutable published version and derives its media ID and purpose server-side. An authenticated visitor may play a PUBLIC course or a previewable lesson. Until T11 supplies enrollment facts, a non-preview lesson in an ENROLLMENT_REQUIRED course returns `COURSE.ENROLLMENT_REQUIRED`. Missing, draft, archived, historical-version and mismatched resources share the same not-found response. The returned OSS/HLS URL is short-lived and must not be persisted or logged.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '201':
+          description: Short-lived playback grant for the bound READY LESSON_VIDEO resource.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseMediaPlaybackGrant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CoursePlaybackForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
   /api/v1/teacher/courses:
     get:
       tags: [Teacher Courses]
@@ -525,6 +558,39 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants:
+    post:
+      tags: [Teacher Courses]
+      operationId: createTeacherCourseLessonPlaybackGrant
+      summary: Preview one lesson video resource owned by the current teacher
+      description: |
+        Resolves the current editable version (the draft when present, otherwise the published version) and permits preview only when the authenticated TEACHER owns the course. The browser cannot submit a media ID, purpose, visibility decision or service credential. Other owners, stale resource IDs and non-video resources are indistinguishable from missing resources.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '201':
+          description: Short-lived owner preview grant for the bound READY LESSON_VIDEO resource.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseMediaPlaybackGrant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
   /api/v1/media/uploads:
     post:
       tags: [Media]
@@ -850,6 +916,22 @@ components:
       schema:
         type: string
         format: uuid
+    LessonId:
+      name: lessonId
+      in: path
+      required: true
+      description: Course-domain lesson ID; it must belong to the version selected by the authorization endpoint.
+      schema:
+        type: string
+        format: uuid
+    ResourceId:
+      name: resourceId
+      in: path
+      required: true
+      description: Course-domain lesson media reference ID. The client never substitutes a media-service asset ID here.
+      schema:
+        type: string
+        format: uuid
     UploadId:
       name: uploadId
       in: path
@@ -890,6 +972,19 @@ components:
             traceId: 2f6c8c3b98f14a9c
             timestamp: '2026-07-16T10:00:00Z'
             path: /api/v1/users/me
+            fieldErrors: []
+    CoursePlaybackForbidden:
+      description: The published course exists, but T11 enrollment/learning permission is required for this non-preview lesson.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: COURSE.ENROLLMENT_REQUIRED
+            message: 该课时需要报名后观看
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-05T10:00:00Z'
+            path: /api/v1/courses/0195d9c2-1c3f-7b6e-a9dd-7367730a6201/lessons/0195d9c2-1c3f-7b6e-a9dd-7367730a6501/resources/0195d9c2-1c3f-7b6e-a9dd-7367730a6601/playback-grants
             fieldErrors: []
     RefreshConflict:
       description: The refresh token was already rotated or revoked. The whole token family is revoked and the user must log in again.
@@ -1789,6 +1884,27 @@ components:
           type: object
           additionalProperties:
             type: string
+        expiresAt:
+          type: string
+          format: date-time
+    CourseMediaPlaybackGrant:
+      type: object
+      additionalProperties: false
+      required: [method, url, headers, expiresAt]
+      description: Short-lived playback projection returned by course-service after domain authorization. It contains no Bucket, Object Key, permanent URL or service credential.
+      properties:
+        method:
+          type: string
+          const: GET
+        url:
+          type: string
+          format: uri
+          description: Expiring OSS URL for an HLS temporary playlist. Playlist segment URLs expire at the same time; never persist or log this value.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Headers required by the authorized GET request; currently empty for OSS signed URLs.
         expiresAt:
           type: string
           format: date-time

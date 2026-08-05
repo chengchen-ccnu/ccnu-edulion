@@ -20,7 +20,12 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +35,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -42,6 +52,8 @@ import tools.jackson.databind.ObjectMapper;
  */
 class MediaHttpIntegrationTest {
     private static final String TEACHER = "00000000-0000-4000-8000-000000007101";
+    private static final String STUDENT = "00000000-0000-4000-8000-000000007102";
+    private static final String SERVICE_SECRET = "test-only-course-media-auth-secret-32-bytes";
     @Value("${local.server.port}") int port;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper mapper;
@@ -58,6 +70,7 @@ class MediaHttpIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM consumed_service_authorization");
         jdbc.update("DELETE FROM temporary_access_object");
         jdbc.update("DELETE FROM access_grant_audit");
         jdbc.update("DELETE FROM media_audit_record");
@@ -123,6 +136,9 @@ class MediaHttpIntegrationTest {
 
         JsonNode grant = mapper.readTree(send("POST", "/api/v1/media/" + video.mediaId() + "/access-grants",
                 "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}", "TEACHER").body());
+        assertThat(sendAs("POST", "/api/v1/media/" + video.mediaId() + "/access-grants",
+                "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}", "STUDENT", STUDENT).statusCode())
+                .isEqualTo(404);
         String authorizedPlaylist = storage.readSigned(grant.get("url").asString());
         assertThat(authorizedPlaylist).contains("#EXTM3U", "https://oss.test/read/")
                 .doesNotContain("segment-00000.ts\n");
@@ -133,6 +149,63 @@ class MediaHttpIntegrationTest {
         assertThat(storage.hasObject(temporaryKey)).isFalse();
         assertThat(jdbc.queryForObject("SELECT deleted_at IS NOT NULL FROM temporary_access_object", Boolean.class))
                 .isTrue();
+    }
+
+    @Test
+    /** Given READY 视频和短时服务令牌；Then 仅完整匹配的首次调用成功，伪造/过期/错绑定/重放全部拒绝。 */
+    void internalPlaybackAuthorizationBindsAllClaimsRejectsReplayAndAuditsVisitor() throws Exception {
+        CompletedTestAsset video = createUploadedAsset("00000000-0000-4000-8000-000000007220",
+                "LESSON_VIDEO", "authorized.mp4", "video/mp4", "authvid".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(video.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        String body = internalPlaybackBody(STUDENT, "LESSON_VIDEO", "hls-v1");
+        Instant now = Instant.now();
+        String token = serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30));
+
+        HttpResponse<String> granted = sendInternal(token, video.mediaId(), body);
+        assertThat(granted.statusCode()).isEqualTo(201);
+        JsonNode serviceGrant = mapper.readTree(granted.body());
+        assertThat(storage.readSigned(serviceGrant.get("url").asString())).contains("#EXTM3U", "https://oss.test/read/");
+        assertThat(granted.body()).doesNotContain("objectKey", "bucket");
+        assertThat(jdbc.queryForObject("SELECT actor_id FROM access_grant_audit", String.class)).isEqualTo(STUDENT);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization", Integer.class))
+                .isEqualTo(1);
+
+        assertThat(sendInternal(token, video.mediaId(), body).statusCode()).isEqualTo(403);
+        assertThat(sendInternal(token.substring(0, token.length() - 1) + "x", video.mediaId(), body).statusCode())
+                .isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "wrong-audience", now, now.plusSeconds(30)),
+                video.mediaId(), body).statusCode()).isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test",
+                now.minusSeconds(60), now.minusSeconds(30)), video.mediaId(), body).statusCode()).isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT,
+                "00000000-0000-4000-8000-000000007999", "LESSON_VIDEO", "hls-v1",
+                "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), body).statusCode()).isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), internalPlaybackBody(TEACHER, "LESSON_VIDEO", "hls-v1")).statusCode())
+                .isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "COURSE_COVER", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), internalPlaybackBody(STUDENT, "COURSE_COVER", "hls-v1")).statusCode())
+                .isEqualTo(403);
+        assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "ORIGINAL", "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), internalPlaybackBody(STUDENT, "LESSON_VIDEO", "ORIGINAL")).statusCode())
+                .isEqualTo(403);
+        assertThat(sendInternal(null, video.mediaId(), body).statusCode()).isEqualTo(403);
+
+        CompletedTestAsset pending = createUploadedAsset("00000000-0000-4000-8000-000000007221",
+                "LESSON_VIDEO", "pending.mp4", "video/mp4", "pending".getBytes(StandardCharsets.UTF_8));
+        String pendingToken = serviceToken(UUID.randomUUID().toString(), STUDENT, pending.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30));
+        assertThat(sendInternal(pendingToken, pending.mediaId(), body).statusCode()).isEqualTo(409);
     }
 
     @Test
@@ -365,6 +438,44 @@ class MediaHttpIntegrationTest {
         if (body != null) request.header("Content-Type", "application/json");
         request.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendInternal(String token, String mediaId, String body) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(
+                        "http://127.0.0.1:" + port + "/internal/v1/media/" + mediaId + "/access-grants"))
+                .header("Content-Type", "application/json");
+        if (token != null) request.header("Authorization", "Bearer " + token);
+        return client.send(request.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String internalPlaybackBody(String visitorId, String purpose, String variant) {
+        return """
+                {"visitorId":"%s","purpose":"%s","accessType":"COURSE_PLAYBACK",
+                 "variant":"%s","disposition":"INLINE"}
+                """.formatted(visitorId, purpose, variant);
+    }
+
+    private static String serviceToken(String tokenId, String visitorId, String mediaId, String purpose,
+            String variant, String audience, Instant issuedAt, Instant expiresAt) {
+        SecretKey key = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer("edu-platform-course-service-test")
+                .audience(List.of(audience))
+                .subject(visitorId)
+                .id(tokenId)
+                .issuedAt(issuedAt)
+                .expiresAt(expiresAt)
+                .claim("mediaId", mediaId)
+                .claim("purpose", purpose)
+                .claim("accessType", "COURSE_PLAYBACK")
+                .claim("variant", variant)
+                .claim("disposition", "INLINE")
+                .claim("traceId", "trace-service-auth-test")
+                .build();
+        return encoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).build(), claims)).getTokenValue();
     }
 
     private static String sha256(byte[] value) throws Exception {

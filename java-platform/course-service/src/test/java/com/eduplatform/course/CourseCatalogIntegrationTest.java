@@ -29,10 +29,12 @@ class CourseCatalogIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired Flyway flyway;
     @Autowired CourseMediaTestConfiguration.FakeMediaBindingClient mediaClient;
+    @Autowired CourseMediaTestConfiguration.FakeMediaPlaybackClient playbackClient;
 
     @BeforeEach
     void resetData() {
         mediaClient.clear();
+        playbackClient.clear();
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
         jdbc.update("DELETE FROM outbox_event");
         jdbc.update("DELETE FROM lesson_media_resource");
@@ -45,6 +47,103 @@ class CourseCatalogIntegrationTest {
                 INSERT INTO category (id, code, name, status)
                 VALUES (?, 'MATH_TEST', '数学测试分类', 'ACTIVE')
                 """, CATEGORY_ID.toString());
+    }
+
+    @Test
+    /** Given 当前发布 PUBLIC 视频；When 学生按课程资源申请；Then 服务端解析绑定并把真实访问者交给媒体域。 */
+    void publicPublishedVideoAllowsPlaybackButDraftHistoricalAndMismatchedResourcesDoNot() {
+        String studentId = "00000000-0000-4000-8000-000000009201";
+        UUID publishedVideo = UUID.randomUUID();
+        UUID draftVideo = UUID.randomUUID();
+        mediaClient.register(publishedVideo.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+        mediaClient.register(draftVideo.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+
+        CourseDtos.TeacherCourse draft = service.create(
+                TEACHER_ID, createRequest(UUID.randomUUID(), "公开视频", null)).course();
+        CourseDtos.TeacherCourse withVideo = service.replaceCurriculum(
+                draft.id(), TEACHER_ID, curriculum(draft.revision(), publishedVideo));
+        service.updatePublication(draft.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, withVideo.revision()));
+        CourseDtos.CourseDetail published = service.getPublished(draft.id());
+        CourseDtos.LessonSummary publishedLesson = published.chapters().get(0).lessons().get(0);
+        CourseDtos.LessonMediaResource publishedResource = publishedLesson.resources().get(0);
+
+        CourseDtos.CourseMediaPlaybackGrant grant = service.createPublishedPlaybackGrant(
+                draft.id(), publishedLesson.id(), publishedResource.id(), studentId, "trace-public");
+        assertThat(grant.method()).isEqualTo("GET");
+        assertThat(playbackClient.lastRequest()).satisfies(request -> {
+            assertThat(request.mediaId()).isEqualTo(publishedVideo.toString());
+            assertThat(request.purpose()).isEqualTo("LESSON_VIDEO");
+            assertThat(request.visitorId()).isEqualTo(studentId);
+        });
+
+        CourseDtos.TeacherCourse editable = service.getTeacherCourse(draft.id(), TEACHER_ID);
+        CourseDtos.TeacherCourse changed = service.replaceCurriculum(
+                draft.id(), TEACHER_ID, curriculum(editable.revision(), draftVideo));
+        CourseDtos.LessonSummary draftLesson = changed.chapters().get(0).lessons().get(0);
+        CourseDtos.LessonMediaResource draftResource = draftLesson.resources().get(0);
+
+        assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
+                draft.id(), draftLesson.id(), draftResource.id(), studentId, "trace-draft"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("COURSE.NOT_FOUND"));
+        assertThatThrownBy(() -> service.createTeacherPlaybackGrant(
+                draft.id(), draftLesson.id(), draftResource.id(), OTHER_TEACHER_ID, "trace-other"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("COURSE.NOT_FOUND"));
+        assertThat(service.createTeacherPlaybackGrant(
+                draft.id(), draftLesson.id(), draftResource.id(), TEACHER_ID, "trace-owner").method())
+                .isEqualTo("GET");
+        assertThat(service.createPublishedPlaybackGrant(
+                draft.id(), publishedLesson.id(), publishedResource.id(), studentId, "trace-current-live").method())
+                .isEqualTo("GET");
+        assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
+                draft.id(), publishedLesson.id(), draftResource.id(), studentId, "trace-mismatch"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("COURSE.NOT_FOUND"));
+
+        service.updatePublication(draft.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, changed.revision()));
+        assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
+                draft.id(), publishedLesson.id(), publishedResource.id(), studentId, "trace-historical"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("COURSE.NOT_FOUND"));
+        assertThat(service.createPublishedPlaybackGrant(
+                draft.id(), draftLesson.id(), draftResource.id(), studentId, "trace-new-live").method())
+                .isEqualTo("GET");
+    }
+
+    @Test
+    /** Given 报名制课程；Then T11 前试看课时可播，非试看课时明确返回 403 且不伪造报名。 */
+    void enrollmentRequiredCourseAllowsOnlyPreviewLessonBeforeT11() {
+        String studentId = "00000000-0000-4000-8000-000000009201";
+        UUID video = UUID.randomUUID();
+        mediaClient.register(video.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+        CourseDtos.TeacherCourse draft = service.create(TEACHER_ID,
+                createRequest(UUID.randomUUID(), "报名课程", null,
+                        CourseDtos.CourseAccessType.ENROLLMENT_REQUIRED)).course();
+        CourseDtos.TeacherCourse nonPreview = service.replaceCurriculum(
+                draft.id(), TEACHER_ID, curriculum(draft.revision(), video, false));
+        service.updatePublication(draft.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, nonPreview.revision()));
+        CourseDtos.LessonSummary lesson = service.getPublished(draft.id()).chapters().get(0).lessons().get(0);
+        CourseDtos.LessonMediaResource resource = lesson.resources().get(0);
+
+        assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
+                draft.id(), lesson.id(), resource.id(), studentId, "trace-enrollment"))
+                .isInstanceOfSatisfying(CourseException.class, exception -> {
+                    assertThat(exception.status().value()).isEqualTo(403);
+                    assertThat(exception.code()).isEqualTo("COURSE.ENROLLMENT_REQUIRED");
+                });
+
+        CourseDtos.TeacherCourse editable = service.getTeacherCourse(draft.id(), TEACHER_ID);
+        CourseDtos.TeacherCourse previewDraft = service.replaceCurriculum(
+                draft.id(), TEACHER_ID, curriculum(editable.revision(), video, true));
+        service.updatePublication(draft.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, previewDraft.revision()));
+        CourseDtos.LessonSummary previewLesson = service.getPublished(draft.id()).chapters().get(0).lessons().get(0);
+        assertThat(service.createPublishedPlaybackGrant(draft.id(), previewLesson.id(),
+                previewLesson.resources().get(0).id(), studentId, "trace-preview").method()).isEqualTo("GET");
     }
 
     @Test
@@ -298,6 +397,11 @@ class CourseCatalogIntegrationTest {
     }
 
     private CourseDtos.CreateCourseRequest createRequest(UUID requestId, String title, UUID coverMediaId) {
+        return createRequest(requestId, title, coverMediaId, CourseDtos.CourseAccessType.PUBLIC);
+    }
+
+    private CourseDtos.CreateCourseRequest createRequest(UUID requestId, String title, UUID coverMediaId,
+            CourseDtos.CourseAccessType accessType) {
         return new CourseDtos.CreateCourseRequest(
                 requestId,
                 title,
@@ -307,7 +411,7 @@ class CourseCatalogIntegrationTest {
                 "测试教师",
                 CATEGORY_ID,
                 CourseDtos.CourseLevel.BEGINNER,
-                CourseDtos.CourseAccessType.PUBLIC);
+                accessType);
     }
 
     private CourseDtos.UpdateCourseRequest updateRequest(long revision, String title) {
@@ -332,13 +436,17 @@ class CourseCatalogIntegrationTest {
     }
 
     private CourseDtos.ReplaceCurriculumRequest curriculum(long revision, UUID videoMediaId) {
+        return curriculum(revision, videoMediaId, true);
+    }
+
+    private CourseDtos.ReplaceCurriculumRequest curriculum(long revision, UUID videoMediaId, boolean previewable) {
         return new CourseDtos.ReplaceCurriculumRequest(
                 revision,
                 List.of(new CourseDtos.ChapterInput(
                         "第一章",
                         1,
                         List.of(new CourseDtos.LessonInput(
-                                "第一课", CourseDtos.LessonType.VIDEO, 1, true,
+                                "第一课", CourseDtos.LessonType.VIDEO, 1, previewable,
                                 videoMediaId == null ? List.of() : List.of(new CourseDtos.LessonMediaResourceInput(
                                         videoMediaId, CourseDtos.LessonMediaPurpose.LESSON_VIDEO, 1)))))));
     }

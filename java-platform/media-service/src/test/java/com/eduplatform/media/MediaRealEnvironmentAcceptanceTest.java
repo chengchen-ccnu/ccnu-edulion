@@ -26,6 +26,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.amqp.core.Message;
@@ -37,18 +40,25 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.server.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @EnabledIfEnvironmentVariable(named = "MEDIA_REAL_ACCEPTANCE", matches = "true")
 /**
- * 只在显式开启时运行的 T07/T08A 真实环境验收。
+ * 只在显式开启时运行的 T07/T08A/T08A.1 真实环境验收。
  *
  * <p>测试先强制确认目标为 {@code edu_platform_media_dev}，OSS 只使用本轮 UUID 前缀并只删除已记录精确键。
- * 它覆盖单对象/Multipart、HEAD、HLS 播放授权、FFmpeg、confirm/return、有限重试/DLQ、幂等、未 ACK 重投和 MQ 故障 Outbox。</p>
+ * 它覆盖单对象/Multipart、HEAD、owner/服务令牌 HLS 播放授权、FFmpeg、confirm/return、有限重试/DLQ、幂等、未 ACK 重投和 MQ 故障 Outbox。</p>
  */
 class MediaRealEnvironmentAcceptanceTest {
     private static final String OWNER = "00000000-0000-4000-8000-000000007901";
+    private static final String VISITOR = "00000000-0000-4000-8000-000000007902";
+    private static final String SERVICE_SECRET = "test-only-real-media-auth-secret-32-bytes";
     private final HttpClient http = HttpClient.newHttpClient();
 
     @Test
@@ -66,6 +76,7 @@ class MediaRealEnvironmentAcceptanceTest {
                         "--platform.media.oss.key-prefix=" + prefix,
                         "--platform.media.worker.enabled=true",
                         "--platform.media.maintenance.enabled=false",
+                        "--platform.media.service-authorization.secret=" + SERVICE_SECRET,
                         "--platform.media.upload.multipart-threshold=1024",
                         "--platform.media.upload.part-size=5242880")) {
             ServletWebServerApplicationContext context = (ServletWebServerApplicationContext) raw;
@@ -123,6 +134,17 @@ class MediaRealEnvironmentAcceptanceTest {
                         HttpResponse.BodyHandlers.ofByteArray());
                 assertThat(segment.statusCode()).isEqualTo(200);
                 assertThat(segment.body()).isNotEmpty();
+
+                String serviceToken = serviceToken(VISITOR, videoId);
+                JsonNode serviceGrant = mapper.readTree(sendInternal(port, serviceToken, videoId, """
+                        {"visitorId":"%s","purpose":"LESSON_VIDEO","accessType":"COURSE_PLAYBACK",
+                         "variant":"hls-v1","disposition":"INLINE"}
+                        """.formatted(VISITOR)).body());
+                HttpResponse<String> servicePlaylist = http.send(HttpRequest.newBuilder(
+                                URI.create(serviceGrant.get("url").asString())).GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                assertThat(servicePlaylist.statusCode()).isEqualTo(200);
+                assertThat(servicePlaylist.body()).contains("#EXTM3U");
 
                 rabbit.convertAndSend(MediaRabbitTopology.EVENTS_EXCHANGE, "media.uploaded.v1", videoUploaded.payloadJson());
                 TimeUnit.MILLISECONDS.sleep(800);
@@ -334,6 +356,8 @@ class MediaRealEnvironmentAcceptanceTest {
         jdbc.update("DELETE FROM temporary_access_object WHERE media_id IN "
                 + "(SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM access_grant_audit WHERE actor_id = ?", OWNER);
+        jdbc.update("DELETE FROM access_grant_audit WHERE actor_id = ?", VISITOR);
+        jdbc.update("DELETE FROM consumed_service_authorization WHERE visitor_id = ?", VISITOR);
         jdbc.update("DELETE FROM media_audit_record WHERE actor_id = ? OR media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER, OWNER);
         jdbc.update("DELETE FROM outbox_event WHERE aggregate_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM media_reference WHERE media_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?)", OWNER);
@@ -349,14 +373,46 @@ class MediaRealEnvironmentAcceptanceTest {
         for (String table : List.of("upload_session", "upload_part", "media_asset", "media_variant",
                 "media_variant_component", "temporary_access_object",
                 "processing_job", "media_reference", "outbox_event", "consumed_event",
-                "media_audit_record", "access_grant_audit")) {
+                "media_audit_record", "access_grant_audit", "consumed_service_authorization")) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class))
-                    .as("T07/T08A acceptance cleanup table %s", table)
+                    .as("T07/T08A/T08A.1 acceptance cleanup table %s", table)
                     .isZero();
         }
     }
 
     private static String sha256(byte[] value) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+    }
+
+    /** 用真实 OSS 验收所需的短时测试令牌；密钥只用于本轮测试进程，不是部署凭据。 */
+    private static String serviceToken(String visitorId, String mediaId) {
+        Instant now = Instant.now();
+        SecretKey key = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer("edu-platform-course-service")
+                .audience(List.of("edu-platform-media-service"))
+                .subject(visitorId)
+                .id(UUID.randomUUID().toString())
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(30))
+                .claim("mediaId", mediaId)
+                .claim("purpose", "LESSON_VIDEO")
+                .claim("accessType", "COURSE_PLAYBACK")
+                .claim("variant", "hls-v1")
+                .claim("disposition", "INLINE")
+                .claim("traceId", "real-service-authorization")
+                .build();
+        return encoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).build(), claims)).getTokenValue();
+    }
+
+    private HttpResponse<String> sendInternal(int port, String token, String mediaId, String body)
+            throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
+                        + "/internal/v1/media/" + mediaId + "/access-grants"))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 }

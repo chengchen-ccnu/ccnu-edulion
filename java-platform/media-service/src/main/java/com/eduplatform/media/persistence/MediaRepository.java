@@ -468,6 +468,30 @@ public class MediaRepository {
                 timestamp(now), grantId);
     }
 
+    /**
+     * 原子消费一次服务授权 jti；唯一键冲突表示同一令牌已使用，调用方必须拒绝重放。
+     *
+     * @return true 表示首次消费并已落库，false 表示 tokenId 已存在
+     */
+    public boolean consumeServiceAuthorization(String tokenId, String issuer, String audience,
+            String visitorId, Instant expiresAt, Instant now) {
+        try {
+            jdbc.update("""
+                    INSERT INTO consumed_service_authorization(
+                        token_id, issuer, audience, visitor_id, expires_at, consumed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """, tokenId, issuer, audience, visitorId, timestamp(expiresAt), timestamp(now));
+            return true;
+        } catch (DuplicateKeyException duplicate) {
+            return false;
+        }
+    }
+
+    /** 删除已经失效的随机 jti 记录；不影响任何仍在有效期内的重放保护。 */
+    public int deleteExpiredServiceAuthorizations(Instant now) {
+        return jdbc.update("DELETE FROM consumed_service_authorization WHERE expires_at < ?", timestamp(now));
+    }
+
     private <T> Optional<T> one(String sql, RowMapper<T> mapper, Object... args) {
         List<T> values = jdbc.query(sql, mapper, args);
         return values.stream().findFirst();

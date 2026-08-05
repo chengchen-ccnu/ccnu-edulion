@@ -9,6 +9,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -114,6 +115,9 @@ public final class CourseDtos {
             List<LessonMediaResource> resources) {}
 
     public record LessonMediaResource(String id, String mediaId, LessonMediaPurpose purpose, int sequence) {}
+
+    /** 短期 HLS 播放投影；URL 及请求头不得持久化、写事件或输出到普通日志。 */
+    public record CourseMediaPlaybackGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
 
     public record TeacherCourse(
             String id,

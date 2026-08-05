@@ -21,6 +21,11 @@ platform:
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${COURSE_MEDIA_REQUEST_TIMEOUT:3s}
+      service-authorization:
+        issuer: ${COURSE_MEDIA_AUTH_ISSUER:edu-platform-course-service}
+        audience: ${COURSE_MEDIA_AUTH_AUDIENCE:edu-platform-media-service}
+        token-ttl: ${COURSE_MEDIA_AUTH_TOKEN_TTL:30s}
+        secret: ${COURSE_MEDIA_AUTH_SECRET:}
       messaging:
         enabled: false
         outbox-poll-delay: 2s
