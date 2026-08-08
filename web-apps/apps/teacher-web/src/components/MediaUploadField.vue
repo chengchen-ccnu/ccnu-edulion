@@ -35,6 +35,9 @@ const busy = computed(() => ["RESTORING", "HASHING", "CREATING", "UPLOADING", "C
   .includes(state.value.stage));
 const percent = computed(() => Math.round(state.value.progress * 100));
 const displayUrl = computed(() => previewUrl.value ?? props.currentUrl ?? null);
+const placeholderLabel = computed(() => state.value.fileName ?? (props.modelValue
+  ? props.purpose === "COURSE_COVER" ? "已绑定课程封面，展示地址暂不可用" : "已绑定课时视频"
+  : "尚未选择文件"));
 
 onMounted(() => { void uploader.restore(); });
 onBeforeUnmount(() => { uploader.dispose(); revokePreview(); emit("busy-change", false); });
@@ -74,7 +77,10 @@ async function remove() {
   if (input.value) input.value.value = "";
   revokePreview();
   state.value = { stage: "IDLE", progress: 0, uploadedBytes: 0, totalBytes: 0,
-    statusLabel: "封面或视频已从当前编辑表单移除，保存后才会解除课程引用。", errorMessage: "" };
+    statusLabel: props.purpose === "COURSE_COVER"
+      ? "课程封面已从当前编辑表单移除，保存后才会解除课程引用。"
+      : "课时视频已从当前编辑表单移除，保存后才会解除目录引用。",
+    errorMessage: "" };
 }
 
 function browse() {
@@ -102,7 +108,7 @@ function formatBytes(bytes: number): string {
     </header>
     <img v-if="purpose === 'COURSE_COVER' && displayUrl" class="media-upload-field__preview" :src="displayUrl" alt="课程封面预览">
     <div v-else class="media-upload-field__placeholder">
-      <strong>{{ state.fileName ?? (modelValue ? "已绑定视频" : "尚未选择文件") }}</strong>
+      <strong>{{ placeholderLabel }}</strong>
       <span v-if="state.totalBytes">{{ formatBytes(state.totalBytes) }}</span>
     </div>
     <input ref="input" class="visually-hidden" type="file" :accept="accept" :disabled="disabled || busy" @change="chooseFile">

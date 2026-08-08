@@ -5,7 +5,7 @@
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CourseAccessType, CourseDetail, CourseLevel } from "@edu/api-client";
-import { HlsVideoPlayer } from "@edu/ui";
+import { HlsVideoPlayer, playbackErrorMessage } from "@edu/ui";
 import { ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
@@ -43,6 +43,13 @@ function getStudentGrant(signal: AbortSignal) {
   if (!course.value || !selectedVideo.value) throw new Error("VIDEO_NOT_SELECTED");
   return studentCourseApi.playbackGrant(course.value.id, selectedVideo.value.lessonId,
     selectedVideo.value.resourceId, signal);
+}
+
+/** 学生课程页解释课程访问规则；403 在 T11 前专指报名制非试看，其他状态复用公共播放器提示。 */
+function studentPlaybackErrorMessage(error: unknown): string {
+  return error instanceof GatewayRequestError && error.status === 403
+    ? "当前课程需要报名；T11 上线前，非试看课时暂不能播放。"
+    : playbackErrorMessage(error);
 }
 
 function selectVideo(lesson: CourseLesson, resourceId: string) {
@@ -131,7 +138,8 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
       <header><div><span class="section-kicker">LESSON VIDEO</span><h3>{{ selectedVideo.title }}</h3></div>
         <button type="button" aria-label="关闭播放器" @click="selectedVideo = null">关闭</button></header>
       <HlsVideoPlayer :grant-key="`${course.id}:${selectedVideo.lessonId}:${selectedVideo.resourceId}`"
-        :title="`${selectedVideo.title}视频`" :grant-provider="getStudentGrant" />
+        :title="`${selectedVideo.title}视频`" :grant-provider="getStudentGrant"
+        :error-message-provider="studentPlaybackErrorMessage" />
     </section>
   </template>
 </template>

@@ -24,11 +24,11 @@ export function playbackRefreshDelay(expiresAt: string, now = Date.now()): numbe
   return Math.max(1_000, remaining - lead);
 }
 
-/** 将课程播放边界的稳定 HTTP 状态转换为学生和教师都能理解的提示。 */
+/** 将课程播放边界的稳定 HTTP 状态转换为不包含教师/学生业务判断的公共提示。 */
 export function playbackErrorMessage(error: unknown): string {
   const status = statusOf(error);
   if (status === 401 || error instanceof Error && error.message === "AUTHENTICATION_REQUIRED") return "需要重新登录后才能播放该视频。";
-  if (status === 403) return "当前课程需要报名；T11 上线前，非试看课时暂不能播放。";
+  if (status === 403) return "当前身份无权播放该视频。";
   if (status === 404) return "课程、课时或视频资源不可见，可能已更新或下架。";
   if (status === 409) return "视频仍在处理中或当前状态不允许播放。";
   if (status === 429) return "播放请求过于频繁，请稍后手动重试。";

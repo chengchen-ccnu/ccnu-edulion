@@ -5,7 +5,7 @@
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { ChapterInput, LessonInput, TeacherCourse } from "@edu/api-client";
-import { HlsVideoPlayer } from "@edu/ui";
+import { HlsVideoPlayer, playbackErrorMessage } from "@edu/ui";
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
@@ -175,6 +175,13 @@ function getTeacherGrant(signal: AbortSignal) {
     selectedVideo.value.resourceId, signal);
 }
 
+/** 教师预览页解释 owner 权限失败；不得向教师展示学生报名流程的 403 文案。 */
+function teacherPlaybackErrorMessage(error: unknown): string {
+  return error instanceof GatewayRequestError && error.status === 403
+    ? "当前教师身份无权预览该课程视频。"
+    : playbackErrorMessage(error);
+}
+
 async function updatePublication(status: "PUBLISHED" | "UNPUBLISHED") {
   if (!course.value || dirty.value) return;
   const prompt = status === "PUBLISHED"
@@ -276,7 +283,8 @@ function messageFor(error: unknown, fallback: string): string {
       <section v-if="selectedVideo" class="teacher-video-preview">
         <header><strong>{{ selectedVideo.title }}</strong><button type="button" @click="selectedVideo = null">关闭预览</button></header>
         <HlsVideoPlayer :grant-key="`${course.id}:${selectedVideo.lessonId}:${selectedVideo.resourceId}`"
-          :title="`${selectedVideo.title}教师预览`" :grant-provider="getTeacherGrant" />
+          :title="`${selectedVideo.title}教师预览`" :grant-provider="getTeacherGrant"
+          :error-message-provider="teacherPlaybackErrorMessage" />
       </section>
       <footer class="editor-actions editor-actions--split">
         <div>

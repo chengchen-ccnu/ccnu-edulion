@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * 短期授权 HLS 播放器；输入是一次性授权获取函数，输出是原生 video 播放体验和可理解的失败反馈。
+ * 短期授权 HLS 播放器；输入是一次性授权获取函数和可选业务错误映射，输出是原生 video 播放体验。
  * 组件优先使用浏览器原生 HLS，其他支持 MSE 的浏览器使用 hls.js；授权 URL、请求头仅保存在内存。
+ * 共享组件不判断教师或学生权限；403 等角色语义由调用页面传入，网络和播放器错误使用公共提示。
  * 切换资源或卸载时会中止授权请求、清理刷新定时器、销毁播放器并移除 video 的临时地址。
  */
 import type { CourseMediaPlaybackGrant } from "@edu/api-client";
@@ -13,6 +14,7 @@ import { playbackErrorMessage, playbackRefreshDelay, requestPlaybackGrant } from
 const props = defineProps<{
   grantKey: string;
   grantProvider: (signal: AbortSignal) => Promise<CourseMediaPlaybackGrant>;
+  errorMessageProvider?: (error: unknown) => string;
   title: string;
 }>();
 
@@ -44,7 +46,9 @@ async function loadGrant(preservePosition: boolean) {
     if (!attached) return;
     scheduleRefresh(grant);
   } catch (error) {
-    if (!controller.signal.aborted && currentGeneration === generation) errorMessage.value = playbackErrorMessage(error);
+    if (!controller.signal.aborted && currentGeneration === generation) {
+      errorMessage.value = props.errorMessageProvider?.(error) ?? playbackErrorMessage(error);
+    }
   } finally {
     if (currentGeneration === generation) loading.value = false;
   }

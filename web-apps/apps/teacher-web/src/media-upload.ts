@@ -261,11 +261,12 @@ export class MediaUploader {
   }
 
   private async consumeAsset(asset: MediaAsset, signal: AbortSignal): Promise<string> {
+    this.assertAssetPurpose(asset);
     this.checkpoint = this.checkpoint ? { ...this.checkpoint, mediaId: asset.mediaId } : null;
     this.writeCheckpoint();
     if (asset.status === "READY") {
       this.patch({ stage: "READY", progress: 1, uploadedBytes: asset.size, totalBytes: asset.size,
-        mediaId: asset.mediaId, statusLabel: "媒体已就绪，可以绑定到课程。", errorMessage: "" });
+        mediaId: asset.mediaId, statusLabel: readyStatusLabel(this.purpose), errorMessage: "" });
       return asset.mediaId;
     }
     if (asset.status === "FAILED" || asset.status === "REJECTED" || asset.status === "EXPIRED"
@@ -278,21 +279,27 @@ export class MediaUploader {
 
   private async pollReady(mediaId: string, signal: AbortSignal): Promise<string> {
     const deadline = this.now() + this.pollTimeoutMs;
-    this.patch({ stage: "PROCESSING", mediaId, statusLabel: "文件已上传，正在校验或处理…" });
+    this.patch({ stage: "PROCESSING", mediaId, statusLabel: initialProcessingStatusLabel(this.purpose) });
     while (this.now() < deadline) {
       const asset = await this.api.getMedia(mediaId, signal);
+      this.assertAssetPurpose(asset);
       if (asset.status === "READY") return await this.consumeAsset(asset, signal);
       if (["FAILED", "REJECTED", "EXPIRED", "DELETING", "DELETED"].includes(asset.status)) {
         return await this.consumeAsset(asset, signal);
       }
-      this.patch({ statusLabel: asset.status === "PROCESSING" ? "视频正在转码为 HLS…"
-        : asset.status === "VERIFYING" ? "正在核验文件完整性…" : "文件已接收，等待处理…" });
+      this.patch({ statusLabel: processingStatusLabel(this.purpose, asset.status) });
       await this.sleep(this.pollIntervalMs, signal);
     }
     throw new Error("MEDIA_PROCESSING_TIMEOUT");
   }
 
+  /** 拒绝把服务端返回的其他用途资产绑定到当前控件，避免状态文案和课程引用同时越过用途边界。 */
+  private assertAssetPurpose(asset: MediaAsset): void {
+    if (asset.purpose !== this.purpose) throw new Error("MEDIA_PURPOSE_MISMATCH");
+  }
+
   private syncCheckpoint(session: MediaUploadSession) {
+    this.assertSessionPurpose(session);
     this.checkpoint = { uploadId: session.uploadId, clientRequestId: session.clientRequestId, purpose: session.purpose,
       fileName: session.fileName, size: session.size, mimeType: session.mimeType, sha256: session.sha256,
       expiresAt: session.expiresAt, mediaId: session.mediaId ?? undefined };
@@ -303,6 +310,11 @@ export class MediaUploader {
 
   private writeCheckpoint() {
     if (this.checkpoint) this.storage?.setItem(this.checkpointKey, JSON.stringify(this.checkpoint));
+  }
+
+  /** 上传会话用途必须与控件一致；不一致时在向 OSS 发送文件字节前终止。 */
+  private assertSessionPurpose(session: MediaUploadSession): void {
+    if (session.purpose !== this.purpose) throw new Error("MEDIA_PURPOSE_MISMATCH");
   }
 
   private fail(message: string, clearCheckpoint: boolean) {
@@ -406,6 +418,7 @@ function isSessionTerminal(status: MediaUploadSession["status"]): boolean {
 
 function uploadErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message === "RESUME_FILE_MISMATCH") return "请选择与恢复会话同名、同大小且内容一致的本地文件。";
+  if (error instanceof Error && error.message === "MEDIA_PURPOSE_MISMATCH") return "服务端返回的媒体用途与当前上传用途不一致，已阻止绑定。";
   if (error instanceof Error && (error.message === "UPLOAD_SESSION_EXPIRED" || error.message === "UPLOAD_GRANT_EXPIRED")) return "短期上传授权已过期，请取消后重新上传。";
   if (error instanceof Error && error.message === "MISSING_ETAG") return "OSS 未返回分片 ETag，无法安全完成上传。";
   if (error instanceof Error && error.message === "MEDIA_PROCESSING_TIMEOUT") return "媒体处理等待超时，可稍后刷新页面继续查询。";
@@ -421,6 +434,30 @@ function initialState(): MediaUploadViewState {
 }
 
 function ratio(value: number, total: number): number { return total > 0 ? Math.min(1, Math.max(0, value / total)) : 0; }
+
+/** 根据业务用途解释通用媒体处理状态；只有课时视频的 PROCESSING 表示 HLS 转码。 */
+function processingStatusLabel(purpose: MediaPurpose, status: MediaAsset["status"]): string {
+  if (status === "PROCESSING") {
+    return purpose === "LESSON_VIDEO" ? "视频正在转码为 HLS…"
+      : purpose === "COURSE_COVER" ? "封面正在校验和处理…" : "媒体正在处理…";
+  }
+  if (status === "VERIFYING") {
+    return purpose === "COURSE_COVER" ? "正在核验封面文件完整性…" : "正在核验文件完整性…";
+  }
+  return purpose === "COURSE_COVER" ? "封面已接收，等待处理…" : "文件已接收，等待处理…";
+}
+
+/** 上传完成进入轮询时提供用途明确的初始提示，避免把封面处理误报为视频操作。 */
+function initialProcessingStatusLabel(purpose: MediaPurpose): string {
+  return purpose === "COURSE_COVER" ? "封面已上传，正在校验和处理…"
+    : purpose === "LESSON_VIDEO" ? "视频已上传，正在校验并准备转码…" : "文件已上传，正在校验或处理…";
+}
+
+/** READY 只回写同用途的稳定 mediaId，并向教师说明实际可绑定对象。 */
+function readyStatusLabel(purpose: MediaPurpose): string {
+  return purpose === "COURSE_COVER" ? "课程封面已就绪，可以绑定到课程。"
+    : purpose === "LESSON_VIDEO" ? "课时视频已就绪，可以绑定到目录。" : "媒体已就绪，可以绑定到课程。";
+}
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

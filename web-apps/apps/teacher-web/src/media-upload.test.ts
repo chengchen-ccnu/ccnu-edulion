@@ -1,5 +1,5 @@
 import { GatewayRequestError } from "@edu/api-client";
-import type { MediaAsset, MediaUploadSession } from "@edu/api-client";
+import type { MediaAsset, MediaPurpose, MediaUploadSession } from "@edu/api-client";
 import { describe, expect, it, vi } from "vitest";
 
 import type { TeacherMediaApi } from "./media-api";
@@ -19,20 +19,66 @@ describe("teacher media uploader", () => {
       progress(2); progress(body.size); return "actual-etag";
     });
     const states: string[] = [];
+    const labels: string[] = [];
     const uploader = new MediaUploader({ api, purpose: "COURSE_COVER", checkpointKey: "cover", storage: memoryStorage(),
       putObject: put, now: () => clock, sleep: async milliseconds => { clock += milliseconds; },
-      onChange: state => states.push(state.stage) });
+      onChange: state => { states.push(state.stage); labels.push(state.statusLabel); } });
 
     await expect(uploader.upload(new File(["cover"], "cover.png", { type: "image/png" })))
       .resolves.toBe("00000000-0000-4000-8000-000000000901");
     expect(put).toHaveBeenCalledOnce();
     expect(states).toContain("PROCESSING");
+    expect(labels).toContain("封面正在校验和处理…");
+    expect(labels.some(label => label.includes("HLS"))).toBe(false);
     expect(uploader.snapshot).toMatchObject({ stage: "READY", progress: 1,
-      mediaId: "00000000-0000-4000-8000-000000000901" });
+      mediaId: "00000000-0000-4000-8000-000000000901",
+      statusLabel: "课程封面已就绪，可以绑定到课程。" });
+  });
+
+  it("reports HLS processing only for LESSON_VIDEO", async () => {
+    let clock = 0;
+    const purpose = "LESSON_VIDEO" as const;
+    const api = fakeApi({ create: vi.fn(async () => singleSession(purpose)),
+      complete: vi.fn(async () => asset("PROCESSING", purpose)),
+      getMedia: vi.fn().mockResolvedValueOnce(asset("PROCESSING", purpose)).mockResolvedValueOnce(asset("READY", purpose)) });
+    const labels: string[] = [];
+    const uploader = new MediaUploader({ api, purpose, checkpointKey: "video-status", storage: memoryStorage(),
+      putObject: async (_grant, body, _signal, progress) => { progress(body.size); return "etag"; },
+      now: () => clock, sleep: async milliseconds => { clock += milliseconds; },
+      onChange: state => labels.push(state.statusLabel) });
+
+    await uploader.upload(new File(["video"], "lesson.mp4", { type: "video/mp4" }));
+
+    expect(labels).toContain("视频正在转码为 HLS…");
+    expect(uploader.snapshot.statusLabel).toBe("课时视频已就绪，可以绑定到目录。");
+  });
+
+  it("rejects a server asset whose purpose does not match the upload control", async () => {
+    const api = fakeApi({ create: vi.fn(async () => singleSession()),
+      complete: vi.fn(async () => asset("READY", "LESSON_VIDEO")) });
+    const uploader = new MediaUploader({ api, purpose: "COURSE_COVER", checkpointKey: "purpose-mismatch",
+      storage: memoryStorage(), putObject: async () => "etag", onChange: () => undefined });
+
+    await expect(uploader.upload(new File(["cover"], "cover.png", { type: "image/png" })))
+      .rejects.toThrow("MEDIA_PURPOSE_MISMATCH");
+    expect(uploader.snapshot).toMatchObject({ stage: "FAILED", mediaId: undefined,
+      errorMessage: "服务端返回的媒体用途与当前上传用途不一致，已阻止绑定。" });
+  });
+
+  it("rejects a mismatched upload session before sending bytes to OSS", async () => {
+    const put = vi.fn(async () => "etag");
+    const api = fakeApi({ create: vi.fn(async () => singleSession("LESSON_VIDEO")) });
+    const uploader = new MediaUploader({ api, purpose: "COURSE_COVER", checkpointKey: "session-purpose-mismatch",
+      storage: memoryStorage(), putObject: put, onChange: () => undefined });
+
+    await expect(uploader.upload(new File(["cover"], "cover.png", { type: "image/png" })))
+      .rejects.toThrow("MEDIA_PURPOSE_MISMATCH");
+    expect(put).not.toHaveBeenCalled();
+    expect(uploader.snapshot.stage).toBe("FAILED");
   });
 
   it("resumes uploaded multipart parts, authorizes each missing part, and submits actual ETags in order", async () => {
-    const session: MediaUploadSession = { ...singleSession(), mode: "MULTIPART", uploadGrant: null, size: 8,
+    const session: MediaUploadSession = { ...singleSession("LESSON_VIDEO"), mode: "MULTIPART", uploadGrant: null, size: 8,
       sha256: "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f",
       multipart: { partSize: 3, maxParts: 10, uploadedParts: [{ partNumber: 1, etag: "server-etag-1", size: 3 }] } };
     const storage = memoryStorage();
@@ -52,18 +98,18 @@ describe("teacher media uploader", () => {
           { partNumber: 2, etag: "actual-etag-2" },
           { partNumber: 3, etag: "actual-etag-3" }
         ]);
-        return asset("READY");
+        return asset("READY", "LESSON_VIDEO");
       }) });
     const put = vi.fn(async (grant, body: Blob, _signal, progress: (bytes: number) => void) => {
       progress(body.size);
       return `actual-etag-${grant.url.endsWith("2") ? 2 : 3}`;
     });
-    const uploader = new MediaUploader({ api, purpose: "COURSE_COVER", checkpointKey: "video", storage,
+    const uploader = new MediaUploader({ api, purpose: "LESSON_VIDEO", checkpointKey: "video", storage,
       putObject: put, now: () => 0, sleep: async () => undefined, onChange: () => undefined });
 
     await uploader.restore();
-    await expect(uploader.upload(new File(["12345678"], "cover.png", { type: "image/png" })))
-      .resolves.toBe(asset("READY").mediaId);
+    await expect(uploader.upload(new File(["12345678"], "lesson.mp4", { type: "video/mp4" })))
+      .resolves.toBe(asset("READY", "LESSON_VIDEO").mediaId);
     expect(authorized.sort()).toEqual([2, 3]);
     expect(put).toHaveBeenCalledTimes(2);
   });
@@ -147,19 +193,23 @@ describe("teacher media uploader", () => {
   });
 });
 
-function singleSession(): MediaUploadSession {
+function singleSession(purpose: MediaPurpose = "COURSE_COVER"): MediaUploadSession {
+  const video = purpose === "LESSON_VIDEO";
   return { uploadId: "00000000-0000-4000-8000-000000000801",
-    clientRequestId: "00000000-0000-4000-8000-000000000802", purpose: "COURSE_COVER", mode: "SINGLE_PUT",
-    status: "CREATED", fileName: "cover.png", size: 5, mimeType: "image/png",
+    clientRequestId: "00000000-0000-4000-8000-000000000802", purpose, mode: "SINGLE_PUT",
+    status: "CREATED", fileName: video ? "lesson.mp4" : "cover.png", size: 5,
+    mimeType: video ? "video/mp4" : "image/png",
     sha256: "d15690f08a15a7aebc9b4f5d8a43d693617d3f9f0d9dd63d5bcdd0f34c3b9657",
     uploadGrant: { method: "PUT", url: "https://oss.example.test/signed", headers: {}, expiresAt: "2099-01-01T00:00:00Z" },
     multipart: null, mediaId: null, expiresAt: "2099-01-01T00:00:00Z", createdAt: "2026-08-05T00:00:00Z" };
 }
 
-function asset(status: MediaAsset["status"]): MediaAsset {
-  return { mediaId: "00000000-0000-4000-8000-000000000901", purpose: "COURSE_COVER", status,
-    processingStatus: status === "READY" ? "SUCCEEDED" : "RUNNING", originalFileName: "cover.png",
-    mimeType: "image/png", size: 5,
+function asset(status: MediaAsset["status"], purpose: MediaPurpose = "COURSE_COVER"): MediaAsset {
+  const video = purpose === "LESSON_VIDEO";
+  return { mediaId: "00000000-0000-4000-8000-000000000901", purpose, status,
+    processingStatus: status === "READY" ? "SUCCEEDED" : "RUNNING",
+    originalFileName: video ? "lesson.mp4" : "cover.png",
+    mimeType: video ? "video/mp4" : "image/png", size: 5,
     sha256: "d15690f08a15a7aebc9b4f5d8a43d693617d3f9f0d9dd63d5bcdd0f34c3b9657",
     variants: [], errorCode: null, errorMessage: null, createdAt: "2026-08-05T00:00:00Z", updatedAt: "2026-08-05T00:00:00Z" };
 }

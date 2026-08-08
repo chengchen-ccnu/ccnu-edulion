@@ -20,8 +20,8 @@ describe("playback grant runtime", () => {
     expect(playbackErrorMessage({ status: 429 })).toContain("稍后手动重试");
   });
 
-  it("maps enrollment and service failures without exposing signed URL details", () => {
-    expect(playbackErrorMessage({ status: 403 })).toContain("需要报名");
+  it("keeps role-specific authorization semantics out of the shared error mapper", () => {
+    expect(playbackErrorMessage({ status: 403 })).toBe("当前身份无权播放该视频。");
     expect(playbackErrorMessage({ status: 503 })).toContain("媒体服务暂时不可用");
   });
 });

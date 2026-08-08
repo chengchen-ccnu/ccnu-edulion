@@ -175,7 +175,7 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 - `pnpm.cmd --dir web-apps install --frozen-lockfile`：通过，锁文件可复现。
 - `generate:api`、`check:api`、全 workspace `typecheck`：通过；OpenAPI 保持 0.7.0，生成文件相对 HEAD 一致。
-- Vitest：受限沙箱首次因已知 `esbuild spawn EPERM` 无法启动；获准沙箱外复跑后 8 个文件 48 项全部通过。新增覆盖单对象、Multipart 已上传分片恢复、实际 ETag、真实字节聚合、取消、增量哈希、固定幂等键有限重试、FAILED/REJECTED/超时、学生/教师路径隔离、授权刷新时机和 429 重试上限。
+- Vitest：受限沙箱首次因已知 `esbuild spawn EPERM` 无法启动；获准沙箱外复跑后 8 个文件 51 项全部通过。新增覆盖单对象、Multipart 已上传分片恢复、实际 ETag、真实字节聚合、取消、增量哈希、固定幂等键有限重试、FAILED/REJECTED/超时、媒体会话/资产用途错配拒绝、封面与视频处理提示隔离、学生/教师路径隔离、授权刷新时机和 429 重试上限。
 - 三端生产构建：获准沙箱外执行并通过；`hls.js` 只在非原生 HLS 浏览器按需加载。
 - Java：`gateway-service,course-service,media-service -am verify` 的 5 个 Reactor 模块全部成功；Gateway 10 项、Course 14 项、Media 12 项（真实环境 1 项默认跳过）及 shared-kernel 1 项均无失败。
 - 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该后端用例没有经过 Vue 页面，不能记录为真实浏览器上传/播放 E2E。
@@ -193,6 +193,8 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 ### 注释覆盖、风险与发布
 
 新增/修改的上传 API、上传状态机、增量哈希、OSS 直传、分片并发/重试/取消、会话检查点、播放授权刷新、HLS 生命周期和页面职责均补充中文 TSDoc/JSDoc/Vue 注释；生成客户端未手工修改。人工可读性检查未发现注释与实现不一致或注释泄露敏感信息。
+
+2026-08-08 状态语义复核修复了共用组件误解释业务状态的问题：通用 `PROCESSING` 现在按上传用途显示，只有 `LESSON_VIDEO` 报告 HLS 转码，`COURSE_COVER` 报告封面校验和处理；上传会话或资产用途与控件不一致时会在 OSS 传输前或课程绑定前失败。封面无展示投影时不再显示“已绑定视频”，替换/移除反馈也按用途区分。共享播放器不再写死学生报名 403，学生课程页和教师 owner 预览页分别解释自己的权限语义，保持公共包不包含角色业务判断。
 
 剩余风险：完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
 
