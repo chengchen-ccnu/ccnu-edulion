@@ -11,6 +11,7 @@ import { useRoute } from "vue-router";
 
 import { teacherCourseApi } from "../course-api";
 import MediaUploadField from "../components/MediaUploadField.vue";
+import { publicationControls } from "../publication-controls";
 
 type EditableResource = NonNullable<LessonInput["resources"]>[number] & { id?: string };
 type EditableLesson = Omit<LessonInput, "resources"> & { id?: string; uiKey: string; resources: EditableResource[] };
@@ -37,6 +38,7 @@ const publishBlocker = computed(() => {
   return "";
 });
 const canPublish = computed(() => publishBlocker.value === "");
+const publication = computed(() => course.value ? publicationControls(course.value) : null);
 
 onMounted(load);
 
@@ -294,14 +296,14 @@ function messageFor(error: unknown, fallback: string): string {
       </section>
       <footer class="editor-actions editor-actions--split">
         <div class="publication-actions">
-          <button v-if="course.publicationStatus === 'PUBLISHED'" class="button button--danger" type="button"
-            :disabled="publishing || dirty" @click="updatePublication('UNPUBLISHED')">下架课程</button>
-          <button v-else class="button button--publish" type="button"
+          <button v-if="publication?.showPublish" class="button button--publish" type="button"
             :disabled="publishing || !canPublish" :title="publishBlocker || undefined"
             @click="updatePublication('PUBLISHED')">
-            {{ course.publicationStatus === "UNPUBLISHED" && !course.hasUnpublishedChanges ? "重新发布" : "发布当前版本" }}
+            {{ publication.publishLabel }}
           </button>
-          <small v-if="course.publicationStatus !== 'PUBLISHED' && publishBlocker" class="publication-blocker" role="status">
+          <button v-if="publication?.showUnpublish" class="button button--danger" type="button"
+            :disabled="publishing || dirty" @click="updatePublication('UNPUBLISHED')">下架课程</button>
+          <small v-if="publication?.showPublish && publishBlocker" class="publication-blocker" role="status">
             {{ publishBlocker }}
           </small>
         </div>

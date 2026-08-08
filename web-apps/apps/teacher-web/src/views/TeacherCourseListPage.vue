@@ -9,6 +9,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { teacherCourseApi } from "../course-api";
+import { canPublishCourse, publicationControls } from "../publication-controls";
 
 const route = useRoute();
 const router = useRouter();
@@ -42,7 +43,7 @@ async function changePage(target: number) {
 }
 
 async function publish(course: TeacherCoursePage["items"][number]) {
-  if (!canPublish(course)) return;
+  if (!canPublishCourse(course)) return;
   if (!window.confirm(`确认发布“${course.title}”的 ${course.version} 版本？`)) return;
   await updatePublication(course, "PUBLISHED");
 }
@@ -65,11 +66,6 @@ async function updatePublication(course: TeacherCoursePage["items"][number], sta
   } finally {
     actionId.value = "";
   }
-}
-
-function canPublish(course: TeacherCoursePage["items"][number]): boolean {
-  return course.hasUnpublishedChanges && course.chapters.length > 0
-    && course.chapters.every(chapter => chapter.lessons.length > 0);
 }
 
 function currentPage(): number {
@@ -151,13 +147,13 @@ function messageFor(error: unknown, fallback: string): string {
         <div class="teacher-course-card__actions">
           <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">编辑信息</RouterLink>
           <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">编排目录</RouterLink>
-          <button v-if="course.publicationStatus === 'PUBLISHED'" class="button button--danger" type="button"
+          <button v-if="publicationControls(course).showPublish" class="button button--primary" type="button"
+            :disabled="actionId === course.id || !canPublishCourse(course)" @click="publish(course)">
+            {{ publicationControls(course).publishLabel }}
+          </button>
+          <button v-if="publicationControls(course).showUnpublish" class="button button--danger" type="button"
             :disabled="actionId === course.id" @click="unpublish(course)">下架课程</button>
-          <button v-else-if="course.publicationStatus === 'UNPUBLISHED' && !course.hasUnpublishedChanges"
-            class="button button--primary" type="button" :disabled="actionId === course.id" @click="publish(course)">重新发布</button>
-          <button v-else class="button button--primary" type="button"
-            :disabled="actionId === course.id || !canPublish(course)" @click="publish(course)">发布草稿</button>
-          <small v-if="course.hasUnpublishedChanges && !canPublish(course)">发布前需确保每章至少有一个课时。</small>
+          <small v-if="course.hasUnpublishedChanges && !canPublishCourse(course)">发布前需确保每章至少有一个课时。</small>
         </div>
       </div>
     </article>
