@@ -28,9 +28,15 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const videoBusyKeys = ref<Set<string>>(new Set());
 const selectedVideo = ref<TeacherVideoSelection | null>(null);
-const canPublish = computed(() => Boolean(course.value) && !dirty.value && chapters.value.length > 0
-  && chapters.value.every(chapter => chapter.lessons.length > 0
-    && chapter.lessons.every(lesson => lesson.type !== "VIDEO" || Boolean(videoMediaId(lesson)))));
+/** 返回当前不能发布的首个目录原因；发布只要求非空目录，VIDEO 课时允许稍后再绑定 READY 视频。 */
+const publishBlocker = computed(() => {
+  if (!course.value) return "课程尚未加载。";
+  if (dirty.value) return "请先保存当前目录，再发布这个版本。";
+  if (chapters.value.length === 0) return "至少添加一个章节后才能发布。";
+  if (chapters.value.some(chapter => chapter.lessons.length === 0)) return "每个章节至少需要一个课时。";
+  return "";
+});
+const canPublish = computed(() => publishBlocker.value === "");
 
 onMounted(load);
 
@@ -287,15 +293,21 @@ function messageFor(error: unknown, fallback: string): string {
           :error-message-provider="teacherPlaybackErrorMessage" />
       </section>
       <footer class="editor-actions editor-actions--split">
-        <div>
+        <div class="publication-actions">
           <button v-if="course.publicationStatus === 'PUBLISHED'" class="button button--danger" type="button"
             :disabled="publishing || dirty" @click="updatePublication('UNPUBLISHED')">下架课程</button>
           <button v-else class="button button--publish" type="button"
-            :disabled="publishing || !canPublish" @click="updatePublication('PUBLISHED')">
+            :disabled="publishing || !canPublish" :title="publishBlocker || undefined"
+            @click="updatePublication('PUBLISHED')">
             {{ course.publicationStatus === "UNPUBLISHED" && !course.hasUnpublishedChanges ? "重新发布" : "发布当前版本" }}
           </button>
+          <small v-if="course.publicationStatus !== 'PUBLISHED' && publishBlocker" class="publication-blocker" role="status">
+            {{ publishBlocker }}
+          </small>
         </div>
-        <button class="button button--primary" type="submit" :disabled="saving || videoBusyKeys.size > 0 || !dirty">{{ saving ? "保存中…" : "保存目录" }}</button>
+        <span v-if="!dirty && !saving" class="editor-save-confirmation" role="status">✓ 当前目录已保存</span>
+        <button v-else class="button button--primary" type="submit"
+          :disabled="saving || videoBusyKeys.size > 0">{{ saving ? "保存中…" : "保存目录" }}</button>
       </footer>
     </form>
   </section>
