@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
@@ -315,6 +317,7 @@ class MediaRealEnvironmentAcceptanceTest {
         if (expectAudio) {
             assertThat(streams).anySatisfy(stream ->
                     assertThat(stream.path("codec_type").asString()).isEqualTo("audio"));
+            assertAudioHasSignal(source);
         } else {
             assertThat(streams).noneSatisfy(stream ->
                     assertThat(stream.path("codec_type").asString()).isEqualTo("audio"));
@@ -333,8 +336,34 @@ class MediaRealEnvironmentAcceptanceTest {
                 assertThat(stream.path("codec_type").asString()).isEqualTo("audio");
                 assertThat(stream.path("codec_name").asString()).isEqualTo("aac");
             });
+            assertAudioHasSignal(localSegment);
         } finally {
             Files.deleteIfExists(localSegment);
+        }
+    }
+
+    /** 解码第一条音轨并验证平均音量，避免仅有 AAC 流结构、实际样本却全静音的假阳性。 */
+    private void assertAudioHasSignal(Path media) throws Exception {
+        Path diagnosticFile = Files.createTempFile("t08-audio-signal-", ".log");
+        try {
+            Process process = new ProcessBuilder(ffmpegExecutable(), "-hide_banner", "-nostdin", "-i",
+                    media.toString(), "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-")
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(diagnosticFile.toFile()).start();
+            boolean completed = process.waitFor(30, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new AssertionError("audio signal inspection timed out");
+            }
+            String diagnostic = Files.readString(diagnosticFile, StandardCharsets.UTF_8);
+            assertThat(process.exitValue()).withFailMessage("audio signal inspection failed").isZero();
+            Matcher meanVolume = Pattern.compile("mean_volume:\\s*(-?(?:\\d+(?:\\.\\d+)?|inf))\\s*dB")
+                    .matcher(diagnostic);
+            assertThat(meanVolume.find()).as("FFmpeg volumedetect mean_volume output").isTrue();
+            assertThat(meanVolume.group(1)).as("audio stream must not be silent").isNotEqualTo("-inf");
+            assertThat(Double.parseDouble(meanVolume.group(1))).as("audible mean volume in dB")
+                    .isGreaterThan(-60.0);
+        } finally {
+            Files.deleteIfExists(diagnosticFile);
         }
     }
 

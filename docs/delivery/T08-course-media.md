@@ -212,8 +212,10 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 FFmpeg Worker 删除了主动禁音的 `-an`，继续以 `-map 0:v:0` 必选第一条视频流，并以 `-map 0:a:0?` 可选第一条音频流；存在音频时固定编码为 AAC、128 kbit/s、48 kHz、双声道，并显式生成 MPEG-TS HLS。视频编码、单清晰度、超时、有限重试、失败诊断和临时目录清理边界未改变，OpenAPI、数据库迁移和媒体授权契约均未修改；前端播放器仍不默认静音。
 
-新增命令级测试断言参数中不存在 `-an`，且包含可选音轨映射、AAC 参数与 MPEG-TS HLS。`MediaRealEnvironmentAcceptanceTest` 使用 lavfi 同时合成 64×64 画面和 1 kHz 正弦波，先由 ffprobe 断言输入确有 video/audio，再经真实 OSS Multipart、RabbitMQ Worker 和 FFmpeg 转码；从短期授权清单下载首个 TS 切片后，ffprobe 断言产物同时含 video 与 `aac` audio。用例另生成无音轨 MP4，确认 optional map 仍能产出含视频的 m3u8/TS。
+新增命令级测试断言参数中不存在 `-an`，且包含可选音轨映射、AAC 参数与 MPEG-TS HLS。`MediaRealEnvironmentAcceptanceTest` 使用 lavfi 同时合成 64×64 画面和 1 kHz 正弦波，先由 ffprobe 断言输入确有 video/audio，再经真实 OSS Multipart、RabbitMQ Worker 和 FFmpeg 转码；从短期授权清单下载首个 TS 切片后，ffprobe 断言产物同时含 video 与 `aac` audio。输入和输出还分别通过 FFmpeg `volumedetect` 解码，要求平均音量高于 `-60 dB`，避免只存在音轨结构但样本全静音的假阳性。用例另生成无音轨 MP4，确认 optional map 仍能产出含视频的 m3u8/TS。
 
 实际执行 Java 全量 `clean verify`，8 个 Reactor 模块全部通过；media-service 14 项中 13 项通过、真实环境用例按默认开关跳过 1 项。随后通过 `Invoke-WithLocalEnvironment.ps1` 显式运行真实用例，1 项通过。用例逐键删除本轮 OSS 原件、HLS 清单/切片和临时授权清单并以 HEAD 确认不存在；按本轮 uploadId/mediaId/eventId 清理并断言 MySQL 记录为零；RabbitMQ processing/references/lifecycle/DLQ 四个持久队列消息数为零；合成输入、ffprobe 报告、下载切片和无音轨转码目录均已删除。开发 Schema 中另一个测试 owner 的既有 5 条上传会话和 4 个媒体资产不属于本轮，未读取内容、未修改、未计作本轮残留。
+
+运行态复核确认 Worker 修复不会追溯修改既有 `READY` HLS：如果 media-service 在代码更新前已经启动，即使随后从最新 Git 工作区重新选择文件，仍会由内存中的旧 FFmpeg 参数处理。验收音频修复必须先完整重启 media-service，再创建全新上传会话；保存目录或重新发布课程只切换课程版本引用，不触发媒体重新转码。
 
 T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。

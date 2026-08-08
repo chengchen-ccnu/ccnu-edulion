@@ -128,6 +128,8 @@ T08A 只在用途明确的 `edu_platform_course_dev` 与 `edu_platform_media_dev
 
 HLS 清单、切片和授权临时清单均为私有 OSS 对象。访问授权只返回短期 URL；数据库仅保留精确 Object Key 以便到期清理。FFmpeg 必选第一条视频流、可选第一条音频流；音频存在时编码为 AAC 128 kbit/s、48 kHz 双声道并封装为 MPEG-TS HLS，无音轨输入不会因找不到音轨失败。真实环境验收继续使用上方 `MediaRealEnvironmentAcceptanceTest` 开关：用例通过 lavfi 生成带 1 kHz 正弦波的输入，由 ffprobe 先断言源 video/audio，再断言真实 OSS 下载的首个 TS 切片包含 video/AAC audio；同时覆盖无音轨转码、清单/切片短期读取、重试/死信和按本轮标识精确清理。若未提供真实环境条件，测试会明确跳过，不能记录为已执行。
 
+更新 `FfmpegCommandRunner`、FFmpeg 参数或 Worker 代码后必须完整重启 media-service；Git 文件变化不会替换已运行 JVM 中的旧类。已经达到 `READY` 的 HLS 变体不会因服务重启、课程重新保存或重新发布而自动转码。验证修复时应先确认新 media-service 已启动，再创建新的上传会话并等待新资产完成处理；旧无声资产需要由新 Worker 重新上传生成，不应继续绑定旧 mediaId。
+
 T08A 不增加 Seed，也不会自动给 T05 固定课程绑定媒体。若人工使用 T05 固定课程进行验收，仍可执行 `cleanup-course-seed.sql`；脚本已按外键逆序清理该固定课程的课时媒体引用及对应课程 Outbox。重新生成方式仍是显式设置 `COURSE_SEED_ENABLED=true` 后重启 course-service。
 
 ## T08A.1 课程播放授权参数与迁移
