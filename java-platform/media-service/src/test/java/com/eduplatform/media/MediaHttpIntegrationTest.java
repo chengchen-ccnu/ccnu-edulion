@@ -209,6 +209,33 @@ class MediaHttpIntegrationTest {
     }
 
     @Test
+    /** Given READY 课程封面；When 课程域以精确服务令牌申请 ORIGINAL；Then 返回短期原件且视频访问类型不能复用。 */
+    void internalCourseCoverDisplayRequiresExactPurposeAccessTypeAndOriginalVariant() throws Exception {
+        CompletedTestAsset cover = createUploadedAsset("00000000-0000-4000-8000-000000007222",
+                "COURSE_COVER", "course-cover.png", "image/png", "cover-image".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(cover.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        String body = internalAccessBody(TEACHER, "COURSE_COVER", "COURSE_COVER_DISPLAY", "ORIGINAL");
+        Instant now = Instant.now();
+        String token = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, cover.mediaId(),
+                "COURSE_COVER", "COURSE_COVER_DISPLAY", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+
+        HttpResponse<String> granted = sendInternal(token, cover.mediaId(), body);
+
+        assertThat(granted.statusCode()).isEqualTo(201);
+        JsonNode grant = mapper.readTree(granted.body());
+        assertThat(storage.readSigned(grant.get("url").asString())).isEqualTo("cover-image");
+        assertThat(granted.body()).doesNotContain("objectKey", "bucket");
+        assertThat(jdbc.queryForObject("SELECT actor_id FROM access_grant_audit", String.class)).isEqualTo(TEACHER);
+        String playbackToken = serviceToken(UUID.randomUUID().toString(), TEACHER, cover.mediaId(),
+                "COURSE_COVER", "ORIGINAL", "edu-platform-media-service-test", now, now.plusSeconds(30));
+        assertThat(sendInternal(playbackToken, cover.mediaId(), body).statusCode()).isEqualTo(403);
+    }
+
+    @Test
     /** Given Worker 首次失败，When 同事件重试后成功及另一消息耗尽，Then 状态可重试且 Recoverer 拒绝进 DLQ。 */
     void videoFailureRetriesAndExhaustionCreatesFailedEventForDlq() throws Exception {
         CompletedTestAsset retry = createUploadedAsset("00000000-0000-4000-8000-000000007210",
@@ -450,14 +477,24 @@ class MediaHttpIntegrationTest {
     }
 
     private static String internalPlaybackBody(String visitorId, String purpose, String variant) {
+        return internalAccessBody(visitorId, purpose, "COURSE_PLAYBACK", variant);
+    }
+
+    private static String internalAccessBody(String visitorId, String purpose, String accessType, String variant) {
         return """
-                {"visitorId":"%s","purpose":"%s","accessType":"COURSE_PLAYBACK",
+                {"visitorId":"%s","purpose":"%s","accessType":"%s",
                  "variant":"%s","disposition":"INLINE"}
-                """.formatted(visitorId, purpose, variant);
+                """.formatted(visitorId, purpose, accessType, variant);
     }
 
     private static String serviceToken(String tokenId, String visitorId, String mediaId, String purpose,
             String variant, String audience, Instant issuedAt, Instant expiresAt) {
+        return serviceTokenForAccess(tokenId, visitorId, mediaId, purpose, "COURSE_PLAYBACK",
+                variant, audience, issuedAt, expiresAt);
+    }
+
+    private static String serviceTokenForAccess(String tokenId, String visitorId, String mediaId, String purpose,
+            String accessType, String variant, String audience, Instant issuedAt, Instant expiresAt) {
         SecretKey key = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
         JwtClaimsSet claims = JwtClaimsSet.builder()
@@ -469,7 +506,7 @@ class MediaHttpIntegrationTest {
                 .expiresAt(expiresAt)
                 .claim("mediaId", mediaId)
                 .claim("purpose", purpose)
-                .claim("accessType", "COURSE_PLAYBACK")
+                .claim("accessType", accessType)
                 .claim("variant", variant)
                 .claim("disposition", "INLINE")
                 .claim("traceId", "trace-service-auth-test")

@@ -80,10 +80,15 @@ public class ServiceAuthorizationVerifier {
             requireEqual(request.accessType(), jwt.getClaimAsString("accessType"));
             requireEqual(request.variant(), jwt.getClaimAsString("variant"));
             requireEqual(request.disposition().name(), jwt.getClaimAsString("disposition"));
-            if (!"COURSE_PLAYBACK".equals(request.accessType())
-                    || request.purpose() != com.eduplatform.media.domain.MediaPurpose.LESSON_VIDEO
-                    || !MediaAssetService.PRESET_VERSION.equals(request.variant())
-                    || request.disposition() != com.eduplatform.media.web.MediaDtos.Disposition.INLINE) {
+            boolean playback = "COURSE_PLAYBACK".equals(request.accessType())
+                    && request.purpose() == com.eduplatform.media.domain.MediaPurpose.LESSON_VIDEO
+                    && MediaAssetService.PRESET_VERSION.equals(request.variant())
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            boolean coverDisplay = "COURSE_COVER_DISPLAY".equals(request.accessType())
+                    && request.purpose() == com.eduplatform.media.domain.MediaPurpose.COURSE_COVER
+                    && "ORIGINAL".equals(request.variant())
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            if (!playback && !coverDisplay) {
                 throw rejected();
             }
             if (!repository.consumeServiceAuthorization(jwt.getId(), properties.issuer(),

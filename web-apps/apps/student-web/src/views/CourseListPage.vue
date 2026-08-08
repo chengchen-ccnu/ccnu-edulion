@@ -18,6 +18,7 @@ const result = ref<CoursePage | null>(null);
 const categories = ref<CategorySummary[]>([]);
 const loading = ref(false);
 const errorMessage = ref("");
+const failedCoverIds = ref<Set<string>>(new Set());
 let requestSequence = 0;
 
 const pageCount = computed(() => Math.max(1, Math.ceil((result.value?.total ?? 0) / pageSize)));
@@ -62,6 +63,7 @@ async function loadCourses() {
   const sequence = ++requestSequence;
   loading.value = true;
   errorMessage.value = "";
+  failedCoverIds.value = new Set();
   const query: ListCoursesQuery = { page: pageFromRoute(), size: pageSize };
   if (filters.keyword) query.keyword = filters.keyword;
   if (filters.categoryId) query.categoryId = filters.categoryId;
@@ -75,6 +77,15 @@ async function loadCourses() {
   } finally {
     if (sequence === requestSequence) loading.value = false;
   }
+}
+
+/** 短期封面地址失效时只隐藏当前图片，保留卡片尺寸和课程导航能力。 */
+function markCoverFailed(courseId: string) {
+  failedCoverIds.value = new Set(failedCoverIds.value).add(courseId);
+}
+
+function showCover(course: CoursePage["items"][number]): boolean {
+  return Boolean(course.coverUrl) && !failedCoverIds.value.has(course.id);
 }
 
 function courseQuery(page: number): Record<string, string> {
@@ -166,7 +177,11 @@ function accessLabel(accessType: CourseAccessType): string {
     <RouterLink v-for="course in result.items" :key="course.id"
       class="course-card" :to="{ name: 'course-detail', params: { courseId: course.id } }">
       <div class="course-card__cover">
-        <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
+        <img v-if="showCover(course)" :src="course.coverUrl!" :alt="`${course.title}封面`"
+          @error="markCoverFailed(course.id)">
+        <div v-else class="course-card__cover-placeholder" role="img" :aria-label="`${course.title}暂无可用封面`">
+          <span aria-hidden="true">▧</span>
+        </div>
         <span>{{ course.category.name }}</span>
       </div>
       <div class="course-card__body">

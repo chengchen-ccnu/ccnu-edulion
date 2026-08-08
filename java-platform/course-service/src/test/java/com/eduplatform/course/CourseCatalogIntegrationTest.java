@@ -29,11 +29,13 @@ class CourseCatalogIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired Flyway flyway;
     @Autowired CourseMediaTestConfiguration.FakeMediaBindingClient mediaClient;
+    @Autowired CourseMediaTestConfiguration.FakeMediaCoverClient coverClient;
     @Autowired CourseMediaTestConfiguration.FakeMediaPlaybackClient playbackClient;
 
     @BeforeEach
     void resetData() {
         mediaClient.clear();
+        coverClient.clear();
         playbackClient.clear();
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
         jdbc.update("DELETE FROM outbox_event");
@@ -157,7 +159,8 @@ class CourseCatalogIntegrationTest {
         CourseDtos.TeacherCourse created = service.create(
                 TEACHER_ID, createRequest(UUID.randomUUID(), "媒体课程", firstCover)).course();
         assertThat(created.coverMediaId()).isEqualTo(firstCover.toString());
-        assertThat(created.coverUrl()).isNull();
+        assertThat(created.coverUrl()).isEqualTo("https://oss.example.test/temporary-cover/" + firstCover);
+        assertThat(coverClient.lastRequest().viewerId()).isEqualTo(TEACHER_ID);
         assertOutboxCount("MediaReferenceBound", firstCover, 1);
 
         CourseDtos.TeacherCourse replaced = service.updateMetadata(
@@ -234,7 +237,10 @@ class CourseCatalogIntegrationTest {
                 draft.id(), TEACHER_ID, updateRequest(curriculum.revision(), "草稿封面", draftCover));
 
         assertThat(edited.coverMediaId()).isEqualTo(draftCover.toString());
-        assertThat(service.getPublished(draft.id()).coverMediaId()).isEqualTo(publishedCover.toString());
+        CourseDtos.CourseDetail published = service.getPublished(draft.id());
+        assertThat(published.coverMediaId()).isEqualTo(publishedCover.toString());
+        assertThat(published.coverUrl()).isEqualTo("https://oss.example.test/temporary-cover/" + publishedCover);
+        assertThat(coverClient.lastRequest().viewerId()).isEqualTo("00000000-0000-0000-0000-000000000000");
         assertOutboxCount("MediaReferenceBound", publishedCover, 2);
         assertOutboxCount("MediaReferenceReleased", publishedCover, 1);
     }

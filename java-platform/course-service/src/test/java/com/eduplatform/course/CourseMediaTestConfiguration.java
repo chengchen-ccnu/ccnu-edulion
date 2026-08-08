@@ -1,6 +1,7 @@
 package com.eduplatform.course;
 
 import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.service.CourseException;
 import com.eduplatform.course.web.CourseDtos;
@@ -29,6 +30,12 @@ class CourseMediaTestConfiguration {
         return new FakeMediaPlaybackClient();
     }
 
+    @Bean
+    @Primary
+    FakeMediaCoverClient fakeMediaCoverClient() {
+        return new FakeMediaCoverClient();
+    }
+
     /**
      * 模拟 media-service 的所有权、用途和 READY 校验；测试必须显式登记允许绑定的资产。
      */
@@ -54,6 +61,27 @@ class CourseMediaTestConfiguration {
         }
 
         private record Asset(String ownerId, String purpose, String status) {}
+    }
+
+    /** 返回确定性的短期封面投影，并记录访问者以验证教师/公开读取边界。 */
+    static final class FakeMediaCoverClient implements MediaCoverClient {
+        private CoverRequest lastRequest;
+
+        void clear() {
+            lastRequest = null;
+        }
+
+        CoverRequest lastRequest() {
+            return lastRequest;
+        }
+
+        @Override
+        public String issueCover(String mediaId, String viewerId, String traceId) {
+            lastRequest = new CoverRequest(mediaId, viewerId, traceId);
+            return "https://oss.example.test/temporary-cover/" + mediaId;
+        }
+
+        record CoverRequest(String mediaId, String viewerId, String traceId) {}
     }
 
     /** 记录课程域交给媒体域的可信事实，并返回不含真实 OSS 数据的确定性短期授权。 */

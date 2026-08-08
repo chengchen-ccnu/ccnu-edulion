@@ -21,12 +21,12 @@ public class AuthorizedMediaAccessService {
     }
 
     /**
-     * 校验并消费一次服务授权，然后仅为绑定用途一致的 READY 视频签发 hls-v1。
+     * 校验并消费一次服务授权，然后仅为用途一致的 READY 视频或课程封面签发精确变体。
      *
      * @param authorizationHeader course-service 生成的 Bearer 服务令牌
      * @param mediaId 内部 URL 中的媒体 ID
      * @param request 与令牌逐项绑定的内部请求
-     * @return 不含 Object Key 的短期 HLS 访问授权
+     * @return 不含 Object Key 的短期 HLS 或封面原件访问授权
      */
     @Transactional
     public MediaDtos.AccessGrant issue(String authorizationHeader, String mediaId,

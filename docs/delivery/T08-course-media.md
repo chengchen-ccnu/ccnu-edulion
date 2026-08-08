@@ -196,6 +196,10 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 2026-08-08 状态语义复核修复了共用组件误解释业务状态的问题：通用 `PROCESSING` 现在按上传用途显示，只有 `LESSON_VIDEO` 报告 HLS 转码，`COURSE_COVER` 报告封面校验和处理；上传会话或资产用途与控件不一致时会在 OSS 传输前或课程绑定前失败。封面无展示投影时不再显示“已绑定视频”，替换/移除反馈也按用途区分。共享播放器不再写死学生报名 403，学生课程页和教师 owner 预览页分别解释自己的权限语义，保持公共包不包含角色业务判断。
 
-剩余风险：完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+同日封面展示复核还修复了两个相互独立的缺陷。教师课程卡片不再让可空 `<img>` 充当 Grid 第一列：无封面、短期 URL 过期或 OSS 加载失败时均保留固定比例占位，课程信息与横向操作区不会错列；学生列表和详情采用相同的单图片失败降级，并覆盖桌面、平板和窄屏布局。课程读取端不再把新媒体绑定的空历史 `cover_url` 直接返回：当版本存在 `coverMediaId` 时，course-service 在确认教师 owner 或已发布课程可见后，以一次性服务 JWT 向 media-service 申请 `COURSE_COVER`/`COURSE_COVER_DISPLAY`/`ORIGINAL`/`INLINE` 短期原图授权，只把 URL 放入本次 `coverUrl` 响应投影，不回写数据库、事件或日志；没有 `coverMediaId` 时才兼容历史 URL。浏览器仍不能调用内部媒体接口，也不能用 `mediaId` 自行拼接 OSS 地址。
+
+本轮新增 Course/Media 集成测试覆盖教师与公开课程封面投影、历史 URL 回退、精确封面用途/访问类型/原图变体校验和错误令牌拒绝。`mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service,media-service -am verify` 实际通过：Course 14 项、Media 12 项及 shared-kernel 1 项通过，真实环境用例 1 项按默认开关跳过。全 workspace `typecheck`（含 OpenAPI 重新生成）、8 个前端测试文件 51 项和三端生产构建均通过。浏览器视觉复跑因本机浏览器控制运行时初始化失败而未执行，不能将结构审查描述为真实页面视觉验收；需在重启更新后的 media/course 服务和 teacher Web 后按下述步骤人工确认。
+
+剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
 
 T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。

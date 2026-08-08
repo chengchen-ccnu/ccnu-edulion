@@ -8,6 +8,7 @@ import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
 import com.eduplatform.course.domain.LessonMediaResourceEntity;
 import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
 import com.eduplatform.course.persistence.CourseMapper;
@@ -36,18 +37,22 @@ import tools.jackson.databind.ObjectMapper;
  * 约束。已发布版本保持只读，后续编辑通过复制新草稿完成，不拥有封面媒体对象。</p>
  */
 public class CourseCatalogService {
+    private static final String PUBLIC_COVER_VIEWER_ID = "00000000-0000-0000-0000-000000000000";
     private final CourseMapper mapper;
     private final ObjectMapper objectMapper;
     private final MediaBindingClient mediaBindingClient;
+    private final MediaCoverClient mediaCoverClient;
     private final MediaPlaybackClient mediaPlaybackClient;
     private final CourseMediaEventFactory mediaEvents;
 
     public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
-            MediaBindingClient mediaBindingClient, MediaPlaybackClient mediaPlaybackClient,
+            MediaBindingClient mediaBindingClient, MediaCoverClient mediaCoverClient,
+            MediaPlaybackClient mediaPlaybackClient,
             CourseMediaEventFactory mediaEvents) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.mediaBindingClient = mediaBindingClient;
+        this.mediaCoverClient = mediaCoverClient;
         this.mediaPlaybackClient = mediaPlaybackClient;
         this.mediaEvents = mediaEvents;
     }
@@ -81,7 +86,7 @@ public class CourseCatalogService {
                 version.getSummary(),
                 version.getDescription(),
                 version.getCoverMediaId(),
-                version.getCoverUrl(),
+                coverUrl(version.getCoverMediaId(), version.getCoverUrl(), PUBLIC_COVER_VIEWER_ID, newTraceId()),
                 new CourseDtos.TeacherSummary(version.getOwnerTeacherId(), version.getInstructorDisplayName()),
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
                 CourseDtos.CourseLevel.valueOf(version.getLevel()),
@@ -164,7 +169,7 @@ public class CourseCatalogService {
     public CreateResult create(String teacherId, CourseDtos.CreateCourseRequest request, String traceId) {
         CourseEntity existing = mapper.findByOwnerAndRequest(teacherId, request.clientRequestId().toString());
         if (existing != null) {
-            return new CreateResult(toTeacherCourse(existing), false);
+            return new CreateResult(toTeacherCourse(existing, traceId), false);
         }
         requireActiveCategory(request.categoryId().toString());
         String coverMediaId = id(request.coverMediaId());
@@ -179,7 +184,7 @@ public class CourseCatalogService {
         mapper.insertCourse(course);
         CourseEntity winner = mapper.findByOwnerAndRequest(teacherId, request.clientRequestId().toString());
         if (!course.getId().equals(winner.getId())) {
-            return new CreateResult(toTeacherCourse(winner), false);
+            return new CreateResult(toTeacherCourse(winner, traceId), false);
         }
 
         CourseVersionEntity version = new CourseVersionEntity();
@@ -197,7 +202,7 @@ public class CourseCatalogService {
         bindCover(version, traceId);
 
         CourseEntity created = requireOwnedCourse(course.getId(), teacherId, false);
-        return new CreateResult(toTeacherCourse(created), true);
+        return new CreateResult(toTeacherCourse(created, traceId), true);
     }
 
     @Transactional(readOnly = true)
@@ -236,7 +241,7 @@ public class CourseCatalogService {
         CourseEntity course = requireOwnedCourse(courseId, teacherId, true);
         CourseVersionEntity draft = ensureDraft(course, traceId);
         if (metadataEquals(draft, request)) {
-            return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
+            return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
         }
         String nextCoverMediaId = id(request.coverMediaId());
         if (!Objects.equals(draft.getCoverMediaId(), nextCoverMediaId)) {
@@ -256,7 +261,7 @@ public class CourseCatalogService {
             releaseCover(draft, traceId);
             bindCover(updated, traceId);
         }
-        return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
+        return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
     }
 
     @Transactional
@@ -279,7 +284,7 @@ public class CourseCatalogService {
         CourseVersionEntity draft = ensureDraft(course, traceId);
         String hash = curriculumHash(request.chapters());
         if (Objects.equals(hash, draft.getCurriculumHash())) {
-            return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
+            return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
         }
         validateLessonMedia(request.chapters(), teacherId, traceId);
         if (draft.getRowVersion() != request.expectedRevision()) {
@@ -293,7 +298,7 @@ public class CourseCatalogService {
         mapper.deleteLessonsByVersion(draft.getId());
         mapper.deleteChaptersByVersion(draft.getId());
         insertCurriculum(draft.getId(), request.chapters(), traceId);
-        return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false));
+        return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
     }
 
     @Transactional
@@ -452,6 +457,11 @@ public class CourseCatalogService {
     }
 
     private CourseDtos.TeacherCourse toTeacherCourse(CourseEntity course) {
+        return toTeacherCourse(course, newTraceId());
+    }
+
+    /** 将稳定封面 ID 投影为本次响应使用的短期 URL；签名结果不回写课程实体。 */
+    private CourseDtos.TeacherCourse toTeacherCourse(CourseEntity course, String traceId) {
         String versionId = course.getCurrentDraftVersionId() != null
                 ? course.getCurrentDraftVersionId() : course.getPublishedVersionId();
         if (versionId == null) {
@@ -470,7 +480,7 @@ public class CourseCatalogService {
                 version.getSummary(),
                 version.getDescription(),
                 version.getCoverMediaId(),
-                version.getCoverUrl(),
+                coverUrl(version.getCoverMediaId(), version.getCoverUrl(), course.getOwnerTeacherId(), traceId),
                 version.getInstructorDisplayName(),
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
                 CourseDtos.CourseLevel.valueOf(version.getLevel()),
@@ -524,7 +534,7 @@ public class CourseCatalogService {
                 row.getTitle(),
                 row.getSummary(),
                 row.getCoverMediaId(),
-                row.getCoverUrl(),
+                coverUrl(row.getCoverMediaId(), row.getCoverUrl(), PUBLIC_COVER_VIEWER_ID, newTraceId()),
                 new CourseDtos.TeacherSummary(row.getTeacherId(), row.getTeacherDisplayName()),
                 new CourseDtos.CategorySummary(row.getCategoryId(), row.getCategoryName()),
                 CourseDtos.CourseLevel.valueOf(row.getLevel()),
@@ -539,6 +549,11 @@ public class CourseCatalogService {
             throw notFound();
         }
         return course;
+    }
+
+    /** 新媒体引用优先生成授权投影；没有 mediaId 时才读取迁移期历史 URL。 */
+    private String coverUrl(String mediaId, String legacyUrl, String viewerId, String traceId) {
+        return mediaId == null ? legacyUrl : mediaCoverClient.issueCover(mediaId, viewerId, traceId);
     }
 
     /** 只允许绑定用途为 LESSON_VIDEO 的精确资源进入播放链路，其他情况统一为不可见。 */

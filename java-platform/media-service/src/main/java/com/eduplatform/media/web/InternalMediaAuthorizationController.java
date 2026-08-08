@@ -29,7 +29,7 @@ public class InternalMediaAuthorizationController {
         this.service = service;
     }
 
-    /** 为已经通过课程领域权限判断的单个 READY 视频签发短期 HLS 访问授权。 */
+    /** 为课程领域已批准的 READY 视频或课程封面签发精确用途与变体的短期访问授权。 */
     @PostMapping("/{mediaId}/access-grants")
     ResponseEntity<MediaDtos.AccessGrant> access(
             @PathVariable String mediaId,

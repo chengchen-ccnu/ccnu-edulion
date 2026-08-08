@@ -15,6 +15,7 @@ const route = useRoute();
 const course = ref<CourseDetail | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const coverFailed = ref(false);
 type CourseLesson = CourseDetail["chapters"][number]["lessons"][number];
 type VideoSelection = { lessonId: string; resourceId: string; title: string };
 const selectedVideo = ref<VideoSelection | null>(null);
@@ -26,6 +27,7 @@ async function loadCourse(courseId: unknown) {
   loading.value = true;
   course.value = null;
   selectedVideo.value = null;
+  coverFailed.value = false;
   errorMessage.value = "";
   try {
     course.value = await studentCourseApi.detail(courseId);
@@ -75,7 +77,13 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
   <div v-if="loading" class="detail-loading">正在读取课程线上版本…</div>
   <template v-else-if="course">
     <section class="detail-hero">
-      <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
+      <div class="detail-hero__cover">
+        <img v-if="course.coverUrl && !coverFailed" :src="course.coverUrl" :alt="`${course.title}封面`"
+          @error="coverFailed = true">
+        <div v-else class="detail-hero__cover-placeholder" role="img" :aria-label="`${course.title}暂无封面`">
+          <span aria-hidden="true">▧</span><strong>课程封面</strong>
+        </div>
+      </div>
       <div class="detail-hero__content">
         <div class="meta-row">
           <span>{{ course.category.name }}</span>

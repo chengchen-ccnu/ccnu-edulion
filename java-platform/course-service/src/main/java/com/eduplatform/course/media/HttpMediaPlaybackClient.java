@@ -35,7 +35,7 @@ public class HttpMediaPlaybackClient implements MediaPlaybackClient {
     @Override
     public CourseDtos.CourseMediaPlaybackGrant issuePlayback(
             String mediaId, String purpose, String visitorId, String traceId) {
-        String token = authorizationIssuer.issue(visitorId, mediaId, purpose, HLS_VARIANT, traceId);
+        String token = authorizationIssuer.issuePlayback(visitorId, mediaId, purpose, HLS_VARIANT, traceId);
         try {
             CourseDtos.CourseMediaPlaybackGrant grant = client.post()
                     .uri("/internal/v1/media/{mediaId}/access-grants", mediaId)

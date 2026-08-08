@@ -91,6 +91,6 @@ T08A 已通过 PR #13 合并。2026-08-02 的人工验收已确认真实 OSS、R
 
 T08A.1 将课程可见性判断与媒体签发连接成服务端闭环。浏览器只按课程、课时和课程域资源行申请播放授权，不能提交 `mediaId`、用途或 `allowAccess`。`course-service` 从当前发布版本的绑定关系解析 `LESSON_VIDEO`：`PUBLIC` 课程允许已登录访问者播放；`ENROLLMENT_REQUIRED` 在 T11 前只允许 `previewable=true` 的课时，非试看内容明确返回 403。草稿、未发布内容只通过教师 owner 路径预览，历史版本、错课时和错资源统一不可见。
 
-课程域批准后签发只发往 media-service 的短时 HMAC JWT，绑定 issuer/audience、访问者、mediaId、用途、`COURSE_PLAYBACK`、`hls-v1`、`INLINE`、有效期、traceId 与一次性 jti。Gateway 不路由 `/internal/**`；media-service 校验全部字段并在 `consumed_service_authorization` 以唯一 jti 原子拒绝重放，再独立复核资产用途和 `READY` 状态。密钥只由 DPAPI/CI Secret 注入，令牌和短期 URL 均不写数据库、事件或日志。
+课程域批准后签发只发往 media-service 的短时 HMAC JWT，绑定 issuer/audience、访问者、mediaId、用途、访问类型、变体、处置方式、有效期、traceId 与一次性 jti。首期精确允许两组课程读取投影：`LESSON_VIDEO`/`COURSE_PLAYBACK`/`hls-v1`/`INLINE` 用于课程视频，`COURSE_COVER`/`COURSE_COVER_DISPLAY`/`ORIGINAL`/`INLINE` 用于课程列表和详情的原图封面。Gateway 不路由 `/internal/**`；media-service 校验全部字段并在 `consumed_service_authorization` 以唯一 jti 原子拒绝重放，再独立复核资产用途和 `READY` 状态。密钥只由 DPAPI/CI Secret 注入，令牌和短期 URL 均不写数据库、事件或日志。
 
-首期只完整开放 `LESSON_VIDEO` 播放；封面继续走已授权展示投影，字幕与课件保持稳定绑定但不被播放接口当作视频授权。T08B 负责 Vue 播放器与授权刷新，T11 负责真实报名/学习权限；media-service 仍不查询课程或学习 Schema。
+首期只完整开放 `LESSON_VIDEO` 播放；封面展示授权仅能由 course-service 在确认草稿 owner 或已发布课程可见后申请，浏览器不能凭 `mediaId` 直接调用内部接口。字幕与课件保持稳定绑定但不被播放接口当作视频授权。T08B 负责 Vue 播放器与授权刷新，T11 负责真实报名/学习权限；media-service 仍不查询课程或学习 Schema。
