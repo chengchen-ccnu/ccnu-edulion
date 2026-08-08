@@ -1,6 +1,7 @@
 package com.eduplatform.media;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.domain.MediaAsset;
@@ -8,6 +9,7 @@ import com.eduplatform.media.messaging.MediaEventFactory;
 import com.eduplatform.media.messaging.MediaRabbitTopology;
 import com.eduplatform.media.messaging.OutboxPublisher;
 import com.eduplatform.media.persistence.MediaRepository;
+import com.eduplatform.media.processing.FfmpegCommandRunner;
 import com.eduplatform.media.storage.ObjectStorage;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
@@ -88,7 +90,7 @@ class MediaRealEnvironmentAcceptanceTest {
             RabbitTemplate rabbit = context.getBean(RabbitTemplate.class);
             OutboxPublisher outbox = context.getBean(OutboxPublisher.class);
             RabbitAdmin admin = new RabbitAdmin(rabbit);
-            admin.purgeQueue(MediaRabbitTopology.DEAD_QUEUE, false);
+            assertAcceptanceQueuesEmpty(admin);
             List<String> eventIds = new ArrayList<>();
             try {
                 JsonNode cover = uploadSingleCover(port, mapper, runId);
@@ -107,9 +109,10 @@ class MediaRealEnvironmentAcceptanceTest {
                 assertThat(downloaded.statusCode()).isEqualTo(200);
                 assertThat(downloaded.body()).isEqualTo("t07-cover".getBytes(StandardCharsets.UTF_8));
 
-                Path video = createSyntheticVideo();
+                Path video = createSyntheticVideo(true);
                 JsonNode videoAsset;
                 try {
+                    assertSourceStreams(mapper, video, true);
                     videoAsset = uploadMultipartVideo(port, mapper, runId, video);
                 } finally {
                     Files.deleteIfExists(video);
@@ -134,6 +137,7 @@ class MediaRealEnvironmentAcceptanceTest {
                         HttpResponse.BodyHandlers.ofByteArray());
                 assertThat(segment.statusCode()).isEqualTo(200);
                 assertThat(segment.body()).isNotEmpty();
+                assertHlsSegmentStreams(mapper, segment.body());
 
                 String serviceToken = serviceToken(VISITOR, videoId);
                 JsonNode serviceGrant = mapper.readTree(sendInternal(port, serviceToken, videoId, """
@@ -145,6 +149,9 @@ class MediaRealEnvironmentAcceptanceTest {
                         HttpResponse.BodyHandlers.ofString());
                 assertThat(servicePlaylist.statusCode()).isEqualTo(200);
                 assertThat(servicePlaylist.body()).contains("#EXTM3U");
+
+                verifySilentVideoStillTranscodes(mapper, context.getBean(FfmpegCommandRunner.class),
+                        context.getBean(MediaProperties.class).worker());
 
                 rabbit.convertAndSend(MediaRabbitTopology.EVENTS_EXCHANGE, "media.uploaded.v1", videoUploaded.payloadJson());
                 TimeUnit.MILLISECONDS.sleep(800);
@@ -165,6 +172,7 @@ class MediaRealEnvironmentAcceptanceTest {
             } finally {
                 context.getBean(RabbitListenerEndpointRegistry.class).stop();
                 cleanupExact(storage, repository, jdbc, eventIds);
+                assertAcceptanceQueuesEmpty(admin);
             }
         }
     }
@@ -279,17 +287,122 @@ class MediaRealEnvironmentAcceptanceTest {
                 aggregateId)).isEqualTo(1);
     }
 
-    private Path createSyntheticVideo() throws Exception {
+    /** 使用 lavfi 合成确定性画面，并按需加入 1 kHz 正弦波音轨供真实 HLS 流断言。 */
+    private Path createSyntheticVideo(boolean withAudio) throws Exception {
         Path output = Files.createTempFile("t07-synthetic-", ".mp4");
-        String ffmpeg = System.getenv("FFMPEG_PATH");
-        if (ffmpeg == null || ffmpeg.isBlank()) ffmpeg = "ffmpeg";
-        Process process = new ProcessBuilder(ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=1", "-c:v", "libx264",
-                "-pix_fmt", "yuv420p", output.toString()).inheritIO().start();
+        List<String> command = new ArrayList<>(List.of(ffmpegExecutable(), "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=1"));
+        if (withAudio) {
+            command.addAll(List.of("-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=1",
+                    "-map", "0:v:0", "-map", "1:a:0"));
+        } else {
+            command.addAll(List.of("-map", "0:v:0"));
+        }
+        command.addAll(List.of("-c:v", "libx264", "-pix_fmt", "yuv420p"));
+        if (withAudio) command.addAll(List.of("-c:a", "aac", "-b:a", "96k", "-shortest"));
+        command.add(output.toString());
+        Process process = new ProcessBuilder(command).inheritIO().start();
         assertThat(process.waitFor(30, TimeUnit.SECONDS)).isTrue();
         assertThat(process.exitValue()).isZero();
         assertThat(Files.size(output)).isPositive();
         return output;
+    }
+
+    /** 断言合成原件确实包含预期流，防止“带声音验收”退化成只生成画面的假阳性。 */
+    private void assertSourceStreams(ObjectMapper mapper, Path source, boolean expectAudio) throws Exception {
+        List<JsonNode> streams = probeStreams(mapper, source);
+        assertThat(streams).anySatisfy(stream -> assertThat(stream.path("codec_type").asString()).isEqualTo("video"));
+        if (expectAudio) {
+            assertThat(streams).anySatisfy(stream ->
+                    assertThat(stream.path("codec_type").asString()).isEqualTo("audio"));
+        } else {
+            assertThat(streams).noneSatisfy(stream ->
+                    assertThat(stream.path("codec_type").asString()).isEqualTo("audio"));
+        }
+    }
+
+    /** 下载的真实 OSS MPEG-TS 切片必须同时包含视频与 AAC 音频，证明完整授权链路没有丢声。 */
+    private void assertHlsSegmentStreams(ObjectMapper mapper, byte[] segment) throws Exception {
+        Path localSegment = Files.createTempFile("t08-hls-audio-", ".ts");
+        try {
+            Files.write(localSegment, segment);
+            List<JsonNode> streams = probeStreams(mapper, localSegment);
+            assertThat(streams).anySatisfy(stream ->
+                    assertThat(stream.path("codec_type").asString()).isEqualTo("video"));
+            assertThat(streams).anySatisfy(stream -> {
+                assertThat(stream.path("codec_type").asString()).isEqualTo("audio");
+                assertThat(stream.path("codec_name").asString()).isEqualTo("aac");
+            });
+        } finally {
+            Files.deleteIfExists(localSegment);
+        }
+    }
+
+    /** optional audio map 必须允许无音轨 MP4 生成可探测的视频 HLS，临时输入与产物始终精确删除。 */
+    private void verifySilentVideoStillTranscodes(ObjectMapper mapper, FfmpegCommandRunner runner,
+            MediaProperties.Worker properties) throws Exception {
+        Path source = createSyntheticVideo(false);
+        Path scratch = Files.createTempDirectory("t08-silent-hls-");
+        try {
+            assertSourceStreams(mapper, source, false);
+            Path playlist = scratch.resolve("index.m3u8");
+            runner.run(source, playlist, scratch.resolve("segment-%05d.ts"), properties);
+            assertThat(Files.readString(playlist, StandardCharsets.UTF_8)).contains("#EXTM3U");
+            Path segment;
+            try (var files = Files.list(scratch)) {
+                segment = files.filter(path -> path.getFileName().toString().endsWith(".ts"))
+                        .findFirst().orElseThrow();
+            }
+            assertSourceStreams(mapper, segment, false);
+        } finally {
+            Files.deleteIfExists(source);
+            deleteRecursively(scratch);
+        }
+    }
+
+    /** 使用与 FFmpeg 同目录的 ffprobe 读取 codec_type/codec_name，不依赖文件扩展名猜测媒体流。 */
+    private List<JsonNode> probeStreams(ObjectMapper mapper, Path media) throws Exception {
+        Path output = Files.createTempFile("t08-ffprobe-", ".json");
+        Path error = Files.createTempFile("t08-ffprobe-", ".log");
+        try {
+            Process process = new ProcessBuilder(ffprobeExecutable(), "-v", "error", "-show_entries",
+                    "stream=codec_type,codec_name", "-of", "json", media.toString())
+                    .redirectOutput(output.toFile()).redirectError(error.toFile()).start();
+            boolean completed = process.waitFor(30, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new AssertionError("ffprobe timed out");
+            }
+            String diagnostic = Files.readString(error, StandardCharsets.UTF_8).replaceAll("[\\r\\n]+", " ");
+            assertThat(process.exitValue()).withFailMessage("ffprobe failed: %s", diagnostic).isZero();
+            List<JsonNode> streams = new ArrayList<>();
+            mapper.readTree(Files.readString(output, StandardCharsets.UTF_8)).path("streams").forEach(streams::add);
+            return streams;
+        } finally {
+            Files.deleteIfExists(output);
+            Files.deleteIfExists(error);
+        }
+    }
+
+    private static String ffmpegExecutable() {
+        String ffmpeg = System.getenv("FFMPEG_PATH");
+        return ffmpeg == null || ffmpeg.isBlank() ? "ffmpeg" : ffmpeg;
+    }
+
+    private static String ffprobeExecutable() {
+        Path ffmpeg = Path.of(ffmpegExecutable());
+        String probeName = ffmpeg.getFileName().toString().toLowerCase().endsWith(".exe")
+                ? "ffprobe.exe" : "ffprobe";
+        return ffmpeg.getParent() == null ? probeName : ffmpeg.resolveSibling(probeName).toString();
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (!Files.exists(root)) return;
+        List<Path> paths;
+        try (var walk = Files.walk(root)) {
+            paths = walk.toList();
+        }
+        for (int index = paths.size() - 1; index >= 0; index--) Files.deleteIfExists(paths.get(index));
     }
 
     private JsonNode awaitStatus(int port, ObjectMapper mapper, String mediaId, String expected, int seconds) throws Exception {
@@ -336,20 +449,28 @@ class MediaRealEnvironmentAcceptanceTest {
         return response;
     }
 
-    /** 只删除本轮固定 owner/事件和从数据库取得的精确 OSS 键，不列举 Bucket。 */
+    /** 只删除本轮固定 owner/事件和从数据库取得的精确 OSS 键，不列举 Bucket，并逐键 HEAD 确认已删除。 */
     private void cleanupExact(ObjectStorage storage, MediaRepository repository, JdbcTemplate jdbc, List<String> eventIds) {
         List<MediaAsset> assets = repository.listAssetsOwned(OWNER, null, null, 0, 100);
+        List<String> mediaIds = assets.stream().map(MediaAsset::mediaId).toList();
+        List<String> uploadIds = jdbc.queryForList(
+                "SELECT upload_id FROM upload_session WHERE owner_id = ?", String.class, OWNER);
+        List<String> objectKeys = new ArrayList<>();
         for (MediaAsset asset : assets) {
             repository.listVariants(asset.mediaId()).forEach(variant -> {
                 repository.listVariantComponents(variant.variantId())
-                        .forEach(component -> storage.delete(component.objectKey()));
-                storage.delete(variant.objectKey());
+                        .forEach(component -> objectKeys.add(component.objectKey()));
+                objectKeys.add(variant.objectKey());
             });
-            storage.delete(asset.objectKey());
+            objectKeys.add(asset.objectKey());
         }
         jdbc.queryForList("SELECT object_key FROM temporary_access_object WHERE media_id IN "
                         + "(SELECT media_id FROM media_asset WHERE owner_id = ?)", String.class, OWNER)
-                .forEach(storage::delete);
+                .forEach(objectKeys::add);
+        objectKeys.stream().distinct().forEach(storage::delete);
+        objectKeys.stream().distinct().forEach(key -> assertThatThrownBy(() -> storage.head(key))
+                .as("acceptance OSS object %s must be deleted", key)
+                .isInstanceOf(com.aliyun.oss.OSSException.class));
         jdbc.update("DELETE FROM consumed_event WHERE event_id IN (SELECT event_id FROM outbox_event "
                 + "WHERE aggregate_id IN (SELECT media_id FROM media_asset WHERE owner_id = ?))", OWNER);
         for (String eventId : eventIds) jdbc.update("DELETE FROM consumed_event WHERE event_id = ?", eventId);
@@ -369,14 +490,52 @@ class MediaRealEnvironmentAcceptanceTest {
         jdbc.update("DELETE FROM upload_part WHERE upload_id IN (SELECT upload_id FROM upload_session WHERE owner_id = ?)", OWNER);
         jdbc.update("DELETE FROM upload_session WHERE owner_id = ?", OWNER);
 
-        // 该专用 Schema 只允许承载 T07 验收数据；逐表归零断言可及时暴露异步消费或新增表遗漏的清理缺口。
-        for (String table : List.of("upload_session", "upload_part", "media_asset", "media_variant",
-                "media_variant_component", "temporary_access_object",
-                "processing_job", "media_reference", "outbox_event", "consumed_event",
-                "media_audit_record", "access_grant_audit", "consumed_service_authorization")) {
-            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class))
-                    .as("T07/T08A/T08A.1 acceptance cleanup table %s", table)
-                    .isZero();
+        // 开发 Schema 可能保留其他显式测试 owner 的数据；这里只验证本轮 owner、媒体和事件，避免误删或误报无关记录。
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM upload_session WHERE owner_id = ?", Integer.class, OWNER))
+                .as("acceptance upload sessions").isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_asset WHERE owner_id = ?", Integer.class, OWNER))
+                .as("acceptance media assets").isZero();
+        for (String uploadId : uploadIds) {
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM upload_part WHERE upload_id = ?", Integer.class, uploadId))
+                    .as("acceptance upload parts for %s", uploadId).isZero();
+        }
+        for (String mediaId : mediaIds) {
+            for (String table : List.of("media_variant", "media_variant_component", "temporary_access_object",
+                    "processing_job", "media_reference")) {
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table + " WHERE media_id = ?",
+                                Integer.class, mediaId))
+                        .as("acceptance cleanup table %s for media %s", table, mediaId).isZero();
+            }
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_event WHERE aggregate_id = ?",
+                            Integer.class, mediaId))
+                    .as("acceptance outbox for media %s", mediaId).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_audit_record WHERE media_id = ?",
+                            Integer.class, mediaId))
+                    .as("acceptance audit for media %s", mediaId).isZero();
+        }
+        for (String eventId : eventIds) {
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_event WHERE event_id = ?",
+                            Integer.class, eventId))
+                    .as("acceptance consumed event %s", eventId).isZero();
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_audit_record WHERE actor_id = ?",
+                        Integer.class, OWNER))
+                .as("acceptance owner audit records").isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM access_grant_audit WHERE actor_id IN (?, ?)",
+                        Integer.class, OWNER, VISITOR))
+                .as("acceptance access grant audit records").isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization WHERE visitor_id = ?",
+                        Integer.class, VISITOR))
+                .as("acceptance service authorization records").isZero();
+    }
+
+    /** 成功验收后四个持久队列都必须为空，确保本轮处理、引用、生命周期和死信消息没有残留。 */
+    private void assertAcceptanceQueuesEmpty(RabbitAdmin admin) {
+        for (String queue : List.of(MediaRabbitTopology.PROCESSING_QUEUE, MediaRabbitTopology.REFERENCES_QUEUE,
+                MediaRabbitTopology.LIFECYCLE_QUEUE, MediaRabbitTopology.DEAD_QUEUE)) {
+            var information = admin.getQueueInfo(queue);
+            assertThat(information).as("RabbitMQ queue %s must exist", queue).isNotNull();
+            assertThat(information.getMessageCount()).as("RabbitMQ queue %s cleanup", queue).isZero();
         }
     }
 

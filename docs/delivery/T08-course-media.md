@@ -142,7 +142,7 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 - T08B 的真实媒体后端环境验收已通过，但本次未在浏览器中执行带真实教师凭据、Gateway、course-service 与专用课程 Fixture 的上传—绑定—学生 HLS 全链路；自动化和 Mock 结果不能替代该人工 E2E。
 - T11 尚未实现报名与学习权限查询；报名制非试看固定返回 403。T08A.1 不伪造报名，也不把该临时边界解释为最终授权模型。
 - 首期播放接口只接受 `LESSON_VIDEO`；封面继续使用展示投影，字幕/课件保持绑定但不堆积未评审的播放/下载授权实现。
-- 当前 HLS 是单清晰度视频、显式关闭音频；多码率自适应、音轨/字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
+- 当前 HLS 保持单清晰度：必选第一条视频流，可选第一条音频流；有音轨时统一编码为 MPEG-TS HLS 兼容的 AAC，无音轨视频也可成功转码。多码率自适应、多音轨选择、字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
 - 病毒、恶意文档与内容安全服务尚未接入；MIME/扩展名、OSS HEAD/SHA 与 FFmpeg 可解码校验不等价于生产内容安全。
 - 绑定验证与课程事务不是分布式事务；READY 资产在验证后到提交前的极短竞态由引用事件、延迟回收和后续对账兜底，不宣称“恰好一次”。
 - 单机 `Semaphore` 只限制单实例并发；多实例全局容量、作业租约、断点续转和运维重放仍需在部署设计中补齐。
@@ -202,6 +202,14 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 本轮新增 Course/Media 集成测试覆盖教师与公开课程封面投影、历史 URL 回退、精确封面用途/访问类型/原图变体校验和错误令牌拒绝。`mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service,media-service -am verify` 实际通过：Course 14 项、Media 12 项及 shared-kernel 1 项通过，真实环境用例 1 项按默认开关跳过。全 workspace `typecheck`（含 OpenAPI 重新生成）、8 个前端测试文件 51 项和三端生产构建均通过。浏览器视觉复跑因本机浏览器控制运行时初始化失败而未执行，不能将结构审查描述为真实页面视觉验收；需在重启更新后的 media/course 服务和 teacher Web 后按下述步骤人工确认。
 
-剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度且无音频/字幕/DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度，只保留第一条音轨且不支持多音轨选择、字幕或 DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+
+### 2026-08-08 HLS 音频修复与真实验收
+
+FFmpeg Worker 删除了主动禁音的 `-an`，继续以 `-map 0:v:0` 必选第一条视频流，并以 `-map 0:a:0?` 可选第一条音频流；存在音频时固定编码为 AAC、128 kbit/s、48 kHz、双声道，并显式生成 MPEG-TS HLS。视频编码、单清晰度、超时、有限重试、失败诊断和临时目录清理边界未改变，OpenAPI、数据库迁移和媒体授权契约均未修改；前端播放器仍不默认静音。
+
+新增命令级测试断言参数中不存在 `-an`，且包含可选音轨映射、AAC 参数与 MPEG-TS HLS。`MediaRealEnvironmentAcceptanceTest` 使用 lavfi 同时合成 64×64 画面和 1 kHz 正弦波，先由 ffprobe 断言输入确有 video/audio，再经真实 OSS Multipart、RabbitMQ Worker 和 FFmpeg 转码；从短期授权清单下载首个 TS 切片后，ffprobe 断言产物同时含 video 与 `aac` audio。用例另生成无音轨 MP4，确认 optional map 仍能产出含视频的 m3u8/TS。
+
+实际执行 Java 全量 `clean verify`，8 个 Reactor 模块全部通过；media-service 14 项中 13 项通过、真实环境用例按默认开关跳过 1 项。随后通过 `Invoke-WithLocalEnvironment.ps1` 显式运行真实用例，1 项通过。用例逐键删除本轮 OSS 原件、HLS 清单/切片和临时授权清单并以 HEAD 确认不存在；按本轮 uploadId/mediaId/eventId 清理并断言 MySQL 记录为零；RabbitMQ processing/references/lifecycle/DLQ 四个持久队列消息数为零；合成输入、ffprobe 报告、下载切片和无音轨转码目录均已删除。开发 Schema 中另一个测试 owner 的既有 5 条上传会话和 4 个媒体资产不属于本轮，未读取内容、未修改、未计作本轮残留。
 
 T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。
