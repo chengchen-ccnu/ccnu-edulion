@@ -164,6 +164,8 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 - 目录写请求显式投影为 `mediaId`、`purpose`、`sequence`，UI 使用的 lesson/resource ID 与 `uiKey` 不会进入请求。新 READY 视频保存后取得课程域 resource ID，教师才可调用 owner 预览接口；发布版本不可变性继续由 T08A 后端保证。
 - 学生只调用发布课程资源播放授权；教师只调用 owner 预览授权。共享 `HlsVideoPlayer` 优先使用浏览器原生 HLS，其他支持 MSE 的浏览器按需加载 `hls.js 1.6.16`，切换/卸载会销毁实例、移除 source、中止请求和清除定时器。
 - 播放授权根据 `expiresAt` 最多提前 30 秒刷新。429 最多退避两次，刷新失败后停止自动循环并显示 401/403/404/409/429/503 中文提示；短期 URL 和授权头只在组件内存存在，不写持久化状态或日志。
+- `/courses/:courseId` 只展示封面、简介、教师、访问规则和发布目录预览；“开始学习/试看”进入受保护的 `/learn/:courseId/:lessonId`，公开详情不再导入播放器或调用播放授权。
+- 独立学习页按 `learning:access` 能力保护，不永久绑定 `STUDENT` 角色。页面包含当前课时、HLS 播放器、可折叠目录、上一课、下一课和退出学习；报名制课程在 T11 前只开放 `previewable=true` 入口，不伪造报名、进度、笔记、练习或 AI。
 
 ### 环境、数据与清理
 
@@ -180,6 +182,9 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 - Java：`gateway-service,course-service,media-service -am verify` 的 5 个 Reactor 模块全部成功；Gateway 10 项、Course 14 项、Media 12 项（真实环境 1 项默认跳过）及 shared-kernel 1 项均无失败。
 - 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该后端用例没有经过 Vue 页面，不能记录为真实浏览器上传/播放 E2E。
 - 浏览器响应式检查：指向同一 OpenAPI Mock 的学生课程详情在 1440×900 与 390×844 均无横向溢出，窄屏信息和目录正确单列，控制台无错误。Mock 详情没有课时资源，教师页又需要真实登录，因此没有把 Mock 页面描述成上传/HLS 播放通过。
+- 2026-08-09 页面规格收口：`install --frozen-lockfile`、`generate:api`、`check:api`、全 workspace `typecheck` 通过；Vitest 10 个文件 66 项全部通过，新增覆盖学习入口选择、报名制只开放试看、深链接安全回跳、按能力守卫、401/403/404/409/429/503 提示、授权有限刷新、音频不默认静音和卸载清理；三端生产构建通过。
+- 同轮 Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，14 份报告共 48 项，47 项通过、真实环境用例默认跳过 1 项；FFmpeg 命令测试继续断言可选第一条音轨和 AAC MPEG-TS HLS。此前带正弦波真实验收结果仍有效，本轮没有重新连接 OSS/RabbitMQ 或把自动化冒充真实 HLS 页面验收。
+- 浏览器复核：OpenAPI Mock 下匿名 `/learn/...` 深链接正确回到统一登录并保留完整目标；课程详情 DOM 没有 `<video>`，390×844 下 `scrollWidth` 等于 `clientWidth` 且控制台无错误。Mock 详情无视频资源且 Mock 登录不能建立有效会话，因此独立学习页的真实授权和播放仍须使用专用环境人工复验。
 - `git diff --check`、敏感信息与构建产物审计在提交前执行；未发现签名 URL 持久化、日志输出、AccessKey、密码或应提交的 dist/target。
 
 ### 人工演示步骤
@@ -187,7 +192,7 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 1. 通过安全环境包装脚本依次启动 media-service、course-service、IAM 与 Gateway，确认只使用专用 dev Schema；启动 teacher/student Web，OSS CORS 精确允许本地 Origin 并暴露 ETag。
 2. 教师创建课程，选择 JPG/PNG/WebP 封面，观察 SHA、真实上传、校验/处理到 READY；保存后刷新，确认展示来自课程 `coverUrl` 投影。替换和移除后再次保存，确认线上已发布版本未被直接改变。
 3. 保存一个 VIDEO 课时取得稳定 ID，分别选择小视频和超过 Multipart 阈值的视频；检查分片进度、取消/恢复提示、处理状态和 READY 后的目录绑定。保存请求只应包含稳定媒体三字段。
-4. 保存目录后在教师页 owner 预览；发布课程后，以已登录访问者在学生详情选择同一课程域资源。公开或试看课时可播放；报名制非试看在 T11 前显示 403 文案。
+4. 保存目录后在教师页 owner 预览；发布课程后，从公共课程详情点击“开始学习/试看”进入 `/learn/:courseId/:lessonId`。确认学习页显示当前课时、目录、上一课/下一课和退出学习；公开或试看课时可播放，报名制非试看在 T11 前显示 403 文案。
 5. 等待授权刷新，确认到期前重新签发；模拟 429/503 或停止依赖，确认有限重试后停止。切换资源或离开页面，确认播放器、定时器、授权请求和 Blob URL 已清理。
 
 ### 注释覆盖、风险与发布
@@ -219,3 +224,11 @@ FFmpeg Worker 删除了主动禁音的 `-an`，继续以 `-map 0:v:0` 必选第�
 运行态复核确认 Worker 修复不会追溯修改既有 `READY` HLS：如果 media-service 在代码更新前已经启动，即使随后从最新 Git 工作区重新选择文件，仍会由内存中的旧 FFmpeg 参数处理。验收音频修复必须先完整重启 media-service，再创建全新上传会话；保存目录或重新发布课程只切换课程版本引用，不触发媒体重新转码。
 
 T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。
+
+### 2026-08-09 页面事实源合入与学习页收口
+
+分支从与远端一致的 `a128dd07dca004df96ce25504673e98a8bec4bf2` 合入最新 `origin/main` `a642d7ea98396ef1da6da98047556f1773c2e0ea`，merge commit 为 `8798eee0bbdf3167d6817857da8f4c71bb7ba0e4`；冲突同时保留 T08B 的真实实现/验收事实与总控新增的页面事实源、T12A～C、T15A～B、T17A～C 规划。页面实现提交为 `9588409a79089407499a01edae6eee5917021744`。
+
+公开课程详情与学习空间现已按 `docs/frontend/page-specs.md` 分离。统一登录白名单识别 `/learn/...` 并保留安全回跳，路由守卫直接校验 `learning:access`；课程域资源行 ID 是唯一播放授权输入，页面仍不接触 media-service 内部接口、mediaId 凭证或 OSS 地址。学习页刷新会重取当前发布课程并按 lessonId 恢复；未知课时/非视频资源显示 404 语义，目录请求在切换或卸载时中止，播放器继续清理 HLS、视频源、刷新定时器与授权请求。
+
+本轮没有修改 OpenAPI、Java 生产代码、数据库迁移、事件或媒体授权契约，没有创建数据库、表、Seed、报名、进度或业务伪数据；只使用 OpenAPI Mock 做无敏感信息的页面检查，临时 Mock/Vite 进程和浏览器页签已精确关闭，因此没有 OSS、RabbitMQ 或数据库清理项。真实音频 HLS 证据沿用本交付文档已记录的安全环境验收，本轮 Java 全量验证证明相关命令和测试未退化，但不能替代新的真实浏览器播放验收。
