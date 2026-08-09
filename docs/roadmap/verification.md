@@ -155,7 +155,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Frontend：`generate:api` 和全 workspace `typecheck` 通过；沙箱内 Vitest/构建因 Vite/esbuild `spawn EPERM` 无法启动，批准在沙箱外复跑后 6 文件 34 项测试和学生/教师/管理三端构建全部通过。`check:api` 提交前正确检测到生成文件相对 HEAD 的待提交差异，提交后复跑。
 - 数据：没有创建数据库、Course 表、Seed 或正式报名数据。只在既有专用 `edu_platform_media_dev` 应用 Media V3；真实验收使用固定测试 owner/visitor 与唯一 OSS 前缀并精确清空。H2 `course_test`、`course_seed_test`、`media_test` Fixture 随测试进程释放。
 - 边界：T08B 才实现上传/播放器/授权刷新；T11 才实现报名与学习权限。首期完整开放 `LESSON_VIDEO` 播放，封面维持展示投影，字幕/课件不提前堆积未评审下载授权。
-- 发布：实现提交为 `f2e1d972e828759089d2192227366ddb4985059b`；[PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已合并，主线 merge commit 为 `2f40b762d41f780509ab388928aff84614d6b62c`。
+- 发布：实现提交为 `f2e1d972e828759089d2192227366ddb4985059b`，已按规则使用 `git push origin HEAD` 推送；Ready [PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 随后已合并，`main` 合并提交为 `2f40b762d41f780509ab388928aff84614d6b62c`。
 
 ## 2026-08-05 T08B 课程媒体上传与播放前端
 
@@ -176,3 +176,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - HLS 音频复核：此前 T07/T08 真实验收只用 lavfi 合成画面，没有生成或断言音频流，因此即使 Worker 使用 `-an` 也会假通过。本次删除 `-an`，改为必选 `0:v:0`、可选 `0:a:0?`，存在音轨时编码为 AAC 128 kbit/s、48 kHz 双声道，仍保持单清晰度 MPEG-TS HLS；命令测试明确断言可选映射、AAC 参数及不存在 `-an`。
 - 带声音真实验收：通过安全环境包装脚本连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 与本机 FFmpeg/ffprobe，lavfi 输入同时包含 video 和 1 kHz 正弦波 audio；ffprobe 先确认输入双流，再确认授权下载的首个 TS 切片含 video 与 AAC audio。输入和输出均由 FFmpeg `volumedetect` 解码并断言平均音量高于 `-60 dB`，防止静音 AAC 假阳性。无音轨 MP4 也成功生成可探测的 m3u8/TS；原有 Multipart、短期授权、切片下载、confirm/return、有限重试、DLQ 和重投继续通过。
 - 音频修复验证与清理：Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，media-service 14 项中真实环境 1 项默认跳过；显式真实用例 1 项通过。用例按精确 Object Key 删除并 HEAD 确认本轮 OSS 对象不存在，按 uploadId/mediaId/eventId 断言本轮 MySQL 记录为零，断言四个持久 RabbitMQ 队列消息数为零，并删除所有本地合成/下载/探测/无音轨转码临时文件。开发 Schema 中其他测试 owner 的既有记录不属于本轮，未修改；没有新增数据库、迁移、表、Seed、报名或业务伪数据。
+
+## 2026-08-09 平台页面规格与后续任务边界审计
+
+- 门禁：先确认 T08B 分支工作区干净，`HEAD` 与 `origin/codex/t08b-course-media-web` 均为 `a128dd07dca004df96ce25504673e98a8bec4bf2`，已有音轨修复和验收提交均已推送；随后保留该分支，从与 `origin/main` 一致的 PR #14 合并提交 `2f40b762d41f780509ab388928aff84614d6b62c` 创建独立文档分支 `codex/platform-page-architecture`。
+- 审计发现：总体架构原本区分 `/courses/:courseId` 课程详情与 `/learn/:courseId/:lessonId` 学习空间，但仓库缺少实施指南中约定的 `docs/frontend/page-specs.md`；功能任务因没有页面事实源，曾把正式播放器内嵌到公共详情。学生首页、教师首页和管理端占位路由也没有统一的“计划/完成”判定。
+- 页面事实源：新增 `docs/frontend/page-specs.md`，冻结公共课程门户、学习空间、教师工作台和管理端的路由、职责、能力授权、页面状态及 Txx 归属。课程详情不得承载正式播放器、进度、作答或 AI；学习页从 T08B 建立媒体壳，T12/T15 只在稳定路由中扩展。
+- 任务治理：T12 拆为学习进度、测评闭环和教师学情，T15 拆为独立答疑和学习上下文答疑，T17 拆为学生门户、教师工作台和运营管理端；T09/T10/T11/T13/T14/T16 的领域边界保持不变。`AGENTS.md` 要求所有前端任务先读页面规格，禁止用假数据、无效按钮或永久 `PlaceholderPage` 冒充产品完成。
+- 范围：本次只修改 Markdown 规格、仓库规则和路线图，不修改 OpenAPI、事件、Java/Python/TypeScript/Vue 生产代码、数据库迁移或生成客户端。文档只记录 PR #15 处于整改验收中，不把未合并的 T08B 实现描述成 `main` 能力。
+- 验证：执行 Markdown 链接/关键术语审计与 `git diff --check`；由于没有修改代码、契约或构建配置，不运行 Maven、Python 或前端构建，不能把本次文档审计作为任何功能测试通过的证据。
+- 数据与外部系统：没有连接或修改 MySQL、Redis、OSS、RabbitMQ、FFmpeg、Neo4j 或外部模型；没有创建数据库、表、迁移、Seed、伪数据或外部对象，因此没有数据清理步骤。

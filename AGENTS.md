@@ -14,6 +14,7 @@
 - `edu_agent_app`：现有 Python 数学智能体，负责检索、推理和讲解；不得直连或写入 Java 业务数据库。不要在平台任务中重新实现它。
 - `web-apps/apps/*`：学生、教师、管理三个独立应用；共享技术包位于 `web-apps/packages/*`，禁止共享带角色业务判断的整页组件。
 - `docs/api/openapi.yaml` 是外部 REST API 字段的唯一事实来源；`docs/events/*` 是事件事实来源。
+- `docs/frontend/page-specs.md` 是三端路由、页面职责、访问能力、页面状态和 Txx 归属的唯一事实来源；功能任务不得自行合并页面职责或发明平行路由。
 - 平台消息队列统一使用 RabbitMQ 与 Spring AMQP。跨服务可靠事件必须采用 Outbox、发布确认、有限重试、死信和按 `eventId` 幂等消费；不得依赖 RabbitMQ 提供“恰好一次”，不得在各服务并行引入 RocketMQ/Kafka 第二套实现。
 
 ## 构建与测试命令
@@ -51,6 +52,15 @@ pnpm.cmd --dir web-apps run mock:api
 4. 兼容性变更优先新增可选字段；删除、重命名、收紧类型或改变语义属于破坏性变更，必须版本化并记录迁移方案。
 5. 统一错误响应必须包含 `code`、`message`、`traceId`、`timestamp`、`path`、`fieldErrors`；日志和响应不得泄露密钥、Token 或隐私。
 6. 事件必须带 `eventId`、`eventType`、`eventVersion`、`aggregateId`、`occurredAt`、`traceId` 和 `payload`，消费者按 `eventId` 幂等。
+
+## 前端页面与产品边界规则
+
+1. 涉及前端页面、路由、导航、跨应用跳转或权限表现的任务，开始前必须完整阅读 `docs/frontend/page-specs.md`。如需新增、删除或改变页面职责，先由总控任务更新页面规格和 backlog；功能任务发现缺口时停止扩展并报告，不得自行改写全局信息架构。
+2. `/courses/:courseId` 是公共课程详情与学习决策页，`/learn/:courseId/:lessonId` 是受保护课程学习页，`/my-learning` 是学习记录入口；禁止为了阶段演示把正式播放器、进度、作答或 AI 会话重新塞回课程详情。
+3. 公共课程中心对角色中立；学习空间按 `learning:access` 和领域访问事实授权，教学空间按 `teaching:access` 与所有权授权，管理空间按 `administration:access` 授权。角色和按钮隐藏不能替代服务端权限判断，教师账号可在后续按能力同时进入学习与教学空间。
+4. 未接通真实契约的功能不得用假数据、空成功页、无效按钮或永久 `PlaceholderPage` 冒充完成。阶段未实现时应隐藏入口，或只在确有产品价值时给出明确不可操作说明，并在 page specs、backlog 和交付文档中标记真实状态。
+5. 每个前端 Txx 只能实现页面规格分配给本任务的区域；后续任务应在稳定路由和布局内填充能力，不得重复创建“临时学习页”“临时管理页”或第二套登录/工作台导航。
+6. 前端交付除类型检查和构建外，必须验证深链接、刷新恢复、权限、loading/empty/partial-error/401/403/404/409/422/429/offline 状态、响应式与基本键盘可访问性。播放器、上传、考试和 SSE 页面还必须验证离开页面后的实例、请求、定时器和临时 URL 清理。
 
 ## 开发与测试数据规则
 
