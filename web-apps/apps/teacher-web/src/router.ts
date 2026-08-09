@@ -9,7 +9,7 @@ import TeacherCourseEditPage from "./views/TeacherCourseEditPage.vue";
 import TeacherCourseListPage from "./views/TeacherCourseListPage.vue";
 
 export const router = createRouter({ history: createWebHistory(), routes: [
-  { path: "/", redirect: "/teacher/dashboard" },
+  { path: "/", redirect: "/teacher/courses" },
   { path: "/teacher/dashboard", name: "teacher-dashboard", component: PlaceholderPage,
     meta: { requiresAuth: true, requiredRole: "TEACHER" },
     props: { heading: "教师工作台", note: "已通过 TEACHER 身份和最小权限校验。" } },
