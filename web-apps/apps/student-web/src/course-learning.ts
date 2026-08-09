@@ -46,4 +46,3 @@ export function firstAccessibleLearningEntry(course: CourseDetail): CourseLearni
 export function findLearningEntry(course: CourseDetail, lessonId: string): CourseLearningEntry | null {
   return courseLearningEntries(course).find(item => item.lesson.id === lessonId) ?? null;
 }
-

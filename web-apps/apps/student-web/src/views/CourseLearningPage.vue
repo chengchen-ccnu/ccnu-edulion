@@ -154,4 +154,3 @@ function cancelDetailRequest() {
     </aside>
   </div>
 </template>
-
