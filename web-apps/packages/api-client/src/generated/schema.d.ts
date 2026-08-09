@@ -263,6 +263,172 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/knowledge-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the enabled junior-mathematics knowledge-point tree
+         * @description Teachers can query and bind enabled knowledge points but cannot maintain them. Results are ordered by parent, sortOrder and code.
+         */
+        get: operations["listTeacherKnowledgePoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create one administrator-maintained knowledge point
+         * @description Requires the trusted `administration:access` permission. Parent relationships remain inside learning-service and never reference another service schema.
+         */
+        post: operations["createKnowledgePoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-points/{knowledgePointId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update mutable knowledge-point metadata with optimistic locking
+         * @description Requires `administration:access`. Stable ID and code are immutable; disabling a node does not rewrite historical question versions.
+         */
+        put: operations["updateKnowledgePoint"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List questions owned by the current teacher
+         * @description Answers and full analyses are intentionally absent from list projections. Filters apply to the current immutable version only.
+         */
+        get: operations["listTeacherQuestions"];
+        put?: never;
+        /**
+         * Idempotently create a teacher-owned draft question
+         * @description Replaying the same `clientRequestId` and body returns the original aggregate; a different body conflicts. Media assets are validated for owner, exact purpose and READY state before the local transaction commits.
+         */
+        post: operations["createTeacherQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/questions/{questionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current immutable version of an owned question */
+        get: operations["getTeacherQuestion"];
+        /**
+         * Create a new immutable version of an owned question
+         * @description Never overwrites a historical version. `expectedRevision` guards the aggregate pointer; historical media references remain retained so old snapshots cannot lose assets.
+         */
+        put: operations["updateTeacherQuestion"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/questions/{questionId}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Activate or archive an owned question
+         * @description DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED. Archived questions are retained for historical consumers and cannot be edited or reactivated in T09.
+         */
+        put: operations["updateTeacherQuestionStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/question-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List asynchronous import tasks owned by the current teacher */
+        get: operations["listQuestionImports"];
+        put?: never;
+        /**
+         * Create an idempotent CSV or XLSX import task
+         * @description The source must be the current teacher's READY `QUESTION_IMPORT_SOURCE`. The task retains a media reference until the configured post-completion retention deadline and then releases it asynchronously.
+         */
+        post: operations["createQuestionImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/question-imports/{importTaskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get one owned import task and its row errors
+         * @description Row errors identify the row, stable code and safe message; rejected source content is never echoed in bulk.
+         */
+        get: operations["getQuestionImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/uploads": {
         parameters: {
             query?: never;
@@ -679,8 +845,225 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        /** @enum {string} */
+        QuestionStage: "JUNIOR";
+        /** @enum {string} */
+        QuestionGrade: "SEVEN" | "EIGHT" | "NINE";
+        /** @enum {string} */
+        QuestionSubject: "MATHEMATICS";
+        /** @enum {string} */
+        QuestionType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER";
+        /** @enum {string} */
+        QuestionDifficulty: "EASY" | "MEDIUM" | "HARD";
+        /** @enum {string} */
+        QuestionStatus: "DRAFT" | "ACTIVE" | "ARCHIVED";
+        /** @enum {string} */
+        QuestionMediaPurpose: "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT";
+        KnowledgePoint: {
+            /** Format: uuid */
+            id: string;
+            code: string;
+            name: string;
+            /** Format: uuid */
+            parentId: string | null;
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            sortOrder: number;
+            enabled: boolean;
+            /** Format: int64 */
+            revision: number;
+            children: components["schemas"]["KnowledgePoint"][];
+        };
+        CreateKnowledgePointRequest: {
+            code: string;
+            name: string;
+            /** Format: uuid */
+            parentId: string | null;
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            sortOrder: number;
+            enabled: boolean;
+        };
+        UpdateKnowledgePointRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            name: string;
+            /** Format: uuid */
+            parentId: string | null;
+            grade: components["schemas"]["QuestionGrade"];
+            sortOrder: number;
+            enabled: boolean;
+        };
+        QuestionOptionInput: {
+            key: string;
+            /** @description Markdown/LaTeX text. External or embedded image URLs are rejected; images use version media references. */
+            content: string;
+        };
+        QuestionMediaInput: {
+            /** Format: uuid */
+            mediaId: string;
+            purpose: components["schemas"]["QuestionMediaPurpose"];
+            sequence: number;
+        };
+        QuestionVersionInput: {
+            type: components["schemas"]["QuestionType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            /** @description Markdown/LaTeX source; rendering is a frontend responsibility. */
+            stem: string;
+            /** @description Required for choice questions and empty for fill/short-answer questions. TRUE_FALSE uses no options. */
+            options: components["schemas"]["QuestionOptionInput"][];
+            /** @description Canonical answer tokens or Markdown/LaTeX strings. This field is teacher-only in T09. */
+            answers: string[];
+            /** @description Full teacher-only analysis; an empty string means no analysis supplied. */
+            analysis: string;
+            knowledgePointIds: string[];
+            media: components["schemas"]["QuestionMediaInput"][];
+        };
+        CreateQuestionRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            version: components["schemas"]["QuestionVersionInput"];
+        };
+        UpdateQuestionRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            version: components["schemas"]["QuestionVersionInput"];
+        };
+        UpdateQuestionStatusRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            /** @enum {string} */
+            status: "ACTIVE" | "ARCHIVED";
+        };
+        QuestionMedia: {
+            /**
+             * Format: uuid
+             * @description learning-service version-media row ID and the stable media referenceId.
+             */
+            id: string;
+            /** Format: uuid */
+            mediaId: string;
+            purpose: components["schemas"]["QuestionMediaPurpose"];
+            sequence: number;
+        };
+        QuestionVersion: {
+            /** Format: uuid */
+            id: string;
+            versionNumber: number;
+            type: components["schemas"]["QuestionType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            /** @description Teacher-only correct answer projection in T09; never reuse this schema for a student endpoint. */
+            answers: string[];
+            /** @description Teacher-only full analysis projection. */
+            analysis: string;
+            knowledgePoints: components["schemas"]["KnowledgePoint"][];
+            media: components["schemas"]["QuestionMedia"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        QuestionSummary: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["QuestionStatus"];
+            /** Format: int64 */
+            revision: number;
+            /** Format: uuid */
+            currentVersionId: string;
+            versionNumber: number;
+            type: components["schemas"]["QuestionType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            grade: components["schemas"]["QuestionGrade"];
+            stemPreview: string;
+            knowledgePointIds: string[];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TeacherQuestion: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["QuestionStatus"];
+            /** Format: int64 */
+            revision: number;
+            currentVersion: components["schemas"]["QuestionVersion"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        QuestionPage: {
+            items: components["schemas"]["QuestionSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @enum {string} */
+        QuestionImportSourceFormat: "CSV" | "XLSX";
+        /** @enum {string} */
+        QuestionImportStatus: "PENDING" | "PROCESSING" | "COMPLETED" | "PARTIAL_SUCCESS" | "FAILED";
+        CreateQuestionImportRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /**
+             * Format: uuid
+             * @description READY QUESTION_IMPORT_SOURCE owned by the current teacher.
+             */
+            sourceMediaId: string;
+            sourceFormat: components["schemas"]["QuestionImportSourceFormat"];
+        };
+        QuestionImportRowError: {
+            rowNumber: number;
+            code: string;
+            message: string;
+        };
+        QuestionImportTask: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sourceMediaId: string;
+            sourceFormat: components["schemas"]["QuestionImportSourceFormat"];
+            status: components["schemas"]["QuestionImportStatus"];
+            progress: number;
+            totalRows: number;
+            processedRows: number;
+            successCount: number;
+            failureCount: number;
+            errors: components["schemas"]["QuestionImportRowError"][];
+            failureCode?: string | null;
+            failureMessage?: string | null;
+            /**
+             * Format: date-time
+             * @description Earliest time the source reference may be released after a terminal result.
+             */
+            retainUntil: string;
+            /** Format: date-time */
+            sourceReleasedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        QuestionImportPage: {
+            items: components["schemas"]["QuestionImportTask"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
         /**
-         * @description Stable business purpose. T08A enables COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE and ARTICLE_ATTACHMENT through explicit per-purpose policies; every other frozen value remains disabled until its owning domain supplies policy and authorization.
+         * @description Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
          * @enum {string}
          */
         MediaPurpose: "COURSE_COVER" | "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT" | "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "AI_QUESTION_IMAGE" | "USER_AVATAR" | "TEACHER_QUALIFICATION" | "BANNER_IMAGE" | "TOPIC_COVER" | "REPORT_EXPORT";
@@ -1103,6 +1486,63 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The question, knowledge point or import task does not exist or is not visible to the caller. */
+        QuestionNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "QUESTION.NOT_FOUND",
+                 *       "message": "题目或任务不存在",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-09T10:00:00Z",
+                 *       "path": "/api/v1/teacher/questions/0198f434-215d-7abc-9123-123456789abc",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The idempotency key, optimistic revision, lifecycle transition or stable knowledge-point code conflicts. */
+        QuestionConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "QUESTION.REVISION_CONFLICT",
+                 *       "message": "题目已被更新，请刷新后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-09T10:00:00Z",
+                 *       "path": "/api/v1/teacher/questions/0198f434-215d-7abc-9123-123456789abc",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description media-service or the short-lived source download is unavailable before the requested operation can safely proceed. Committed Outbox events remain retryable and do not use this response. */
+        QuestionDependencyUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "QUESTION.MEDIA_UNAVAILABLE",
+                 *       "message": "媒体服务暂时不可用，请稍后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-09T10:00:00Z",
+                 *       "path": "/api/v1/teacher/question-imports",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description One-based page number. */
@@ -1115,6 +1555,9 @@ export interface components {
         ResourceId: string;
         UploadId: string;
         MediaId: string;
+        QuestionId: string;
+        KnowledgePointId: string;
+        ImportTaskId: string;
     };
     requestBodies: never;
     headers: {
@@ -1579,6 +2022,341 @@ export interface operations {
             409: components["responses"]["MediaConflict"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    listTeacherKnowledgePoints: {
+        parameters: {
+            query?: {
+                grade?: components["schemas"]["QuestionGrade"];
+                /** @description Omit for the complete tree; use the literal root UUID only when querying one branch. */
+                parentId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enabled knowledge points visible to teachers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePoint"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createKnowledgePoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKnowledgePointRequest"];
+            };
+        };
+        responses: {
+            /** @description Knowledge point created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePoint"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateKnowledgePoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                knowledgePointId: components["parameters"]["KnowledgePointId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateKnowledgePointRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated knowledge point. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePoint"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listTeacherQuestions: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                keyword?: string;
+                type?: components["schemas"]["QuestionType"];
+                status?: components["schemas"]["QuestionStatus"];
+                difficulty?: components["schemas"]["QuestionDifficulty"];
+                knowledgePointId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paged owner-only question summaries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createTeacherQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Original question returned for an identical idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherQuestion"];
+                };
+            };
+            /** @description Draft question and immutable version 1 created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
+        };
+    };
+    getTeacherQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner editor projection including the answer and analysis. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    updateTeacherQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Aggregate now points at the newly inserted immutable version. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
+        };
+    };
+    updateTeacherQuestionStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateQuestionStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated aggregate lifecycle state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listQuestionImports: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paged import task summaries ordered by creation time descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateQuestionImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Original task returned for an identical idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            /** @description Import task and local Outbox event committed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
+        };
+    };
+    getQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import progress, totals and complete row-error list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
         };
     };
     createMediaUpload: {

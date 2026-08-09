@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.7.0
-  description: T08A.1 Gateway contract. Course-service decides published, preview and owner visibility from trusted course facts before media-service issues a short-lived OSS/HLS grant. Browsers identify only the course lesson resource and can neither assert a media ID or purpose nor call the internal service authorization endpoint.
+  version: 0.8.0
+  description: T09 Gateway contract. Adds teacher-owned immutable question versions, administrator-maintained junior-mathematics knowledge points, stable question media references and asynchronous CSV/XLSX imports. No student question, attempt or grading API is exposed in T09.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -14,6 +14,9 @@ tags:
   - name: Courses
   - name: Teacher Courses
   - name: Media
+  - name: Teacher Questions
+  - name: Question Imports
+  - name: Knowledge Points
 paths:
   /api/v1/auth/login:
     post:
@@ -591,6 +594,335 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/teacher/knowledge-points:
+    get:
+      tags: [Knowledge Points]
+      operationId: listTeacherKnowledgePoints
+      summary: List the enabled junior-mathematics knowledge-point tree
+      description: Teachers can query and bind enabled knowledge points but cannot maintain them. Results are ordered by parent, sortOrder and code.
+      parameters:
+        - name: grade
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionGrade'
+        - name: parentId
+          in: query
+          description: Omit for the complete tree; use the literal root UUID only when querying one branch.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Enabled knowledge points visible to teachers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgePoint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/admin/knowledge-points:
+    post:
+      tags: [Knowledge Points]
+      operationId: createKnowledgePoint
+      summary: Create one administrator-maintained knowledge point
+      description: Requires the trusted `administration:access` permission. Parent relationships remain inside learning-service and never reference another service schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgePointRequest'
+      responses:
+        '201':
+          description: Knowledge point created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgePoint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+  /api/v1/admin/knowledge-points/{knowledgePointId}:
+    put:
+      tags: [Knowledge Points]
+      operationId: updateKnowledgePoint
+      summary: Update mutable knowledge-point metadata with optimistic locking
+      description: Requires `administration:access`. Stable ID and code are immutable; disabling a node does not rewrite historical question versions.
+      parameters:
+        - $ref: '#/components/parameters/KnowledgePointId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateKnowledgePointRequest'
+      responses:
+        '200':
+          description: Updated knowledge point.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgePoint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+  /api/v1/teacher/questions:
+    get:
+      tags: [Teacher Questions]
+      operationId: listTeacherQuestions
+      summary: List questions owned by the current teacher
+      description: Answers and full analyses are intentionally absent from list projections. Filters apply to the current immutable version only.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionType'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionStatus'
+        - name: difficulty
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionDifficulty'
+        - name: knowledgePointId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paged owner-only question summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      tags: [Teacher Questions]
+      operationId: createTeacherQuestion
+      summary: Idempotently create a teacher-owned draft question
+      description: Replaying the same `clientRequestId` and body returns the original aggregate; a different body conflicts. Media assets are validated for owner, exact purpose and READY state before the local transaction commits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuestionRequest'
+      responses:
+        '201':
+          description: Draft question and immutable version 1 created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherQuestion'
+        '200':
+          description: Original question returned for an identical idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherQuestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/QuestionDependencyUnavailable'
+  /api/v1/teacher/questions/{questionId}:
+    get:
+      tags: [Teacher Questions]
+      operationId: getTeacherQuestion
+      summary: Get the current immutable version of an owned question
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Owner editor projection including the answer and analysis.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherQuestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+    put:
+      tags: [Teacher Questions]
+      operationId: updateTeacherQuestion
+      summary: Create a new immutable version of an owned question
+      description: Never overwrites a historical version. `expectedRevision` guards the aggregate pointer; historical media references remain retained so old snapshots cannot lose assets.
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuestionRequest'
+      responses:
+        '200':
+          description: Aggregate now points at the newly inserted immutable version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherQuestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/QuestionDependencyUnavailable'
+  /api/v1/teacher/questions/{questionId}/status:
+    put:
+      tags: [Teacher Questions]
+      operationId: updateTeacherQuestionStatus
+      summary: Activate or archive an owned question
+      description: DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED. Archived questions are retained for historical consumers and cannot be edited or reactivated in T09.
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuestionStatusRequest'
+      responses:
+        '200':
+          description: Updated aggregate lifecycle state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherQuestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+  /api/v1/teacher/question-imports:
+    get:
+      tags: [Question Imports]
+      operationId: listQuestionImports
+      summary: List asynchronous import tasks owned by the current teacher
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Paged import task summaries ordered by creation time descending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Question Imports]
+      operationId: createQuestionImport
+      summary: Create an idempotent CSV or XLSX import task
+      description: The source must be the current teacher's READY `QUESTION_IMPORT_SOURCE`. The task retains a media reference until the configured post-completion retention deadline and then releases it asynchronously.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuestionImportRequest'
+      responses:
+        '202':
+          description: Import task and local Outbox event committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportTask'
+        '200':
+          description: Original task returned for an identical idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/QuestionDependencyUnavailable'
+  /api/v1/teacher/question-imports/{importTaskId}:
+    get:
+      tags: [Question Imports]
+      operationId: getQuestionImport
+      summary: Get one owned import task and its row errors
+      description: Row errors identify the row, stable code and safe message; rejected source content is never echoed in bulk.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      responses:
+        '200':
+          description: Import progress, totals and complete row-error list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
   /api/v1/media/uploads:
     post:
       tags: [Media]
@@ -946,6 +1278,27 @@ components:
       schema:
         type: string
         format: uuid
+    QuestionId:
+      name: questionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KnowledgePointId:
+      name: knowledgePointId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ImportTaskId:
+      name: importTaskId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     Unauthorized:
       description: Authentication is missing or invalid.
@@ -1108,6 +1461,45 @@ components:
             traceId: 2f6c8c3b98f14a9c
             timestamp: '2026-08-01T10:00:00Z'
             path: /api/v1/media/uploads
+            fieldErrors: []
+    QuestionNotFound:
+      description: The question, knowledge point or import task does not exist or is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: QUESTION.NOT_FOUND
+            message: 题目或任务不存在
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-09T10:00:00Z'
+            path: /api/v1/teacher/questions/0198f434-215d-7abc-9123-123456789abc
+            fieldErrors: []
+    QuestionConflict:
+      description: The idempotency key, optimistic revision, lifecycle transition or stable knowledge-point code conflicts.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: QUESTION.REVISION_CONFLICT
+            message: 题目已被更新，请刷新后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-09T10:00:00Z'
+            path: /api/v1/teacher/questions/0198f434-215d-7abc-9123-123456789abc
+            fieldErrors: []
+    QuestionDependencyUnavailable:
+      description: media-service or the short-lived source download is unavailable before the requested operation can safely proceed. Committed Outbox events remain retryable and do not use this response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: QUESTION.MEDIA_UNAVAILABLE
+            message: 媒体服务暂时不可用，请稍后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-09T10:00:00Z'
+            path: /api/v1/teacher/question-imports
             fieldErrors: []
   schemas:
     LoginRequest:
@@ -1604,9 +1996,479 @@ components:
         updatedAt:
           type: string
           format: date-time
+    QuestionStage:
+      type: string
+      enum: [JUNIOR]
+    QuestionGrade:
+      type: string
+      enum: [SEVEN, EIGHT, NINE]
+    QuestionSubject:
+      type: string
+      enum: [MATHEMATICS]
+    QuestionType:
+      type: string
+      enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER]
+    QuestionDifficulty:
+      type: string
+      enum: [EASY, MEDIUM, HARD]
+    QuestionStatus:
+      type: string
+      enum: [DRAFT, ACTIVE, ARCHIVED]
+    QuestionMediaPurpose:
+      type: string
+      enum: [QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT]
+    KnowledgePoint:
+      type: object
+      additionalProperties: false
+      required: [id, code, name, parentId, stage, grade, subject, sortOrder, enabled, revision, children]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: '^JUNIOR_MATH_[A-Z0-9_]{2,50}$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentId:
+          type: [string, 'null']
+          format: uuid
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        subject:
+          $ref: '#/components/schemas/QuestionSubject'
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        enabled:
+          type: boolean
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgePoint'
+    CreateKnowledgePointRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name, parentId, stage, grade, subject, sortOrder, enabled]
+      properties:
+        code:
+          type: string
+          pattern: '^JUNIOR_MATH_[A-Z0-9_]{2,50}$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentId:
+          type: [string, 'null']
+          format: uuid
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        subject:
+          $ref: '#/components/schemas/QuestionSubject'
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        enabled:
+          type: boolean
+    UpdateKnowledgePointRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, name, parentId, grade, sortOrder, enabled]
+      properties:
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentId:
+          type: [string, 'null']
+          format: uuid
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        enabled:
+          type: boolean
+    QuestionOptionInput:
+      type: object
+      additionalProperties: false
+      required: [key, content]
+      properties:
+        key:
+          type: string
+          pattern: '^[A-H]$'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: Markdown/LaTeX text. External or embedded image URLs are rejected; images use version media references.
+    QuestionMediaInput:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, sequence]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/QuestionMediaPurpose'
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 100
+    QuestionVersionInput:
+      type: object
+      additionalProperties: false
+      required: [type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePointIds, media]
+      properties:
+        type:
+          $ref: '#/components/schemas/QuestionType'
+        difficulty:
+          $ref: '#/components/schemas/QuestionDifficulty'
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        subject:
+          $ref: '#/components/schemas/QuestionSubject'
+        stem:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: Markdown/LaTeX source; rendering is a frontend responsibility.
+        options:
+          type: array
+          maxItems: 8
+          description: Required for choice questions and empty for fill/short-answer questions. TRUE_FALSE uses no options.
+          items:
+            $ref: '#/components/schemas/QuestionOptionInput'
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: Canonical answer tokens or Markdown/LaTeX strings. This field is teacher-only in T09.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 20000
+        analysis:
+          type: string
+          maxLength: 50000
+          description: Full teacher-only analysis; an empty string means no analysis supplied.
+        knowledgePointIds:
+          type: array
+          uniqueItems: true
+          maxItems: 30
+          items:
+            type: string
+            format: uuid
+        media:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/QuestionMediaInput'
+    CreateQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, version]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+        version:
+          $ref: '#/components/schemas/QuestionVersionInput'
+    UpdateQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, version]
+      properties:
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        version:
+          $ref: '#/components/schemas/QuestionVersionInput'
+    UpdateQuestionStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, status]
+      properties:
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum: [ACTIVE, ARCHIVED]
+    QuestionMedia:
+      type: object
+      additionalProperties: false
+      required: [id, mediaId, purpose, sequence]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: learning-service version-media row ID and the stable media referenceId.
+        mediaId:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/QuestionMediaPurpose'
+        sequence:
+          type: integer
+          minimum: 1
+    QuestionVersion:
+      type: object
+      additionalProperties: false
+      required: [id, versionNumber, type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePoints, media, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        type:
+          $ref: '#/components/schemas/QuestionType'
+        difficulty:
+          $ref: '#/components/schemas/QuestionDifficulty'
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        subject:
+          $ref: '#/components/schemas/QuestionSubject'
+        stem:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionOptionInput'
+        answers:
+          type: array
+          description: Teacher-only correct answer projection in T09; never reuse this schema for a student endpoint.
+          items:
+            type: string
+        analysis:
+          type: string
+          description: Teacher-only full analysis projection.
+        knowledgePoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgePoint'
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionMedia'
+        createdAt:
+          type: string
+          format: date-time
+    QuestionSummary:
+      type: object
+      additionalProperties: false
+      required: [id, status, revision, currentVersionId, versionNumber, type, difficulty, grade, stemPreview, knowledgePointIds, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/QuestionStatus'
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+        currentVersionId:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        type:
+          $ref: '#/components/schemas/QuestionType'
+        difficulty:
+          $ref: '#/components/schemas/QuestionDifficulty'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        stemPreview:
+          type: string
+          maxLength: 240
+        knowledgePointIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TeacherQuestion:
+      type: object
+      additionalProperties: false
+      required: [id, status, revision, currentVersion, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/QuestionStatus'
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+        currentVersion:
+          $ref: '#/components/schemas/QuestionVersion'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    QuestionPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionSummary'
+        page:
+          type: integer
+          minimum: 1
+        size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+    QuestionImportSourceFormat:
+      type: string
+      enum: [CSV, XLSX]
+    QuestionImportStatus:
+      type: string
+      enum: [PENDING, PROCESSING, COMPLETED, PARTIAL_SUCCESS, FAILED]
+    CreateQuestionImportRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, sourceMediaId, sourceFormat]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+        sourceMediaId:
+          type: string
+          format: uuid
+          description: READY QUESTION_IMPORT_SOURCE owned by the current teacher.
+        sourceFormat:
+          $ref: '#/components/schemas/QuestionImportSourceFormat'
+    QuestionImportRowError:
+      type: object
+      additionalProperties: false
+      required: [rowNumber, code, message]
+      properties:
+        rowNumber:
+          type: integer
+          minimum: 2
+        code:
+          type: string
+          pattern: '^QUESTION_IMPORT\.[A-Z][A-Z0-9_]*$'
+        message:
+          type: string
+          maxLength: 500
+    QuestionImportTask:
+      type: object
+      additionalProperties: false
+      required: [id, sourceMediaId, sourceFormat, status, progress, totalRows, processedRows, successCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceMediaId:
+          type: string
+          format: uuid
+        sourceFormat:
+          $ref: '#/components/schemas/QuestionImportSourceFormat'
+        status:
+          $ref: '#/components/schemas/QuestionImportStatus'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        totalRows:
+          type: integer
+          minimum: 0
+        processedRows:
+          type: integer
+          minimum: 0
+        successCount:
+          type: integer
+          minimum: 0
+        failureCount:
+          type: integer
+          minimum: 0
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionImportRowError'
+        failureCode:
+          type: [string, 'null']
+        failureMessage:
+          type: [string, 'null']
+        retainUntil:
+          type: string
+          format: date-time
+          description: Earliest time the source reference may be released after a terminal result.
+        sourceReleasedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    QuestionImportPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionImportTask'
+        page:
+          type: integer
+          minimum: 1
+        size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          format: int64
+          minimum: 0
     MediaPurpose:
       type: string
-      description: Stable business purpose. T08A enables COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE and ARTICLE_ATTACHMENT through explicit per-purpose policies; every other frozen value remains disabled until its owning domain supplies policy and authorization.
+      description: Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
       enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
     MediaUploadMode:
       type: string
