@@ -139,7 +139,6 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 
 ## 已知风险与后续依赖
 
-- T08B 的真实媒体后端环境验收已通过，但本次未在浏览器中执行带真实教师凭据、Gateway、course-service 与专用课程 Fixture 的上传—绑定—学生 HLS 全链路；自动化和 Mock 结果不能替代该人工 E2E。
 - T11 尚未实现报名与学习权限查询；报名制非试看固定返回 403。T08A.1 不伪造报名，也不把该临时边界解释为最终授权模型。
 - 首期播放接口只接受 `LESSON_VIDEO`；封面继续使用展示投影，字幕/课件保持绑定但不堆积未评审的播放/下载授权实现。
 - 当前 HLS 保持单清晰度：必选第一条视频流，可选第一条音频流；有音轨时统一编码为 MPEG-TS HLS 兼容的 AAC，无音轨视频也可成功转码。多码率自适应、多音轨选择、字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
@@ -180,11 +179,11 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 - Vitest：受限沙箱首次因已知 `esbuild spawn EPERM` 无法启动；获准沙箱外复跑后 8 个文件 51 项全部通过。新增覆盖单对象、Multipart 已上传分片恢复、实际 ETag、真实字节聚合、取消、增量哈希、固定幂等键有限重试、FAILED/REJECTED/超时、媒体会话/资产用途错配拒绝、封面与视频处理提示隔离、学生/教师路径隔离、授权刷新时机和 429 重试上限。
 - 三端生产构建：获准沙箱外执行并通过；`hls.js` 只在非原生 HLS 浏览器按需加载。
 - Java：`gateway-service,course-service,media-service -am verify` 的 5 个 Reactor 模块全部成功；Gateway 10 项、Course 14 项、Media 12 项（真实环境 1 项默认跳过）及 shared-kernel 1 项均无失败。
-- 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该后端用例没有经过 Vue 页面，不能记录为真实浏览器上传/播放 E2E。
-- 浏览器响应式检查：指向同一 OpenAPI Mock 的学生课程详情在 1440×900 与 390×844 均无横向溢出，窄屏信息和目录正确单列，控制台无错误。Mock 详情没有课时资源，教师页又需要真实登录，因此没有把 Mock 页面描述成上传/HLS 播放通过。
+- 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该项是后端证据；真实 Vue 页面链路另见下方“最终真实浏览器 E2E”。
+- 浏览器响应式检查：指向同一 OpenAPI Mock 的学生课程详情在 1440×900 与 390×844 均无横向溢出，窄屏信息和目录正确单列，控制台无错误。这是早期页面布局证据；真实上传和 HLS 播放另见下方最终验收记录。
 - 2026-08-09 页面规格收口：`install --frozen-lockfile`、`generate:api`、`check:api`、全 workspace `typecheck` 通过；Vitest 10 个文件 66 项全部通过，新增覆盖学习入口选择、报名制只开放试看、深链接安全回跳、按能力守卫、401/403/404/409/429/503 提示、授权有限刷新、音频不默认静音和卸载清理；三端生产构建通过。
 - 同轮 Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，14 份报告共 48 项，47 项通过、真实环境用例默认跳过 1 项；FFmpeg 命令测试继续断言可选第一条音轨和 AAC MPEG-TS HLS。此前带正弦波真实验收结果仍有效，本轮没有重新连接 OSS/RabbitMQ 或把自动化冒充真实 HLS 页面验收。
-- 浏览器复核：OpenAPI Mock 下匿名 `/learn/...` 深链接正确回到统一登录并保留完整目标；课程详情 DOM 没有 `<video>`，390×844 下 `scrollWidth` 等于 `clientWidth` 且控制台无错误。Mock 详情无视频资源且 Mock 登录不能建立有效会话，因此独立学习页的真实授权和播放仍须使用专用环境人工复验。
+- 浏览器复核：OpenAPI Mock 下匿名 `/learn/...` 深链接正确回到统一登录并保留完整目标；课程详情 DOM 没有 `<video>`，390×844 下 `scrollWidth` 等于 `clientWidth` 且控制台无错误。该轮仅证明 Mock 页面边界；独立学习页的真实授权和播放已在下方最终验收中补齐。
 - `git diff --check`、敏感信息与构建产物审计在提交前执行；未发现签名 URL 持久化、日志输出、AccessKey、密码或应提交的 dist/target。
 
 ### 人工演示步骤
@@ -211,7 +210,7 @@ T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有�
 
 本轮新增 Course/Media 集成测试覆盖教师与公开课程封面投影、历史 URL 回退、精确封面用途/访问类型/原图变体校验和错误令牌拒绝。`mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service,media-service -am verify` 实际通过：Course 14 项、Media 12 项及 shared-kernel 1 项通过，真实环境用例 1 项按默认开关跳过。全 workspace `typecheck`（含 OpenAPI 重新生成）、8 个前端测试文件 51 项和三端生产构建均通过。浏览器视觉复跑因本机浏览器控制运行时初始化失败而未执行，不能将结构审查描述为真实页面视觉验收；需在重启更新后的 media/course 服务和 teacher Web 后按下述步骤人工确认。
 
-剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度，只保留第一条音轨且不支持多音轨选择、字幕或 DRM；真实浏览器全链路需带专用教师/访问者账号和最小公开/试看课程再次人工验收；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度，只保留第一条音轨且不支持多音轨选择、字幕或 DRM；真实浏览器全链路已于 2026-08-09 通过，后续 OSS CORS、FFmpeg、浏览器或部署环境变化时仍需按同一安全流程复跑；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
 
 ### 2026-08-08 HLS 音频修复与真实验收
 
@@ -231,4 +230,20 @@ T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f
 
 公开课程详情与学习空间现已按 `docs/frontend/page-specs.md` 分离。统一登录白名单识别 `/learn/...` 并保留安全回跳，路由守卫直接校验 `learning:access`；课程域资源行 ID 是唯一播放授权输入，页面仍不接触 media-service 内部接口、mediaId 凭证或 OSS 地址。学习页刷新会重取当前发布课程并按 lessonId 恢复；未知课时/非视频资源显示 404 语义，目录请求在切换或卸载时中止，播放器继续清理 HLS、视频源、刷新定时器与授权请求。
 
-本轮没有修改 OpenAPI、Java 生产代码、数据库迁移、事件或媒体授权契约，没有创建数据库、表、Seed、报名、进度或业务伪数据；只使用 OpenAPI Mock 做无敏感信息的页面检查，临时 Mock/Vite 进程和浏览器页签已精确关闭，因此没有 OSS、RabbitMQ 或数据库清理项。真实音频 HLS 证据沿用本交付文档已记录的安全环境验收，本轮 Java 全量验证证明相关命令和测试未退化，但不能替代新的真实浏览器播放验收。
+页面规格收口当轮没有修改 OpenAPI、Java 生产代码、数据库迁移、事件或媒体授权契约，也没有创建报名、进度或业务伪数据；当轮只使用 OpenAPI Mock 并完成临时进程清理。其后已执行新的真实浏览器播放验收，结果与清理见下一节。
+
+### 2026-08-09 最终真实浏览器 E2E
+
+本轮在既有 `codex/t08b-course-media-web` 和 Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 上执行，开始时工作区干净，`HEAD` 与远端分支均为 `5d253c4d7707ba99c5144804f036e487ce95770b`。所有需要凭据的启动、MySQL、OSS 和 RabbitMQ 操作均经 `scripts/Invoke-WithLocalEnvironment.ps1` 注入；没有读取、复制或输出密码、JWT 密钥、OSS AccessKey、Token 或签名 URL。实际启动 Gateway、IAM、Course、Media 以及教师/学生 Vite，使用本机既有的真实 RabbitMQ、OSS 和 FFmpeg 依赖；浏览器只访问 Gateway 和后端签发的短期 OSS 地址。
+
+教师使用既有固定测试账号编辑幂等 seed 课程 `00000000-0000-4000-8000-000000000201`：上传本轮唯一前缀的 1280×720 PNG 封面，页面显示真实 100% 进度并到达 `READY`，保存后封面投影实际加载尺寸为 1280×720；创建两个 `VIDEO` 课时，各上传同一个 12 秒、640×360、H.264 + AAC 1 kHz 正弦波 MP4，两个独立媒体资产均经 OSS 和 FFmpeg 到达 `READY`。目录保存后发布按钮恢复可用，v2 成功发布；教师 owner 预览取得课程域授权，播放器 `readyState=4`、有媒体源且 `muted=false`。
+
+学生从 `/courses` 看到真实封面并进入课程详情；详情 DOM 的 `<video>` 数为 0，只展示课程信息、目录和“开始学习”。入口跳转到 `/learn/:courseId/:lessonId`，页面包含当前课时、两课目录、上一课、下一课和退出学习。HLS 首课实际解码为 640×360，`readyState=4`、`volume=1`、`muted=false`，播放时间从 0 推进到约 10 秒；刷新同一深链接后 URL 不变、播放器重新取得源并恢复到 `readyState=4`。切换第二课后只存在一个新播放器且时间归零，退出学习后页面 `<video>` 数为 0。将本轮 Media 访问授权 TTL 临时缩短为 20 秒后，播放器在 18 秒观察窗内保持可用，授权审计从 20 增至 22，证明到期前重新签发了 HLS 清单/切片授权。
+
+产物证据没有依赖“播放器未静音”推断声音。定向审计从两个本轮 `LESSON_VIDEO` 的精确 OSS Object Key 各下载首个 MPEG-TS 切片到临时目录；`ffprobe` 对两份切片均断言存在 H.264 视频流和 AAC 音频流，FFmpeg `volumedetect` 均确认平均音量高于 `-60 dB`、不是静音。随后把课程发布为 v3、访问方式改成报名制并关闭两个课时试看；没有创建报名记录。学生访问当前 v3 课时得到明确提示“当前课时需要报名；报名能力将在 T11 接通，现阶段只能播放试看内容”，连续观察后 `LESSON_VIDEO` 授权审计保持 8，不产生自动重试循环。旧 v2 lessonId 在新版本发布后返回 404，当前 v3 lessonId 才用于 403 验证，二者语义已分别确认。
+
+浏览器控制台共采集 8 条记录，无 warning/error，也没有签名 URL、Token 或密钥标记。Gateway、IAM、Course、Media 和当前两端 Vite 日志没有签名 URL、Bearer Token、密码或 AccessKeySecret；唯一启动错误是发现旧教师 Vite 占用 5174，停止该旧进程并启动当前分支后不再出现。静态持久化边界继续由实现与自动化检查保证：上传检查点只保存稳定 ID/摘要，HLS 授权只保存在组件运行时内存。
+
+最终回归实际执行并通过 `install --frozen-lockfile`、`generate:api`、`check:api`、全 workspace `typecheck`、前端测试和三端生产构建；Vitest 在沙箱内因 `esbuild spawn EPERM` 未进入用例，使用同一命令在批准的沙箱外复跑后 10 个文件 66 项全部通过。Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，Media 14 项中 13 项通过、真实环境用例按默认开关跳过 1 项；本轮另外显式执行的 OSS 音轨审计 1 项和精确清理 1 项均通过，临时测试源码在提交前删除。构建仅保留既有 HLS 动态 chunk 大于 500 kB 的体积提示，没有测试或编译失败。
+
+验收未新建数据库、迁移、表或虚假报名。它复用三个用途明确的 dev Schema、两个既有固定测试账号和一个既有幂等 seed 课程；结束时按本轮 3 个 mediaId/uploadId 和精确 Object Key 删除 1 个封面、2 个视频、HLS 清单/切片及临时授权对象，四个媒体 RabbitMQ 持久队列消息数均为 0，未执行全队列 purge。`edu_platform_media_dev` 恢复为原有 6 个资产且本轮文件名前缀计数为 0；seed 课程清除本轮 v2/v3 后恢复为验收前的 v1/PUBLIC/1 章/1 课时/0 资源，另一个既有课程保持 1 条；本轮 16 条刷新会话和 4 条登录审计被删除，两个测试账号仍为 ACTIVE。最后删除包含合成封面、带声视频、下载切片和日志的本轮 20 个临时文件，并停止六个应用端口。
