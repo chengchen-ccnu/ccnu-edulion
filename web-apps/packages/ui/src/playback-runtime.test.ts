@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { playbackErrorMessage, playbackRefreshDelay, requestPlaybackGrant } from "./playback-runtime";
 
@@ -21,7 +22,21 @@ describe("playback grant runtime", () => {
   });
 
   it("keeps role-specific authorization semantics out of the shared error mapper", () => {
+    expect(playbackErrorMessage({ status: 401 })).toContain("重新登录");
     expect(playbackErrorMessage({ status: 403 })).toBe("当前身份无权播放该视频。");
+    expect(playbackErrorMessage({ status: 404 })).toContain("资源不可见");
+    expect(playbackErrorMessage({ status: 409 })).toContain("仍在处理中");
     expect(playbackErrorMessage({ status: 503 })).toContain("媒体服务暂时不可用");
+  });
+
+  it("keeps audio enabled and releases every in-memory player resource on unmount", () => {
+    const source = readFileSync(new URL("./HlsVideoPlayer.vue", import.meta.url), "utf8");
+
+    expect(source).not.toMatch(/<video[^>]*\bmuted\b/);
+    expect(source).toContain("onBeforeUnmount(cleanup)");
+    expect(source).toContain("grantAbort?.abort()");
+    expect(source).toContain("clearTimeout(refreshTimer)");
+    expect(source).toContain("hls?.destroy()");
+    expect(source).toContain('removeAttribute("src")');
   });
 });

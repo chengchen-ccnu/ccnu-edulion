@@ -1,61 +1,62 @@
 <script setup lang="ts">
 /**
  * 公共课程详情页；按路由 courseId 调用 GET /api/v1/courses/{courseId}。
- * 成功展示当前发布版本和目录，资源不存在/下架或网络失败时展示错误，不读取教师草稿。
+ * 成功展示当前发布版本和目录预览，资源不存在/下架或网络失败时展示错误，不读取教师草稿。
+ * 正式播放只通过 `/learn/:courseId/:lessonId` 打开；本页不申请授权、不持有 HLS 或短期 URL。
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { CourseAccessType, CourseDetail, CourseLevel } from "@edu/api-client";
-import { HlsVideoPlayer, playbackErrorMessage } from "@edu/ui";
-import { ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { studentCourseApi } from "../course-api";
+import { courseLearningEntries, firstAccessibleLearningEntry } from "../course-learning";
 
 const route = useRoute();
 const course = ref<CourseDetail | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 const coverFailed = ref(false);
-type CourseLesson = CourseDetail["chapters"][number]["lessons"][number];
-type VideoSelection = { lessonId: string; resourceId: string; title: string };
-const selectedVideo = ref<VideoSelection | null>(null);
+let detailAbort: AbortController | null = null;
+let loadGeneration = 0;
+const learningEntries = computed(() => course.value ? courseLearningEntries(course.value) : []);
+const firstLearningEntry = computed(() => course.value ? firstAccessibleLearningEntry(course.value) : null);
 
 watch(() => route.params.courseId, loadCourse, { immediate: true });
+onBeforeUnmount(cancelDetailRequest);
 
 async function loadCourse(courseId: unknown) {
+  cancelDetailRequest();
+  const generation = ++loadGeneration;
   if (typeof courseId !== "string") return;
   loading.value = true;
   course.value = null;
-  selectedVideo.value = null;
   coverFailed.value = false;
   errorMessage.value = "";
+  const controller = new AbortController();
+  detailAbort = controller;
   try {
-    course.value = await studentCourseApi.detail(courseId);
+    const detail = await studentCourseApi.detail(courseId, controller.signal);
+    if (!controller.signal.aborted && generation === loadGeneration) course.value = detail;
   } catch (error) {
-    errorMessage.value = error instanceof GatewayRequestError && error.status === 404
-      ? "课程不存在、尚未发布或已经下架。"
-      : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
+    if (!controller.signal.aborted && generation === loadGeneration) {
+      errorMessage.value = error instanceof GatewayRequestError && error.status === 404
+        ? "课程不存在、尚未发布或已经下架。"
+        : error instanceof TypeError ? "网络连接不可用，请检查网络后重试。"
+          : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
+    }
   } finally {
-    loading.value = false;
+    if (generation === loadGeneration) loading.value = false;
   }
 }
 
-/** 学生只能用课程域资源行申请授权；函数不接收也不推导 mediaId，短期 URL 交给播放器内存管理。 */
-function getStudentGrant(signal: AbortSignal) {
-  if (!course.value || !selectedVideo.value) throw new Error("VIDEO_NOT_SELECTED");
-  return studentCourseApi.playbackGrant(course.value.id, selectedVideo.value.lessonId,
-    selectedVideo.value.resourceId, signal);
+function learningEntryFor(lessonId: string) {
+  return learningEntries.value.find(item => item.lesson.id === lessonId) ?? null;
 }
 
-/** 学生课程页解释课程访问规则；403 在 T11 前专指报名制非试看，其他状态复用公共播放器提示。 */
-function studentPlaybackErrorMessage(error: unknown): string {
-  return error instanceof GatewayRequestError && error.status === 403
-    ? "当前课程需要报名；T11 上线前，非试看课时暂不能播放。"
-    : playbackErrorMessage(error);
-}
-
-function selectVideo(lesson: CourseLesson, resourceId: string) {
-  selectedVideo.value = { lessonId: lesson.id, resourceId, title: lesson.title };
+function cancelDetailRequest() {
+  detailAbort?.abort();
+  detailAbort = null;
 }
 
 function levelLabel(level: CourseLevel): string {
@@ -97,6 +98,15 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           <strong>{{ course.teacher.displayName }}</strong>
           <small>线上版本 {{ course.publishedVersion }}</small>
         </div>
+        <RouterLink v-if="firstLearningEntry" class="detail-learning-action"
+          :to="`/learn/${course.id}/${firstLearningEntry.lesson.id}`">
+          {{ course.accessType === "PUBLIC" ? "开始学习" : "试看课程" }}
+          <span aria-hidden="true">→</span>
+        </RouterLink>
+        <p v-else-if="course.accessType === 'ENROLLMENT_REQUIRED'" class="detail-access-note">
+          本课程需要报名，当前没有可试看视频；报名能力将在 T11 接通。
+        </p>
+        <p v-else class="detail-access-note">当前发布版本暂时没有可播放的视频课时。</p>
       </div>
     </section>
 
@@ -128,26 +138,18 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
                 <strong>{{ lesson.title }}</strong>
                 <small>{{ lessonTypeLabel(lesson.type) }}</small>
                 <em v-if="lesson.previewable">可试看</em>
-                <button v-for="resource in lesson.resources.filter(item => item.purpose === 'LESSON_VIDEO')"
-                  :key="resource.id" class="lesson-play" type="button"
-                  :aria-pressed="selectedVideo?.resourceId === resource.id"
-                  @click="selectVideo(lesson, resource.id)">
-                  {{ selectedVideo?.resourceId === resource.id ? "正在预览" : "播放视频" }}
-                </button>
+                <RouterLink v-if="learningEntryFor(lesson.id)?.accessible" class="lesson-play"
+                  :to="`/learn/${course.id}/${lesson.id}`">
+                  {{ lesson.previewable && course.accessType === "ENROLLMENT_REQUIRED" ? "试看" : "进入学习" }}
+                </RouterLink>
+                <span v-else-if="learningEntryFor(lesson.id)" class="lesson-locked">需报名</span>
               </li>
             </ol>
           </li>
         </ol>
         <div v-else class="empty-inline">该课程暂未提供目录。</div>
-        <p class="scope-note">当前只播放已发布版本的课时视频；不记录进度，也不实现报名、题目或智能答疑。</p>
+        <p class="scope-note">目录仅预览当前发布版本；视频会在独立学习页打开。本阶段不记录进度，也不实现报名、题目或智能答疑。</p>
       </section>
     </div>
-    <section v-if="selectedVideo" class="course-player-panel">
-      <header><div><span class="section-kicker">LESSON VIDEO</span><h3>{{ selectedVideo.title }}</h3></div>
-        <button type="button" aria-label="关闭播放器" @click="selectedVideo = null">关闭</button></header>
-      <HlsVideoPlayer :grant-key="`${course.id}:${selectedVideo.lessonId}:${selectedVideo.resourceId}`"
-        :title="`${selectedVideo.title}视频`" :grant-provider="getStudentGrant"
-        :error-message-provider="studentPlaybackErrorMessage" />
-    </section>
   </template>
 </template>

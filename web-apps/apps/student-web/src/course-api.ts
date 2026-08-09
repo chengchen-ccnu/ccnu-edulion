@@ -18,7 +18,7 @@ import { authStore } from "./auth";
 export interface StudentCourseApi {
   list(query: ListCoursesQuery): Promise<CoursePage>;
   categories(): Promise<CategorySummary[]>;
-  detail(courseId: string): Promise<CourseDetail>;
+  detail(courseId: string, signal?: AbortSignal): Promise<CourseDetail>;
   playbackGrant(courseId: string, lessonId: string, resourceId: string,
     signal?: AbortSignal): Promise<CourseMediaPlaybackGrant>;
 }
@@ -40,8 +40,10 @@ export function createStudentCourseApi(
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },
-    async detail(courseId) {
-      const result = await client.GET("/api/v1/courses/{courseId}", { params: { path: { courseId } } });
+    async detail(courseId, signal) {
+      const result = await client.GET("/api/v1/courses/{courseId}", {
+        params: { path: { courseId } }, signal
+      });
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },

@@ -185,6 +185,14 @@ describe("post-login routing", () => {
       .toMatchObject({ access: "public",
         href: "http://student.test/courses/00000000-0000-4000-8000-000000000201?from=teacher" });
   });
+
+  it("keeps a learning deep link and authorizes it by learning capability instead of role name", () => {
+    const target = "/learn/00000000-0000-4000-8000-000000000201/00000000-0000-4000-8000-000000000301";
+    const destination = selectPostLoginDestination(user(["TEACHER"], ["learning:access"]), target, urls);
+
+    expect(resolveInternalRedirect(target, urls)).toMatchObject({ access: "workspace", requestedPath: target });
+    expect(destination).toMatchObject({ kind: "target", target: { href: `http://student.test${target}` } });
+  });
 });
 
 describe("application route guard", () => {
@@ -263,6 +271,28 @@ describe("application route guard", () => {
 
     expect(router.currentRoute.value.name).toBe("protected");
   });
+
+  it("guards a learning route by capability without requiring a STUDENT role", async () => {
+    const router = permissionRouter("/learn/course-1/lesson-1", "learning:access");
+    const store = guardStore(true, true);
+    installAuthGuard(router, store);
+
+    await router.push("/learn/course-1/lesson-1");
+
+    expect(router.currentRoute.value.name).toBe("protected-permission");
+    expect(store.hasPermission).toHaveBeenCalledWith("learning:access");
+    expect(store.canAccess).not.toHaveBeenCalled();
+  });
+
+  it("sends an authenticated account without learning capability to 403", async () => {
+    const router = permissionRouter("/learn/course-1/lesson-1", "learning:access");
+    const store = guardStore(true, false);
+    installAuthGuard(router, store);
+
+    await router.push("/learn/course-1/lesson-1");
+
+    expect(router.currentRoute.value.name).toBe("forbidden");
+  });
 });
 
 function testRouter(path: string, role: PlatformRole) {
@@ -277,6 +307,14 @@ function publicCourseRouter() {
   return createRouter({ history: createMemoryHistory(), routes: [
     { path: "/courses", name: "courses", component: {}, meta: { restoreSession: true } },
     { path: "/courses/:courseId", name: "course-detail", component: {}, meta: { restoreSession: true } }
+  ] });
+}
+
+function permissionRouter(path: string, permission: string) {
+  return createRouter({ history: createMemoryHistory(), routes: [
+    { path: "/login", name: "login", component: {} },
+    { path: "/forbidden", name: "forbidden", component: {} },
+    { path, name: "protected-permission", component: {}, meta: { requiresAuth: true, requiredPermission: permission } }
   ] });
 }
 
@@ -295,7 +333,8 @@ function guardStore(authenticated: boolean, authorized: boolean): AuthStore {
       currentUser: authenticated ? user(["STUDENT"], ["learning:access"]) : null, failure: null },
     login: vi.fn(), restore: vi.fn(), logout: vi.fn(),
     ensureCurrentUser: vi.fn().mockResolvedValue(authenticated),
-    hasRole: vi.fn(), hasPermission: vi.fn(), canAccess: vi.fn().mockReturnValue(authorized)
+    hasRole: vi.fn(), hasPermission: vi.fn().mockReturnValue(authorized),
+    canAccess: vi.fn().mockReturnValue(authorized)
   } as unknown as AuthStore;
 }
 

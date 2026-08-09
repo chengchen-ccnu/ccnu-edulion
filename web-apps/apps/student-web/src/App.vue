@@ -15,11 +15,11 @@ const workspaceLinks = computed(() => availableWorkspaces(authStore.state.curren
 const singleWorkspace = computed(() => workspaceLinks.value.length === 1 ? workspaceLinks.value[0] : null);
 const canSwitchWorkspace = computed(() => workspaceLinks.value.length > 1);
 const isPublicCourse = computed(() => route.name === "courses" || route.name === "course-detail");
-const isStudentLearningSpace = computed(() => route.meta.requiredRole === "STUDENT");
+const isStudentLearningSpace = computed(() => route.name === "course-learning" || route.meta.requiredRole === "STUDENT");
 const canEnterStudentHome = computed(() => authStore.state.status !== "authenticated" || authStore.canAccess("STUDENT"));
 const shellTitle = computed(() => isStudentLearningSpace.value ? "学生学习中心" : "Edu Lion 在线教育平台");
 const shellAudience = computed(() => route.name === "login" ? "统一登录门户"
-  : isPublicCourse.value ? "课程中心" : "公共门户");
+  : isPublicCourse.value ? "课程中心" : route.name === "course-learning" ? "学习空间" : "公共门户");
 
 async function logout() {
   await authStore.logout();
