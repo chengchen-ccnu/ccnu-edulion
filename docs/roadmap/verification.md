@@ -239,3 +239,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Frontend：`generate:api`、全 workspace `typecheck` 通过。Vitest/Vite 在沙箱内因既有 esbuild `spawn EPERM` 无法启动，批准沙箱外复跑后 13 文件 91 项和学生/教师/管理三端生产构建全部通过；只更新生成客户端，没有实现 T10 Vue 页面。
 - MySQL 与数据：安全包装脚本只读确认本机 MySQL 可达且配置目标为 `edu_platform_learning_dev`，显式 Flyway 验收因该数据库不存在（MySQL 1049）在建表前停止。按规则没有自动创建 Schema，因此没有真实表、行、Seed、OSS 对象或 RabbitMQ 消息需要清理，也未触碰其他数据库。H2 `learning_test` 的合成 Fixture 随 JVM 销毁；显式 MySQL 测试已实现，待环境管理员创建专用库后可按随机 ID 验收并精确清理。
 - 安全与可读性：未知/缺失 JSON 字段、错角色/权限、答案泄漏、媒体错绑定、重复消息和失败语义均有验证；人工维护的业务边界、复杂流程、SQL、契约和事件均有中文说明。最终 `git diff --check`、敏感信息审计、暂存范围和提交后 `check:api` 在推送前复核。
+- 发布：关键实现提交 `169457d` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建且未合并。首轮 CI run #98 的 Python、Frontend、Java 与 OpenAPI 四个 Job 全部成功；落盘发布状态的后续纯文档提交仍需通过同一 CI。

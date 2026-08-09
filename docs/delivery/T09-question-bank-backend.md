@@ -102,4 +102,4 @@ CSV 必须为 UTF-8；CSV/XLSX 首行字段为 `type,difficulty,grade,stem,optio
 
 已知风险：当前导入模板是基于统计证据冻结的规范化 CSV/XLSX，不直接读取历史 JSON；历史题干内嵌选项、外部图片、组合题和年级冲突需要离线清洗映射，不能自动猜测。XLSX 解析支持普通单工作表，不支持公式计算、富文本、合并结构和嵌图；生产大批量容量与病毒/恶意文档扫描仍需真实环境压测和媒体安全能力。T10 负责教师上传、编辑、公式预览与导入结果页面；T11 负责测评快照和学生答案权限，不得复用教师详情作为学生取题接口。
 
-分支为 `codex/t09-question-bank-backend`，基线为 `main@6839eab`。关键提交、Ready PR 和 CI 结果在创建后补充；本任务不会自行合并 PR。
+分支为 `codex/t09-question-bank-backend`，基线为 `main@6839eab`，关键实现提交为 `169457d`。Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建且未合并；首轮 CI run #98 的 Python、Frontend、Java 和 OpenAPI 四个 Job 全部成功。后续仅用于落盘本段发布状态的文档提交仍需通过同一 CI，最终结果在任务交付答复中报告。
