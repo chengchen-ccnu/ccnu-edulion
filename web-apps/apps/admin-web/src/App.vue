@@ -1,13 +1,27 @@
 <script setup lang="ts">
-/** 管理应用根壳；导航面向 ADMIN，页面访问仍由共享守卫校验角色与 administration:access 权限。 */
+/**
+ * 管理应用根壳固定渲染 T17C 规划侧栏；当前入口均为建设中且不可跳转，权限守卫仍保护直接深链接。
+ * 组件只处理账号退出副作用，不把管理角色判断下沉到共享 AppShell。
+ */
 import { availableWorkspaces, buildUnifiedLoginUrl, buildWorkspaceChooserUrl } from "@edu/auth";
-import { AppShell } from "@edu/ui";
+import { AppShell, buildAccountTools } from "@edu/ui";
 import { computed } from "vue";
+import { useRoute } from "vue-router";
 import { authStore } from "./auth";
+import { buildAdminNavigation } from "./navigation";
 
+const route = useRoute();
 const loginUrl = buildUnifiedLoginUrl();
 const workspaceChooserUrl = buildWorkspaceChooserUrl();
-const canSwitchWorkspace = computed(() => availableWorkspaces(authStore.state.currentUser).length > 1);
+const workspaceLinks = computed(() => availableWorkspaces(authStore.state.currentUser));
+const navigationItems = computed(() => buildAdminNavigation(route.name?.toString()));
+const accountTools = computed(() => buildAccountTools({
+  authenticated: authStore.state.status === "authenticated",
+  accountLabel: authStore.state.currentUser?.displayName,
+  loginHref: loginUrl,
+  workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined,
+  workspaceLabel: authStore.state.status === "authenticated" ? "管理端" : undefined
+}));
 async function logout() {
   await authStore.logout();
   window.location.assign(loginUrl);
@@ -15,14 +29,8 @@ async function logout() {
 </script>
 
 <template>
-  <AppShell title="平台运营中心" audience="管理端">
-    <template #navigation>
-      <RouterLink to="/admin/dashboard">概览</RouterLink>
-      <RouterLink to="/admin/reviews">审核</RouterLink>
-      <a v-if="canSwitchWorkspace" :href="workspaceChooserUrl">选择工作台</a>
-      <button v-if="authStore.state.status === 'authenticated'" type="button" @click="logout">退出</button>
-      <a v-else :href="loginUrl">统一登录</a>
-    </template>
+  <AppShell workspace-label="管理端" navigation-placement="side" :navigation-items="navigationItems"
+    :account-tools="accountTools" @tool-activate="logout">
     <RouterView />
   </AppShell>
 </template>

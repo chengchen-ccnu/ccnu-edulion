@@ -9,6 +9,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { teacherCourseApi } from "../course-api";
+import { canPublishCourse, publicationControls } from "../publication-controls";
 
 const route = useRoute();
 const router = useRouter();
@@ -18,6 +19,7 @@ const loading = ref(false);
 const actionId = ref("");
 const errorMessage = ref("");
 const successMessage = ref("");
+const failedCoverIds = ref<Set<string>>(new Set());
 const pageCount = computed(() => Math.max(1, Math.ceil((page.value?.total ?? 0) / pageSize)));
 
 watch(() => route.fullPath, load, { immediate: true });
@@ -25,6 +27,7 @@ watch(() => route.fullPath, load, { immediate: true });
 async function load() {
   loading.value = true;
   errorMessage.value = "";
+  failedCoverIds.value = new Set();
   try {
     page.value = await teacherCourseApi.list({ page: currentPage(), size: pageSize });
   } catch (error) {
@@ -40,7 +43,7 @@ async function changePage(target: number) {
 }
 
 async function publish(course: TeacherCoursePage["items"][number]) {
-  if (!canPublish(course)) return;
+  if (!canPublishCourse(course)) return;
   if (!window.confirm(`确认发布“${course.title}”的 ${course.version} 版本？`)) return;
   await updatePublication(course, "PUBLISHED");
 }
@@ -65,11 +68,6 @@ async function updatePublication(course: TeacherCoursePage["items"][number], sta
   }
 }
 
-function canPublish(course: TeacherCoursePage["items"][number]): boolean {
-  return course.hasUnpublishedChanges && course.chapters.length > 0
-    && course.chapters.every(chapter => chapter.lessons.length > 0);
-}
-
 function currentPage(): number {
   const value = typeof route.query.page === "string" ? Number(route.query.page) : 1;
   return Number.isInteger(value) && value > 0 ? value : 1;
@@ -85,6 +83,15 @@ function levelLabel(level: CourseLevel): string {
 
 function accessLabel(accessType: CourseAccessType): string {
   return accessType === "PUBLIC" ? "公开" : "需报名";
+}
+
+/** 图片授权失效或 OSS 加载失败时只降级当前卡片封面，不破坏课程信息与操作布局。 */
+function markCoverFailed(courseId: string) {
+  failedCoverIds.value = new Set(failedCoverIds.value).add(courseId);
+}
+
+function showCover(course: TeacherCoursePage["items"][number]): boolean {
+  return Boolean(course.coverUrl) && !failedCoverIds.value.has(course.id);
 }
 
 function messageFor(error: unknown, fallback: string): string {
@@ -109,31 +116,45 @@ function messageFor(error: unknown, fallback: string): string {
   <div v-if="loading" class="teacher-loading">正在加载你的课程…</div>
   <div v-else-if="page?.items.length" class="teacher-course-list">
     <article v-for="course in page.items" :key="course.id" class="teacher-course-card">
-      <img v-if="course.coverUrl" :src="course.coverUrl" :alt="`${course.title}封面`">
-      <div class="teacher-course-card__content">
-        <div class="teacher-course-card__status">
-          <span :class="`status-pill status-pill--${course.publicationStatus.toLowerCase()}`">
-            {{ statusLabel(course.publicationStatus) }}
-          </span>
-          <span v-if="course.hasUnpublishedChanges" class="status-pill status-pill--changes">有未发布修改</span>
-        </div>
-        <h3>{{ course.title }}</h3>
-        <p>{{ course.summary || "尚未填写课程摘要。" }}</p>
-        <div class="teacher-course-card__meta">
-          <span>{{ course.category.name }}</span><span>{{ levelLabel(course.level) }}</span>
-          <span>{{ accessLabel(course.accessType) }}</span><span>{{ course.version }} · revision {{ course.revision }}</span>
+      <div class="teacher-course-card__cover">
+        <img v-if="showCover(course)" :src="course.coverUrl!" :alt="`${course.title}封面`"
+          @error="markCoverFailed(course.id)">
+        <div v-else class="teacher-course-card__cover-placeholder" role="img" :aria-label="`${course.title}暂无可用封面`">
+          <span aria-hidden="true">▧</span>
+          <strong>课程封面</strong>
+          <small>{{ course.category.name }}</small>
         </div>
       </div>
-      <div class="teacher-course-card__actions">
-        <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">编辑元数据</RouterLink>
-        <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">编排目录</RouterLink>
-        <button v-if="course.publicationStatus === 'PUBLISHED'" class="button button--danger" type="button"
-          :disabled="actionId === course.id" @click="unpublish(course)">下架</button>
-        <button v-else-if="course.publicationStatus === 'UNPUBLISHED' && !course.hasUnpublishedChanges"
-          class="button button--primary" type="button" :disabled="actionId === course.id" @click="publish(course)">重新发布</button>
-        <button v-else class="button button--primary" type="button"
-          :disabled="actionId === course.id || !canPublish(course)" @click="publish(course)">发布草稿</button>
-        <small v-if="course.hasUnpublishedChanges && !canPublish(course)">发布前需确保每章至少有一个课时。</small>
+      <div class="teacher-course-card__content">
+        <div class="teacher-course-card__heading">
+          <div>
+            <div class="teacher-course-card__status">
+              <span :class="`status-pill status-pill--${course.publicationStatus.toLowerCase()}`">
+                {{ statusLabel(course.publicationStatus) }}
+              </span>
+              <span v-if="course.hasUnpublishedChanges" class="status-pill status-pill--changes">有未发布修改</span>
+            </div>
+            <h3>{{ course.title }}</h3>
+          </div>
+          <span class="teacher-course-card__version">{{ course.version }} · r{{ course.revision }}</span>
+        </div>
+        <p>{{ course.summary || "尚未填写课程摘要。" }}</p>
+        <dl class="teacher-course-card__meta">
+          <div><dt>分类</dt><dd>{{ course.category.name }}</dd></div>
+          <div><dt>难度</dt><dd>{{ levelLabel(course.level) }}</dd></div>
+          <div><dt>访问</dt><dd>{{ accessLabel(course.accessType) }}</dd></div>
+        </dl>
+        <div class="teacher-course-card__actions">
+          <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">编辑信息</RouterLink>
+          <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">编排目录</RouterLink>
+          <button v-if="publicationControls(course).showPublish" class="button button--primary" type="button"
+            :disabled="actionId === course.id || !canPublishCourse(course)" @click="publish(course)">
+            {{ publicationControls(course).publishLabel }}
+          </button>
+          <button v-if="publicationControls(course).showUnpublish" class="button button--danger" type="button"
+            :disabled="actionId === course.id" @click="unpublish(course)">下架课程</button>
+          <small v-if="course.hasUnpublishedChanges && !canPublishCourse(course)">发布前需确保每章至少有一个课时。</small>
+        </div>
       </div>
     </article>
   </div>

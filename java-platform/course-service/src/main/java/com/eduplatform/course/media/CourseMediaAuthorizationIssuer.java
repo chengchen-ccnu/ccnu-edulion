@@ -55,7 +55,25 @@ public class CourseMediaAuthorizationIssuer {
      * @param traceId 当前请求追踪 ID，只用于媒体授权审计关联
      * @return 只供 course-service 到 media-service 内部调用使用的紧凑 JWT
      */
-    public String issue(String visitorId, String mediaId, String purpose, String variant, String traceId) {
+    public String issuePlayback(String visitorId, String mediaId, String purpose, String variant, String traceId) {
+        return issue(visitorId, mediaId, purpose, "COURSE_PLAYBACK", variant, "INLINE", traceId);
+    }
+
+    /**
+     * 为已通过课程可见性判断的封面签发一次 COURSE_COVER_DISPLAY/ORIGINAL/INLINE 服务令牌。
+     *
+     * @param viewerId 教师 owner 或公开课程读取使用的可信 UUID；不会交给浏览器
+     * @param mediaId 课程版本保存的稳定 COURSE_COVER 媒体 ID
+     * @param traceId 当前课程读取调用链 ID，只用于跨服务审计关联
+     * @return 仅供 course-service 调用 media-service 内部接口的一次性紧凑 JWT
+     */
+    public String issueCover(String viewerId, String mediaId, String traceId) {
+        return issue(viewerId, mediaId, "COURSE_COVER", "COURSE_COVER_DISPLAY", "ORIGINAL", "INLINE", traceId);
+    }
+
+    /** 将明确的访问类型、用途、变体和处置方式全部绑定进短时 JWT，调用方不能省略业务边界。 */
+    private String issue(String visitorId, String mediaId, String purpose, String accessType,
+            String variant, String disposition, String traceId) {
         Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(properties.issuer())
@@ -66,9 +84,9 @@ public class CourseMediaAuthorizationIssuer {
                 .expiresAt(now.plus(properties.tokenTtl()))
                 .claim("mediaId", mediaId)
                 .claim("purpose", purpose)
-                .claim("accessType", "COURSE_PLAYBACK")
+                .claim("accessType", accessType)
                 .claim("variant", variant)
-                .claim("disposition", "INLINE")
+                .claim("disposition", disposition)
                 .claim("traceId", traceId)
                 .build();
         return encoder.encode(JwtEncoderParameters.from(

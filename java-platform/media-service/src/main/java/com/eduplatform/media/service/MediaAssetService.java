@@ -289,10 +289,10 @@ public class MediaAssetService {
      * <p>输入 mediaId、purpose、variant 和 visitorId 已由一次性令牌强绑定；本方法仍独立校验
      * 资产存在、精确用途与 READY 状态，media-service 不查询课程或报名数据库。</p>
      *
-     * @param mediaId 课程绑定解析出的稳定媒体 ID
-     * @param visitorId 实际播放访问者，用于安全审计
+     * @param mediaId 课程绑定解析出的稳定视频或封面媒体 ID
+     * @param visitorId 实际播放访问者或课程封面读取标识，用于安全审计
      * @param purpose 令牌绑定且必须与媒体资产一致的用途
-     * @param variant 令牌绑定的派生版本，课程播放固定为 hls-v1
+     * @param variant 令牌绑定的精确版本；课程播放为 hls-v1，封面展示为 ORIGINAL
      * @param disposition 令牌绑定的读取处置方式
      * @param traceId 课程请求链路 ID
      * @return 短期对象或 HLS 清单授权

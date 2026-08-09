@@ -109,15 +109,15 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     label: "学生学习中心",
     role: "STUDENT",
     permission: "learning:access",
-    path: "/",
-    accepts: path => path === "/"
+    path: "/courses",
+    accepts: path => path === "/" || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
   },
   {
     id: "teacher",
     label: "教师工作台",
     role: "TEACHER",
     permission: "teaching:access",
-    path: "/teacher/dashboard",
+    path: "/teacher/courses",
     accepts: path => path === "/teacher/dashboard"
       || path === "/teacher/courses"
       || path === "/teacher/courses/new"
@@ -373,7 +373,7 @@ export interface AuthGuardOptions {
 }
 
 /**
- * 安装路由守卫：恢复当前用户、校验目标工作台角色与权限，并安全跳转到统一登录页。
+ * 安装路由守卫：恢复当前用户、校验目标页面声明的能力或旧工作台角色，并安全跳转到统一登录页。
  * 标记 restoreSession 的公开路由只在后台尝试恢复一次会话，不等待结果也不阻断匿名访问；
  * 受保护路由必须完成身份恢复，权限不足进入 forbidden 页面。
  */
@@ -396,14 +396,16 @@ export function installAuthGuard(router: Router, store: AuthStore, options: Auth
       const safeRedirect = resolveInternalRedirect(to.fullPath);
       return { name: LOGIN_ROUTE_NAME, query: safeRedirect ? { redirect: safeRedirect.requestedPath } : {} };
     }
+    const requiredPermission = to.meta.requiredPermission as string | undefined;
+    if (requiredPermission && !store.hasPermission(requiredPermission)) return { name: "forbidden" };
     const requiredRole = to.meta.requiredRole as PlatformRole | undefined;
     if (requiredRole && !store.canAccess(requiredRole)) return { name: "forbidden" };
     return true;
   });
 }
 
-function userCanAccess(user: CurrentUser, workspace: Pick<WorkspaceDefinition, "role" | "permission">): boolean {
-  return user.roles.includes(workspace.role) && user.permissions.includes(workspace.permission);
+function userCanAccess(user: CurrentUser, workspace: Pick<WorkspaceDefinition, "permission">): boolean {
+  return user.permissions.includes(workspace.permission);
 }
 
 function toWorkspaceLink(workspace: WorkspaceDefinition, urls: PlatformUrls): WorkspaceLink {

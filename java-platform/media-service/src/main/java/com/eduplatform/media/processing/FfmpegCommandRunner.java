@@ -25,10 +25,7 @@ public class FfmpegCommandRunner {
      */
     public void run(Path input, Path playlist, Path segmentPattern, MediaProperties.Worker properties) {
         Path error = playlist.getParent().resolve("ffmpeg-error.log");
-        List<String> command = List.of(properties.ffmpegPath(), "-hide_banner", "-loglevel", "error", "-y",
-                "-i", input.toString(), "-map", "0:v:0", "-c:v", "libx264", "-preset", "veryfast", "-an",
-                "-f", "hls", "-hls_time", Long.toString(Math.max(1, properties.hlsSegmentDuration().toSeconds())),
-                "-hls_playlist_type", "vod", "-hls_segment_filename", segmentPattern.toString(), playlist.toString());
+        List<String> command = buildCommand(input, playlist, segmentPattern, properties);
         try {
             Process process = new ProcessBuilder(command)
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD)
@@ -51,5 +48,22 @@ public class FfmpegCommandRunner {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("FFmpeg worker interrupted", exception);
         }
+    }
+
+    /**
+     * 构造单清晰度 MPEG-TS HLS 命令；视频流必选，第一条音轨可选并在存在时编码为 AAC。
+     *
+     * <p>{@code 0:a:0?} 的问号是 FFmpeg optional map 语义，保证没有音轨的源视频仍可转码。
+     * 返回参数不包含凭据或存储地址，仅包含 Worker 临时文件路径。</p>
+     */
+    List<String> buildCommand(Path input, Path playlist, Path segmentPattern,
+            MediaProperties.Worker properties) {
+        return List.of(properties.ffmpegPath(), "-hide_banner", "-loglevel", "error", "-y",
+                "-i", input.toString(), "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "libx264", "-preset", "veryfast",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+                "-f", "hls", "-hls_segment_type", "mpegts",
+                "-hls_time", Long.toString(Math.max(1, properties.hlsSegmentDuration().toSeconds())),
+                "-hls_playlist_type", "vod", "-hls_segment_filename", segmentPattern.toString(), playlist.toString());
     }
 }

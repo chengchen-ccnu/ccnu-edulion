@@ -1,25 +1,26 @@
 <script setup lang="ts">
 /**
- * student-web 根壳同时承载角色中立的公开门户/统一登录，以及受保护的学生学习空间。
- * 公共课程页恢复会话后展示可进入的工作台与退出入口，页面数据本身不依赖登录结果。
+ * student-web 根壳提供规格冻结的固定导航；页面、登录状态和工作台数量只改变高亮与账号工具状态。
+ * 课程标题和学习上下文继续由 RouterView 内页面负责，根壳没有数据写入副作用。
  */
 import { availableWorkspaces } from "@edu/auth";
-import { AppShell } from "@edu/ui";
+import { AppShell, buildAccountTools } from "@edu/ui";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { authStore } from "./auth";
+import { buildStudentNavigation } from "./navigation";
 
 const route = useRoute();
 const router = useRouter();
 const workspaceLinks = computed(() => availableWorkspaces(authStore.state.currentUser));
-const singleWorkspace = computed(() => workspaceLinks.value.length === 1 ? workspaceLinks.value[0] : null);
-const canSwitchWorkspace = computed(() => workspaceLinks.value.length > 1);
-const isPublicCourse = computed(() => route.name === "courses" || route.name === "course-detail");
-const isStudentLearningSpace = computed(() => route.meta.requiredRole === "STUDENT");
-const canEnterStudentHome = computed(() => authStore.state.status !== "authenticated" || authStore.canAccess("STUDENT"));
-const shellTitle = computed(() => isStudentLearningSpace.value ? "学生学习中心" : "Edu Lion 在线教育平台");
-const shellAudience = computed(() => route.name === "login" ? "统一登录门户"
-  : isPublicCourse.value ? "课程中心" : "公共门户");
+const navigationItems = computed(() => buildStudentNavigation(route.name?.toString()));
+const accountTools = computed(() => buildAccountTools({
+  authenticated: authStore.state.status === "authenticated",
+  accountLabel: authStore.state.currentUser?.displayName,
+  loginHref: "/login",
+  workspaceHref: workspaceLinks.value.length > 1 ? "/workspaces" : undefined,
+  workspaceLabel: authStore.state.status === "authenticated" ? "学习端" : undefined
+}));
 
 async function logout() {
   await authStore.logout();
@@ -28,15 +29,8 @@ async function logout() {
 </script>
 
 <template>
-  <AppShell :title="shellTitle" :audience="shellAudience">
-    <template #navigation>
-      <RouterLink v-if="canEnterStudentHome" to="/">学生学习中心</RouterLink>
-      <RouterLink to="/courses">课程中心</RouterLink>
-      <a v-if="isPublicCourse && singleWorkspace" :href="singleWorkspace.href">{{ singleWorkspace.label }}</a>
-      <RouterLink v-else-if="isPublicCourse && canSwitchWorkspace" to="/workspaces">选择工作台</RouterLink>
-      <button v-if="authStore.state.status === 'authenticated'" type="button" @click="logout">退出</button>
-      <RouterLink v-else to="/login">统一登录</RouterLink>
-    </template>
+  <AppShell workspace-label="学习端" :navigation-items="navigationItems" :account-tools="accountTools"
+    @tool-activate="logout">
     <RouterView />
   </AppShell>
 </template>

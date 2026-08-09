@@ -81,7 +81,7 @@ T07 可以先使用 OSS/MQ 适配器 Mock 完成契约、单元测试和不依�
 | Redis | 本地缓存、短期会话或限流链路需要时使用 | 复用 `127.0.0.1:6379`，`media-service` 默认逻辑 DB 3；Redis 不是媒体资产事实源 |
 | RabbitMQ 4.x + 兼容 Erlang/OTP | 真实发布、消费、重试、死信和重启恢复验收必需 | Windows 推荐 RabbitMQ 4.3.x 与 Erlang/OTP 27.x；应用端口 `5672`，管理 UI `15672` 仅本机使用 |
 | 阿里云 OSS 专用开发/测试 Bucket | 真实直传、Multipart、HEAD 校验和短期访问验收必需 | 使用独立前缀和最小权限 RAM/STS；没有明确授权时必须使用 Mock，不读取个人或生产 Bucket |
-| FFmpeg | 本机真实视频转码验收需要 | T08A 产生私有 `hls-v1` 播放清单和切片；默认关闭音频、单清晰度，截图和多码率不在本轮范围 |
+| FFmpeg（含同目录 ffprobe） | 本机真实视频转码验收需要 | T08A 产生私有 `hls-v1` 播放清单和切片；单清晰度，第一条音轨可选并编码为 AAC，无音轨输入仍可转码；截图、多码率、多音轨选择、字幕和 DRM 不在本轮范围 |
 | 内容安全/病毒扫描服务 | 生产公开前需要 | T07 的 OSS HEAD/哈希复核与 FFmpeg 可解码验证不等价于内容安全或病毒扫描；这是已知上线依赖 |
 
 Windows 原生 RabbitMQ 的建议准备顺序是：安装一个受 RabbitMQ 支持的 64 位 Erlang/OTP 27.x，再安装 RabbitMQ 4.3.x；安装目录使用 ASCII 且尽量不含空格，以管理员权限安装服务。管理插件是可选的，可用于本机查看 Exchange、Queue 和死信。只对本机开放应用端口 `5672` 和可选管理端口 `15672`，不要把集群/CLI 端口暴露到公网。建议创建专用 vhost `/edu-platform` 和最小权限本地用户，不直接沿用默认 `guest` 作为共享或生产账号。
@@ -126,13 +126,17 @@ T08A 只在用途明确的 `edu_platform_course_dev` 与 `edu_platform_media_dev
 | `COURSE_MEDIA_REQUEST_TIMEOUT` | `3s` | 课程绑定校验调用 media-service 的超时 |
 | `COURSE_MEDIA_OUTBOX_MAX_ATTEMPTS` | `20` | 课程引用事件发布失败上限，耗尽后保留 `FAILED` 供审计/人工重放 |
 
-HLS 清单、切片和授权临时清单均为私有 OSS 对象。访问授权只返回短期 URL；数据库仅保留精确 Object Key 以便到期清理。真实环境验收继续使用上方 `MediaRealEnvironmentAcceptanceTest` 开关，该用例现在还验证 HLS 清单与首个切片可读取、重试/死信及最终精确清理。若未提供真实环境条件，测试会明确跳过，不能记录为已执行。
+HLS 清单、切片和授权临时清单均为私有 OSS 对象。访问授权只返回短期 URL；数据库仅保留精确 Object Key 以便到期清理。FFmpeg 必选第一条视频流、可选第一条音频流；音频存在时编码为 AAC 128 kbit/s、48 kHz 双声道并封装为 MPEG-TS HLS，无音轨输入不会因找不到音轨失败。真实环境验收继续使用上方 `MediaRealEnvironmentAcceptanceTest` 开关：用例通过 lavfi 生成带 1 kHz 正弦波的输入，由 ffprobe 先断言源 video/audio，再断言真实 OSS 下载的首个 TS 切片包含 video/AAC audio；同时覆盖无音轨转码、清单/切片短期读取、重试/死信和按本轮标识精确清理。若未提供真实环境条件，测试会明确跳过，不能记录为已执行。
+
+更新 `FfmpegCommandRunner`、FFmpeg 参数或 Worker 代码后必须完整重启 media-service；Git 文件变化不会替换已运行 JVM 中的旧类。已经达到 `READY` 的 HLS 变体不会因服务重启、课程重新保存或重新发布而自动转码。验证修复时应先确认新 media-service 已启动，再创建新的上传会话并等待新资产完成处理；旧无声资产需要由新 Worker 重新上传生成，不应继续绑定旧 mediaId。
 
 T08A 不增加 Seed，也不会自动给 T05 固定课程绑定媒体。若人工使用 T05 固定课程进行验收，仍可执行 `cleanup-course-seed.sql`；脚本已按外键逆序清理该固定课程的课时媒体引用及对应课程 Outbox。重新生成方式仍是显式设置 `COURSE_SEED_ENABLED=true` 后重启 course-service。
 
 ## T08A.1 课程播放授权参数与迁移
 
 浏览器只经 Gateway 调用 course-service 的课程资源播放授权接口；Gateway 不配置 `/internal/**` 路由。course-service 根据当前发布/可编辑版本、课程访问类型、课时试看标志、课程 owner 和资源绑定作出决定，再使用短时一次性服务 JWT 调用 media-service。media-service 不查询 course/learning Schema，并继续只对用途匹配且 `READY` 的资产签发短期 OSS/HLS 授权。
+
+T08B 浏览器直传要求专用 OSS Bucket 配置精确 CORS：只允许实际部署的 teacher Web Origin（本地为 `http://localhost:5174`）使用 `PUT`，允许签名授权返回的请求头，并在响应中暴露 `ETag`，否则 Multipart 无法收集服务端实际分片标签并安全完成。生产环境不得用 `*` 放宽 Origin；短期 PUT/GET URL、授权请求头和 HLS 清单 URL 只能保存在组件运行时内存，不得写入 `localStorage`、日志或业务表。
 
 Media V3 新增 `consumed_service_authorization`，以 jti 主键拒绝服务令牌重放并在到期后由维护任务清理。表中不保存 JWT、签名 URL、课程 ID、课时 ID、Object Key 或 Bucket。应用不会创建 `edu_platform_media_dev` 数据库；只在用途明确的 media dev/test Schema 中由 Flyway 向前迁移。T08A.1 没有 Course 迁移、Seed 或报名数据。
 

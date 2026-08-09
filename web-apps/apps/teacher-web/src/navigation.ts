@@ -1,31 +1,29 @@
-/** 教师端导航模型：公共课程中心对所有身份可见，教学入口只对有教学能力的教师显示。 */
+/** 教师端固定导航模型：身份只能改变受保护入口状态，不能改变标签、顺序或数量。 */
 import type { CurrentUser } from "@edu/api-client";
 import { buildCourseCenterUrl } from "@edu/auth";
 import type { PlatformUrls } from "@edu/auth";
-
-/** 教师应用根壳可渲染的站内路由或跨应用绝对链接。 */
-export interface TeacherNavigationItem {
-  id: "dashboard" | "course-center" | "teaching-management";
-  label: string;
-  kind: "router" | "external";
-  href: string;
-}
+import type { ShellNavigationItem } from "@edu/ui";
 
 /**
- * 根据当前身份生成教师应用导航；输入为可空的当前用户，输出不会向学生暴露教学管理入口。
+ * 根据当前路由和可空身份生成七个固定槽位。
+ * 无教学能力时课程管理保留原位但无 href；未交付的 T10/T12/T17 页面始终是不可操作的建设中状态。
  */
-export function buildTeacherNavigation(user: CurrentUser | null, urls?: PlatformUrls): TeacherNavigationItem[] {
-  const courseCenter: TeacherNavigationItem = {
-    id: "course-center",
-    label: "课程中心",
-    kind: "external",
-    href: buildCourseCenterUrl(urls)
-  };
+export function buildTeacherNavigation(routeName: string | null | undefined, user: CurrentUser | null,
+    urls?: PlatformUrls): ShellNavigationItem[] {
   const canTeach = user?.roles.includes("TEACHER") && user.permissions.includes("teaching:access");
-  if (!canTeach) return [courseCenter];
+  const inCourseManagement = routeName === "teacher-courses" || routeName === "teacher-course-new"
+    || routeName === "teacher-course-edit" || routeName === "teacher-course-curriculum";
   return [
-    { id: "dashboard", label: "工作台", kind: "router", href: "/teacher/dashboard" },
-    courseCenter,
-    { id: "teaching-management", label: "教学管理", kind: "router", href: "/teacher/courses" }
+    { id: "course-center", label: "课程中心", state: "enabled", current: false,
+      kind: "external", href: buildCourseCenterUrl(urls) },
+    { id: "dashboard", label: "工作台", state: "coming-soon", current: routeName === "teacher-dashboard" },
+    { id: "course-management", label: "课程管理", state: canTeach ? "enabled" : "permission-required",
+      current: inCourseManagement, kind: canTeach ? "router" : undefined,
+      href: canTeach ? "/teacher/courses" : undefined },
+    { id: "question-bank", label: "题库", state: "coming-soon", current: routeName === "teacher-questions" },
+    { id: "assessment-management", label: "测评管理", state: "coming-soon",
+      current: routeName === "teacher-assessments" },
+    { id: "student-analysis", label: "学情分析", state: "coming-soon", current: routeName === "teacher-students" },
+    { id: "media-center", label: "媒体中心", state: "coming-soon", current: routeName === "teacher-media" }
   ];
 }

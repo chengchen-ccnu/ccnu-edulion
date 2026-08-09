@@ -9,16 +9,18 @@ import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import CourseMetadataFields from "../components/CourseMetadataFields.vue";
+import MediaUploadField from "../components/MediaUploadField.vue";
 import { teacherCourseApi } from "../course-api";
 import { authStore } from "../auth";
 
 const router = useRouter();
 const categories = ref<CategorySummary[]>([]);
 const saving = ref(false);
+const coverBusy = ref(false);
 const errorMessage = ref("");
 const fieldErrors = ref<Record<string, string>>({});
 const form = reactive<CreateCourseRequest>({
-  clientRequestId: crypto.randomUUID(),
+  clientRequestId: courseCreateRequestId(),
   title: "",
   summary: "",
   description: "",
@@ -44,6 +46,7 @@ async function submit() {
   fieldErrors.value = {};
   try {
     const course = await teacherCourseApi.create({ ...form });
+    sessionStorage.removeItem("teacher-course-create-request-id");
     await router.push({ name: "teacher-course-edit", params: { courseId: course.id }, query: { created: "1" } });
   } catch (error) {
     if (error instanceof GatewayRequestError) fieldErrors.value = error.fieldErrors;
@@ -55,6 +58,16 @@ async function submit() {
 
 function messageFor(error: unknown, fallback: string): string {
   return error instanceof GatewayRequestError ? error.message : fallback;
+}
+
+/** 刷新创建页时复用课程幂等键，使已就绪封面和课程创建请求不会因重复点击产生重复事实。 */
+function courseCreateRequestId(): string {
+  const key = "teacher-course-create-request-id";
+  const existing = sessionStorage.getItem(key);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(key, created);
+  return created;
 }
 </script>
 
@@ -68,6 +81,9 @@ function messageFor(error: unknown, fallback: string): string {
     <p class="editor-intro">课程会以草稿创建。完成目录编排并主动发布前，学生端不可见。</p>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
     <form @submit.prevent="submit">
+      <MediaUploadField v-model="form.coverMediaId" purpose="COURSE_COVER" accept="image/jpeg,image/png,image/webp"
+        label="课程封面" :checkpoint-key="`teacher-course-cover:${form.clientRequestId}`"
+        @busy-change="coverBusy = $event" />
       <CourseMetadataFields v-model:title="form.title" v-model:summary="form.summary"
         v-model:description="form.description"
         v-model:instructor-display-name="form.instructorDisplayName" v-model:category-id="form.categoryId"
@@ -75,7 +91,7 @@ function messageFor(error: unknown, fallback: string): string {
         :categories="categories" :field-errors="fieldErrors" />
       <footer class="editor-actions">
         <RouterLink class="button button--quiet" :to="{ name: 'teacher-courses' }">取消</RouterLink>
-        <button class="button button--primary" type="submit" :disabled="saving || !categories.length">
+        <button class="button button--primary" type="submit" :disabled="saving || coverBusy || !categories.length">
           {{ saving ? "正在创建…" : "创建并继续编辑" }}
         </button>
       </footer>

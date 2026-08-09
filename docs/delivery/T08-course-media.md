@@ -1,16 +1,16 @@
-# T08A/T08A.1 课程媒体绑定、HLS 与播放授权闭环交付
+# T08A/T08A.1/T08B 课程媒体绑定、上传与播放闭环交付
 
 ## 任务目标与边界
 
 T08A 将课程封面和课时资源的写事实从 URL 收口为稳定 `mediaId`，并把 T07 的最小视频派生演进为可授权播放的私有 HLS。课程服务只拥有课程版本与媒体引用，不接入 OSS SDK、不保存 Bucket、Object Key 或短期签名 URL；媒体服务只拥有上传、对象、处理和授权事实，不保存课程实体或决定课程可见性。
 
-本任务完成 `COURSE_COVER`、`LESSON_VIDEO` 领域绑定，并显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 上传策略。最终 Vue 上传器、处理状态交互和播放器属于 T08B；报名、学习进度、“我的学习”、题库和 Agent 均未实现。
+T08A 完成 `COURSE_COVER`、`LESSON_VIDEO` 领域绑定，并显式启用 `VIDEO_POSTER`、`SUBTITLE`、`COURSEWARE`、`ARTICLE_ATTACHMENT` 上传策略。T08B 已完成课程封面/课时视频 Vue 上传器、处理状态交互与播放器；报名、学习进度、“我的学习”、题库和 Agent 均未实现。
 
-T08A.1 在既有绑定与 HLS 之上补齐播放授权闭环：course-service 决定课程/版本/课时/资源可见性，media-service 只验证一次性服务授权并签发 READY 媒体的短期 OSS/HLS 凭证。T11 前不创建或伪造报名，报名制课程的非试看课时固定返回 403；T08B 才实现浏览器播放器、授权刷新和页面交互。
+T08A.1 在既有绑定与 HLS 之上补齐播放授权闭环：course-service 决定课程/版本/课时/资源可见性，media-service 只验证一次性服务授权并签发 READY 媒体的短期 OSS/HLS 凭证。T11 前不创建或伪造报名，报名制课程的非试看课时固定返回 403；T08B 只消费这两条课程域授权，不扩展该临时权限边界。
 
 ## 架构与调用流程
 
-1. 浏览器或后续 T08B 页面经 Gateway 使用 T07 上传会话把对象直传 OSS，并轮询到 `READY`。
+1. T08B 浏览器页面经 Gateway 使用 T07 上传会话，把对象字节直传 OSS，并轮询到 `READY`。
 2. 教师创建/编辑课程时只提交 `coverMediaId`；目录写入只提交课时资源的 `mediaId`、用途和顺序。
 3. `course-service` 在本地写事务前调用 `POST /api/v1/media/{mediaId}/binding-validations`，media-service 校验上传者、精确用途和 `READY` 状态。失败时课程不落库；没有跨库查询。
 4. 课程事务保存版本级 `cover_media_id` 或 `lesson_media_resource`，同时写本域 Outbox。绑定、替换和解除分别发布已有 `MediaReferenceBound`/`MediaReferenceReleased` v1；mandatory、publisher confirm、有限退避和失败留痕用于可靠补投。
@@ -39,7 +39,7 @@ T08A 将 OpenAPI 更新到 `0.6.0`：
 
 前端 TypeScript 类型由同一 OpenAPI 重新生成。为保持契约编译兼容，现有页面仅停止提交 `coverUrl`、保存目录时透传既有 `resources`，并兼容历史封面为空；没有实现上传和播放交互。
 
-T08A.1 将 OpenAPI 更新到 `0.7.0`，新增两个课程域播放授权 POST。外部契约只暴露课程/课时/课程资源 ID 和短期 `CourseMediaPlaybackGrant`；内部服务 API 不属于 Gateway 外部契约。404 用于资源不存在、版本/绑定不匹配和 owner 不匹配，报名制非试看使用明确 403，READY 冲突为 409，媒体依赖不可用为 503。生成的 TypeScript 客户端已同步；页面仍未调用接口。
+T08A.1 将 OpenAPI 更新到 `0.7.0`，新增两个课程域播放授权 POST。外部契约只暴露课程/课时/课程资源 ID 和短期 `CourseMediaPlaybackGrant`；内部服务 API 不属于 Gateway 外部契约。404 用于资源不存在、版本/绑定不匹配和 owner 不匹配，报名制非试看使用明确 403，READY 冲突为 409，媒体依赖不可用为 503。T08B 直接复用生成的 TypeScript 字段和路径调用这些接口，没有修改 OpenAPI，也没有手写重复 DTO。
 
 ## 数据库表与向前迁移
 
@@ -139,10 +139,9 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 
 ## 已知风险与后续依赖
 
-- T08B 尚未实现最终上传页、状态轮询、资源编排控件、播放器和授权刷新；新上传媒体目前只能通过 API/验收脚本绑定和播放。
 - T11 尚未实现报名与学习权限查询；报名制非试看固定返回 403。T08A.1 不伪造报名，也不把该临时边界解释为最终授权模型。
 - 首期播放接口只接受 `LESSON_VIDEO`；封面继续使用展示投影，字幕/课件保持绑定但不堆积未评审的播放/下载授权实现。
-- 当前 HLS 是单清晰度视频、显式关闭音频；多码率自适应、音轨/字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
+- 当前 HLS 保持单清晰度：必选第一条视频流，可选第一条音频流；有音轨时统一编码为 MPEG-TS HLS 兼容的 AAC，无音轨视频也可成功转码。多码率自适应、多音轨选择、字幕打包、截图、DRM 和 CDN 发布策略需后续专项设计。
 - 病毒、恶意文档与内容安全服务尚未接入；MIME/扩展名、OSS HEAD/SHA 与 FFmpeg 可解码校验不等价于生产内容安全。
 - 绑定验证与课程事务不是分布式事务；READY 资产在验证后到提交前的极短竞态由引用事件、延迟回收和后续对账兜底，不宣称“恰好一次”。
 - 单机 `Semaphore` 只限制单实例并发；多实例全局容量、作业租约、断点续转和运维重放仍需在部署设计中补齐。
@@ -151,4 +150,112 @@ T08A.1 新增/触及的课程播放决策、只读查询投影、服务令牌签
 ## 分支、提交与 PR
 
 - T08A：分支 `codex/t08a-course-media-contract-binding`，关键提交 `2f2697882394a5194a48e1756c8d05cd1a3780ea`；[PR #13](https://github.com/chengchen-ccnu/ccnu-edulion/pull/13) 已合并，当前基线 merge commit 为 `55b30d52493e84038da59f7a6789e43b8de6e716`。
-- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，基于最新 `origin/main` 的 `55b30d52493e84038da59f7a6789e43b8de6e716`；实现提交 `f2e1d972e828759089d2192227366ddb4985059b`，Ready [PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已创建，未自行合并。
+- T08A.1：分支 `codex/t08a1-course-media-playback-auth`，实现提交 `f2e1d972e828759089d2192227366ddb4985059b`；[PR #14](https://github.com/chengchen-ccnu/ccnu-edulion/pull/14) 已合并，主线 merge commit 为 `2f40b762d41f780509ab388928aff84614d6b62c`。
+
+## T08B 前端实现（2026-08-05）
+
+### 功能与前端边界
+
+- 教师创建/编辑课程不再出现手填图片 URL。`MediaUploadField` 支持封面选择、本地 Blob 预览、真实字节进度、校验/处理状态、成功、失败、取消、有限重试、替换和移除；只有上传器轮询到 `READY` 才向课程表单回写 `coverMediaId`。
+- 课程目录的 `VIDEO` 课时在首次保存、取得稳定 lesson ID 后可上传 `LESSON_VIDEO`。状态机按服务端 `SINGLE_PUT`/`MULTIPART` 选择协议，Multipart 使用返回的 `partSize`、每片单独申请授权、最多 3 路并发、最多 3 次传输尝试，并向完成接口提交 OSS 实际 ETag。
+- SHA-256 使用 `@noble/hashes` 增量状态和 4 MiB `Blob.slice()` 计算，任一时刻不把整段视频读入内存。上传用 `XMLHttpRequest.upload` 的真实字节事件聚合进度，不显示模拟进度。
+- 同一运行中重复点击复用一个 Promise；创建会话的 429/503 有限重试固定复用同一 `clientRequestId`。`sessionStorage` 检查点只保存 uploadId、幂等键、用途和不可变文件摘要等稳定字段，不保存签名 URL、授权头或 Token；刷新后查询服务端会话并明确要求重选同一 File。
+- 目录写请求显式投影为 `mediaId`、`purpose`、`sequence`，UI 使用的 lesson/resource ID 与 `uiKey` 不会进入请求。新 READY 视频保存后取得课程域 resource ID，教师才可调用 owner 预览接口；发布版本不可变性继续由 T08A 后端保证。
+- 学生只调用发布课程资源播放授权；教师只调用 owner 预览授权。共享 `HlsVideoPlayer` 优先使用浏览器原生 HLS，其他支持 MSE 的浏览器按需加载 `hls.js 1.6.16`，切换/卸载会销毁实例、移除 source、中止请求和清除定时器。
+- 播放授权根据 `expiresAt` 最多提前 30 秒刷新。429 最多退避两次，刷新失败后停止自动循环并显示 401/403/404/409/429/503 中文提示；短期 URL 和授权头只在组件内存存在，不写持久化状态或日志。
+- `/courses/:courseId` 只展示封面、简介、教师、访问规则和发布目录预览；“开始学习/试看”进入受保护的 `/learn/:courseId/:lessonId`，公开详情不再导入播放器或调用播放授权。
+- 独立学习页按 `learning:access` 能力保护，不永久绑定 `STUDENT` 角色。页面包含当前课时、HLS 播放器、可折叠目录、上一课、下一课和退出学习；报名制课程在 T11 前只开放 `previewable=true` 入口，不伪造报名、进度、笔记、练习或 AI。
+
+### 环境、数据与清理
+
+T08B 没有新增数据库迁移、业务表、Seed 或报名数据，也没有创建数据库。自动化继续只使用随 Maven 测试进程释放的 H2 Schema。真实验收通过凭据包装脚本连接既有专用 `edu_platform_media_dev`（已处于 V3），使用固定测试 owner 和唯一 `t07-acceptance/<runId>/` 前缀验证 OSS、RabbitMQ 与 FFmpeg；用例结束后按精确 Object Key 删除原件、HLS/临时清单和切片，定向清理测试消息与记录，并逐表断言验收数据为 0。没有操作 course/IAM Schema，也没有创建虚假报名。
+
+浏览器直传环境必须允许教师 Web Origin 对专用 OSS Bucket 执行短期 `PUT`，允许签名要求的请求头，并通过 `Access-Control-Expose-Headers: ETag` 暴露分片实际 ETag。生产 Origin 必须使用精确白名单，不能用 `*` 扩大带凭证边界。
+
+### 测试与实际结果
+
+- `pnpm.cmd --dir web-apps install --frozen-lockfile`：通过，锁文件可复现。
+- `generate:api`、`check:api`、全 workspace `typecheck`：通过；OpenAPI 保持 0.7.0，生成文件相对 HEAD 一致。
+- Vitest：受限沙箱首次因已知 `esbuild spawn EPERM` 无法启动；获准沙箱外复跑后 8 个文件 51 项全部通过。新增覆盖单对象、Multipart 已上传分片恢复、实际 ETag、真实字节聚合、取消、增量哈希、固定幂等键有限重试、FAILED/REJECTED/超时、媒体会话/资产用途错配拒绝、封面与视频处理提示隔离、学生/教师路径隔离、授权刷新时机和 429 重试上限。
+- 三端生产构建：获准沙箱外执行并通过；`hls.js` 只在非原生 HLS 浏览器按需加载。
+- Java：`gateway-service,course-service,media-service -am verify` 的 5 个 Reactor 模块全部成功；Gateway 10 项、Course 14 项、Media 12 项（真实环境 1 项默认跳过）及 shared-kernel 1 项均无失败。
+- 真实 `MediaRealEnvironmentAcceptanceTest`：通过 `Invoke-WithLocalEnvironment.ps1` 显式开启后 1 项通过，实际连接既有 `edu_platform_media_dev`、真实 OSS、RabbitMQ 和 FFmpeg，并完成精确清理。该项是后端证据；真实 Vue 页面链路另见下方“最终真实浏览器 E2E”。
+- 浏览器响应式检查：指向同一 OpenAPI Mock 的学生课程详情在 1440×900 与 390×844 均无横向溢出，窄屏信息和目录正确单列，控制台无错误。这是早期页面布局证据；真实上传和 HLS 播放另见下方最终验收记录。
+- 2026-08-09 页面规格收口：`install --frozen-lockfile`、`generate:api`、`check:api`、全 workspace `typecheck` 通过；Vitest 10 个文件 66 项全部通过，新增覆盖学习入口选择、报名制只开放试看、深链接安全回跳、按能力守卫、401/403/404/409/429/503 提示、授权有限刷新、音频不默认静音和卸载清理；三端生产构建通过。
+- 同轮 Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，14 份报告共 48 项，47 项通过、真实环境用例默认跳过 1 项；FFmpeg 命令测试继续断言可选第一条音轨和 AAC MPEG-TS HLS。此前带正弦波真实验收结果仍有效，本轮没有重新连接 OSS/RabbitMQ 或把自动化冒充真实 HLS 页面验收。
+- 浏览器复核：OpenAPI Mock 下匿名 `/learn/...` 深链接正确回到统一登录并保留完整目标；课程详情 DOM 没有 `<video>`，390×844 下 `scrollWidth` 等于 `clientWidth` 且控制台无错误。该轮仅证明 Mock 页面边界；独立学习页的真实授权和播放已在下方最终验收中补齐。
+- `git diff --check`、敏感信息与构建产物审计在提交前执行；未发现签名 URL 持久化、日志输出、AccessKey、密码或应提交的 dist/target。
+
+### 人工演示步骤
+
+1. 通过安全环境包装脚本依次启动 media-service、course-service、IAM 与 Gateway，确认只使用专用 dev Schema；启动 teacher/student Web，OSS CORS 精确允许本地 Origin 并暴露 ETag。
+2. 教师创建课程，选择 JPG/PNG/WebP 封面，观察 SHA、真实上传、校验/处理到 READY；保存后刷新，确认展示来自课程 `coverUrl` 投影。替换和移除后再次保存，确认线上已发布版本未被直接改变。
+3. 保存一个 VIDEO 课时取得稳定 ID，分别选择小视频和超过 Multipart 阈值的视频；检查分片进度、取消/恢复提示、处理状态和 READY 后的目录绑定。保存请求只应包含稳定媒体三字段。
+4. 保存目录后在教师页 owner 预览；发布课程后，从公共课程详情点击“开始学习/试看”进入 `/learn/:courseId/:lessonId`。确认学习页显示当前课时、目录、上一课/下一课和退出学习；公开或试看课时可播放，报名制非试看在 T11 前显示 403 文案。
+5. 等待授权刷新，确认到期前重新签发；模拟 429/503 或停止依赖，确认有限重试后停止。切换资源或离开页面，确认播放器、定时器、授权请求和 Blob URL 已清理。
+
+### 注释覆盖、风险与发布
+
+新增/修改的上传 API、上传状态机、增量哈希、OSS 直传、分片并发/重试/取消、会话检查点、播放授权刷新、HLS 生命周期和页面职责均补充中文 TSDoc/JSDoc/Vue 注释；生成客户端未手工修改。人工可读性检查未发现注释与实现不一致或注释泄露敏感信息。
+
+2026-08-08 状态语义复核修复了共用组件误解释业务状态的问题：通用 `PROCESSING` 现在按上传用途显示，只有 `LESSON_VIDEO` 报告 HLS 转码，`COURSE_COVER` 报告封面校验和处理；上传会话或资产用途与控件不一致时会在 OSS 传输前或课程绑定前失败。封面无展示投影时不再显示“已绑定视频”，替换/移除反馈也按用途区分。共享播放器不再写死学生报名 403，学生课程页和教师 owner 预览页分别解释自己的权限语义，保持公共包不包含角色业务判断。
+
+同日封面展示复核还修复了两个相互独立的缺陷。教师课程卡片不再让可空 `<img>` 充当 Grid 第一列：无封面、短期 URL 过期或 OSS 加载失败时均保留固定比例占位，课程信息与横向操作区不会错列；学生列表和详情采用相同的单图片失败降级，并覆盖桌面、平板和窄屏布局。课程读取端不再把新媒体绑定的空历史 `cover_url` 直接返回：当版本存在 `coverMediaId` 时，course-service 在确认教师 owner 或已发布课程可见后，以一次性服务 JWT 向 media-service 申请 `COURSE_COVER`/`COURSE_COVER_DISPLAY`/`ORIGINAL`/`INLINE` 短期原图授权，只把 URL 放入本次 `coverUrl` 响应投影，不回写数据库、事件或日志；没有 `coverMediaId` 时才兼容历史 URL。浏览器仍不能调用内部媒体接口，也不能用 `mediaId` 自行拼接 OSS 地址。
+
+目录编辑页同步修正了保存/发布状态的误导：保存成功后不再保留一个灰色“保存目录”按钮，而显示“当前目录已保存”；目录再次变化时恢复保存按钮。发布按钮的前端条件与 course-service 对齐，只要求至少一个章节且每章至少一个课时，不再强迫每个 `VIDEO` 目录项先绑定视频；未满足条件时按钮旁直接显示原因。没有视频的 VIDEO 课时可以发布为暂不可播放的目录项，后续上传 READY 视频并发布新版本，不会把未 READY 媒体写入课程资源。
+
+发布操作状态随后进一步收口：`publicationStatus=PUBLISHED` 只表示旧版本仍在线，不能据此隐藏新草稿的发布入口。当教师替换或移除视频并保存目录后，课程保持线上旧版本，同时返回 `hasUnpublishedChanges=true`；目录页和课程列表此时并列显示主操作“发布新版本”与危险操作“下架课程”。线上版本没有草稿差异时才只显示下架；已下架且没有新草稿时显示并允许“重新发布”。两个页面共用教师应用内的纯状态映射，不改变后端版本不可变性或发布契约。
+
+该修复执行全 workspace `typecheck`、9 个前端测试文件 57 项和学生/教师/管理三端生产构建，结果均通过。页面级复核时教师 Vite 服务已成功启动，但浏览器控制运行时初始化失败，未打开页面，因此本轮不宣称真实浏览器按钮点击验收；可按上方人工步骤在已有教师登录态下确认两个操作同时出现。
+
+本轮新增 Course/Media 集成测试覆盖教师与公开课程封面投影、历史 URL 回退、精确封面用途/访问类型/原图变体校验和错误令牌拒绝。`mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service,media-service -am verify` 实际通过：Course 14 项、Media 12 项及 shared-kernel 1 项通过，真实环境用例 1 项按默认开关跳过。全 workspace `typecheck`（含 OpenAPI 重新生成）、8 个前端测试文件 51 项和三端生产构建均通过。浏览器视觉复跑因本机浏览器控制运行时初始化失败而未执行，不能将结构审查描述为真实页面视觉验收；需在重启更新后的 media/course 服务和 teacher Web 后按下述步骤人工确认。
+
+剩余风险：课程列表当前按有封面的课程逐项申请短期原图授权，现有内部契约没有批量授权能力，课程数量较大时会增加 course-service 到 media-service 的只读调用；后续若有性能证据，应先设计批量契约而不是让前端拼接地址。完整生产内容安全仍未接入；HLS 仍为单清晰度，只保留第一条音轨且不支持多音轨选择、字幕或 DRM；真实浏览器全链路已于 2026-08-09 通过，后续 OSS CORS、FFmpeg、浏览器或部署环境变化时仍需按同一安全流程复跑；大文件哈希虽有固定内存上限，但当前在主线程增量执行，超大视频的耗时仍受终端 CPU 影响。
+
+### 2026-08-08 HLS 音频修复与真实验收
+
+FFmpeg Worker 删除了主动禁音的 `-an`，继续以 `-map 0:v:0` 必选第一条视频流，并以 `-map 0:a:0?` 可选第一条音频流；存在音频时固定编码为 AAC、128 kbit/s、48 kHz、双声道，并显式生成 MPEG-TS HLS。视频编码、单清晰度、超时、有限重试、失败诊断和临时目录清理边界未改变，OpenAPI、数据库迁移和媒体授权契约均未修改；前端播放器仍不默认静音。
+
+新增命令级测试断言参数中不存在 `-an`，且包含可选音轨映射、AAC 参数与 MPEG-TS HLS。`MediaRealEnvironmentAcceptanceTest` 使用 lavfi 同时合成 64×64 画面和 1 kHz 正弦波，先由 ffprobe 断言输入确有 video/audio，再经真实 OSS Multipart、RabbitMQ Worker 和 FFmpeg 转码；从短期授权清单下载首个 TS 切片后，ffprobe 断言产物同时含 video 与 `aac` audio。输入和输出还分别通过 FFmpeg `volumedetect` 解码，要求平均音量高于 `-60 dB`，避免只存在音轨结构但样本全静音的假阳性。用例另生成无音轨 MP4，确认 optional map 仍能产出含视频的 m3u8/TS。
+
+实际执行 Java 全量 `clean verify`，8 个 Reactor 模块全部通过；media-service 14 项中 13 项通过、真实环境用例按默认开关跳过 1 项。随后通过 `Invoke-WithLocalEnvironment.ps1` 显式运行真实用例，1 项通过。用例逐键删除本轮 OSS 原件、HLS 清单/切片和临时授权清单并以 HEAD 确认不存在；按本轮 uploadId/mediaId/eventId 清理并断言 MySQL 记录为零；RabbitMQ processing/references/lifecycle/DLQ 四个持久队列消息数为零；合成输入、ffprobe 报告、下载切片和无音轨转码目录均已删除。开发 Schema 中另一个测试 owner 的既有 5 条上传会话和 4 个媒体资产不属于本轮，未读取内容、未修改、未计作本轮残留。
+
+运行态复核确认 Worker 修复不会追溯修改既有 `READY` HLS：如果 media-service 在代码更新前已经启动，即使随后从最新 Git 工作区重新选择文件，仍会由内存中的旧 FFmpeg 参数处理。验收音频修复必须先完整重启 media-service，再创建全新上传会话；保存目录或重新发布课程只切换课程版本引用，不触发媒体重新转码。
+
+T08B 分支为 `codex/t08b-course-media-web`，基线为已合并 PR #14 的 `2f40b762d41f780509ab388928aff84614d6b62c`；关键实现提交为 `4b6e524cae2fbeb2dac886147b7f9c342a72c393`。Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 已创建，未自行合并。
+
+### 2026-08-09 页面事实源合入与学习页收口
+
+分支从与远端一致的 `a128dd07dca004df96ce25504673e98a8bec4bf2` 合入最新 `origin/main` `a642d7ea98396ef1da6da98047556f1773c2e0ea`，merge commit 为 `8798eee0bbdf3167d6817857da8f4c71bb7ba0e4`；冲突同时保留 T08B 的真实实现/验收事实与总控新增的页面事实源、T12A～C、T15A～B、T17A～C 规划。页面实现提交为 `9588409a79089407499a01edae6eee5917021744`。
+
+公开课程详情与学习空间现已按 `docs/frontend/page-specs.md` 分离。统一登录白名单识别 `/learn/...` 并保留安全回跳，路由守卫直接校验 `learning:access`；课程域资源行 ID 是唯一播放授权输入，页面仍不接触 media-service 内部接口、mediaId 凭证或 OSS 地址。学习页刷新会重取当前发布课程并按 lessonId 恢复；未知课时/非视频资源显示 404 语义，目录请求在切换或卸载时中止，播放器继续清理 HLS、视频源、刷新定时器与授权请求。
+
+页面规格收口当轮没有修改 OpenAPI、Java 生产代码、数据库迁移、事件或媒体授权契约，也没有创建报名、进度或业务伪数据；当轮只使用 OpenAPI Mock 并完成临时进程清理。其后已执行新的真实浏览器播放验收，结果与清理见下一节。
+
+### 2026-08-09 最终真实浏览器 E2E
+
+本轮在既有 `codex/t08b-course-media-web` 和 Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15) 上执行，开始时工作区干净，`HEAD` 与远端分支均为 `5d253c4d7707ba99c5144804f036e487ce95770b`。所有需要凭据的启动、MySQL、OSS 和 RabbitMQ 操作均经 `scripts/Invoke-WithLocalEnvironment.ps1` 注入；没有读取、复制或输出密码、JWT 密钥、OSS AccessKey、Token 或签名 URL。实际启动 Gateway、IAM、Course、Media 以及教师/学生 Vite，使用本机既有的真实 RabbitMQ、OSS 和 FFmpeg 依赖；浏览器只访问 Gateway 和后端签发的短期 OSS 地址。
+
+教师使用既有固定测试账号编辑幂等 seed 课程 `00000000-0000-4000-8000-000000000201`：上传本轮唯一前缀的 1280×720 PNG 封面，页面显示真实 100% 进度并到达 `READY`，保存后封面投影实际加载尺寸为 1280×720；创建两个 `VIDEO` 课时，各上传同一个 12 秒、640×360、H.264 + AAC 1 kHz 正弦波 MP4，两个独立媒体资产均经 OSS 和 FFmpeg 到达 `READY`。目录保存后发布按钮恢复可用，v2 成功发布；教师 owner 预览取得课程域授权，播放器 `readyState=4`、有媒体源且 `muted=false`。
+
+学生从 `/courses` 看到真实封面并进入课程详情；详情 DOM 的 `<video>` 数为 0，只展示课程信息、目录和“开始学习”。入口跳转到 `/learn/:courseId/:lessonId`，页面包含当前课时、两课目录、上一课、下一课和退出学习。HLS 首课实际解码为 640×360，`readyState=4`、`volume=1`、`muted=false`，播放时间从 0 推进到约 10 秒；刷新同一深链接后 URL 不变、播放器重新取得源并恢复到 `readyState=4`。切换第二课后只存在一个新播放器且时间归零，退出学习后页面 `<video>` 数为 0。将本轮 Media 访问授权 TTL 临时缩短为 20 秒后，播放器在 18 秒观察窗内保持可用，授权审计从 20 增至 22，证明到期前重新签发了 HLS 清单/切片授权。
+
+产物证据没有依赖“播放器未静音”推断声音。定向审计从两个本轮 `LESSON_VIDEO` 的精确 OSS Object Key 各下载首个 MPEG-TS 切片到临时目录；`ffprobe` 对两份切片均断言存在 H.264 视频流和 AAC 音频流，FFmpeg `volumedetect` 均确认平均音量高于 `-60 dB`、不是静音。随后把课程发布为 v3、访问方式改成报名制并关闭两个课时试看；没有创建报名记录。学生访问当前 v3 课时得到明确提示“当前课时需要报名；报名能力将在 T11 接通，现阶段只能播放试看内容”，连续观察后 `LESSON_VIDEO` 授权审计保持 8，不产生自动重试循环。旧 v2 lessonId 在新版本发布后返回 404，当前 v3 lessonId 才用于 403 验证，二者语义已分别确认。
+
+浏览器控制台共采集 8 条记录，无 warning/error，也没有签名 URL、Token 或密钥标记。Gateway、IAM、Course、Media 和当前两端 Vite 日志没有签名 URL、Bearer Token、密码或 AccessKeySecret；唯一启动错误是发现旧教师 Vite 占用 5174，停止该旧进程并启动当前分支后不再出现。静态持久化边界继续由实现与自动化检查保证：上传检查点只保存稳定 ID/摘要，HLS 授权只保存在组件运行时内存。
+
+最终回归实际执行并通过 `install --frozen-lockfile`、`generate:api`、`check:api`、全 workspace `typecheck`、前端测试和三端生产构建；Vitest 在沙箱内因 `esbuild spawn EPERM` 未进入用例，使用同一命令在批准的沙箱外复跑后 10 个文件 66 项全部通过。Java 完整 `clean verify` 的 8 个 Reactor 模块全部成功，Media 14 项中 13 项通过、真实环境用例按默认开关跳过 1 项；本轮另外显式执行的 OSS 音轨审计 1 项和精确清理 1 项均通过，临时测试源码在提交前删除。构建仅保留既有 HLS 动态 chunk 大于 500 kB 的体积提示，没有测试或编译失败。
+
+验收未新建数据库、迁移、表或虚假报名。它复用三个用途明确的 dev Schema、两个既有固定测试账号和一个既有幂等 seed 课程；结束时按本轮 3 个 mediaId/uploadId 和精确 Object Key 删除 1 个封面、2 个视频、HLS 清单/切片及临时授权对象，四个媒体 RabbitMQ 持久队列消息数均为 0，未执行全队列 purge。`edu_platform_media_dev` 恢复为原有 6 个资产且本轮文件名前缀计数为 0；seed 课程清除本轮 v2/v3 后恢复为验收前的 v1/PUBLIC/1 章/1 课时/0 资源，另一个既有课程保持 1 条；本轮 16 条刷新会话和 4 条登录审计被删除，两个测试账号仍为 ACTIVE。最后删除包含合成封面、带声视频、下载切片和日志的本轮 20 个临时文件，并停止六个应用端口。
+
+### 2026-08-09 三端固定导航收口
+
+开始时工作区干净但停在 `main@1cf7c1146c9d686fc29cc4e90b34557d2a51736b`；安全切回既有 `codex/t08b-course-media-web` 后确认本地与远端均为 `384ad3fed84c2a23bf92a6a28912f4ec55e87448`。完整读取旧基线与 PR #17 新版 `AGENTS.md`、`docs/frontend/page-specs.md` 后，以普通 merge 合入 `origin/main@1cf7c11`，没有 rebase 或改写历史。冲突只在 backlog/verification，merge commit `be627eb` 同时保留三端导航事实源、后续 T10/T12/T15/T17 设计和 T08B 已完成的真实浏览器、音轨、403 与精确清理证据。
+
+共享 `AppShell` 现在固定显示 `Edu Lion`，接收无角色含义的主导航/账号工具模型，并按传入的顶部或侧栏布局渲染；页面标题、课程名和学习上下文仍位于 `RouterView`。禁用主导航使用无 href、无 tabindex 的 `<span aria-disabled="true">`，当前未交付路由只允许改变 `aria-current`。账号工具区固定为通知、工作台、账号，匿名登录和登录后账号菜单只改变槽位内部状态；工作台数量不再向主导航插入入口。登录后账号菜单采用锚定在账号按钮下方的独立浮层，不进入横向导航的滚动上下文；个人中心和布局设置在后续任务接通前明确显示“建设中”且不可操作，退出登录是唯一动作。各应用自行提供固定模型，公共壳不读取 `STUDENT`、`TEACHER` 或 `ADMIN`。
+
+学生端顺序固定为首页、课程中心、我的学习、练习中心、AI 答疑，仅课程中心可跳转；课程列表/详情只高亮课程中心，`/learn/...` 只高亮不可跳转的我的学习，不再出现品牌和导航重复的“学生学习中心”。教师端固定为课程中心、工作台、课程管理、题库、测评管理、学情分析、媒体中心；课程中心和有 `teaching:access` 时的课程管理可用，其余明确建设中，缺少教学能力时课程管理保留原位但无 href。教师应用默认入口和单工作台登录落点改为已交付的课程管理，避免进入未交付工作台。管理端使用固定七项左侧栏，T17C 前均为无 href 的建设中状态，顶部只保留品牌、管理端标识和固定账号工具。
+
+自动化实际通过冻结安装、OpenAPI 生成与一致性、全 workspace 类型检查、13 个 Vitest 文件 91 项和三端生产构建；沙箱内定向 Vitest 首次被既有 `esbuild spawn EPERM` 阻止，同命令在批准的沙箱外运行后通过。构建只保留既有 hls.js 按需 chunk 大于 500 kB 提示。真实浏览器使用当前三端 Vite 验证：1440×900 同源视口与 390×844 同源视口均保持标签顺序且 `scrollWidth == clientWidth`；禁用项无 href/tabindex，可聚焦顺序从启用主导航进入账号工具再进入页面表单。账号菜单缺陷修复后，桌面弹层宽 248px 并完整位于视口内；390px 验收视口的页面宽度为 375/375，账号工具计算溢出为 `visible/visible`，两个建设中按钮禁用、仅退出登录可操作，原有 46px 高内部滚动区不再裁切菜单。临时视口 HTML 已删除，控制台只有 Vite debug，无 warning/error。
+
+快速真实课程回归通过 Gateway、IAM、Course、Media 和现有 dev 数据读取两门已发布课程；没有创建或修改课程、媒体、报名、进度或 OSS/RabbitMQ 数据。课程详情品牌仍为 `Edu Lion`、只高亮课程中心且 `<video>` 数为 0，既有公开课程的“开始学习”生成真实 `/learn/...` 深链接；匿名点击后安全回跳完整保留并进入统一登录。学生真实登录后进入 `/learn/5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057/18d2d6cc-f374-46b1-ad81-743f169d0ce9`，页面只高亮“我的学习”、没有重复“学生学习中心”，当前课时、目录和退出学习均存在，HLS 元素为 1、`readyState=4`、`muted=false`、`volume=1`。刷新同一深链接后 URL 与播放器恢复，退出学习返回课程详情且 `<video>` 数降为 0；控制台只有 Vite debug，无 warning/error。本轮是现有媒体数据的只读快速回归，没有重新创建或修改验收数据。

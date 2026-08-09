@@ -1,9 +1,10 @@
-/** student-web 路由表：公共课程无需身份，学习首页仍要求学生角色与学习权限。 */
+/** student-web 路由表：公共课程无需身份，课程学习页按 learning:access 能力保护，旧首页仍沿用学生角色门禁。 */
 import { AccessDeniedPage, WorkspaceChooser } from "@edu/auth";
 import type { RouteRecordRaw } from "vue-router";
 
 import { authStore } from "./auth";
 import CourseDetailPage from "./views/CourseDetailPage.vue";
+import CourseLearningPage from "./views/CourseLearningPage.vue";
 import CourseListPage from "./views/CourseListPage.vue";
 import LoginPage from "./views/LoginPage.vue";
 import PlaceholderPage from "./views/PlaceholderPage.vue";
@@ -17,6 +18,8 @@ export const studentRoutes: RouteRecordRaw[] = [
     meta: { restoreSession: true } },
   { path: "/courses/:courseId", name: "course-detail", component: CourseDetailPage,
     meta: { restoreSession: true } },
+  { path: "/learn/:courseId/:lessonId", name: "course-learning", component: CourseLearningPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/login", name: "login", component: LoginPage },
   { path: "/workspaces", name: "workspaces", component: WorkspaceChooser,
     meta: { requiresAuth: true }, props: { store: authStore } },

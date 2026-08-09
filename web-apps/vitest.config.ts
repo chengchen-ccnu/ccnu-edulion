@@ -7,7 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@edu/api-client": fileURLToPath(new URL("./packages/api-client/src/index.ts", import.meta.url)),
-      "@edu/auth": fileURLToPath(new URL("./packages/auth/src/index.ts", import.meta.url))
+      "@edu/auth": fileURLToPath(new URL("./packages/auth/src/index.ts", import.meta.url)),
+      "@edu/ui": fileURLToPath(new URL("./packages/ui/src/index.ts", import.meta.url))
     }
   },
   test: {
