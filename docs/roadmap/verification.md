@@ -197,3 +197,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Java：完整 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 的 8 个 Reactor 模块全部成功；14 份报告共 48 项，47 项通过、真实环境用例默认跳过 1 项。`FfmpegCommandRunnerTest` 继续确认不存在 `-an`，包含 `0:a:0?`、AAC 128 kbit/s、48 kHz、双声道和 MPEG-TS HLS；本轮没有修改 Java 生产代码。
 - 浏览器：OpenAPI Mock 下匿名学习深链接正确回到统一登录并保留完整目标；课程详情 DOM 的播放器数量为 0，390×844 窄屏 `scrollWidth` 与 `clientWidth` 同为 375，控制台无错误。Mock 详情没有视频资源且 Mock 登录无法建立有效会话，因此没有宣称真实学习页 HLS 或上传 E2E；真实带声音 OSS/RabbitMQ/FFmpeg 证据沿用此前已记录并精确清理的验收。
 - 数据与清理：本轮没有连接或修改 MySQL、OSS、RabbitMQ，没有创建数据库、表、迁移、Seed、报名、进度或业务伪数据。临时 OpenAPI Mock、Vite 进程与浏览器页签已关闭；Maven H2 Fixture 随进程释放，构建产物均为忽略项。
+- PR：使用规定的 `git push origin HEAD` 更新现有 Ready [PR #15](https://github.com/chengchen-ccnu/ccnu-edulion/pull/15)，未创建重复 PR、未自行合并；push 与 pull_request 两组 CI 的 Java、Python、Frontend、OpenAPI 共 8 项均通过。
