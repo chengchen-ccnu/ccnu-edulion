@@ -4,6 +4,7 @@ import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.service.KnowledgePointService;
 import com.eduplatform.learning.service.QuestionImportService;
 import com.eduplatform.learning.service.QuestionService;
+import com.eduplatform.learning.service.LegacyQuestionImportService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -30,9 +31,11 @@ import com.eduplatform.learning.persistence.QuestionRepository;
 @ConditionalOnBean(QuestionRepository.class)
 public class TeacherQuestionController {
     private final QuestionService questions; private final KnowledgePointService knowledge; private final QuestionImportService imports;
+    private final LegacyQuestionImportService legacyImports;
 
-    public TeacherQuestionController(QuestionService questions, KnowledgePointService knowledge, QuestionImportService imports) {
-        this.questions = questions; this.knowledge = knowledge; this.imports = imports;
+    public TeacherQuestionController(QuestionService questions, KnowledgePointService knowledge, QuestionImportService imports,
+            LegacyQuestionImportService legacyImports) {
+        this.questions = questions; this.knowledge = knowledge; this.imports = imports; this.legacyImports = legacyImports;
     }
 
     @GetMapping("/api/v1/teacher/knowledge-points")
@@ -130,6 +133,36 @@ public class TeacherQuestionController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable String importTaskId) {
         return imports.get(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId);
+    }
+
+    @PostMapping("/api/v1/teacher/legacy-question-imports")
+    /** 创建默认由迁移脚本驱动的受控 JSON 任务；接口自身不遍历目录或自动全量导入。 */
+    public ResponseEntity<QuestionDtos.ImportTaskResponse> createLegacyImport(
+            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @Valid @RequestBody QuestionDtos.CreateLegacyImportRequest request) {
+        var result = legacyImports.create(LearningIdentity.teacher(userId, roles, permissions).userId(), request);
+        return result.created() ? ResponseEntity.status(201).body(result.response()) : ResponseEntity.ok(result.response());
+    }
+
+    @PostMapping("/api/v1/teacher/legacy-question-imports/{importTaskId}/batches")
+    /** 同步处理最多 20 项并只返回来源键、计数和问题码；不回显原题内容。 */
+    public QuestionDtos.LegacyImportBatchResult submitLegacyBatch(
+            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String importTaskId, @Valid @RequestBody QuestionDtos.LegacyImportBatchRequest request,
+            HttpServletRequest servlet) {
+        return legacyImports.submit(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId,
+                request, trace(servlet));
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources")
+    /** 精确清理该任务创建且仍为 DRAFT 的题目，并通过 Outbox 解除媒体引用。 */
+    public QuestionDtos.LegacyImportCleanupResult cleanupLegacyImport(
+            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String importTaskId, HttpServletRequest servlet) {
+        return legacyImports.cleanup(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId, trace(servlet));
     }
 
     private static String trace(HttpServletRequest request) { return (String) request.getAttribute(com.eduplatform.learning.config.TraceFilter.ATTRIBUTE); }

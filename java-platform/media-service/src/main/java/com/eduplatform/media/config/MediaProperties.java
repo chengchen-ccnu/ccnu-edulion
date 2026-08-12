@@ -1,6 +1,7 @@
 package com.eduplatform.media.config;
 
 import java.time.Duration;
+import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -15,7 +16,8 @@ public record MediaProperties(
         Maintenance maintenance,
         Worker worker,
         Oss oss,
-        ServiceAuthorization serviceAuthorization) {
+        ServiceAuthorization serviceAuthorization,
+        ExternalImageImport externalImageImport) {
 
     public record Messaging(boolean enabled, Duration outboxPollDelay, Duration confirmTimeout,
             int maxPublishAttempts) {}
@@ -34,4 +36,8 @@ public record MediaProperties(
     /** 可信领域服务令牌的验证参数；secret 不得通过 HTTP、日志或数据库传播。 */
     public record ServiceAuthorization(String issuer, String audience, Duration maxTokenTtl,
             Duration clockSkew, String secret) {}
+
+    /** 历史图片转存的网络边界；主机白名单为空或 enabled=false 时端点拒绝所有转存。 */
+    public record ExternalImageImport(boolean enabled, List<String> allowedHosts, long maxBytes,
+            Duration requestTimeout, int maxRedirects) {}
 }

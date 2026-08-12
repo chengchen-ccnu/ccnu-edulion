@@ -66,6 +66,7 @@ class MediaHttpIntegrationTest {
     @Autowired MediaProcessingCoordinator coordinator;
     @Autowired MediaMessageRecoverer recoverer;
     @Autowired FakeFfmpegCommandRunner ffmpeg;
+    @Autowired FakeExternalImageDownloader externalImages;
     private final HttpClient client = HttpClient.newHttpClient();
 
     @BeforeEach
@@ -113,6 +114,31 @@ class MediaHttpIntegrationTest {
                 + "/complete", "{\"sha256\":\"" + sha + "\",\"parts\":[]}", "TEACHER").body());
         assertThat(send("POST", "/api/v1/media/" + pending.get("mediaId").asString() + "/binding-validations",
                 "{\"purpose\":\"COURSE_COVER\"}", "TEACHER").statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    /** Given 虚构 HTTPS 图片，When 转存并重放，Then 只建一个 READY 资产且数据库/事件不保存 URL。 */
+    void externalQuestionImageTransferIsIdempotentAndPersistsNoSourceUrl() throws Exception {
+        String request = """
+                {"clientRequestId":"00000000-0000-4000-8000-000000007301",
+                 "sourceUrl":"https://images.fixture.test/question.png"}
+                """;
+        HttpResponse<String> first = send("POST", "/api/v1/media/external-image-transfers", request, "TEACHER");
+        HttpResponse<String> replay = send("POST", "/api/v1/media/external-image-transfers", request, "TEACHER");
+        assertThat(first.statusCode()).isEqualTo(201); assertThat(replay.statusCode()).isEqualTo(200);
+        JsonNode asset = mapper.readTree(first.body());
+        assertThat(asset.get("purpose").asString()).isEqualTo("QUESTION_IMAGE");
+        assertThat(asset.get("status").asString()).isEqualTo("READY");
+        assertThat(externalImages.calls()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_asset", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM upload_session", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_event WHERE payload_json LIKE '%images.fixture.test%'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_audit_record WHERE details LIKE '%images.fixture.test%'", Integer.class)).isZero();
+        String malformed = """
+                {"clientRequestId":"00000000-0000-4000-8000-000000007302","sourceUrl":"https://["}
+                """;
+        assertThat(send("POST", "/api/v1/media/external-image-transfers", malformed, "TEACHER").statusCode()).isEqualTo(422);
+        assertThat(externalImages.calls()).isEqualTo(1);
     }
 
     @Test

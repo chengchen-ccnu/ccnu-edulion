@@ -29,6 +29,10 @@ public final class MediaDtos {
             @NotBlank @Size(max = 127) String mimeType,
             @NotBlank @Pattern(regexp = "^[a-fA-F0-9]{64}$") String sha256) {}
 
+    /** 外部历史图片只在本次调用内使用 HTTPS URL；服务端不得持久化或记录该字段。 */
+    public record ExternalImageTransferRequest(@NotNull UUID clientRequestId,
+            @NotBlank @Size(max = 2000) @Pattern(regexp = "^https://.*$") String sourceUrl) {}
+
     public record AuthorizePartRequest(
             @Positive @Max(10000) int partNumber,
             @Positive long contentLength,

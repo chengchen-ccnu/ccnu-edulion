@@ -20,6 +20,12 @@ platform:
       max-token-ttl: ${MEDIA_SERVICE_AUTH_MAX_TOKEN_TTL:1m}
       clock-skew: ${MEDIA_SERVICE_AUTH_CLOCK_SKEW:5s}
       secret: ${COURSE_MEDIA_AUTH_SECRET:}
+    external-image-import:
+      enabled: false
+      allowed-hosts: []
+      max-bytes: 10485760
+      request-timeout: 10s
+      max-redirects: 2
 
 ---
 spring:

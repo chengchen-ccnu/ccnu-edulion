@@ -46,7 +46,8 @@ public class QuestionImportService {
         Instant now = Instant.now(); String id = UUID.randomUUID().toString();
         ImportTask task = new ImportTask(id, ownerId, request.clientRequestId().toString(), fingerprint,
                 request.sourceMediaId().toString(), request.sourceFormat(), QuestionModels.ImportStatus.PENDING,
-                0, 0, 0, 0, 0, null, null, now.plus(properties.importSettings().retention()), null, now, now);
+                0, 0, 0, 0, 0, 0, 0, null, null, false, null, null, null,
+                now.plus(properties.importSettings().retention()), null, null, now, now);
         repository.insertImportTask(task);
         repository.insertOutbox(events.importRequested(id, task.sourceMediaId(), task.sourceFormat().name(), traceId, now));
         repository.insertOutbox(events.mediaReference("MediaReferenceBound", task.sourceMediaId(),
@@ -86,8 +87,9 @@ public class QuestionImportService {
     private QuestionDtos.ImportTaskResponse response(ImportTask task, boolean includeErrors) {
         List<QuestionDtos.ImportRowError> errors = includeErrors ? repository.importErrors(task.id()).stream()
                 .map(value -> new QuestionDtos.ImportRowError(value.rowNumber(), value.code(), value.message())).toList() : List.of();
-        return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.status(), task.progress(),
-                task.totalRows(), task.processedRows(), task.successCount(), task.failureCount(), errors, task.failureCode(),
+        return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(),
+                task.dryRun(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(),
+                task.reviewCount(), task.skippedCount(), task.failureCount(), errors, task.failureCode(),
                 task.failureMessage(), task.retainUntil(), task.sourceReleasedAt(), task.createdAt(), task.updatedAt());
     }
 

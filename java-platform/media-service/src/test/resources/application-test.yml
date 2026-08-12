@@ -41,6 +41,12 @@ platform:
       timeout: 30s
       max-concurrent-jobs: 1
       hls-segment-duration: 2s
+    external-image-import:
+      enabled: true
+      allowed-hosts: [images.fixture.test]
+      max-bytes: 1048576
+      request-timeout: 1s
+      max-redirects: 1
     oss:
       enabled: false
       endpoint: ""

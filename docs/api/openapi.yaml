@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.8.0
-  description: T09 Gateway contract. Adds teacher-owned immutable question versions, administrator-maintained junior-mathematics knowledge points, stable question media references and asynchronous CSV/XLSX imports. No student question, attempt or grading API is exposed in T09.
+  version: 0.9.0
+  description: T09A Gateway contract. Retains T09 CSV/XLSX imports and adds bounded, idempotent legacy per-question JSON migration, composite-question projections, review issues and media-service-owned external image transfer. No T10 page or T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -923,6 +923,138 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/teacher/legacy-question-imports:
+    post:
+      tags: [Question Imports]
+      operationId: createLegacyQuestionImport
+      summary: Create an explicitly bounded legacy JSON migration task
+      description: |
+        The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
+        to true in migration tooling; the API never scans a server path. Creating a task does not import
+        any item and does not authorize full migration of the historical corpus.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLegacyQuestionImportRequest'
+      responses:
+        '201':
+          description: Empty legacy migration task created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportTask'
+        '200':
+          description: Identical task replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionImportTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+  /api/v1/teacher/legacy-question-imports/{importTaskId}/batches:
+    post:
+      tags: [Question Imports]
+      operationId: submitLegacyQuestionImportBatch
+      summary: Submit one idempotent legacy JSON batch of at most 20 items
+      description: |
+        Each item is parsed independently. The response contains only stable source keys, outcomes and
+        issue codes; it never echoes question text, answers or raw JSON. Dry-run performs no media transfer
+        and creates no question. A duplicate batchId returns its original aggregate result.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LegacyQuestionImportBatchRequest'
+      responses:
+        '200':
+          description: Bounded batch processed or safely replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyQuestionImportBatchResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/QuestionDependencyUnavailable'
+  /api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources:
+    delete:
+      tags: [Question Imports]
+      operationId: cleanupLegacyQuestionImport
+      summary: Precisely clean resources created by one non-dry-run acceptance task
+      description: Only DRAFT questions still owned by the caller and linked to this exact task are removed; media references are released through Outbox. The historical source directory and unrelated questions are never touched.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      responses:
+        '200':
+          description: Exact cleanup counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyQuestionImportCleanupResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/media/external-image-transfers:
+    post:
+      tags: [Media]
+      operationId: transferExternalQuestionImage
+      summary: Idempotently transfer one allow-listed HTTPS question image into media-service
+      description: |
+        Teacher-only T09A compatibility endpoint. media-service validates the HTTPS host before and after
+        redirects, blocks private/link-local destinations, enforces image MIME and size limits, stores the
+        object through its own storage port and returns only a stable mediaId. The source URL is neither
+        persisted nor logged. Dry-run callers must not invoke this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalImageTransferRequest'
+      responses:
+        '201':
+          description: Image transferred and READY asset created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '200':
+          description: Identical transfer replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/MediaConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/MediaDependencyUnavailable'
   /api/v1/media/uploads:
     post:
       tags: [Media]
@@ -2007,6 +2139,10 @@ components:
       enum: [MATHEMATICS]
     QuestionType:
       type: string
+      enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE]
+    QuestionInputType:
+      type: string
+      description: COMPOSITE is created only by the bounded T09A migration contract; T10 editing is not implemented.
       enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER]
     QuestionDifficulty:
       type: string
@@ -2139,7 +2275,7 @@ components:
       required: [type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePointIds, media]
       properties:
         type:
-          $ref: '#/components/schemas/QuestionType'
+          $ref: '#/components/schemas/QuestionInputType'
         difficulty:
           $ref: '#/components/schemas/QuestionDifficulty'
         stage:
@@ -2234,10 +2370,34 @@ components:
         sequence:
           type: integer
           minimum: 1
+    QuestionLegacySource:
+      type: object
+      additionalProperties: false
+      required: [sourceSystem, externalId, originalDifficulty, pathEdition, jsonEdition, pathGrade, jsonGrade, metadataConflict]
+      properties:
+        sourceSystem: {type: string}
+        externalId: {type: string}
+        originalDifficulty: {type: [string, 'null']}
+        pathEdition: {type: [string, 'null']}
+        jsonEdition: {type: [string, 'null']}
+        pathGrade: {type: [string, 'null']}
+        jsonGrade: {type: [string, 'null']}
+        metadataConflict:
+          type: boolean
+          description: Both values are retained; true means no value won automatically.
+    QuestionChild:
+      type: object
+      additionalProperties: false
+      required: [questionId, sequence, type, stem]
+      properties:
+        questionId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1, maximum: 100}
+        type: {$ref: '#/components/schemas/QuestionType'}
+        stem: {type: string}
     QuestionVersion:
       type: object
       additionalProperties: false
-      required: [id, versionNumber, type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePoints, media, createdAt]
+      required: [id, versionNumber, type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePoints, media, legacySource, children, createdAt]
       properties:
         id:
           type: string
@@ -2277,6 +2437,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/QuestionMedia'
+        legacySource:
+          oneOf:
+            - $ref: '#/components/schemas/QuestionLegacySource'
+            - type: 'null'
+        children:
+          type: array
+          maxItems: 100
+          description: Immutable ordered subquestion projection; empty for non-composite questions.
+          items:
+            $ref: '#/components/schemas/QuestionChild'
         createdAt:
           type: string
           format: date-time
@@ -2366,7 +2536,10 @@ components:
       enum: [CSV, XLSX]
     QuestionImportStatus:
       type: string
-      enum: [PENDING, PROCESSING, COMPLETED, PARTIAL_SUCCESS, FAILED]
+      enum: [PENDING, PROCESSING, COMPLETED, PARTIAL_SUCCESS, FAILED, CLEANED]
+    QuestionImportItemOutcome:
+      type: string
+      enum: [IMPORTED, VALID, NEEDS_REVIEW, SKIPPED, FAILED]
     CreateQuestionImportRequest:
       type: object
       additionalProperties: false
@@ -2398,16 +2571,25 @@ components:
     QuestionImportTask:
       type: object
       additionalProperties: false
-      required: [id, sourceMediaId, sourceFormat, status, progress, totalRows, processedRows, successCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
+      required: [id, sourceMediaId, sourceFormat, sourceSystem, dryRun, status, progress, totalRows, processedRows, successCount, reviewCount, skippedCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
         sourceMediaId:
-          type: string
+          type: [string, 'null']
           format: uuid
         sourceFormat:
-          $ref: '#/components/schemas/QuestionImportSourceFormat'
+          oneOf:
+            - $ref: '#/components/schemas/QuestionImportSourceFormat'
+            - type: string
+              const: LEGACY_JSON
+        sourceSystem:
+          type: [string, 'null']
+          maxLength: 80
+          description: Stable migration namespace; null for CSV/XLSX.
+        dryRun:
+          type: boolean
         status:
           $ref: '#/components/schemas/QuestionImportStatus'
         progress:
@@ -2421,6 +2603,12 @@ components:
           type: integer
           minimum: 0
         successCount:
+          type: integer
+          minimum: 0
+        reviewCount:
+          type: integer
+          minimum: 0
+        skippedCount:
           type: integer
           minimum: 0
         failureCount:
@@ -2447,6 +2635,116 @@ components:
         updatedAt:
           type: string
           format: date-time
+    CreateLegacyQuestionImportRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, sourceSystem, sourceRootFingerprint, dryRun, maxItems]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        sourceSystem:
+          type: string
+          pattern: '^[A-Z0-9][A-Z0-9_-]{2,79}$'
+          description: Stable namespace such as LEGACY_RAWSTON_V3; it is not a filesystem path.
+        sourceRootFingerprint:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the normalized read-only root label; the directory path is not stored.
+        dryRun:
+          type: boolean
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Hard task ceiling. Full-corpus migration is deliberately impossible through this contract.
+    LegacyQuestionImportItem:
+      type: object
+      additionalProperties: false
+      required: [externalId, relativePath, pathEdition, pathGrade, contentSha256, json]
+      properties:
+        externalId:
+          type: string
+          minLength: 1
+          maxLength: 160
+        relativePath:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Normalized relative path only; absolute paths and `..` are rejected and only its hash is persisted.
+        pathEdition: {type: string, minLength: 1, maxLength: 100}
+        pathGrade: {type: string, minLength: 1, maxLength: 100}
+        contentSha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the original UTF-8 file bytes; treated as an opaque source idempotency fingerprint.
+        json:
+          type: object
+          description: One legacy per-question object. It is bounded to 256 KiB by the server and never echoed or logged.
+          additionalProperties: true
+    LegacyQuestionImportBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchId, finalBatch, items]
+      properties:
+        batchId: {type: string, format: uuid}
+        finalBatch:
+          type: boolean
+          description: Marks the task terminal after this batch; later new batches are rejected.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/LegacyQuestionImportItem'
+    LegacyQuestionImportIssue:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [EMBEDDED_OPTIONS_AMBIGUOUS, IMPLICIT_MULTI_PART, SUBQUESTION_ANSWER_MISSING, PATH_JSON_METADATA_CONFLICT, SOURCE_CONTENT_CONFLICT, TYPE_UNSUPPORTED, FIELD_INVALID, HTML_UNSAFE, EXTERNAL_IMAGE_TRANSFER_FAILED]
+        message: {type: string, maxLength: 300}
+    LegacyQuestionImportItemResult:
+      type: object
+      additionalProperties: false
+      required: [externalId, outcome, questionId, issueCodes]
+      properties:
+        externalId: {type: string, maxLength: 160}
+        outcome: {$ref: '#/components/schemas/QuestionImportItemOutcome'}
+        questionId: {type: [string, 'null'], format: uuid}
+        issueCodes:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+    LegacyQuestionImportBatchResult:
+      type: object
+      additionalProperties: false
+      required: [importTaskId, batchId, replayed, finalBatch, processedCount, importedCount, validCount, reviewCount, skippedCount, failedCount, items]
+      properties:
+        importTaskId: {type: string, format: uuid}
+        batchId: {type: string, format: uuid}
+        replayed: {type: boolean}
+        finalBatch: {type: boolean}
+        processedCount: {type: integer, minimum: 0, maximum: 20}
+        importedCount: {type: integer, minimum: 0, maximum: 20}
+        validCount: {type: integer, minimum: 0, maximum: 20}
+        reviewCount: {type: integer, minimum: 0, maximum: 20}
+        skippedCount: {type: integer, minimum: 0, maximum: 20}
+        failedCount: {type: integer, minimum: 0, maximum: 20}
+        items:
+          type: array
+          maxItems: 20
+          items: {$ref: '#/components/schemas/LegacyQuestionImportItemResult'}
+    LegacyQuestionImportCleanupResult:
+      type: object
+      additionalProperties: false
+      required: [importTaskId, questionsDeleted, sourceReferencesDeleted, mediaReferencesReleased, alreadyCleaned]
+      properties:
+        importTaskId: {type: string, format: uuid}
+        questionsDeleted: {type: integer, minimum: 0}
+        sourceReferencesDeleted: {type: integer, minimum: 0}
+        mediaReferencesReleased: {type: integer, minimum: 0}
+        alreadyCleaned: {type: boolean}
     QuestionImportPage:
       type: object
       additionalProperties: false
@@ -2466,6 +2764,21 @@ components:
           type: integer
           format: int64
           minimum: 0
+    ExternalImageTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, sourceUrl]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: Deterministically derived from sourceSystem/externalId/image index for safe retry.
+        sourceUrl:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2000
+          description: Used only during this call; media-service must not persist or log it.
     MediaPurpose:
       type: string
       description: Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.

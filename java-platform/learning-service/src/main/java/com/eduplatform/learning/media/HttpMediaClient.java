@@ -83,6 +83,30 @@ public class HttpMediaClient implements MediaClient {
         }
     }
 
+    @Override
+    /** 调用媒体域受限转存端点；响应只接受稳定 mediaId，不保存或记录 sourceUrl。 */
+    public String transferExternalImage(String clientRequestId, String sourceUrl, String teacherId, String traceId) {
+        try {
+            Asset response = media.post().uri("/api/v1/media/external-image-transfers")
+                    .header("X-User-Id", teacherId).header("X-User-Roles", "TEACHER").header("X-Trace-Id", traceId)
+                    .body(Map.of("clientRequestId", clientRequestId, "sourceUrl", sourceUrl))
+                    .retrieve().body(Asset.class);
+            if (response == null || response.mediaId() == null || !"QUESTION_IMAGE".equals(response.purpose())
+                    || !"READY".equals(response.status())) throw unavailable();
+            return response.mediaId();
+        } catch (QuestionException exception) {
+            throw exception;
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 422 || exception.getStatusCode().value() == 409) {
+                throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.MEDIA_NOT_BINDABLE",
+                        "历史图片无法安全转存");
+            }
+            throw unavailable();
+        } catch (RuntimeException exception) {
+            throw unavailable();
+        }
+    }
+
     private static QuestionException notBindable(String mediaId, String reason) {
         return new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.MEDIA_NOT_BINDABLE", "媒体不可绑定",
                 List.of(new FieldError("mediaId", mediaId + ": " + reason)));
@@ -94,4 +118,5 @@ public class HttpMediaClient implements MediaClient {
 
     private record Binding(String mediaId, String purpose, String status, boolean bindable) {}
     private record Grant(String method, String url, Map<String, String> headers) {}
+    private record Asset(String mediaId, String purpose, String status) {}
 }

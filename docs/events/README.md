@@ -27,3 +27,5 @@ T09 另行冻结 [`learning-question-events.v1.yaml`](./learning-question-events
 | 题库导入死信 Queue | `edu.learning.question-import.dlq.v1` | durable classic；绑定 `question.import.dead.v1` |
 
 导入任务与 `QuestionImportRequested` Outbox 在 learning-service 本地事务内提交。消费者使用手动确认语义、最多 3 次指数退避和 `eventId` 持久化幂等；不可恢复异常或超限消息进入 DLQ，Recoverer 将任务标为 `FAILED` 并保留人工重放证据。CSV/XLSX 源文件只通过 media-service 的短期 GET 授权读取；事件、数据库和日志均不得保存签名 URL。任务进入终态后仍保留 `QUESTION_IMPORT_SOURCE` 引用至配置的保留期，到期任务再以本地 Outbox 发布 `MediaReferenceReleased`，不能在消费完成时立即删除对象。
+
+T09A 新增 [`learning-question-events.v2.yaml`](./learning-question-events.v2.yaml)，不改写 v1。每个最多 20 项的历史 JSON 批次在 learning-service 内完成后，以本地 Outbox 向 durable topic `edu.learning.events.v2` 发布 `question.legacy-import.batch.processed.v2`。事件只含 importTaskId、batchId、dryRun 和聚合计数，不含题干、答案、原始 JSON、路径、外部 URL 或媒体签名。当前没有业务消费者；后续迁移审计消费者必须自建队列并按 `eventId` 幂等，不能把 v2 绑定到 v1 CSV/XLSX Worker。

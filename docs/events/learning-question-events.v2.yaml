@@ -1,0 +1,56 @@
+contract: edu.learning.question.events
+contractVersion: 2
+contentType: application/json
+exchange: edu.learning.events.v2
+compatibility: new-major
+producer: learning-service legacy question import application transactions
+consumers:
+  - audit and migration operations consumers (optional)
+deliverySemantics: at-least-once; consumers deduplicate eventId while producer deduplicates batchId and source externalId
+description: |
+  T09A legacy JSON batch contract. It is a new major contract and does not change the merged
+  QuestionImportRequested v1 CSV/XLSX event. Payloads never contain question text, answers,
+  source JSON, external URLs, Bucket names, Object Keys, credentials or signed URLs. The HTTP
+  request processes each bounded item in the learning-service and emits this content-free summary
+  through its local Outbox. Parsing remains synchronous per bounded batch so callers can retry exact
+  failed items without persisting the source JSON.
+
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId: {type: string, format: uuid}
+    eventType: {type: string, const: LegacyQuestionImportBatchProcessed}
+    eventVersion: {type: integer, const: 2}
+    aggregateId:
+      type: string
+      format: uuid
+      description: learning-service legacy import task ID.
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, minLength: 8, maxLength: 64}
+    payload:
+      $ref: '#/events/LegacyQuestionImportBatchProcessed/payload'
+
+events:
+  LegacyQuestionImportBatchProcessed:
+    routingKey: question.legacy-import.batch.processed.v2
+    aggregate: question_import_task
+    payload:
+      type: object
+      additionalProperties: false
+      required: [importTaskId, batchId, itemCount, importedCount, reviewCount, skippedCount, failedCount, dryRun]
+      properties:
+        importTaskId: {type: string, format: uuid}
+        batchId:
+          type: string
+          format: uuid
+          description: Idempotency key for one bounded batch; duplicate delivery is a no-op.
+        itemCount: {type: integer, minimum: 1, maximum: 20}
+        importedCount: {type: integer, minimum: 0, maximum: 20}
+        reviewCount: {type: integer, minimum: 0, maximum: 20}
+        skippedCount: {type: integer, minimum: 0, maximum: 20}
+        failedCount: {type: integer, minimum: 0, maximum: 20}
+        dryRun:
+          type: boolean
+          description: When true no question or media asset may be created.
