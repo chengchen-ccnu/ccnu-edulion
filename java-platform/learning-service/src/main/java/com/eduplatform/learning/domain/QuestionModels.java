@@ -3,7 +3,7 @@ package com.eduplatform.learning.domain;
 import java.time.Instant;
 import java.util.List;
 
-/** T09/T09A 题库内部模型；答案只会进入教师 DTO 或导入处理，不提供学生投影。 */
+/** T09～T09B 题库内部模型；答案只会进入教师 DTO 或导入处理，不提供学生投影。 */
 public final class QuestionModels {
     private QuestionModels() {}
 
@@ -17,6 +17,7 @@ public final class QuestionModels {
     public enum ImportFormat { CSV, XLSX, LEGACY_JSON }
     public enum ImportStatus { PENDING, PROCESSING, COMPLETED, PARTIAL_SUCCESS, FAILED, CLEANED }
     public enum ImportOutcome { IMPORTED, VALID, NEEDS_REVIEW, SKIPPED, FAILED }
+    public enum ResolutionAction { IMPORT_CORRECTED, CONFIRM_SKIP }
 
     public record KnowledgePoint(String id, String code, String name, String parentId, Stage stage, Grade grade,
             Subject subject, int sortOrder, boolean enabled, long revision, Instant createdAt, Instant updatedAt) {}
@@ -42,4 +43,9 @@ public final class QuestionModels {
     public record LegacyBatch(String importTaskId, String batchId, String requestFingerprint, boolean finalBatch,
             int processedCount, int importedCount, int validCount, int reviewCount, int skippedCount,
             int failedCount, String resultJson, Instant createdAt) {}
+    public record LegacyReviewItem(String id, String importTaskId, String batchId, String ownerId,
+            String sourceRefId, String externalId, String contentSha256, String pathEdition,
+            String jsonEdition, String pathGrade, String jsonGrade, String originalDifficulty,
+            ImportOutcome outcome, String questionId, List<String> issueCodes, long revision,
+            ResolutionAction resolutionAction, Instant resolvedAt, Instant createdAt, Instant updatedAt) {}
 }

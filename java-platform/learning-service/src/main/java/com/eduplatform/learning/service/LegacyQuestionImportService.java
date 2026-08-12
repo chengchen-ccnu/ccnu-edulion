@@ -5,6 +5,7 @@ import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.domain.QuestionModels.ImportTask;
 import com.eduplatform.learning.domain.QuestionModels.LegacyBatch;
 import com.eduplatform.learning.domain.QuestionModels.LegacySource;
+import com.eduplatform.learning.domain.QuestionModels.LegacyReviewItem;
 import com.eduplatform.learning.importing.LegacyQuestionJsonParser;
 import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.messaging.LearningEvents;
@@ -27,7 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * T09A 受控历史 JSON 迁移编排：任务上限、批次幂等、来源幂等、dry-run、复核与精确清理。
+ * T09A/T09B 受控历史 JSON 编排：任务上限、批次幂等、来源幂等、dry-run、可恢复复核与精确清理。
  *
  * <p>每次调用最多 20 项并顺序处理；跨请求并发由唯一键和事务锁收口。原始 JSON 与外部 URL
  * 只存在于当前调用栈，持久化和事件仅包含哈希、来源键、计数及问题码。</p>
@@ -97,11 +98,15 @@ public class LegacyQuestionImportService {
             LegacySource existing = repository.findLegacySource(ownerId, task.sourceSystem(), item.externalId(), task.dryRun()).orElse(null);
             if (existing != null) {
                 if (existing.contentSha256().equals(item.contentSha256())) {
+                    persistReview(task, request.batchId().toString(), item, existing, QuestionModels.ImportOutcome.SKIPPED,
+                            existing.questionId(), existing.issueCodes());
                     results.add(new QuestionDtos.LegacyImportItemResult(item.externalId(), QuestionModels.ImportOutcome.SKIPPED,
                             existing.questionId(), existing.issueCodes())); skipped++;
                 } else {
                     repository.insertLegacyIssue(taskId, request.batchId().toString(), item.externalId(),
                             item.contentSha256(), "SOURCE_CONTENT_CONFLICT", Instant.now());
+                    persistReview(task, request.batchId().toString(), item, null, QuestionModels.ImportOutcome.NEEDS_REVIEW,
+                            null, List.of("SOURCE_CONTENT_CONFLICT"));
                     results.add(result(item.externalId(), QuestionModels.ImportOutcome.NEEDS_REVIEW, null,
                             List.of("SOURCE_CONTENT_CONFLICT"))); review++;
                 }
@@ -130,6 +135,8 @@ public class LegacyQuestionImportService {
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.NEEDS_REVIEW, null,
                         List.of(issue))); review++;
             } catch (RuntimeException failure) {
+                persistReview(task, request.batchId().toString(), item, null, QuestionModels.ImportOutcome.FAILED,
+                        null, List.of("FIELD_INVALID"));
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.FAILED, null, List.of("FIELD_INVALID"))); failed++;
             }
         }
@@ -141,6 +148,73 @@ public class LegacyQuestionImportService {
         repository.insertOutbox(events.legacyBatchProcessed(taskId, batch.batchId(), batch.processedCount(),
                 batch.importedCount(), batch.reviewCount(), batch.skippedCount(), batch.failedCount(), task.dryRun(), traceId, now));
         return result(taskId, batch, false, results);
+    }
+
+    /** 分页返回可刷新复核项；仅本人 LEGACY_JSON 任务可见，投影不含原题内容。 */
+    public QuestionDtos.LegacyReviewPage items(String ownerId, String taskId, int page, int size,
+            QuestionModels.ImportOutcome outcome) {
+        ImportTask task = repository.findImportTask(taskId, ownerId).orElseThrow(LegacyQuestionImportService::notFound);
+        if (task.sourceFormat() != QuestionModels.ImportFormat.LEGACY_JSON) throw notFound();
+        var rows = repository.listLegacyReviewItems(ownerId, taskId, page, size, outcome);
+        return new QuestionDtos.LegacyReviewPage(rows.stream().map(this::reviewResponse).toList(), page, size,
+                repository.countLegacyReviewItems(ownerId, taskId, outcome));
+    }
+
+    /** 精确返回一个复核项；itemId 不属于本人任务时按不存在处理。 */
+    public QuestionDtos.LegacyReviewItem item(String ownerId, String taskId, String itemId) {
+        ImportTask task = repository.findImportTask(taskId, ownerId).orElseThrow(LegacyQuestionImportService::notFound);
+        if (task.sourceFormat() != QuestionModels.ImportFormat.LEGACY_JSON) throw notFound();
+        return reviewResponse(repository.findLegacyReviewItem(ownerId, taskId, itemId)
+                .orElseThrow(LegacyQuestionImportService::notFound));
+    }
+
+    /**
+     * 显式解决 NEEDS_REVIEW 项：结构化修正后创建题目，或确认跳过。
+     * expectedRevision 防止并发覆盖；clientRequestId/完整请求指纹保证网络重放不重复创建题目或累计计数。
+     */
+    @Transactional
+    public QuestionDtos.LegacyReviewItem resolve(String ownerId, String taskId, String itemId,
+            QuestionDtos.ResolveLegacyItemRequest request, String traceId) {
+        String fingerprint = fingerprint(request);
+        var replay = repository.findLegacyResolution(ownerId, request.clientRequestId().toString());
+        if (replay.isPresent()) {
+            if (!replay.get().itemId().equals(itemId) || !replay.get().fingerprint().equals(fingerprint)) {
+                throw conflict("QUESTION.IDEMPOTENCY_CONFLICT", "clientRequestId 已用于不同的复核解决请求");
+            }
+            return item(ownerId, taskId, itemId);
+        }
+        ImportTask task = ownedForUpdate(ownerId, taskId);
+        if (task.sourceFormat() != QuestionModels.ImportFormat.LEGACY_JSON) throw notFound();
+        LegacyReviewItem current = repository.findLegacyReviewItemForUpdate(ownerId, taskId, itemId)
+                .orElseThrow(LegacyQuestionImportService::notFound);
+        if (current.revision() != request.expectedRevision()) {
+            throw conflict("QUESTION_IMPORT.ITEM_REVISION_CONFLICT", "复核项已被更新，请刷新后重试");
+        }
+        if (current.outcome() != QuestionModels.ImportOutcome.NEEDS_REVIEW || current.resolutionAction() != null) {
+            throw conflict("QUESTION_IMPORT.ITEM_ALREADY_RESOLVED", "复核项已是终态，不能再次解决");
+        }
+        QuestionModels.ResolutionAction action = QuestionModels.ResolutionAction.valueOf(request.action().name());
+        String questionId = null;
+        if (action == QuestionModels.ResolutionAction.IMPORT_CORRECTED) {
+            if (request.correctedVersion() == null) throw invalid("correctedVersion", "修正后导入必须提交完整结构化题目");
+            String questionRequestId = deterministic(taskId, itemId + ":resolution:" + request.clientRequestId());
+            questionId = questions.create(ownerId, questionRequestId, request.correctedVersion(), traceId).response().id();
+        } else if (request.correctedVersion() != null) {
+            throw invalid("correctedVersion", "确认跳过时 correctedVersion 必须为 null");
+        }
+        Instant now = Instant.now();
+        QuestionModels.ImportOutcome outcome = action == QuestionModels.ResolutionAction.IMPORT_CORRECTED
+                ? QuestionModels.ImportOutcome.IMPORTED : QuestionModels.ImportOutcome.SKIPPED;
+        if (repository.resolveLegacyReviewItem(ownerId, taskId, itemId, request.expectedRevision(), action,
+                outcome, questionId, now) == 0) {
+            throw conflict("QUESTION_IMPORT.ITEM_REVISION_CONFLICT", "复核项已被更新，请刷新后重试");
+        }
+        if (current.sourceRefId() != null) repository.resolveLegacySource(ownerId, current.sourceRefId(), outcome,
+                questionId, now);
+        repository.insertLegacyResolution(ownerId, taskId, itemId, request.clientRequestId().toString(),
+                fingerprint, action, questionId, now);
+        repository.applyLegacyResolution(taskId, action, now);
+        return item(ownerId, taskId, itemId);
     }
 
     /**
@@ -200,10 +274,23 @@ public class LegacyQuestionImportService {
             QuestionDtos.LegacyImportItem item, LegacyQuestionJsonParser.Parsed parsed,
             QuestionModels.ImportOutcome outcome, String questionId, List<String> issueCodes) {
         Instant now = Instant.now();
-        repository.insertLegacySource(new LegacySource(UUID.randomUUID().toString(), task.id(), batch.batchId().toString(),
+        LegacySource source = new LegacySource(UUID.randomUUID().toString(), task.id(), batch.batchId().toString(),
                 task.ownerId(), task.sourceSystem(), item.externalId(), task.dryRun(), item.contentSha256(),
                 sha256(item.relativePath().replace('\\', '/')), item.pathEdition(), parsed.jsonEdition(), item.pathGrade(), parsed.jsonGrade(),
-                parsed.originalDifficulty(), outcome, questionId, issueCodes, now, now));
+                parsed.originalDifficulty(), outcome, questionId, issueCodes, now, now);
+        repository.insertLegacySource(source);
+        persistReview(task, batch.batchId().toString(), item, source, outcome, questionId, issueCodes);
+    }
+
+    private void persistReview(ImportTask task, String batchId, QuestionDtos.LegacyImportItem item,
+            LegacySource source, QuestionModels.ImportOutcome outcome, String questionId, List<String> issueCodes) {
+        Instant now = Instant.now();
+        repository.insertLegacyReviewItem(new LegacyReviewItem(UUID.randomUUID().toString(), task.id(), batchId,
+                task.ownerId(), source == null ? null : source.id(), item.externalId(), item.contentSha256(),
+                source == null ? item.pathEdition() : source.pathEdition(), source == null ? null : source.jsonEdition(),
+                source == null ? item.pathGrade() : source.pathGrade(), source == null ? null : source.jsonGrade(),
+                source == null ? null : source.originalDifficulty(), outcome, questionId, List.copyOf(issueCodes),
+                0, null, null, now, now));
     }
 
     private void validateItem(QuestionDtos.LegacyImportItem item) {
@@ -223,10 +310,37 @@ public class LegacyQuestionImportService {
     private ImportTask ownedForUpdate(String ownerId, String taskId) {
         return repository.findImportTaskForUpdate(taskId, ownerId).orElseThrow(LegacyQuestionImportService::notFound);
     }
+
+    private QuestionDtos.LegacyReviewItem reviewResponse(LegacyReviewItem item) {
+        List<QuestionDtos.LegacyIssue> issues = item.issueCodes().stream()
+                .map(code -> new QuestionDtos.LegacyIssue(code, issueMessage(code))).toList();
+        QuestionDtos.LegacyResolution resolution = item.resolutionAction() == null ? null
+                : new QuestionDtos.LegacyResolution(QuestionDtos.ResolutionAction.valueOf(item.resolutionAction().name()),
+                        item.resolvedAt());
+        return new QuestionDtos.LegacyReviewItem(item.id(), item.revision(), item.externalId(), item.outcome(),
+                item.questionId(), repository.findImportTask(item.importTaskId()).map(ImportTask::sourceSystem).orElse("LEGACY"),
+                item.originalDifficulty(), item.pathEdition(), item.jsonEdition(), item.pathGrade(), item.jsonGrade(),
+                issues, resolution, item.createdAt(), item.updatedAt());
+    }
+
+    private static String issueMessage(String code) {
+        return switch (code) {
+            case "EMBEDDED_OPTIONS_AMBIGUOUS" -> "内嵌选项无法可靠拆分";
+            case "IMPLICIT_MULTI_PART" -> "题干疑似包含未显式建模的多问";
+            case "SUBQUESTION_ANSWER_MISSING" -> "子题缺少可确认答案";
+            case "PATH_JSON_METADATA_CONFLICT" -> "目录与 JSON 教材或年级信息冲突";
+            case "SOURCE_CONTENT_CONFLICT" -> "相同来源标识的内容指纹发生变化";
+            case "TYPE_UNSUPPORTED" -> "历史题型无法安全映射";
+            case "HTML_UNSAFE" -> "历史 HTML 含不安全或被移除结构";
+            case "EXTERNAL_IMAGE_TRANSFER_FAILED" -> "外部图片转存失败";
+            default -> "字段无法安全转换，需要人工复核";
+        };
+    }
+
     private QuestionDtos.ImportTaskResponse response(ImportTask task) {
         return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(), task.dryRun(),
-                task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(), task.reviewCount(),
-                task.skippedCount(), task.failureCount(), List.of(), task.failureCode(), task.failureMessage(), task.retainUntil(),
+                task.maxItems(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(), task.reviewCount(),
+                repository.countResolvedLegacyItems(task.id()), task.skippedCount(), task.failureCount(), List.of(), task.failureCode(), task.failureMessage(), task.retainUntil(),
                 task.sourceReleasedAt(), task.createdAt(), task.updatedAt());
     }
     private QuestionDtos.LegacyImportBatchResult readResult(LegacyBatch batch, boolean replayed) {

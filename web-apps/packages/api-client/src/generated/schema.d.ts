@@ -388,6 +388,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/questions/{questionId}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page immutable versions of an owned question
+         * @description History is ordered newest first. Reading history never moves the aggregate current-version pointer.
+         */
+        get: operations["listTeacherQuestionVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/questions/{questionId}/versions/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get one immutable historical version of an owned question
+         * @description The version must belong to the owned aggregate. This read-only endpoint never changes revision or the current-version pointer.
+         */
+        get: operations["getTeacherQuestionVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/question-imports": {
         parameters: {
             query?: never;
@@ -423,6 +463,65 @@ export interface paths {
         get: operations["getQuestionImport"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/question-imports/{importTaskId}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page refresh-safe historical JSON item projections
+         * @description Available only for an owned LEGACY_JSON task. It returns source metadata, outcome, revision and issue codes, never raw JSON, paths, question text or answers.
+         */
+        get: operations["listLegacyQuestionImportItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one refresh-safe historical JSON review item */
+        get: operations["getLegacyQuestionImportItem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Idempotently import an explicit structured correction or confirm skip
+         * @description `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
+         *     ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
+         *     is terminal for the item. Replaying the same clientRequestId and body returns the same result.
+         */
+        post: operations["resolveLegacyQuestionImportItem"];
         delete?: never;
         options?: never;
         head?: never;
@@ -941,7 +1040,7 @@ export interface components {
         /** @enum {string} */
         QuestionType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER" | "COMPOSITE";
         /**
-         * @description COMPOSITE is created only by the bounded T09A migration contract; T10 editing is not implemented.
+         * @description Ordinary leaf type. Composite children cannot themselves be composite.
          * @enum {string}
          */
         QuestionInputType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER";
@@ -1000,7 +1099,7 @@ export interface components {
             sequence: number;
         };
         QuestionVersionInput: {
-            type: components["schemas"]["QuestionInputType"];
+            type: components["schemas"]["QuestionType"];
             difficulty: components["schemas"]["QuestionDifficulty"];
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
@@ -1012,6 +1111,21 @@ export interface components {
             /** @description Canonical answer tokens or Markdown/LaTeX strings. This field is teacher-only in T09. */
             answers: string[];
             /** @description Full teacher-only analysis; an empty string means no analysis supplied. */
+            analysis: string;
+            knowledgePointIds: string[];
+            media: components["schemas"]["QuestionMediaInput"][];
+            /** @description Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question. */
+            children?: components["schemas"]["QuestionChildInput"][];
+        };
+        QuestionChildInput: {
+            type: components["schemas"]["QuestionInputType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            answers: string[];
             analysis: string;
             knowledgePointIds: string[];
             media: components["schemas"]["QuestionMediaInput"][];
@@ -1057,9 +1171,24 @@ export interface components {
         QuestionChild: {
             /** Format: uuid */
             questionId: string;
+            /** Format: uuid */
+            versionId: string;
+            versionNumber: number;
             sequence: number;
-            type: components["schemas"]["QuestionType"];
+            type: components["schemas"]["QuestionInputType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
             stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            /** @description Teacher-only correct answers for this immutable child version. */
+            answers: string[];
+            analysis: string;
+            knowledgePoints: components["schemas"]["KnowledgePoint"][];
+            media: components["schemas"]["QuestionMedia"][];
+            /** Format: date-time */
+            createdAt: string;
         };
         QuestionVersion: {
             /** Format: uuid */
@@ -1122,6 +1251,25 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        QuestionVersionSummary: {
+            /** Format: uuid */
+            id: string;
+            versionNumber: number;
+            type: components["schemas"]["QuestionType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stemPreview: string;
+            childCount: number;
+            /** Format: date-time */
+            createdAt: string;
+            current: boolean;
+        };
+        QuestionVersionPage: {
+            items: components["schemas"]["QuestionVersionSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
         /** @enum {string} */
         QuestionImportSourceFormat: "CSV" | "XLSX";
         /** @enum {string} */
@@ -1152,12 +1300,17 @@ export interface components {
             /** @description Stable migration namespace; null for CSV/XLSX. */
             sourceSystem: string | null;
             dryRun: boolean;
+            /** @description Hard LEGACY_JSON task ceiling; null for CSV/XLSX. */
+            maxItems: number | null;
             status: components["schemas"]["QuestionImportStatus"];
             progress: number;
             totalRows: number;
             processedRows: number;
             successCount: number;
+            /** @description Current unresolved NEEDS_REVIEW count. */
             reviewCount: number;
+            /** @description Number of historical JSON items explicitly imported after correction or confirmed skipped. */
+            resolvedCount: number;
             skippedCount: number;
             failureCount: number;
             errors: components["schemas"]["QuestionImportRowError"][];
@@ -1240,6 +1393,50 @@ export interface components {
             sourceReferencesDeleted: number;
             mediaReferencesReleased: number;
             alreadyCleaned: boolean;
+        };
+        /** @enum {string} */
+        LegacyQuestionImportResolutionAction: "IMPORT_CORRECTED" | "CONFIRM_SKIP";
+        LegacyQuestionImportResolution: {
+            action: components["schemas"]["LegacyQuestionImportResolutionAction"];
+            /** Format: date-time */
+            resolvedAt: string;
+        };
+        LegacyQuestionImportReviewItem: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            revision: number;
+            externalId: string;
+            outcome: components["schemas"]["QuestionImportItemOutcome"];
+            /** Format: uuid */
+            questionId: string | null;
+            sourceSystem: string;
+            originalDifficulty: string | null;
+            pathEdition: string | null;
+            jsonEdition: string | null;
+            pathGrade: string | null;
+            jsonGrade: string | null;
+            issues: components["schemas"]["LegacyQuestionImportIssue"][];
+            resolution: components["schemas"]["LegacyQuestionImportResolution"] | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        LegacyQuestionImportItemPage: {
+            items: components["schemas"]["LegacyQuestionImportReviewItem"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        ResolveLegacyQuestionImportItemRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            action: components["schemas"]["LegacyQuestionImportResolutionAction"];
+            correctedVersion: components["schemas"]["QuestionVersionInput"] | null;
         };
         QuestionImportPage: {
             items: components["schemas"]["QuestionImportTask"][];
@@ -2468,6 +2665,61 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    listTeacherQuestionVersions: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paged immutable version summaries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionVersionPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    getTeacherQuestionVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full teacher-only version projection including structured ordered children. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionVersion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
     listQuestionImports: {
         parameters: {
             query?: {
@@ -2555,6 +2807,95 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    listLegacyQuestionImportItems: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                outcome?: components["schemas"]["QuestionImportItemOutcome"];
+            };
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paged owner-only legacy item summaries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportItemPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    getLegacyQuestionImportItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owned legacy item with stable issues and resolution state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportReviewItem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    resolveLegacyQuestionImportItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveLegacyQuestionImportItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Item resolved or identical request safely replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportReviewItem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
         };
     };
     createLegacyQuestionImport: {

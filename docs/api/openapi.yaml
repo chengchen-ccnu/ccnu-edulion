@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.9.0
-  description: T09A Gateway contract. Retains T09 CSV/XLSX imports and adds bounded, idempotent legacy per-question JSON migration, composite-question projections, review issues and media-service-owned external image transfer. No T10 page or T11 attempt/grading API is exposed.
+  version: 0.10.0
+  description: T09B Gateway contract. Adds structured ordinary/composite question writes, immutable version history, unified import-task projections and refresh-safe legacy JSON item review/resolution. No T10 Vue page, full-corpus migration or T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -849,6 +849,54 @@ paths:
           $ref: '#/components/responses/QuestionConflict'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+  /api/v1/teacher/questions/{questionId}/versions:
+    get:
+      tags: [Teacher Questions]
+      operationId: listTeacherQuestionVersions
+      summary: Page immutable versions of an owned question
+      description: History is ordered newest first. Reading history never moves the aggregate current-version pointer.
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Paged immutable version summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionVersionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/teacher/questions/{questionId}/versions/{versionId}:
+    get:
+      tags: [Teacher Questions]
+      operationId: getTeacherQuestionVersion
+      summary: Get one immutable historical version of an owned question
+      description: The version must belong to the owned aggregate. This read-only endpoint never changes revision or the current-version pointer.
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - name: versionId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Full teacher-only version projection including structured ordered children.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
   /api/v1/teacher/question-imports:
     get:
       tags: [Question Imports]
@@ -923,6 +971,97 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/teacher/question-imports/{importTaskId}/items:
+    get:
+      tags: [Question Imports]
+      operationId: listLegacyQuestionImportItems
+      summary: Page refresh-safe historical JSON item projections
+      description: Available only for an owned LEGACY_JSON task. It returns source metadata, outcome, revision and issue codes, never raw JSON, paths, question text or answers.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: outcome
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionImportItemOutcome'
+      responses:
+        '200':
+          description: Paged owner-only legacy item summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyQuestionImportItemPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/teacher/question-imports/{importTaskId}/items/{itemId}:
+    get:
+      tags: [Question Imports]
+      operationId: getLegacyQuestionImportItem
+      summary: Get one refresh-safe historical JSON review item
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+        - name: itemId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Owned legacy item with stable issues and resolution state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyQuestionImportReviewItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+  /api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution:
+    post:
+      tags: [Question Imports]
+      operationId: resolveLegacyQuestionImportItem
+      summary: Idempotently import an explicit structured correction or confirm skip
+      description: |
+        `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
+        ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
+        is terminal for the item. Replaying the same clientRequestId and body returns the same result.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+        - name: itemId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveLegacyQuestionImportItemRequest'
+      responses:
+        '200':
+          description: Item resolved or identical request safely replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyQuestionImportReviewItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/QuestionNotFound'
+        '409':
+          $ref: '#/components/responses/QuestionConflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/QuestionDependencyUnavailable'
   /api/v1/teacher/legacy-question-imports:
     post:
       tags: [Question Imports]
@@ -2142,7 +2281,7 @@ components:
       enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE]
     QuestionInputType:
       type: string
-      description: COMPOSITE is created only by the bounded T09A migration contract; T10 editing is not implemented.
+      description: Ordinary leaf type. Composite children cannot themselves be composite.
       enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER]
     QuestionDifficulty:
       type: string
@@ -2275,7 +2414,7 @@ components:
       required: [type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePointIds, media]
       properties:
         type:
-          $ref: '#/components/schemas/QuestionInputType'
+          $ref: '#/components/schemas/QuestionType'
         difficulty:
           $ref: '#/components/schemas/QuestionDifficulty'
         stage:
@@ -2320,6 +2459,47 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/QuestionMediaInput'
+        children:
+          type: array
+          maxItems: 100
+          description: Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question.
+          items:
+            $ref: '#/components/schemas/QuestionChildInput'
+    QuestionChildInput:
+      type: object
+      additionalProperties: false
+      required: [type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePointIds, media]
+      properties:
+        type:
+          $ref: '#/components/schemas/QuestionInputType'
+        difficulty:
+          $ref: '#/components/schemas/QuestionDifficulty'
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
+        grade:
+          $ref: '#/components/schemas/QuestionGrade'
+        subject:
+          $ref: '#/components/schemas/QuestionSubject'
+        stem: {type: string, minLength: 1, maxLength: 50000}
+        options:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/QuestionOptionInput'}
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: {type: string, minLength: 1, maxLength: 20000}
+        analysis: {type: string, maxLength: 50000}
+        knowledgePointIds:
+          type: array
+          uniqueItems: true
+          maxItems: 30
+          items: {type: string, format: uuid}
+        media:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/QuestionMediaInput'}
     CreateQuestionRequest:
       type: object
       additionalProperties: false
@@ -2388,12 +2568,33 @@ components:
     QuestionChild:
       type: object
       additionalProperties: false
-      required: [questionId, sequence, type, stem]
+      required: [questionId, versionId, versionNumber, sequence, type, difficulty, stage, grade, subject, stem, options, answers, analysis, knowledgePoints, media, createdAt]
       properties:
         questionId: {type: string, format: uuid}
+        versionId: {type: string, format: uuid}
+        versionNumber: {type: integer, minimum: 1}
         sequence: {type: integer, minimum: 1, maximum: 100}
-        type: {$ref: '#/components/schemas/QuestionType'}
+        type: {$ref: '#/components/schemas/QuestionInputType'}
+        difficulty: {$ref: '#/components/schemas/QuestionDifficulty'}
+        stage: {$ref: '#/components/schemas/QuestionStage'}
+        grade: {$ref: '#/components/schemas/QuestionGrade'}
+        subject: {$ref: '#/components/schemas/QuestionSubject'}
         stem: {type: string}
+        options:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionOptionInput'}
+        answers:
+          type: array
+          description: Teacher-only correct answers for this immutable child version.
+          items: {type: string}
+        analysis: {type: string}
+        knowledgePoints:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePoint'}
+        media:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionMedia'}
+        createdAt: {type: string, format: date-time}
     QuestionVersion:
       type: object
       additionalProperties: false
@@ -2531,6 +2732,30 @@ components:
           type: integer
           format: int64
           minimum: 0
+    QuestionVersionSummary:
+      type: object
+      additionalProperties: false
+      required: [id, versionNumber, type, difficulty, stemPreview, childCount, createdAt, current]
+      properties:
+        id: {type: string, format: uuid}
+        versionNumber: {type: integer, minimum: 1}
+        type: {$ref: '#/components/schemas/QuestionType'}
+        difficulty: {$ref: '#/components/schemas/QuestionDifficulty'}
+        stemPreview: {type: string, maxLength: 240}
+        childCount: {type: integer, minimum: 0, maximum: 100}
+        createdAt: {type: string, format: date-time}
+        current: {type: boolean}
+    QuestionVersionPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionVersionSummary'}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1}
+        total: {type: integer, format: int64, minimum: 0}
     QuestionImportSourceFormat:
       type: string
       enum: [CSV, XLSX]
@@ -2571,7 +2796,7 @@ components:
     QuestionImportTask:
       type: object
       additionalProperties: false
-      required: [id, sourceMediaId, sourceFormat, sourceSystem, dryRun, status, progress, totalRows, processedRows, successCount, reviewCount, skippedCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
+      required: [id, sourceMediaId, sourceFormat, sourceSystem, dryRun, maxItems, status, progress, totalRows, processedRows, successCount, reviewCount, resolvedCount, skippedCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -2590,6 +2815,11 @@ components:
           description: Stable migration namespace; null for CSV/XLSX.
         dryRun:
           type: boolean
+        maxItems:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 1000
+          description: Hard LEGACY_JSON task ceiling; null for CSV/XLSX.
         status:
           $ref: '#/components/schemas/QuestionImportStatus'
         progress:
@@ -2608,6 +2838,11 @@ components:
         reviewCount:
           type: integer
           minimum: 0
+          description: Current unresolved NEEDS_REVIEW count.
+        resolvedCount:
+          type: integer
+          minimum: 0
+          description: Number of historical JSON items explicitly imported after correction or confirmed skipped.
         skippedCount:
           type: integer
           minimum: 0
@@ -2745,6 +2980,64 @@ components:
         sourceReferencesDeleted: {type: integer, minimum: 0}
         mediaReferencesReleased: {type: integer, minimum: 0}
         alreadyCleaned: {type: boolean}
+    LegacyQuestionImportResolutionAction:
+      type: string
+      enum: [IMPORT_CORRECTED, CONFIRM_SKIP]
+    LegacyQuestionImportResolution:
+      type: object
+      additionalProperties: false
+      required: [action, resolvedAt]
+      properties:
+        action: {$ref: '#/components/schemas/LegacyQuestionImportResolutionAction'}
+        resolvedAt: {type: string, format: date-time}
+    LegacyQuestionImportReviewItem:
+      type: object
+      additionalProperties: false
+      required: [id, revision, externalId, outcome, questionId, sourceSystem, originalDifficulty, pathEdition, jsonEdition, pathGrade, jsonGrade, issues, resolution, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 0}
+        externalId: {type: string, maxLength: 160}
+        outcome: {$ref: '#/components/schemas/QuestionImportItemOutcome'}
+        questionId: {type: [string, 'null'], format: uuid}
+        sourceSystem: {type: string, maxLength: 80}
+        originalDifficulty: {type: [string, 'null'], maxLength: 40}
+        pathEdition: {type: [string, 'null'], maxLength: 100}
+        jsonEdition: {type: [string, 'null'], maxLength: 100}
+        pathGrade: {type: [string, 'null'], maxLength: 100}
+        jsonGrade: {type: [string, 'null'], maxLength: 100}
+        issues:
+          type: array
+          items: {$ref: '#/components/schemas/LegacyQuestionImportIssue'}
+        resolution:
+          oneOf:
+            - $ref: '#/components/schemas/LegacyQuestionImportResolution'
+            - type: 'null'
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    LegacyQuestionImportItemPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/LegacyQuestionImportReviewItem'}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1}
+        total: {type: integer, format: int64, minimum: 0}
+    ResolveLegacyQuestionImportItemRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, action, correctedVersion]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        action: {$ref: '#/components/schemas/LegacyQuestionImportResolutionAction'}
+        correctedVersion:
+          oneOf:
+            - $ref: '#/components/schemas/QuestionVersionInput'
+            - type: 'null'
     QuestionImportPage:
       type: object
       additionalProperties: false

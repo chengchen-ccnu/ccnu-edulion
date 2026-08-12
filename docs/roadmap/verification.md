@@ -262,3 +262,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 页面冻结：教师题库高亮组固定为 `/teacher/questions`、`/teacher/questions/new`、`/teacher/questions/:questionId`、`/teacher/questions/:questionId/edit`、`/teacher/question-imports` 和 `/teacher/question-imports/:importTaskId`。列表、新建、只读详情/版本、编辑、导入列表和导入详情/复核职责互不混入临时弹层，刷新后必须由 URL 与服务端恢复。
 - 任务拆分：新增 T09B 先向前补齐组合题结构化写入、版本历史、统一导入查询和逐项人工解决契约；T10 只在 T09B 冻结后实现 Vue 页面。T09B 不创建前端页面、不修改已合并 V1/V2、不授权全量迁移；T10 不实现组卷、学生作答、成绩或自动导入 44,441 份题库。
 - 范围与数据：本轮只修改页面规格、路线图、T09A 状态和验证记录，没有修改 OpenAPI、生成代码、Java/Python/Vue、数据库迁移或配置；未连接 MySQL、Redis、OSS、RabbitMQ、FFmpeg 或外部题库，未创建数据库、表、Seed、伪数据、媒体对象或消息。Markdown 差异检查通过即可，不把未执行的工程构建宣称为验证结果。
+
+## 2026-08-12 T09B 题库前端契约闭环实施
+
+- 门禁与范围：开始时分支为 `codex/t09b-question-bank-ui-contract`，HEAD、merge-base 和本地 `main` 均为 `c358c8e7dd971dd57c31f7040252b6715a1256ae`，工作区干净。完整读取 `docs/frontend/page-specs.md`，保持教师题库六组稳定路由不变；未创建 T10 Vue 页面、组卷/作答/成绩接口或 Python 智能体修改。
+- 契约先行：先把 OpenAPI 升级到 0.10.0 并成功生成客户端，再实现 Java。普通题与 `COMPOSITE` 共用完整父版本字段，组合题以 `children` 提交一层有序完整子题；父/子均含题型、题干、选项、答案、解析、知识点和 `mediaId` 引用。新增版本历史分页/指定详情、统一导入任务计数、历史 JSON 项分页/详情和 revision 幂等解决端点。
+- 不可变历史与权限：V3 只向前增加 `parent_question_id`、精确 `child_question_version_id`、复核项表和解决幂等表，V1/V2 未修改。历史父版本读取精确子版本，不跟随子聚合指针；子聚合不进入根列表或独立教师路由。他人题目、版本、任务和复核项统一 404，列表 SQL 不读取答案或完整解析。
+- 复核状态机：每个提交项保存安全元数据、问题码、outcome、revision 和解决状态，不保存原始 JSON、题干、答案、路径明文或外部 URL。只允许显式完整修正后导入或确认跳过；`clientRequestId`/指纹幂等，旧 revision 返回 409，单项成功后不可被另一请求覆盖。批次 20、任务 1000 上限未改变，未执行全量题库迁移。
+- 自动化：`generate:api` 通过；learning-service 相关 Reactor 测试共 19 项，17 通过、2 个显式真实环境用例默认跳过。新增覆盖结构化组合新建/更新、父子字段、根列表、旧子版本冻结、历史读取不移动当前指针、owner 404、复核分页/详情/问题码、修正导入、确认跳过、幂等重放、revision 冲突和统一计数。
+- 真实 MySQL 与数据：通过规定凭据包装脚本在既有 `edu_platform_learning_dev` 将 Flyway V2 向前迁移到 V3；应用未创建数据库。仅创建随机 owner 下的最小虚构知识点、单子题组合题和一项含糊历史 JSON 复核项，MySQL 8 用例通过后按精确 ID 逆序清理，owner 题目、幂等键、任务、复核项和解决记录均断言为 0。没有读取真实历史题库、连接 OSS/RabbitMQ 或创建媒体/Seed。
+- 完整工程门禁：Java 8 模块 `clean verify` 全部通过（2 分 29 秒）；Frontend 生成客户端与全 workspace 类型检查通过。Vitest 在沙箱内因既有 `esbuild spawn EPERM` 受阻，经批准沙箱外复跑后 13 文件 91 项全过；三端生产构建通过，仅有既有 HLS chunk 大小提示。
+- 待发布门禁：提交后 API 一致性、敏感信息审计和 Ready PR CI 状态将在发布前执行并回填；当前结果不提前宣称 CI 已通过。
