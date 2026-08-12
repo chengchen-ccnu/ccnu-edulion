@@ -125,7 +125,7 @@ mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl media-servi
 
 - 分支：`codex/t09a-legacy-json-import`
 - 基线：`main@71bd7d85`
-- Ready PR：[#19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19)，Open、非 Draft；不得自行合并。
+- PR：[#19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19) 已于 2026-08-12 合并到 `main`，合并提交为 `8295f46768c8ea77eae617b266e85f06d2445477`。
 - 关键实现提交：`ac69319`（`feat(question): add controlled legacy JSON migration`）。
 
 ## 人工可读性检查
