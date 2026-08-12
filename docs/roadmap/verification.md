@@ -253,4 +253,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实小样本与数据：先通过凭据包装脚本在既有专用 `edu_platform_learning_dev` 验证 V1/V2，程序化选择 1 份无图片且无需复核的真实文件完成 dry-run、实际导入及任务级精确清理。最终验收另只选择 1 份含 1 张图片的 `fillin` 真实 JSON，media-service 白名单仅为精确主机 `v3.rawstonedu.net` 且禁止重定向；真实 Gateway → learning-service → media-service → 阿里云 OSS 链路通过，生成 `QUESTION_IMAGE/READY`，learning 题目版本只保存 `mediaId`。同源请求幂等重放保持 1 个媒体/上传记录；dry-run 媒体、审计、对象和临时文件增量均为 0；非法主机返回 422 且无上传记录。
 - 真实外部系统与清理：RabbitMQ 实际完成 Bound/Released 事件发布、消费与状态转换；OSS `HEAD` 和短期签名读取验证成功。随后按精确任务、题目、媒体、上传、事件和 Object Key 清理，得到 `mysqlRemainingRows=0`、`ossObjectDeleted=true`、6 个相关队列为空、本机临时文件增量为 0。最终复跑证据哈希前缀为任务 `ea90ccf387d38207`、题目 `be3404bf0b8b4e7b`、媒体 `01afe8b6a742604e`、上传 `aacd4baa5800f90e`、对象键 `64bf9dd968cac53b`；没有输出真实文件路径、内容、完整 URL、Bucket、Object Key 或签名 URL。未创建数据库、Seed 或持久伪数据。
 - 边界：未执行 44,441 份全量迁移，未实现 T10 页面、T11 组卷/作答，也未修改 Python 智能体。本次单文件 E2E 只证明经审核主机上的该图片在验收时可安全转存，不代表全站下载授权或全量兼容；全量前仍须另行确认来源授权、最小白名单、限流和迁移计划。
-- 发布：实现提交 `ac69319` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19) 已创建并保持 Open/非 Draft，未自行合并。PR 创建后的纯文档状态提交继续复用同一分支与 CI。
+- 发布：实现提交 `ac69319` 和最终真实图片验收提交 `027de44` 已按规定推送；[PR #19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19) 的 Java、Python、Frontend 和 OpenAPI 最新检查全部成功，并于 2026-08-12 合并到 `main@8295f46768c8ea77eae617b266e85f06d2445477`。合并后本地 `main` 已快进同步，T09A 本地和远端功能分支均已清理。
+
+## 2026-08-12 题库页面路由与 T09B 契约闭环规格
+
+- 审计基线：总控在 `main@8295f46768c8ea77eae617b266e85f06d2445477`、干净工作区完成核对；T09A PR #19 已合并且最终 CI 全绿，Node `20.19.5`、pnpm `10.22.0` 与仓库冻结版本一致。完整读取前端页面唯一事实源，并只读核对 OpenAPI 0.9.0、生成客户端、教师路由和固定导航。
+- 缺口证据：现有契约将 `COMPOSITE` 排除在题目输入之外；题目详情只有当前版本，没有不可变版本历史查询；历史 JSON 虽持久化来源项和问题码，却没有可分页、刷新恢复的逐项查询和显式解决/跳过接口。教师端也只有 `/teacher/questions` 聚合路由，无法在不发明平行路由或仅靠浏览器内存的情况下完成编辑与复核。
+- 页面冻结：教师题库高亮组固定为 `/teacher/questions`、`/teacher/questions/new`、`/teacher/questions/:questionId`、`/teacher/questions/:questionId/edit`、`/teacher/question-imports` 和 `/teacher/question-imports/:importTaskId`。列表、新建、只读详情/版本、编辑、导入列表和导入详情/复核职责互不混入临时弹层，刷新后必须由 URL 与服务端恢复。
+- 任务拆分：新增 T09B 先向前补齐组合题结构化写入、版本历史、统一导入查询和逐项人工解决契约；T10 只在 T09B 冻结后实现 Vue 页面。T09B 不创建前端页面、不修改已合并 V1/V2、不授权全量迁移；T10 不实现组卷、学生作答、成绩或自动导入 44,441 份题库。
+- 范围与数据：本轮只修改页面规格、路线图、T09A 状态和验证记录，没有修改 OpenAPI、生成代码、Java/Python/Vue、数据库迁移或配置；未连接 MySQL、Redis、OSS、RabbitMQ、FFmpeg 或外部题库，未创建数据库、表、Seed、伪数据、媒体对象或消息。Markdown 差异检查通过即可，不把未执行的工程构建宣称为验证结果。
