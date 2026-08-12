@@ -367,6 +367,16 @@ public class QuestionRepository {
                         rs.getString("resulting_question_id")), ownerId, clientRequestId).stream().findFirst();
     }
 
+    /**
+     * 在任务行锁内用当前读复查解决请求；MySQL REPEATABLE READ 下不得沿用事务开始时的普通查询快照。
+     */
+    public Optional<LegacyResolutionRow> findLegacyResolutionForUpdate(String ownerId, String clientRequestId) {
+        return jdbc.query("SELECT * FROM question_legacy_item_resolution WHERE owner_id=? AND client_request_id=? FOR UPDATE",
+                (rs, row) -> new LegacyResolutionRow(rs.getString("review_item_id"),
+                        rs.getString("request_fingerprint"), rs.getString("action"),
+                        rs.getString("resulting_question_id")), ownerId, clientRequestId).stream().findFirst();
+    }
+
     /** 乐观把 NEEDS_REVIEW 项置为人工终态；返回 0 表示 revision 或状态冲突。 */
     public int resolveLegacyReviewItem(String ownerId, String taskId, String itemId, long expectedRevision,
             QuestionModels.ResolutionAction action, QuestionModels.ImportOutcome outcome, String questionId, Instant now) {
@@ -390,11 +400,14 @@ public class QuestionRepository {
                 action.name(), questionId, ts(now));
     }
 
-    /** 人工解决后更新统一任务计数；不改变 processedRows 或任务硬上限。 */
-    public void applyLegacyResolution(String taskId, QuestionModels.ResolutionAction action, Instant now) {
+    /**
+     * 仅在最终批次形成的可复核终态中累计人工结果，不改变 processedRows 或任务硬上限。
+     * @return 更新行数；0 表示任务不是 COMPLETED/PARTIAL_SUCCESS，调用方必须回滚整次解决事务
+     */
+    public int applyLegacyResolution(String taskId, QuestionModels.ResolutionAction action, Instant now) {
         int imported = action == QuestionModels.ResolutionAction.IMPORT_CORRECTED ? 1 : 0;
         int skipped = action == QuestionModels.ResolutionAction.CONFIRM_SKIP ? 1 : 0;
-        jdbc.update("UPDATE question_import_task SET status=CASE WHEN review_count<=1 AND failure_count=0 THEN 'COMPLETED' WHEN status='COMPLETED' THEN 'COMPLETED' ELSE 'PARTIAL_SUCCESS' END,review_count=GREATEST(0,review_count-1),success_count=success_count+?,skipped_count=skipped_count+?,updated_at=? WHERE id=?",
+        return jdbc.update("UPDATE question_import_task SET status=CASE WHEN review_count<=1 AND failure_count=0 THEN 'COMPLETED' ELSE 'PARTIAL_SUCCESS' END,review_count=GREATEST(0,review_count-1),success_count=success_count+?,skipped_count=skipped_count+?,updated_at=? WHERE id=? AND status IN ('COMPLETED','PARTIAL_SUCCESS')",
                 imported, skipped, ts(now), taskId);
     }
 
@@ -432,11 +445,8 @@ public class QuestionRepository {
 
     /** 原子累计一个已确认批次；finalBatch 决定任务是否进入终态。 */
     public void applyLegacyBatchProgress(String taskId, LegacyBatch batch, boolean finalBatch, Instant retainUntil, Instant now) {
-        String status = finalBatch
-                ? (batch.failedCount() + batch.reviewCount() == 0 ? QuestionModels.ImportStatus.COMPLETED.name()
-                : QuestionModels.ImportStatus.PARTIAL_SUCCESS.name()) : QuestionModels.ImportStatus.PROCESSING.name();
-        jdbc.update("UPDATE question_import_task SET status=?,total_rows=CASE WHEN ? THEN processed_rows+? ELSE total_rows END,processed_rows=processed_rows+?,success_count=success_count+?,review_count=review_count+?,skipped_count=skipped_count+?,failure_count=failure_count+?,progress=CASE WHEN ? THEN 100 ELSE LEAST(99,(processed_rows+?)*100/NULLIF(total_rows,0)) END,retain_until=?,updated_at=? WHERE id=?",
-                status, finalBatch, batch.processedCount(), batch.processedCount(),
+        jdbc.update("UPDATE question_import_task SET status=CASE WHEN ? THEN CASE WHEN review_count+?=0 AND failure_count+?=0 THEN 'COMPLETED' ELSE 'PARTIAL_SUCCESS' END ELSE 'PROCESSING' END,total_rows=CASE WHEN ? THEN processed_rows+? ELSE total_rows END,processed_rows=processed_rows+?,success_count=success_count+?,review_count=review_count+?,skipped_count=skipped_count+?,failure_count=failure_count+?,progress=CASE WHEN ? THEN 100 ELSE LEAST(99,(processed_rows+?)*100/NULLIF(max_items,0)) END,retain_until=?,updated_at=? WHERE id=?",
+                finalBatch, batch.reviewCount(), batch.failedCount(), finalBatch, batch.processedCount(), batch.processedCount(),
                 batch.importedCount() + batch.validCount(), batch.reviewCount(), batch.skippedCount(),
                 batch.failedCount(), finalBatch, batch.processedCount(), ts(retainUntil), ts(now), taskId);
     }

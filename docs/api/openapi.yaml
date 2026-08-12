@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.10.0
+  version: 0.10.1
   description: T09B Gateway contract. Adds structured ordinary/composite question writes, immutable version history, unified import-task projections and refresh-safe legacy JSON item review/resolution. No T10 Vue page, full-corpus migration or T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
@@ -1030,7 +1030,10 @@ paths:
       description: |
         `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
         ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
-        is terminal for the item. Replaying the same clientRequestId and body returns the same result.
+        is terminal for the item. Resolution is allowed only after the final batch has completed and the task
+        is in `COMPLETED` or `PARTIAL_SUCCESS`; `PENDING`, `PROCESSING`, `FAILED` and `CLEANED` tasks return
+        `QUESTION_IMPORT.TASK_NOT_REVIEWABLE` with HTTP 409. Replaying the same clientRequestId and body,
+        including two concurrent identical requests, returns the first committed result.
       parameters:
         - $ref: '#/components/parameters/ImportTaskId'
         - name: itemId
@@ -1057,7 +1060,7 @@ paths:
         '404':
           $ref: '#/components/responses/QuestionNotFound'
         '409':
-          $ref: '#/components/responses/QuestionConflict'
+          $ref: '#/components/responses/LegacyQuestionReviewConflict'
         '422':
           $ref: '#/components/responses/ValidationFailed'
         '503':
@@ -1759,6 +1762,31 @@ components:
             timestamp: '2026-08-09T10:00:00Z'
             path: /api/v1/teacher/questions/0198f434-215d-7abc-9123-123456789abc
             fieldErrors: []
+    LegacyQuestionReviewConflict:
+      description: The import task is not in a final reviewable state, the item revision is stale/already resolved, or the idempotency key conflicts with another request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            taskNotReviewable:
+              summary: Final batch has not completed
+              value:
+                code: QUESTION_IMPORT.TASK_NOT_REVIEWABLE
+                message: 历史导入任务未进入可人工复核终态
+                traceId: 2f6c8c3b98f14a9c
+                timestamp: '2026-08-12T10:00:00Z'
+                path: /api/v1/teacher/question-imports/0198f434-215d-7abc-9123-123456789abc/items/0198f434-215d-7abc-9123-123456789abd/resolution
+                fieldErrors: []
+            revisionConflict:
+              summary: Review item has changed
+              value:
+                code: QUESTION_IMPORT.ITEM_REVISION_CONFLICT
+                message: 复核项已被更新，请刷新后重试
+                traceId: 2f6c8c3b98f14a9c
+                timestamp: '2026-08-12T10:00:00Z'
+                path: /api/v1/teacher/question-imports/0198f434-215d-7abc-9123-123456789abc/items/0198f434-215d-7abc-9123-123456789abd/resolution
+                fieldErrors: []
     QuestionDependencyUnavailable:
       description: media-service or the short-lived source download is unavailable before the requested operation can safely proceed. Committed Outbox events remain retryable and do not use this response.
       content:

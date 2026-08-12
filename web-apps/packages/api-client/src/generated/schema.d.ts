@@ -519,7 +519,10 @@ export interface paths {
          * Idempotently import an explicit structured correction or confirm skip
          * @description `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
          *     ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
-         *     is terminal for the item. Replaying the same clientRequestId and body returns the same result.
+         *     is terminal for the item. Resolution is allowed only after the final batch has completed and the task
+         *     is in `COMPLETED` or `PARTIAL_SUCCESS`; `PENDING`, `PROCESSING`, `FAILED` and `CLEANED` tasks return
+         *     `QUESTION_IMPORT.TASK_NOT_REVIEWABLE` with HTTP 409. Replaying the same clientRequestId and body,
+         *     including two concurrent identical requests, returns the first committed result.
          */
         post: operations["resolveLegacyQuestionImportItem"];
         delete?: never;
@@ -1919,6 +1922,15 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The import task is not in a final reviewable state, the item revision is stale/already resolved, or the idempotency key conflicts with another request. */
+        LegacyQuestionReviewConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description media-service or the short-lived source download is unavailable before the requested operation can safely proceed. Committed Outbox events remain retryable and do not use this response. */
         QuestionDependencyUnavailable: {
             headers: {
@@ -2893,7 +2905,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["QuestionNotFound"];
-            409: components["responses"]["QuestionConflict"];
+            409: components["responses"]["LegacyQuestionReviewConflict"];
             422: components["responses"]["ValidationFailed"];
             503: components["responses"]["QuestionDependencyUnavailable"];
         };

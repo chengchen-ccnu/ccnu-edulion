@@ -176,15 +176,18 @@ public class LegacyQuestionImportService {
     public QuestionDtos.LegacyReviewItem resolve(String ownerId, String taskId, String itemId,
             QuestionDtos.ResolveLegacyItemRequest request, String traceId) {
         String fingerprint = fingerprint(request);
-        var replay = repository.findLegacyResolution(ownerId, request.clientRequestId().toString());
-        if (replay.isPresent()) {
-            if (!replay.get().itemId().equals(itemId) || !replay.get().fingerprint().equals(fingerprint)) {
-                throw conflict("QUESTION.IDEMPOTENCY_CONFLICT", "clientRequestId 已用于不同的复核解决请求");
-            }
-            return item(ownerId, taskId, itemId);
-        }
+        String clientRequestId = request.clientRequestId().toString();
+        var replay = replayResolution(ownerId, taskId, itemId, clientRequestId, fingerprint);
+        if (replay.isPresent()) return replay.get();
+
         ImportTask task = ownedForUpdate(ownerId, taskId);
         if (task.sourceFormat() != QuestionModels.ImportFormat.LEGACY_JSON) throw notFound();
+        // 两个相同请求可能在任务锁前都未读到幂等行；获得锁后必须重查首个事务已提交的结果。
+        replay = replayResolutionForUpdate(ownerId, taskId, itemId, clientRequestId, fingerprint);
+        if (replay.isPresent()) return replay.get();
+        if (!reviewable(task.status())) {
+            throw conflict("QUESTION_IMPORT.TASK_NOT_REVIEWABLE", "历史导入任务未进入可人工复核终态");
+        }
         LegacyReviewItem current = repository.findLegacyReviewItemForUpdate(ownerId, taskId, itemId)
                 .orElseThrow(LegacyQuestionImportService::notFound);
         if (current.revision() != request.expectedRevision()) {
@@ -211,9 +214,11 @@ public class LegacyQuestionImportService {
         }
         if (current.sourceRefId() != null) repository.resolveLegacySource(ownerId, current.sourceRefId(), outcome,
                 questionId, now);
-        repository.insertLegacyResolution(ownerId, taskId, itemId, request.clientRequestId().toString(),
+        repository.insertLegacyResolution(ownerId, taskId, itemId, clientRequestId,
                 fingerprint, action, questionId, now);
-        repository.applyLegacyResolution(taskId, action, now);
+        if (repository.applyLegacyResolution(taskId, action, now) == 0) {
+            throw conflict("QUESTION_IMPORT.TASK_NOT_REVIEWABLE", "历史导入任务未进入可人工复核终态");
+        }
         return item(ownerId, taskId, itemId);
     }
 
@@ -311,6 +316,42 @@ public class LegacyQuestionImportService {
         return repository.findImportTaskForUpdate(taskId, ownerId).orElseThrow(LegacyQuestionImportService::notFound);
     }
 
+    /**
+     * 读取已提交的人工解决结果；相同 clientRequestId 必须绑定同一复核项和完整请求指纹。
+     * @return 已存在时返回第一次提交后的安全复核投影，否则返回空
+     */
+    private java.util.Optional<QuestionDtos.LegacyReviewItem> replayResolution(String ownerId, String taskId,
+            String itemId, String clientRequestId, String fingerprint) {
+        var replay = repository.findLegacyResolution(ownerId, clientRequestId);
+        return replayResolution(ownerId, taskId, itemId, fingerprint, replay);
+    }
+
+    /** 任务锁后的幂等二次查询使用当前读，避免 MySQL REPEATABLE READ 沿用锁前快照。 */
+    private java.util.Optional<QuestionDtos.LegacyReviewItem> replayResolutionForUpdate(String ownerId, String taskId,
+            String itemId, String clientRequestId, String fingerprint) {
+        var replay = repository.findLegacyResolutionForUpdate(ownerId, clientRequestId);
+        if (replay.isEmpty()) return java.util.Optional.empty();
+        validateReplay(itemId, fingerprint, replay.get());
+        // 幂等行必须与复核项一起使用当前读，否则 MySQL REPEATABLE READ 仍可能返回 revision=0 的旧快照。
+        return java.util.Optional.of(reviewResponse(repository.findLegacyReviewItemForUpdate(ownerId, taskId, itemId)
+                .orElseThrow(LegacyQuestionImportService::notFound)));
+    }
+
+    private java.util.Optional<QuestionDtos.LegacyReviewItem> replayResolution(String ownerId, String taskId,
+            String itemId, String fingerprint,
+            java.util.Optional<QuestionRepository.LegacyResolutionRow> replay) {
+        if (replay.isEmpty()) return java.util.Optional.empty();
+        validateReplay(itemId, fingerprint, replay.get());
+        return java.util.Optional.of(item(ownerId, taskId, itemId));
+    }
+
+    private static void validateReplay(String itemId, String fingerprint,
+            QuestionRepository.LegacyResolutionRow replay) {
+        if (!replay.itemId().equals(itemId) || !replay.fingerprint().equals(fingerprint)) {
+            throw conflict("QUESTION.IDEMPOTENCY_CONFLICT", "clientRequestId 已用于不同的复核解决请求");
+        }
+    }
+
     private QuestionDtos.LegacyReviewItem reviewResponse(LegacyReviewItem item) {
         List<QuestionDtos.LegacyIssue> issues = item.issueCodes().stream()
                 .map(code -> new QuestionDtos.LegacyIssue(code, issueMessage(code))).toList();
@@ -368,6 +409,7 @@ public class LegacyQuestionImportService {
     private static String sha256(String value) { return sha256(value.getBytes(StandardCharsets.UTF_8)); }
     private static String sha256(byte[] value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (Exception exception) { throw new IllegalStateException(exception); } }
     private static boolean terminal(QuestionModels.ImportStatus status) { return status == QuestionModels.ImportStatus.COMPLETED || status == QuestionModels.ImportStatus.PARTIAL_SUCCESS || status == QuestionModels.ImportStatus.FAILED || status == QuestionModels.ImportStatus.CLEANED; }
+    private static boolean reviewable(QuestionModels.ImportStatus status) { return status == QuestionModels.ImportStatus.COMPLETED || status == QuestionModels.ImportStatus.PARTIAL_SUCCESS; }
     private static QuestionException invalid(String field, String reason) { return new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "COMMON.VALIDATION_FAILED", "请求参数不合法", List.of(new com.eduplatform.shared.api.FieldError(field, reason))); }
     private static QuestionException conflict(String code, String message) { return new QuestionException(HttpStatus.CONFLICT, code, message); }
     private static QuestionException notFound() { return new QuestionException(HttpStatus.NOT_FOUND, "QUESTION.NOT_FOUND", "历史导入任务不存在或不可见"); }

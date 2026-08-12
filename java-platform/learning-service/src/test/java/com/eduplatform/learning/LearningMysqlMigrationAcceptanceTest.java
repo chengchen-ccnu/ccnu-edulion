@@ -16,6 +16,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -108,9 +111,39 @@ class LearningMysqlMigrationAcceptanceTest {
                     true, List.of(item)), "t09b-mysql-review");
             var review = legacyImports.items(ownerId, reviewTaskId, 1, 20,
                     QuestionModels.ImportOutcome.NEEDS_REVIEW).items().get(0);
-            legacyImports.resolve(ownerId, reviewTaskId, review.id(), new QuestionDtos.ResolveLegacyItemRequest(
-                    UUID.randomUUID(), 0, QuestionDtos.ResolutionAction.CONFIRM_SKIP, null), "t09b-mysql-skip");
+            var corrected = new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE,
+                    QuestionModels.Difficulty.EASY, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
+                    QuestionModels.Subject.MATHEMATICS, "T09B 并发幂等合成题",
+                    List.of(new QuestionDtos.OptionInput("A", "1"), new QuestionDtos.OptionInput("B", "2")),
+                    List.of("A"), "T09B 并发幂等解析", List.of(UUID.fromString(pointId)), List.of());
+            var resolution = new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                    QuestionDtos.ResolutionAction.IMPORT_CORRECTED, corrected);
+            int questionsBeforeResolution = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?", Integer.class, ownerId);
+            String concurrentTaskId = reviewTaskId;
+            var executor = Executors.newFixedThreadPool(2);
+            var ready = new CountDownLatch(2); var start = new CountDownLatch(1);
+            try {
+                var first = executor.submit(() -> {
+                    ready.countDown(); start.await();
+                    return legacyImports.resolve(ownerId, concurrentTaskId, review.id(), resolution, "t09b-mysql-concurrent-01");
+                });
+                var second = executor.submit(() -> {
+                    ready.countDown(); start.await();
+                    return legacyImports.resolve(ownerId, concurrentTaskId, review.id(), resolution, "t09b-mysql-concurrent-02");
+                });
+                assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue(); start.countDown();
+                var firstResult = first.get(10, TimeUnit.SECONDS);
+                var secondResult = second.get(10, TimeUnit.SECONDS);
+                assertThat(secondResult).isEqualTo(firstResult);
+            } finally {
+                executor.shutdownNow();
+            }
             assertThat(legacyImports.item(ownerId, reviewTaskId, review.id()).revision()).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?",
+                    Integer.class, ownerId)).isEqualTo(questionsBeforeResolution + 1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_item_resolution WHERE import_task_id=?",
+                    Integer.class, reviewTaskId)).isEqualTo(1);
         } finally {
             if (reviewTaskId != null) {
                 legacyImports.cleanup(ownerId, reviewTaskId, "t09b-mysql-review-cleanup");
