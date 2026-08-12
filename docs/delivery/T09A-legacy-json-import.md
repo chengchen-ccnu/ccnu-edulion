@@ -75,14 +75,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 
 ## 测试与实际结果
 
-- 完整 Java `clean verify` 的 8 个 Reactor 模块通过：共 70 项测试，67 通过、3 个真实环境用例默认跳过。最终变更后定向复跑 gateway 11 项、learning 17 项和 media 18 项，均无失败。
+- 最终完整 Java `clean verify` 的 8 个 Reactor 模块通过：共 71 项测试，67 通过、4 个真实环境用例默认跳过；media-service 共 19 项，17 通过、2 个真实环境用例默认跳过。受控真实图片用例另在显式启用真实环境后 1 项通过。
 - 专用 MySQL 验收通过：`edu_platform_learning_dev` 上 2 项测试通过，包含 V1/V2 校验、1 份真实文件 dry-run、1 份真实文件实际导入和精确清理；终端没有输出文件路径、题干、答案或 JSON。
 - 自动化只提交少量虚构 Fixture，覆盖四种题型、显式子题顺序、编号父答案、空解答、HTML 清洗、LaTeX、图片转存幂等、SSRF 拒绝和任务清理。
 - OpenAPI 生成和全 workspace 类型检查通过；Vitest 在沙箱内因既有 `esbuild spawn EPERM` 受阻，经批准在沙箱外复跑后 13 个文件 91 项全通过，三端生产构建通过。两个 PowerShell 脚本语法解析通过；统计脚本以 3 文件上限验证只输出聚合计数。
 
+### 2026-08-12 真实外部图片受控 E2E
+
+- 前置条件：通过本地凭据包装脚本确认 `edu_platform_learning_dev`、`edu_platform_media_dev`、MySQL、RabbitMQ 和阿里云 OSS 配置可用；凭据、Bucket、Object Key、签名 URL 均未输出。只程序化选择并读取 1 份 `fillin` 真实 JSON，其中恰有 1 个 HTTPS 图片引用；没有复制或修改原文件，也没有输出路径、题干、答案、JSON 或完整来源 URL。
+- 白名单：本轮 media-service 只允许精确主机 `v3.rawstonedu.net`，禁止重定向，没有放开任意 HTTPS 域名。Java 安全下载器实际完成 HTTPS 下载、MIME/图片魔数和大小校验并写入真实 OSS。
+- 链路：请求经真实 Gateway 路由到 learning-service，再调用 media-service；生成 1 个 `QUESTION_IMAGE`、状态 `READY` 的媒体资产。Gateway 投影和 learning 表只含稳定 `mediaId`，不含外部 URL、Bucket、Object Key 或签名 URL；OSS `HEAD` 与短期签名读取成功且内容摘要一致。
+- 幂等与拒绝：相同确定性请求重放返回同一 `mediaId`，媒体资产和上传会话仍各 1 行、OSS 对象未重复创建；`dry-run` 创建媒体/上传/审计记录均为 0，未生成对象或临时下载文件；对白名单外 `example.com` 的请求返回 422 `MEDIA.EXTERNAL_IMAGE_INVALID`，且没有新增上传会话。
+- 事件与清理：真实 RabbitMQ 完成 `MediaReferenceBound`、`MediaReferenceReleased` 发布和幂等消费，引用状态依次为 `BOUND`、`RELEASED`。验收按精确 `importTaskId`、`questionId`、`mediaId`、`uploadId`、事件 ID 和 OSS Object Key 逆序清理；Object Key 删除后 `HEAD` 失败，6 个相关持久队列消息数均为 0，本机外部图片临时文件增量为 0。
+- 聚合清理证据：`mysqlRemainingRows=0`、`ossObjectDeleted=true`、`rabbitQueuesEmpty=true`、`temporaryFilesRemaining=0`；最终复跑标识仅记录 16 位 SHA-256 前缀：任务 `ea90ccf387d38207`、题目 `be3404bf0b8b4e7b`、媒体 `01afe8b6a742604e`、上传 `aacd4baa5800f90e`、对象键 `64bf9dd968cac53b`。这些哈希只用于关联本轮验收日志，不能用于定位或删除其他数据。
+
+该用例默认跳过，必须经人工审核单文件和唯一主机后显式运行；以下变量均在凭据包装脚本的进程内设置，不写入仓库或 `local.env`：
+
+```powershell
+$env:T09A_EXTERNAL_IMAGE_ACCEPTANCE = 'true'
+$env:LEGACY_QUESTION_ROOT = '<只读历史题库根目录>'
+$env:T09A_EXTERNAL_IMAGE_FILE = '<根目录内已审核的单个 JSON 绝对路径>'
+$env:T09A_EXTERNAL_IMAGE_HOST = '<从该单文件审核出的唯一 HTTPS 主机>'
+mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl media-service -am `
+  '-Dtest=T09AExternalImageRealAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+测试拒绝非 `edu_platform_learning_dev`/`edu_platform_media_dev` Schema、通配或多主机配置；正常和异常路径都只按本轮随机 owner 与捕获的精确 ID 清理，禁止用它做全量迁移。
+
 ## 伪数据与清理/重新生成
 
-未创建任何数据库。自动化 Fixture 只存在于随机 H2 内存库，进程结束自动释放；重复运行测试即可重新生成。真实验收复用用途明确的 `edu_platform_learning_dev`，V2 表和列作为迁移结果保留；本轮随机题目、来源引用、批次、问题、Outbox 和任务记录均按精确 ID 清理。没有修改 media 开发库、OSS 或 RabbitMQ。
+未创建任何数据库。自动化 Fixture 只存在于随机 H2 内存库，进程结束自动释放；重复运行测试即可重新生成。真实验收复用用途明确的 `edu_platform_learning_dev` 与 `edu_platform_media_dev`，既有迁移表保留；本轮临时创建的题目、来源引用、批次、问题、Outbox、任务、媒体资产、上传会话、媒体引用、审计、RabbitMQ 消息和唯一 OSS 对象均按精确 ID/Object Key 清理。本轮没有 Seed 或持久伪数据，验收后两 Schema、本机临时目录和相关队列无本轮残留。
 
 ## 人工演示步骤
 
@@ -95,7 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 ## 已知风险与后续依赖
 
 - 44,441 份全量迁移未执行，也未获得授权；吞吐、站点限流和来源质量分布仍需另行迁移计划。
-- 真实外部站点图片到真实 OSS 的 E2E 未执行；当前证据为虚构下载器集成测试和 HTTP 安全单元测试。正式启用前需人工维护最小主机白名单并确认来源授权。
+- 真实外部站点图片到真实 OSS 的 E2E 已只对 1 份文件、1 张图片和唯一主机执行；它不构成对整个来源站点的下载授权，也不证明 28,646 份含图文件均可迁移。全量迁移前仍须逐来源确认合法下载权限、最小白名单、限流、内容授权和失败恢复方案；不得用本次主机值扩展为通配规则。
 - `NEEDS_REVIEW` 的人工工作台属于 T10；本任务只提供后端记录与投影。
 - 组合题在 T11 前仅作为题库结构存在，不代表已支持组卷、作答或判分。
 
