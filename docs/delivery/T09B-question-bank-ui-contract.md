@@ -86,4 +86,5 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 
 - 分支：`codex/t09b-question-bank-ui-contract`
 - 基线：`main@c358c8e7dd971dd57c31f7040252b6715a1256ae`
-- PR 与关键提交：将在本任务完成验证、提交并创建 Ready PR 后回填。
+- Ready PR：[#21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21)，保持打开且不由本任务合并。
+- 关键实现提交：`86a9176`（`feat(question): close T09B UI contracts`）。
