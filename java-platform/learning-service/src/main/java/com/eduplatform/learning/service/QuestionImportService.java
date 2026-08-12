@@ -88,8 +88,8 @@ public class QuestionImportService {
         List<QuestionDtos.ImportRowError> errors = includeErrors ? repository.importErrors(task.id()).stream()
                 .map(value -> new QuestionDtos.ImportRowError(value.rowNumber(), value.code(), value.message())).toList() : List.of();
         return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(),
-                task.dryRun(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(),
-                task.reviewCount(), task.skippedCount(), task.failureCount(), errors, task.failureCode(),
+                task.dryRun(), task.maxItems(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(),
+                task.reviewCount(), repository.countResolvedLegacyItems(task.id()), task.skippedCount(), task.failureCount(), errors, task.failureCode(),
                 task.failureMessage(), task.retainUntil(), task.sourceReleasedAt(), task.createdAt(), task.updatedAt());
     }
 

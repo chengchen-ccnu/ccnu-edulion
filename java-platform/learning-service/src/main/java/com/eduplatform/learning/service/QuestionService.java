@@ -31,7 +31,7 @@ import tools.jackson.databind.ObjectMapper;
  * 教师题目聚合服务：所有权、幂等、不可变版本、乐观锁与媒体 Outbox 在这里收口。
  *
  * <p>任何更新先插入新版本，再以 revision 原子移动聚合指针；旧版本及其媒体引用继续保留，避免
- * T11 快照或审计历史因“替换附件”丢失。T09 不提供学生读取方法。</p>
+ * T11 快照或审计历史因“替换附件”丢失。T09B 仍不提供学生读取方法。</p>
  */
 @Service
 @ConditionalOnBean(QuestionRepository.class)
@@ -49,12 +49,12 @@ public class QuestionService {
     /** 创建 DRAFT 与版本 1；相同 clientRequestId/指纹返回原聚合，不再次发布引用事件。 */
     @Transactional
     public Creation create(String ownerId, String requestId, QuestionDtos.VersionInput input, String traceId) {
-        return createInternal(ownerId, requestId, input, traceId, false);
+        return createInternal(ownerId, requestId, input, traceId, true, true);
     }
 
-    /** 共享普通创建与受控组合题迁移写入；只有专用迁移入口可将 allowComposite 设为 true。 */
+    /** 共享普通创建与受控组合题写入；结构化入口要求组合父题携带完整有序子题。 */
     private Creation createInternal(String ownerId, String requestId, QuestionDtos.VersionInput input,
-            String traceId, boolean allowComposite) {
+            String traceId, boolean allowComposite, boolean requireCompositeChildren) {
         String fingerprint = fingerprint(input);
         var replay = repository.findIdempotency(ownerId, requestId);
         if (replay.isPresent()) {
@@ -63,22 +63,32 @@ public class QuestionService {
             }
             return new Creation(get(ownerId, replay.get().resourceId()), false);
         }
+        validateStructure(input, allowComposite, requireCompositeChildren);
         Prepared prepared = prepare(input, ownerId, traceId, allowComposite);
+        List<PreparedChild> children = new ArrayList<>();
+        for (QuestionDtos.ChildInput child : input.childItems()) {
+            QuestionDtos.VersionInput childVersion = childVersion(child);
+            children.add(new PreparedChild(childVersion, prepare(childVersion, ownerId, traceId, false)));
+        }
         Instant now = Instant.now(); String questionId = UUID.randomUUID().toString(); String versionId = UUID.randomUUID().toString();
         List<Media> versionMedia = mediaRows(prepared.media());
         Aggregate aggregate = new Aggregate(questionId, ownerId, QuestionModels.Status.DRAFT, null, 0, now, now);
         Version version = version(versionId, questionId, 1, input, prepared.knowledge(), versionMedia, now);
-        repository.insertAggregate(aggregate); repository.insertVersion(version, ownerId); repository.setInitialVersion(questionId, versionId, now);
+        repository.insertAggregate(aggregate);
+        List<QuestionRepository.ChildLink> childLinks = new ArrayList<>();
+        for (PreparedChild child : children) childLinks.add(insertChild(ownerId, questionId, child, traceId, now));
+        repository.insertVersion(version, ownerId);
+        if (!childLinks.isEmpty()) repository.insertVersionChildren(questionId, versionId, childLinks);
+        repository.setInitialVersion(questionId, versionId, now);
         repository.insertIdempotency(ownerId, requestId, fingerprint, "QUESTION", questionId, now);
-        for (Media item : versionMedia) repository.insertOutbox(events.mediaReference("MediaReferenceBound", item.mediaId(),
-                "QUESTION_VERSION_MEDIA", item.id(), traceId, now));
+        bindMedia(versionMedia, traceId, now);
         return new Creation(get(ownerId, questionId), true);
     }
 
     /** 导入行使用任务 ID + 行号派生的请求 ID，因此 Worker 崩溃重放也不会重复生成题目。 */
     @Transactional
     public Creation createImported(String ownerId, String deterministicRequestId, QuestionDtos.VersionInput input, String traceId) {
-        return createInternal(ownerId, deterministicRequestId, input, traceId, false);
+        return createInternal(ownerId, deterministicRequestId, input, traceId, false, true);
     }
 
     /**
@@ -89,9 +99,10 @@ public class QuestionService {
     @Transactional
     public Creation createImportedComposite(String ownerId, String deterministicRequestId,
             QuestionDtos.VersionInput input, List<String> childQuestionIds, String traceId) {
-        Creation parent = createInternal(ownerId, deterministicRequestId, input, traceId, true);
-        if (parent.created()) repository.insertVersionChildren(parent.response().currentVersion().id(), childQuestionIds);
-        return parent;
+        Creation parent = createInternal(ownerId, deterministicRequestId, input, traceId, true, false);
+        if (parent.created()) repository.insertCurrentVersionChildren(parent.response().id(),
+                parent.response().currentVersion().id(), childQuestionIds);
+        return new Creation(get(ownerId, parent.response().id()), parent.created());
     }
 
     /** 写入新版本并乐观移动指针；ARCHIVED 聚合拒绝修改。 */
@@ -101,16 +112,25 @@ public class QuestionService {
         Aggregate aggregate = owned(ownerId, questionId);
         if (aggregate.status() == QuestionModels.Status.ARCHIVED) throw conflict("QUESTION.ARCHIVED", "归档题目不能修改");
         if (aggregate.revision() != expectedRevision) throw conflict("QUESTION.REVISION_CONFLICT", "题目已被更新，请刷新后重试");
-        Prepared prepared = prepare(input, ownerId, traceId, false); Instant now = Instant.now();
+        validateStructure(input, true, true);
+        Prepared prepared = prepare(input, ownerId, traceId, true);
+        List<PreparedChild> children = new ArrayList<>();
+        for (QuestionDtos.ChildInput child : input.childItems()) {
+            QuestionDtos.VersionInput childValue = childVersion(child);
+            children.add(new PreparedChild(childValue, prepare(childValue, ownerId, traceId, false)));
+        }
+        Instant now = Instant.now();
         String versionId = UUID.randomUUID().toString(); List<Media> versionMedia = mediaRows(prepared.media());
         Version version = version(versionId, questionId, repository.nextVersionNumber(questionId), input,
                 prepared.knowledge(), versionMedia, now);
+        List<QuestionRepository.ChildLink> childLinks = new ArrayList<>();
+        for (PreparedChild child : children) childLinks.add(insertChild(ownerId, questionId, child, traceId, now));
         repository.insertVersion(version, ownerId);
+        if (!childLinks.isEmpty()) repository.insertVersionChildren(questionId, versionId, childLinks);
         if (repository.moveToVersion(questionId, ownerId, expectedRevision, versionId, now) == 0) {
             throw conflict("QUESTION.REVISION_CONFLICT", "题目已被更新，请刷新后重试");
         }
-        for (Media item : versionMedia) repository.insertOutbox(events.mediaReference("MediaReferenceBound", item.mediaId(),
-                "QUESTION_VERSION_MEDIA", item.id(), traceId, now));
+        bindMedia(versionMedia, traceId, now);
         return get(ownerId, questionId);
     }
 
@@ -147,9 +167,64 @@ public class QuestionService {
                 page, size, rows.total());
     }
 
+    /** 分页返回本人题目的不可变历史摘要；只读查询不会移动当前版本指针。 */
+    public QuestionDtos.VersionPage versions(String ownerId, String questionId, int page, int size) {
+        Aggregate aggregate = owned(ownerId, questionId);
+        var rows = repository.listVersions(questionId, aggregate.currentVersionId(), page, size);
+        return new QuestionDtos.VersionPage(rows.stream().map(row -> new QuestionDtos.VersionSummary(row.id(),
+                row.versionNumber(), row.type(), row.difficulty(), preview(row.stem()), row.childCount(),
+                row.createdAt(), row.current())).toList(), page, size, repository.countVersions(questionId));
+    }
+
+    /** 返回属于本人聚合的指定不可变版本；读取历史不改变 aggregate revision。 */
+    public QuestionDtos.VersionResponse version(String ownerId, String questionId, String versionId) {
+        owned(ownerId, questionId);
+        Version version = repository.findVersion(questionId, versionId).orElseThrow(QuestionService::notFound);
+        return versionResponse(questionId, version);
+    }
+
+    private QuestionRepository.ChildLink insertChild(String ownerId, String parentQuestionId,
+            PreparedChild child, String traceId, Instant now) {
+        String questionId = UUID.randomUUID().toString(); String versionId = UUID.randomUUID().toString();
+        Aggregate aggregate = new Aggregate(questionId, ownerId, QuestionModels.Status.DRAFT, null, 0, now, now);
+        List<Media> media = mediaRows(child.prepared().media());
+        Version version = version(versionId, questionId, 1, child.input(), child.prepared().knowledge(), media, now);
+        repository.insertAggregate(aggregate, parentQuestionId);
+        repository.insertVersion(version, ownerId);
+        repository.setInitialVersion(questionId, versionId, now);
+        bindMedia(media, traceId, now);
+        return new QuestionRepository.ChildLink(questionId, versionId);
+    }
+
+    private void bindMedia(List<Media> media, String traceId, Instant now) {
+        for (Media item : media) repository.insertOutbox(events.mediaReference("MediaReferenceBound", item.mediaId(),
+                "QUESTION_VERSION_MEDIA", item.id(), traceId, now));
+    }
+
+    private static QuestionDtos.VersionInput childVersion(QuestionDtos.ChildInput child) {
+        return new QuestionDtos.VersionInput(child.type(), child.difficulty(), child.stage(), child.grade(),
+                child.subject(), child.stem(), child.options(), child.answers(), child.analysis(),
+                child.knowledgePointIds(), child.media(), List.of());
+    }
+
+    private void validateStructure(QuestionDtos.VersionInput input, boolean allowComposite,
+            boolean requireCompositeChildren) {
+        if (input.type() == QuestionModels.Type.COMPOSITE) {
+            if (!allowComposite) throw invalid("type", "此入口不允许组合题");
+            if (requireCompositeChildren && input.childItems().isEmpty()) {
+                throw invalid("children", "组合题必须包含至少一个结构化子题");
+            }
+        } else if (!input.childItems().isEmpty()) {
+            throw invalid("children", "普通题不能包含组合题子题");
+        }
+        if (input.childItems().stream().anyMatch(child -> child.type() == QuestionModels.Type.COMPOSITE)) {
+            throw invalid("children", "组合题子题不能再次嵌套组合题");
+        }
+    }
+
     private Prepared prepare(QuestionDtos.VersionInput input, String ownerId, String traceId, boolean allowComposite) {
         if (input.type() == QuestionModels.Type.COMPOSITE && !allowComposite) {
-            throw invalid("type", "组合题只能由 T09A 受控迁移创建，普通编辑契约尚未开放子题编排");
+            throw invalid("type", "组合题必须通过结构化父子题契约提交");
         }
         validateContent(input);
         List<String> ids = input.knowledgePointIds().stream().map(UUID::toString).distinct().toList();
@@ -195,9 +270,8 @@ public class QuestionService {
             case FILL_BLANK, SHORT_ANSWER -> {
                 if (!keys.isEmpty()) throw invalid("options", "填空题和简答题不能包含选项");
             }
-            case COMPOSITE -> {
-                if (!keys.isEmpty()) throw invalid("options", "组合题父题不能包含选项");
-            }
+            // 组合父题同样保留结构化选项与答案；子题由独立完整输入逐项校验。
+            case COMPOSITE -> { }
         }
     }
 
@@ -216,10 +290,15 @@ public class QuestionService {
     }
 
     private Aggregate owned(String ownerId, String questionId) {
-        return repository.findAggregate(questionId, ownerId).orElseThrow(QuestionService::notFound);
+        return repository.findRootAggregate(questionId, ownerId).orElseThrow(QuestionService::notFound);
     }
 
     private QuestionDtos.QuestionResponse response(Aggregate aggregate, Version version) {
+        return new QuestionDtos.QuestionResponse(aggregate.id(), aggregate.status(), aggregate.revision(),
+                versionResponse(aggregate.id(), version), aggregate.createdAt(), aggregate.updatedAt());
+    }
+
+    private QuestionDtos.VersionResponse versionResponse(String questionId, Version version) {
         List<QuestionDtos.KnowledgePointResponse> knowledge = version.knowledgePoints().stream()
                 .map(value -> KnowledgePointService.response(value, List.of())).toList();
         var responseVersion = new QuestionDtos.VersionResponse(version.id(), version.versionNumber(), version.type(),
@@ -227,14 +306,24 @@ public class QuestionService {
                 version.options().stream().map(value -> new QuestionDtos.OptionInput(value.key(), value.content())).toList(),
                 version.answers(), version.analysis(), knowledge, version.media().stream().map(value ->
                         new QuestionDtos.MediaResponse(value.id(), value.mediaId(), value.purpose(), value.sequence())).toList(),
-                repository.findLegacySourceByQuestion(aggregate.id()).map(source -> new QuestionDtos.LegacySourceResponse(
+                repository.findLegacySourceByQuestion(questionId).map(source -> new QuestionDtos.LegacySourceResponse(
                         source.sourceSystem(), source.externalId(), source.originalDifficulty(), source.pathEdition(),
                         source.jsonEdition(), source.pathGrade(), source.jsonGrade(),
                         source.issueCodes().contains("PATH_JSON_METADATA_CONFLICT"))).orElse(null),
-                repository.versionChildren(version.id()).stream().map(child -> new QuestionDtos.ChildResponse(
-                        child.questionId(), child.sequence(), child.type(), child.stem())).toList(), version.createdAt());
-        return new QuestionDtos.QuestionResponse(aggregate.id(), aggregate.status(), aggregate.revision(), responseVersion,
-                aggregate.createdAt(), aggregate.updatedAt());
+                repository.versionChildren(version.id()).stream().map(child -> childResponse(child)).toList(),
+                version.createdAt());
+        return responseVersion;
+    }
+
+    private QuestionDtos.ChildResponse childResponse(QuestionRepository.ChildSnapshotRow child) {
+        Version version = repository.findVersion(child.questionId(), child.versionId()).orElseThrow(QuestionService::notFound);
+        return new QuestionDtos.ChildResponse(child.questionId(), version.id(), version.versionNumber(), child.sequence(),
+                version.type(), version.difficulty(), version.stage(), version.grade(), version.subject(), version.stem(),
+                version.options().stream().map(value -> new QuestionDtos.OptionInput(value.key(), value.content())).toList(),
+                version.answers(), version.analysis(), version.knowledgePoints().stream()
+                        .map(value -> KnowledgePointService.response(value, List.of())).toList(),
+                version.media().stream().map(value -> new QuestionDtos.MediaResponse(value.id(), value.mediaId(),
+                        value.purpose(), value.sequence())).toList(), version.createdAt());
     }
 
     private String fingerprint(Object value) {
@@ -253,5 +342,6 @@ public class QuestionService {
     private static QuestionException notFound() { return new QuestionException(HttpStatus.NOT_FOUND, "QUESTION.NOT_FOUND", "题目不存在或不可见"); }
 
     private record Prepared(List<KnowledgePoint> knowledge, List<QuestionDtos.MediaInput> media) {}
+    private record PreparedChild(QuestionDtos.VersionInput input, Prepared prepared) {}
     public record Creation(QuestionDtos.QuestionResponse response, boolean created) {}
 }

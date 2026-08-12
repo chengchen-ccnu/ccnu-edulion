@@ -27,6 +27,9 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.io.ByteArrayOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -66,11 +69,13 @@ class QuestionBankIntegrationTest {
     @BeforeEach
     void reset() {
         jdbc.update("DELETE FROM learning_consumed_event"); jdbc.update("DELETE FROM learning_outbox_event");
+        jdbc.update("DELETE FROM question_legacy_item_resolution"); jdbc.update("DELETE FROM question_legacy_review_item");
         jdbc.update("DELETE FROM question_legacy_import_issue"); jdbc.update("DELETE FROM question_legacy_source_ref");
         jdbc.update("DELETE FROM question_legacy_import_batch"); jdbc.update("DELETE FROM question_version_child");
         jdbc.update("DELETE FROM question_import_row_error"); jdbc.update("DELETE FROM question_import_task");
         jdbc.update("DELETE FROM question_version_media"); jdbc.update("DELETE FROM question_version_knowledge_point");
         jdbc.update("DELETE FROM question_idempotency_request"); jdbc.update("DELETE FROM question_version");
+        jdbc.update("UPDATE question_aggregate SET parent_question_id=NULL");
         jdbc.update("DELETE FROM question_aggregate"); jdbc.update("DELETE FROM knowledge_point");
         Instant now = Instant.now();
         jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -303,6 +308,160 @@ class QuestionBankIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM learning_outbox_event WHERE event_type='MediaReferenceReleased'", Integer.class)).isEqualTo(1);
     }
 
+    /** 创建并更新一层组合题，验证根列表隔离及旧父版本仍读取原子题完整内容。 */
+    @Test
+    void structuredCompositeWritesFreezeFullChildHistoryAndHideChildAggregatesFromList() {
+        var created = questions.create(TEACHER, UUID.randomUUID().toString(), composite("父题一", "子题一", "A"),
+                "trace-t09b-composite-01").response();
+        String firstVersionId = created.currentVersion().id();
+        assertThat(created.currentVersion().children()).singleElement().satisfies(child -> {
+            assertThat(child.stem()).isEqualTo("子题一");
+            assertThat(child.options()).extracting(QuestionDtos.OptionInput::key).containsExactly("A", "B");
+            assertThat(child.answers()).containsExactly("A");
+            assertThat(child.analysis()).isEqualTo("子题解析");
+            assertThat(child.knowledgePoints()).extracting(QuestionDtos.KnowledgePointResponse::id).containsExactly(KP);
+        });
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null).items())
+                .singleElement().satisfies(item -> assertThat(item.type()).isEqualTo(QuestionModels.Type.COMPOSITE));
+
+        var updated = questions.update(TEACHER, created.id(), 0, composite("父题二", "子题二", "B"),
+                "trace-t09b-composite-02");
+        assertThat(updated.currentVersion().children()).singleElement()
+                .satisfies(child -> assertThat(child.answers()).containsExactly("B"));
+        assertThat(questions.versions(TEACHER, created.id(), 1, 20).items())
+                .extracting(QuestionDtos.VersionSummary::versionNumber).containsExactly(2, 1);
+
+        var historical = questions.version(TEACHER, created.id(), firstVersionId);
+        assertThat(historical.stem()).isEqualTo("父题一");
+        assertThat(historical.children()).singleElement().satisfies(child -> {
+            assertThat(child.stem()).isEqualTo("子题一");
+            assertThat(child.answers()).containsExactly("A");
+        });
+        assertThat(questions.get(TEACHER, created.id()).currentVersion().id()).isEqualTo(updated.currentVersion().id());
+        assertThatThrownBy(() -> questions.version(OTHER, created.id(), firstVersionId))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    /** 用两个虚构含糊项验证刷新分页、问题码、修正导入、确认跳过、幂等与旧 revision 冲突。 */
+    @Test
+    void legacyReviewItemsRecoverByPageAndResolveIdempotentlyWithRevision() throws Exception {
+        var task = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                "LEGACY_T09B_FIXTURE", "d".repeat(64), true, 2)).response();
+        var firstJson = objectMapper.readTree("""
+                {"exerciseID":"review-01","exerciseType":"select_single","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"选项含义不清 A 1 B 2","queAns":"A","solution":"","optCount":2,"subQues":[]}
+                """);
+        var secondJson = objectMapper.readTree("""
+                {"exerciseID":"review-02","exerciseType":"select_single","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"另一道不清题 A 1 B 2","queAns":"A","solution":"","optCount":2,"subQues":[]}
+                """);
+        legacyImports.submit(TEACHER, task.id(), new QuestionDtos.LegacyImportBatchRequest(UUID.randomUUID(), true,
+                List.of(legacyItem("review-01", firstJson), legacyItem("review-02", secondJson))), "trace-t09b-review-01");
+        var page = legacyImports.items(TEACHER, task.id(), 1, 1, QuestionModels.ImportOutcome.NEEDS_REVIEW);
+        assertThat(page.total()).isEqualTo(2); assertThat(page.items()).hasSize(1);
+        var first = page.items().get(0);
+        assertThat(first.revision()).isZero();
+        assertThat(first.issues()).extracting(QuestionDtos.LegacyIssue::code).containsExactly("EMBEDDED_OPTIONS_AMBIGUOUS");
+        assertThatThrownBy(() -> legacyImports.item(OTHER, task.id(), first.id()))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+
+        var importRequest = new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                QuestionDtos.ResolutionAction.IMPORT_CORRECTED, single("A", List.of()));
+        var imported = legacyImports.resolve(TEACHER, task.id(), first.id(), importRequest, "trace-t09b-review-02");
+        var replay = legacyImports.resolve(TEACHER, task.id(), first.id(), importRequest, "trace-t09b-review-03");
+        assertThat(imported.outcome()).isEqualTo(QuestionModels.ImportOutcome.IMPORTED);
+        assertThat(imported.revision()).isEqualTo(1); assertThat(replay.questionId()).isEqualTo(imported.questionId());
+        assertThat(questions.get(TEACHER, imported.questionId()).currentVersion().legacySource().sourceSystem())
+                .isEqualTo("LEGACY_T09B_FIXTURE");
+
+        var second = legacyImports.items(TEACHER, task.id(), 2, 1, null).items().get(0);
+        var skipped = legacyImports.resolve(TEACHER, task.id(), second.id(),
+                new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                        QuestionDtos.ResolutionAction.CONFIRM_SKIP, null), "trace-t09b-review-04");
+        assertThat(skipped.outcome()).isEqualTo(QuestionModels.ImportOutcome.SKIPPED);
+        var projection = imports.get(TEACHER, task.id());
+        assertThat(projection.reviewCount()).isZero(); assertThat(projection.resolvedCount()).isEqualTo(2);
+        assertThat(projection.successCount()).isEqualTo(1); assertThat(projection.skippedCount()).isEqualTo(1);
+        assertThatThrownBy(() -> legacyImports.resolve(TEACHER, task.id(), second.id(),
+                new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                        QuestionDtos.ResolutionAction.CONFIRM_SKIP, null), "trace-t09b-review-05"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("QUESTION_IMPORT.ITEM_REVISION_CONFLICT"));
+    }
+
+    /**
+     * 非最终批次即使产生 NEEDS_REVIEW 也不能人工解决；最终批次后，相同解决请求并发重放只提交一次。
+     * 前置输入为两批 dry-run 虚构项；预期任务先保持 PROCESSING，最终进入可复核终态并只累计一题一次计数。
+     */
+    @Test
+    void legacyReviewWaitsForFinalBatchAndConcurrentIdenticalResolutionReturnsFirstResult() throws Exception {
+        var task = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                "LEGACY_T09B_STATE_FIXTURE", "e".repeat(64), true, 3)).response();
+        var reviewJson = objectMapper.readTree("""
+                {"exerciseID":"state-review-01","exerciseType":"select_single","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"无法可靠拆分 A 1 B 2","queAns":"A","solution":"","optCount":2,"subQues":[]}
+                """);
+        legacyImports.submit(TEACHER, task.id(), new QuestionDtos.LegacyImportBatchRequest(UUID.randomUUID(), false,
+                List.of(legacyItem("state-review-01", reviewJson))), "trace-t09b-state-01");
+        var reviewItem = legacyImports.items(TEACHER, task.id(), 1, 20,
+                QuestionModels.ImportOutcome.NEEDS_REVIEW).items().get(0);
+        var request = new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                QuestionDtos.ResolutionAction.IMPORT_CORRECTED, single("A", List.of()));
+
+        assertThatThrownBy(() -> legacyImports.resolve(TEACHER, task.id(), reviewItem.id(), request,
+                "trace-t09b-state-early"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(error.code()).isEqualTo("QUESTION_IMPORT.TASK_NOT_REVIEWABLE");
+                });
+        var processing = imports.get(TEACHER, task.id());
+        assertThat(processing.status()).isEqualTo(QuestionModels.ImportStatus.PROCESSING);
+        assertThat(processing.reviewCount()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_item_resolution", Integer.class)).isZero();
+
+        var validJson = objectMapper.readTree("""
+                {"exerciseID":"state-valid-02","exerciseType":"fillin","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"计算 $2+2$","queAns":"4","solution":"","subQues":[]}
+                """);
+        var finalBatch = legacyImports.submit(TEACHER, task.id(), new QuestionDtos.LegacyImportBatchRequest(
+                UUID.randomUUID(), true, List.of(legacyItem("state-valid-02", validJson))), "trace-t09b-state-02");
+        assertThat(finalBatch.finalBatch()).isTrue();
+        assertThat(imports.get(TEACHER, task.id()).status()).isEqualTo(QuestionModels.ImportStatus.PARTIAL_SUCCESS);
+
+        var executor = Executors.newFixedThreadPool(2);
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try {
+            var first = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return legacyImports.resolve(TEACHER, task.id(), reviewItem.id(), request, "trace-t09b-state-concurrent-01");
+            });
+            var second = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return legacyImports.resolve(TEACHER, task.id(), reviewItem.id(), request, "trace-t09b-state-concurrent-02");
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            var firstResult = first.get(10, TimeUnit.SECONDS);
+            var secondResult = second.get(10, TimeUnit.SECONDS);
+            assertThat(secondResult).isEqualTo(firstResult);
+            assertThat(firstResult.outcome()).isEqualTo(QuestionModels.ImportOutcome.IMPORTED);
+            assertThat(firstResult.revision()).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        var completed = imports.get(TEACHER, task.id());
+        assertThat(completed.status()).isEqualTo(QuestionModels.ImportStatus.COMPLETED);
+        assertThat(completed.reviewCount()).isZero();
+        assertThat(completed.resolvedCount()).isEqualTo(1);
+        assertThat(completed.successCount()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?",
+                Integer.class, TEACHER)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_item_resolution WHERE import_task_id=?",
+                Integer.class, task.id())).isEqualTo(1);
+    }
+
     private QuestionDtos.VersionInput single(String answer, List<QuestionDtos.MediaInput> mediaRows) {
         return new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE, QuestionModels.Difficulty.EASY,
                 QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
@@ -314,6 +473,17 @@ class QuestionBankIntegrationTest {
         return new QuestionDtos.VersionInput(type, QuestionModels.Difficulty.MEDIUM, QuestionModels.Stage.JUNIOR,
                 QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS, "题干 $x$", options, answers,
                 "解析", List.of(UUID.fromString(KP)), List.of());
+    }
+
+    private QuestionDtos.VersionInput composite(String parentStem, String childStem, String childAnswer) {
+        var child = new QuestionDtos.ChildInput(QuestionModels.Type.SINGLE_CHOICE, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                childStem, List.of(new QuestionDtos.OptionInput("A", "1"), new QuestionDtos.OptionInput("B", "2")),
+                List.of(childAnswer), "子题解析", List.of(UUID.fromString(KP)), List.of());
+        return new QuestionDtos.VersionInput(QuestionModels.Type.COMPOSITE, QuestionModels.Difficulty.MEDIUM,
+                QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                parentStem, List.of(), List.of("综合作答"), "父题解析", List.of(UUID.fromString(KP)), List.of(),
+                List.of(child));
     }
 
     private static String row(String... values) {

@@ -16,6 +16,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -42,7 +45,7 @@ class LearningMysqlMigrationAcceptanceTest {
             "question_version_knowledge_point", "question_version_media", "question_idempotency_request",
             "question_import_task", "question_import_row_error", "learning_outbox_event", "learning_consumed_event",
             "question_legacy_import_batch", "question_legacy_source_ref", "question_legacy_import_issue",
-            "question_version_child");
+            "question_version_child", "question_legacy_review_item", "question_legacy_item_resolution");
 
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
@@ -58,8 +61,9 @@ class LearningMysqlMigrationAcceptanceTest {
         }
     }
 
+    /** 在既有专用 MySQL 上验证 V3 组合历史与人工复核，并按本轮随机 ID 精确清理全部 Fixture。 */
     @Test
-    void flywayV2WorksOnMysqlAndFixtureIsPreciselyRemoved() {
+    void flywayV3CompositeHistoryAndReviewResolutionWorkOnMysqlAndFixturesArePreciselyRemoved() throws Exception {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_learning_dev");
         List<String> actual = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
@@ -68,27 +72,97 @@ class LearningMysqlMigrationAcceptanceTest {
         String ownerId = UUID.randomUUID().toString();
         String pointId = UUID.randomUUID().toString();
         String requestId = UUID.randomUUID().toString();
-        String questionId = null;
+        String questionId = null; String reviewTaskId = null;
         try {
             Instant now = Instant.now();
             jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     pointId, "JUNIOR_MATH_ACCEPTANCE_" + pointId.replace("-", "").substring(0, 12).toUpperCase(),
                     "T09迁移验收知识点", null, "JUNIOR", "SEVEN", "MATHEMATICS", 99999, true, 0,
                     Timestamp.from(now), Timestamp.from(now));
-            QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE,
+            QuestionDtos.ChildInput child = new QuestionDtos.ChildInput(QuestionModels.Type.SINGLE_CHOICE,
                     QuestionModels.Difficulty.EASY, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
-                    QuestionModels.Subject.MATHEMATICS, "T09 合成迁移验收题干",
+                    QuestionModels.Subject.MATHEMATICS, "T09B 合成子题",
                     List.of(new QuestionDtos.OptionInput("A", "1"), new QuestionDtos.OptionInput("B", "2")),
-                    List.of("A"), "T09 合成解析", List.of(UUID.fromString(pointId)), List.of());
+                    List.of("A"), "T09B 子题解析", List.of(UUID.fromString(pointId)), List.of());
+            QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(QuestionModels.Type.COMPOSITE,
+                    QuestionModels.Difficulty.EASY, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
+                    QuestionModels.Subject.MATHEMATICS, "T09B 合成迁移验收父题",
+                    List.of(), List.of("综合作答"), "T09B 合成解析", List.of(UUID.fromString(pointId)), List.of(),
+                    List.of(child));
             questionId = questions.create(ownerId, requestId, input, "t09-mysql-acceptance").response().id();
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_version WHERE question_id=?",
                     Integer.class, questionId)).isEqualTo(1);
+            String oldVersion = questions.get(ownerId, questionId).currentVersion().id();
+            questions.update(ownerId, questionId, 0, input, "t09b-mysql-update");
+            assertThat(questions.version(ownerId, questionId, oldVersion).children()).hasSize(1);
+            assertThat(questions.versions(ownerId, questionId, 1, 20).total()).isEqualTo(2);
+
+            reviewTaskId = legacyImports.create(ownerId, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                    "LEGACY_T09B_MYSQL", "e".repeat(64), true, 1)).response().id();
+            JsonNode ambiguous = mapper.readTree("""
+                    {"exerciseID":"t09b-mysql-review","exerciseType":"select_single","difficulty":1,
+                     "gradeIndex":7,"gradeName":"七年级","question":"含糊选项 A 1 B 2","queAns":"A",
+                     "solution":"","optCount":2,"subQues":[]}
+                    """);
+            QuestionDtos.LegacyImportItem item = new QuestionDtos.LegacyImportItem("t09b-mysql-review",
+                    "虚构版/七年级上/text/t09b-mysql-review.json", "虚构版", "七年级上",
+                    sha256(mapper.writeValueAsString(ambiguous)), ambiguous);
+            legacyImports.submit(ownerId, reviewTaskId, new QuestionDtos.LegacyImportBatchRequest(UUID.randomUUID(),
+                    true, List.of(item)), "t09b-mysql-review");
+            var review = legacyImports.items(ownerId, reviewTaskId, 1, 20,
+                    QuestionModels.ImportOutcome.NEEDS_REVIEW).items().get(0);
+            var corrected = new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE,
+                    QuestionModels.Difficulty.EASY, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
+                    QuestionModels.Subject.MATHEMATICS, "T09B 并发幂等合成题",
+                    List.of(new QuestionDtos.OptionInput("A", "1"), new QuestionDtos.OptionInput("B", "2")),
+                    List.of("A"), "T09B 并发幂等解析", List.of(UUID.fromString(pointId)), List.of());
+            var resolution = new QuestionDtos.ResolveLegacyItemRequest(UUID.randomUUID(), 0,
+                    QuestionDtos.ResolutionAction.IMPORT_CORRECTED, corrected);
+            int questionsBeforeResolution = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?", Integer.class, ownerId);
+            String concurrentTaskId = reviewTaskId;
+            var executor = Executors.newFixedThreadPool(2);
+            var ready = new CountDownLatch(2); var start = new CountDownLatch(1);
+            try {
+                var first = executor.submit(() -> {
+                    ready.countDown(); start.await();
+                    return legacyImports.resolve(ownerId, concurrentTaskId, review.id(), resolution, "t09b-mysql-concurrent-01");
+                });
+                var second = executor.submit(() -> {
+                    ready.countDown(); start.await();
+                    return legacyImports.resolve(ownerId, concurrentTaskId, review.id(), resolution, "t09b-mysql-concurrent-02");
+                });
+                assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue(); start.countDown();
+                var firstResult = first.get(10, TimeUnit.SECONDS);
+                var secondResult = second.get(10, TimeUnit.SECONDS);
+                assertThat(secondResult).isEqualTo(firstResult);
+            } finally {
+                executor.shutdownNow();
+            }
+            assertThat(legacyImports.item(ownerId, reviewTaskId, review.id()).revision()).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?",
+                    Integer.class, ownerId)).isEqualTo(questionsBeforeResolution + 1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_item_resolution WHERE import_task_id=?",
+                    Integer.class, reviewTaskId)).isEqualTo(1);
         } finally {
+            if (reviewTaskId != null) {
+                legacyImports.cleanup(ownerId, reviewTaskId, "t09b-mysql-review-cleanup");
+                jdbc.update("DELETE FROM question_legacy_import_issue WHERE import_task_id=?", reviewTaskId);
+                jdbc.update("DELETE FROM question_legacy_import_batch WHERE import_task_id=?", reviewTaskId);
+                jdbc.update("DELETE FROM learning_outbox_event WHERE aggregate_id=?", reviewTaskId);
+                jdbc.update("DELETE FROM question_import_task WHERE id=?", reviewTaskId);
+            }
             if (questionId != null) {
-                jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", questionId);
-                jdbc.update("DELETE FROM question_version_media WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", questionId);
+                List<String> ids = new java.util.ArrayList<>(); ids.add(questionId);
+                ids.addAll(jdbc.queryForList("SELECT id FROM question_aggregate WHERE parent_question_id=?", String.class, questionId));
+                jdbc.update("DELETE FROM question_version_child WHERE parent_question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", questionId);
+                for (String id : ids) {
+                    jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", id);
+                    jdbc.update("DELETE FROM question_version_media WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", id);
+                    jdbc.update("DELETE FROM question_version WHERE question_id=?", id);
+                }
                 jdbc.update("DELETE FROM question_idempotency_request WHERE owner_id=? AND client_request_id=?", ownerId, requestId);
-                jdbc.update("DELETE FROM question_version WHERE question_id=?", questionId);
+                jdbc.update("DELETE FROM question_aggregate WHERE parent_question_id=?", questionId);
                 jdbc.update("DELETE FROM question_aggregate WHERE id=? AND owner_id=?", questionId, ownerId);
             }
             jdbc.update("DELETE FROM knowledge_point WHERE id=?", pointId);
@@ -96,6 +170,14 @@ class LearningMysqlMigrationAcceptanceTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE id=?", Integer.class, pointId)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_idempotency_request WHERE owner_id=? AND client_request_id=?",
                 Integer.class, ownerId, requestId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE owner_id=?", Integer.class, ownerId)).isZero();
+        if (reviewTaskId != null) {
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_import_task WHERE id=?", Integer.class, reviewTaskId)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_review_item WHERE import_task_id=?",
+                    Integer.class, reviewTaskId)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_item_resolution WHERE import_task_id=?",
+                    Integer.class, reviewTaskId)).isZero();
+        }
     }
 
     @Test
@@ -125,6 +207,8 @@ class LearningMysqlMigrationAcceptanceTest {
         } finally {
             for (String taskId : List.of(dryTask == null ? "" : dryTask, importTask == null ? "" : importTask)) {
                 if (taskId.isBlank()) continue;
+                jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=?", taskId);
+                jdbc.update("DELETE FROM question_legacy_review_item WHERE import_task_id=?", taskId);
                 jdbc.update("DELETE FROM question_legacy_import_issue WHERE import_task_id=?", taskId);
                 jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=?", taskId);
                 jdbc.update("DELETE FROM question_legacy_import_batch WHERE import_task_id=?", taskId);

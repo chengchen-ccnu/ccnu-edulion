@@ -176,7 +176,7 @@ source java-platform/course-service/src/main/resources/db/seed/cleanup-course-se
 
 ## T09 题库、媒体绑定与异步导入
 
-T09 只允许把 `LEARNING_MYSQL_DATABASE` 指向用途明确的 `edu_platform_learning_dev`（自动化环境可使用 `learning_test`）。应用不会创建数据库；Flyway V1 的 10 张题库表保持不变，T09A 以 V2 新增历史批次、来源幂等引用、导入问题和有序子题关系 4 张表，并向既有导入任务补充只读 JSON 状态字段。迁移不创建报名、进度、试卷、作答、成绩或错题表，也不建立跨 Schema 外键。
+T09 只允许把 `LEARNING_MYSQL_DATABASE` 指向用途明确的 `edu_platform_learning_dev`（自动化环境可使用 `learning_test`）。应用不会创建数据库；Flyway V1 的 10 张题库表和 T09A 的 V2 均保持不变。T09B 只新增 V3：为组合子聚合标记父题、把父版本关系冻结到精确子版本，并新增历史 JSON 可恢复复核项及解决幂等表；V3 会从 V2 来源引用回填安全复核投影，但不保存原始 JSON、题干、答案、路径明文或外部 URL。迁移不创建报名、进度、试卷、作答、成绩或错题表，也不建立跨 Schema 外键。
 
 本任务不提供默认 Seed。H2 集成测试以 `teacher_test_01` 对应的固定 UUID 和合成题目/知识点为最小 Fixture，测试进程退出即销毁；没有把真实题库样本写入仓库或数据库。若后续人工演示需要数据，应通过教师 API 创建并记录精确 `questionId`/`knowledgePointId`，验收后只清理这些 ID，禁止清空共享开发 Schema。
 
@@ -207,7 +207,7 @@ learning-service 只通过 `MEDIA_SERVICE_BASE_URL` 调用 media-service 的绑�
 
 RabbitMQ 资源为 `edu.learning.events.v1`、队列 `edu.learning.question-import.v1`、死信交换机 `edu.learning.dlx.v1` 和 DLQ `edu.learning.question-import.dlq.v1`。生产者使用事务 Outbox、持久消息、mandatory、publisher confirm/return 和有限退避；消费者总计最多尝试 3 次，超限拒绝进入 DLQ，并以数据库 `eventId` 幂等。重复消费的每一行还使用任务 ID 与行号生成确定性 `clientRequestId`，不会重复创建题目。
 
-T09A 的历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。实际导入必须显式使用 `-Action Import`；清理必须携带原任务 ID。示例只做 5 项 dry-run：
+T09A/T09B 的历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。T09B 只允许教师对单个 `NEEDS_REVIEW` 项携带 revision，显式提交完整结构化修正后导入或确认跳过；不会启发式放行，也不会提高批次/任务上限。实际批量导入仍必须显式使用 `-Action Import`；清理必须携带原任务 ID。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前教师的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
 
@@ -219,7 +219,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 
 外部图片仅由 media-service 转存。默认 `MEDIA_EXTERNAL_IMAGE_IMPORT_ENABLED=false`；人工实际导入图片前必须显式启用，并把 `MEDIA_EXTERNAL_IMAGE_ALLOWED_HOSTS` 设置为逗号分隔的精确 HTTPS 主机白名单。`MEDIA_EXTERNAL_IMAGE_MAX_BYTES` 默认 10 MiB、`MEDIA_EXTERNAL_IMAGE_TIMEOUT` 默认 10 秒、`MEDIA_EXTERNAL_IMAGE_MAX_REDIRECTS` 默认 2。每次请求和重定向都复核白名单、DNS 私网/回环地址、MIME、大小和图片魔数；URL 明文不写数据库、事件或日志。learning-service 仍只配置 `MEDIA_SERVICE_BASE_URL`，不配置 OSS SDK 或凭据。
 
-真实 MySQL 迁移验收默认跳过，并且不会创建数据库。先由环境管理员创建用途明确的 `edu_platform_learning_dev`，再通过安全包装脚本显式执行；测试在建立 Spring 上下文前复核 Schema 名。设置 `LEGACY_QUESTION_ROOT` 后还会程序化选择一份无图片、无需复核的真实文件，分别执行一项 dry-run、一项实际导入和精确清理；终端不输出路径、题干、答案或 JSON。测试最终只保留 V1/V2 Schema：
+真实 MySQL 迁移验收默认跳过，并且不会创建数据库。先由环境管理员创建用途明确的 `edu_platform_learning_dev`，再通过安全包装脚本显式执行；测试在建立 Spring 上下文前复核 Schema 名。默认用例以最小虚构组合题和复核项验证 V3，并按随机 owner、任务和题目精确清理。设置 `LEGACY_QUESTION_ROOT` 后还会程序化选择一份无图片、无需复核的真实文件，分别执行一项 dry-run、一项实际导入和精确清理；终端不输出路径、题干、答案或 JSON。测试最终只保留 V1/V2/V3 Schema，不保留 Fixture：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\Invoke-WithLocalEnvironment.ps1' -ScriptBlock { `$env:LEARNING_MYSQL_ACCEPTANCE='true'; `$env:LEGACY_QUESTION_ROOT='I:\大模型学习\edu_agent\智能体项目\data\题库'; `$env:RABBITMQ_ENABLED='false'; mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service -am '-Dtest=LearningMysqlMigrationAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test }"

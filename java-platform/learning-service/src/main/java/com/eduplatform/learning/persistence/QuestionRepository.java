@@ -5,6 +5,7 @@ import com.eduplatform.learning.domain.QuestionModels.Aggregate;
 import com.eduplatform.learning.domain.QuestionModels.ImportTask;
 import com.eduplatform.learning.domain.QuestionModels.LegacyBatch;
 import com.eduplatform.learning.domain.QuestionModels.LegacySource;
+import com.eduplatform.learning.domain.QuestionModels.LegacyReviewItem;
 import com.eduplatform.learning.domain.QuestionModels.KnowledgePoint;
 import com.eduplatform.learning.domain.QuestionModels.Media;
 import com.eduplatform.learning.domain.QuestionModels.Option;
@@ -92,11 +93,22 @@ public class QuestionRepository {
                 .stream().findFirst();
     }
 
+    /** 只允许教师路由把根题目作为独立资源访问；组合子聚合只能随父版本投影读取。 */
+    public Optional<Aggregate> findRootAggregate(String id, String ownerId) {
+        return jdbc.query("SELECT * FROM question_aggregate WHERE id=? AND owner_id=? AND parent_question_id IS NULL",
+                this::aggregate, id, ownerId).stream().findFirst();
+    }
+
     /** 插入稳定题目聚合；初始当前版本指针稍后在同一事务设置。 */
     public void insertAggregate(Aggregate value) {
-        jdbc.update("INSERT INTO question_aggregate(id,owner_id,status,current_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+        insertAggregate(value, null);
+    }
+
+    /** 插入根题目或指定组合父题下的隐藏子聚合；子聚合不会进入教师题库根列表。 */
+    public void insertAggregate(Aggregate value, String parentQuestionId) {
+        jdbc.update("INSERT INTO question_aggregate(id,owner_id,status,current_version_id,revision,created_at,updated_at,parent_question_id) VALUES(?,?,?,?,?,?,?,?)",
                 value.id(), value.ownerId(), value.status().name(), value.currentVersionId(), value.revision(),
-                ts(value.createdAt()), ts(value.updatedAt()));
+                ts(value.createdAt()), ts(value.updatedAt()), parentQuestionId);
     }
 
     /** 只在当前指针为空时绑定首个不可变版本。 */
@@ -146,6 +158,29 @@ public class QuestionRepository {
                 .stream().findFirst();
     }
 
+    /** 按聚合和版本 ID 同时读取，防止借版本 UUID 跨题目查看历史内容。 */
+    public Optional<Version> findVersion(String questionId, String versionId) {
+        return jdbc.query("SELECT * FROM question_version WHERE id=? AND question_id=?",
+                (rs, row) -> version(rs), versionId, questionId).stream().findFirst();
+    }
+
+    /** 分页读取不可变版本摘要；查询不会更新聚合当前指针。 */
+    public List<VersionSummaryRow> listVersions(String questionId, String currentVersionId, int page, int size) {
+        return jdbc.query("SELECT v.id,v.version_number,v.question_type,v.difficulty,v.stem_md,v.created_at,"
+                        + "(SELECT COUNT(*) FROM question_version_child c WHERE c.parent_question_version_id=v.id) child_count "
+                        + "FROM question_version v WHERE v.question_id=? ORDER BY v.version_number DESC LIMIT ? OFFSET ?",
+                (rs, row) -> new VersionSummaryRow(rs.getString("id"), rs.getInt("version_number"),
+                        QuestionModels.Type.valueOf(rs.getString("question_type")),
+                        QuestionModels.Difficulty.valueOf(rs.getString("difficulty")), rs.getString("stem_md"),
+                        rs.getInt("child_count"), instant(rs, "created_at"), currentVersionId.equals(rs.getString("id"))),
+                questionId, size, (page - 1) * size);
+    }
+
+    /** 返回聚合不可变版本总数。 */
+    public long countVersions(String questionId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM question_version WHERE question_id=?", Long.class, questionId);
+    }
+
     /** 查询教师创建题目的幂等指纹与原资源 ID。 */
     public Optional<Idempotency> findIdempotency(String ownerId, String requestId) {
         return jdbc.query("SELECT request_fingerprint,resource_type,resource_id FROM question_idempotency_request WHERE owner_id=? AND client_request_id=?",
@@ -163,7 +198,7 @@ public class QuestionRepository {
     /** 查询教师当前版本列表；返回行绝不读取 answers_json 或 analysis_md。 */
     public PagedRows listQuestions(String ownerId, int page, int size, String keyword, QuestionModels.Type type,
             QuestionModels.Status status, QuestionModels.Difficulty difficulty, String knowledgePointId) {
-        StringBuilder where = new StringBuilder(" FROM question_aggregate q JOIN question_version v ON v.id=q.current_version_id WHERE q.owner_id=:ownerId");
+        StringBuilder where = new StringBuilder(" FROM question_aggregate q JOIN question_version v ON v.id=q.current_version_id WHERE q.owner_id=:ownerId AND q.parent_question_id IS NULL");
         Map<String, Object> args = new HashMap<>(); args.put("ownerId", ownerId);
         if (keyword != null && !keyword.isBlank()) { where.append(" AND v.stem_md LIKE :keyword"); args.put("keyword", "%" + keyword.trim() + "%"); }
         if (type != null) { where.append(" AND v.question_type=:type"); args.put("type", type.name()); }
@@ -283,6 +318,106 @@ public class QuestionRepository {
                 value.questionId(), json(value.issueCodes()), ts(value.createdAt()), ts(value.updatedAt()));
     }
 
+    /** 为每个已处理历史 JSON 项保存可刷新投影；只含来源元数据、结果和问题码。 */
+    public void insertLegacyReviewItem(LegacyReviewItem value) {
+        jdbc.update("INSERT INTO question_legacy_review_item(id,import_task_id,batch_id,owner_id,source_ref_id,external_id,content_sha256,path_edition,json_edition,path_grade,json_grade,original_difficulty,outcome,question_id,issue_codes_json,revision,resolution_action,resolved_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                value.id(), value.importTaskId(), value.batchId(), value.ownerId(), value.sourceRefId(),
+                value.externalId(), value.contentSha256(), value.pathEdition(), value.jsonEdition(), value.pathGrade(),
+                value.jsonGrade(), value.originalDifficulty(), value.outcome().name(), value.questionId(),
+                json(value.issueCodes()), value.revision(), value.resolutionAction() == null ? null : value.resolutionAction().name(),
+                value.resolvedAt() == null ? null : ts(value.resolvedAt()), ts(value.createdAt()), ts(value.updatedAt()));
+    }
+
+    /** 按 owner/task 分页读取复核项，避免枚举他人任务。 */
+    public List<LegacyReviewItem> listLegacyReviewItems(String ownerId, String taskId, int page, int size,
+            QuestionModels.ImportOutcome outcome) {
+        String filter = outcome == null ? "" : " AND outcome=?";
+        String sql = "SELECT * FROM question_legacy_review_item WHERE owner_id=? AND import_task_id=?" + filter
+                + " ORDER BY created_at,id LIMIT ? OFFSET ?";
+        return outcome == null
+                ? jdbc.query(sql, this::legacyReviewItem, ownerId, taskId, size, (page - 1) * size)
+                : jdbc.query(sql, this::legacyReviewItem, ownerId, taskId, outcome.name(), size, (page - 1) * size);
+    }
+
+    /** 返回符合可选结果筛选的复核项总数。 */
+    public long countLegacyReviewItems(String ownerId, String taskId, QuestionModels.ImportOutcome outcome) {
+        String sql = "SELECT COUNT(*) FROM question_legacy_review_item WHERE owner_id=? AND import_task_id=?"
+                + (outcome == null ? "" : " AND outcome=?");
+        return outcome == null ? jdbc.queryForObject(sql, Long.class, ownerId, taskId)
+                : jdbc.queryForObject(sql, Long.class, ownerId, taskId, outcome.name());
+    }
+
+    /** 精确读取一个 owner/task 下的复核项；其他 owner 一律表现为不存在。 */
+    public Optional<LegacyReviewItem> findLegacyReviewItem(String ownerId, String taskId, String itemId) {
+        return jdbc.query("SELECT * FROM question_legacy_review_item WHERE id=? AND import_task_id=? AND owner_id=?",
+                this::legacyReviewItem, itemId, taskId, ownerId).stream().findFirst();
+    }
+
+    /** 锁定待解决项，串行化 revision 校验与终态决定。 */
+    public Optional<LegacyReviewItem> findLegacyReviewItemForUpdate(String ownerId, String taskId, String itemId) {
+        return jdbc.query("SELECT * FROM question_legacy_review_item WHERE id=? AND import_task_id=? AND owner_id=? FOR UPDATE",
+                this::legacyReviewItem, itemId, taskId, ownerId).stream().findFirst();
+    }
+
+    /** 查找解决请求幂等记录，结果题目 ID 可为空（确认跳过）。 */
+    public Optional<LegacyResolutionRow> findLegacyResolution(String ownerId, String clientRequestId) {
+        return jdbc.query("SELECT * FROM question_legacy_item_resolution WHERE owner_id=? AND client_request_id=?",
+                (rs, row) -> new LegacyResolutionRow(rs.getString("review_item_id"),
+                        rs.getString("request_fingerprint"), rs.getString("action"),
+                        rs.getString("resulting_question_id")), ownerId, clientRequestId).stream().findFirst();
+    }
+
+    /**
+     * 在任务行锁内用当前读复查解决请求；MySQL REPEATABLE READ 下不得沿用事务开始时的普通查询快照。
+     */
+    public Optional<LegacyResolutionRow> findLegacyResolutionForUpdate(String ownerId, String clientRequestId) {
+        return jdbc.query("SELECT * FROM question_legacy_item_resolution WHERE owner_id=? AND client_request_id=? FOR UPDATE",
+                (rs, row) -> new LegacyResolutionRow(rs.getString("review_item_id"),
+                        rs.getString("request_fingerprint"), rs.getString("action"),
+                        rs.getString("resulting_question_id")), ownerId, clientRequestId).stream().findFirst();
+    }
+
+    /** 乐观把 NEEDS_REVIEW 项置为人工终态；返回 0 表示 revision 或状态冲突。 */
+    public int resolveLegacyReviewItem(String ownerId, String taskId, String itemId, long expectedRevision,
+            QuestionModels.ResolutionAction action, QuestionModels.ImportOutcome outcome, String questionId, Instant now) {
+        return jdbc.update("UPDATE question_legacy_review_item SET outcome=?,question_id=?,revision=revision+1,resolution_action=?,resolved_at=?,updated_at=? WHERE id=? AND import_task_id=? AND owner_id=? AND revision=? AND outcome=? AND resolution_action IS NULL",
+                outcome.name(), questionId, action.name(), ts(now), ts(now), itemId, taskId, ownerId,
+                expectedRevision, QuestionModels.ImportOutcome.NEEDS_REVIEW.name());
+    }
+
+    /** 同步来源幂等引用的人工终态，使后续详情保留来源信息且同源重放得到一致结果。 */
+    public void resolveLegacySource(String ownerId, String sourceRefId, QuestionModels.ImportOutcome outcome,
+            String questionId, Instant now) {
+        jdbc.update("UPDATE question_legacy_source_ref SET outcome=?,question_id=?,updated_at=? WHERE id=? AND owner_id=?",
+                outcome.name(), questionId, ts(now), sourceRefId, ownerId);
+    }
+
+    /** 与项状态和题目创建同事务保存幂等决定。 */
+    public void insertLegacyResolution(String ownerId, String taskId, String itemId, String clientRequestId,
+            String fingerprint, QuestionModels.ResolutionAction action, String questionId, Instant now) {
+        jdbc.update("INSERT INTO question_legacy_item_resolution(id,owner_id,import_task_id,review_item_id,client_request_id,request_fingerprint,action,resulting_question_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                java.util.UUID.randomUUID().toString(), ownerId, taskId, itemId, clientRequestId, fingerprint,
+                action.name(), questionId, ts(now));
+    }
+
+    /**
+     * 仅在最终批次形成的可复核终态中累计人工结果，不改变 processedRows 或任务硬上限。
+     * @return 更新行数；0 表示任务不是 COMPLETED/PARTIAL_SUCCESS，调用方必须回滚整次解决事务
+     */
+    public int applyLegacyResolution(String taskId, QuestionModels.ResolutionAction action, Instant now) {
+        int imported = action == QuestionModels.ResolutionAction.IMPORT_CORRECTED ? 1 : 0;
+        int skipped = action == QuestionModels.ResolutionAction.CONFIRM_SKIP ? 1 : 0;
+        return jdbc.update("UPDATE question_import_task SET status=CASE WHEN review_count<=1 AND failure_count=0 THEN 'COMPLETED' ELSE 'PARTIAL_SUCCESS' END,review_count=GREATEST(0,review_count-1),success_count=success_count+?,skipped_count=skipped_count+?,updated_at=? WHERE id=? AND status IN ('COMPLETED','PARTIAL_SUCCESS')",
+                imported, skipped, ts(now), taskId);
+    }
+
+    /** 统计已显式解决项，供 CSV/XLSX 与 JSON 共用的任务投影展示。 */
+    public int countResolvedLegacyItems(String taskId) {
+        Integer value = jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_review_item WHERE import_task_id=? AND resolution_action IS NOT NULL",
+                Integer.class, taskId);
+        return value == null ? 0 : value;
+    }
+
     /** 用 owner/sourceSystem/externalId 查幂等来源，内容哈希变化由服务层转人工复核。 */
     public Optional<LegacySource> findLegacySource(String ownerId, String sourceSystem, String externalId, boolean dryRun) {
         return jdbc.query("SELECT * FROM question_legacy_source_ref WHERE owner_id=? AND source_system=? AND external_id=? AND dry_run=?",
@@ -310,28 +445,35 @@ public class QuestionRepository {
 
     /** 原子累计一个已确认批次；finalBatch 决定任务是否进入终态。 */
     public void applyLegacyBatchProgress(String taskId, LegacyBatch batch, boolean finalBatch, Instant retainUntil, Instant now) {
-        String status = finalBatch
-                ? (batch.failedCount() + batch.reviewCount() == 0 ? QuestionModels.ImportStatus.COMPLETED.name()
-                : QuestionModels.ImportStatus.PARTIAL_SUCCESS.name()) : QuestionModels.ImportStatus.PROCESSING.name();
-        jdbc.update("UPDATE question_import_task SET status=?,total_rows=CASE WHEN ? THEN processed_rows+? ELSE total_rows END,processed_rows=processed_rows+?,success_count=success_count+?,review_count=review_count+?,skipped_count=skipped_count+?,failure_count=failure_count+?,progress=CASE WHEN ? THEN 100 ELSE LEAST(99,(processed_rows+?)*100/NULLIF(total_rows,0)) END,retain_until=?,updated_at=? WHERE id=?",
-                status, finalBatch, batch.processedCount(), batch.processedCount(),
+        jdbc.update("UPDATE question_import_task SET status=CASE WHEN ? THEN CASE WHEN review_count+?=0 AND failure_count+?=0 THEN 'COMPLETED' ELSE 'PARTIAL_SUCCESS' END ELSE 'PROCESSING' END,total_rows=CASE WHEN ? THEN processed_rows+? ELSE total_rows END,processed_rows=processed_rows+?,success_count=success_count+?,review_count=review_count+?,skipped_count=skipped_count+?,failure_count=failure_count+?,progress=CASE WHEN ? THEN 100 ELSE LEAST(99,(processed_rows+?)*100/NULLIF(max_items,0)) END,retain_until=?,updated_at=? WHERE id=?",
+                finalBatch, batch.reviewCount(), batch.failedCount(), finalBatch, batch.processedCount(), batch.processedCount(),
                 batch.importedCount() + batch.validCount(), batch.reviewCount(), batch.skippedCount(),
                 batch.failedCount(), finalBatch, batch.processedCount(), ts(retainUntil), ts(now), taskId);
     }
 
-    /** 将不可变父版本连接到有序子题；子题自身仍是独立题目聚合。 */
-    public void insertVersionChildren(String parentVersionId, List<String> childQuestionIds) {
-        for (int index = 0; index < childQuestionIds.size(); index++) {
-            jdbc.update("INSERT INTO question_version_child(parent_question_version_id,child_question_id,sequence_no) VALUES(?,?,?)",
-                    parentVersionId, childQuestionIds.get(index), index + 1);
+    /** 将不可变父版本连接到精确子版本；历史读取不再跟随子聚合当前指针漂移。 */
+    public void insertVersionChildren(String parentQuestionId, String parentVersionId, List<ChildLink> children) {
+        for (int index = 0; index < children.size(); index++) {
+            ChildLink child = children.get(index);
+            jdbc.update("UPDATE question_aggregate SET parent_question_id=? WHERE id=? AND (parent_question_id IS NULL OR parent_question_id=?)",
+                    parentQuestionId, child.questionId(), parentQuestionId);
+            jdbc.update("INSERT INTO question_version_child(parent_question_version_id,child_question_id,child_question_version_id,sequence_no) VALUES(?,?,?,?)",
+                    parentVersionId, child.questionId(), child.versionId(), index + 1);
         }
     }
 
-    /** 返回不可变父版本的有序子题轻量投影，不读取子题答案或解析。 */
-    public List<ChildRow> versionChildren(String parentVersionId) {
-        return jdbc.query("SELECT c.child_question_id,c.sequence_no,v.question_type,v.stem_md FROM question_version_child c JOIN question_aggregate q ON q.id=c.child_question_id JOIN question_version v ON v.id=q.current_version_id WHERE c.parent_question_version_id=? ORDER BY c.sequence_no",
-                (rs, row) -> new ChildRow(rs.getString(1), rs.getInt(2),
-                        QuestionModels.Type.valueOf(rs.getString(3)), rs.getString(4)), parentVersionId);
+    /** 兼容 T09A 导入：把现有子聚合的当前版本冻结到新关系列。 */
+    public void insertCurrentVersionChildren(String parentQuestionId, String parentVersionId,
+            List<String> childQuestionIds) {
+        List<ChildLink> links = childQuestionIds.stream().map(id -> new ChildLink(id,
+                jdbc.queryForObject("SELECT current_version_id FROM question_aggregate WHERE id=?", String.class, id))).toList();
+        insertVersionChildren(parentQuestionId, parentVersionId, links);
+    }
+
+    /** 返回不可变父版本的有序子版本键，完整内容由 findVersion 精确读取。 */
+    public List<ChildSnapshotRow> versionChildren(String parentVersionId) {
+        return jdbc.query("SELECT child_question_id,child_question_version_id,sequence_no FROM question_version_child WHERE parent_question_version_id=? ORDER BY sequence_no",
+                (rs, row) -> new ChildSnapshotRow(rs.getString(1), rs.getString(2), rs.getInt(3)), parentVersionId);
     }
 
     /** 重试耗尽后写安全失败码与保留期限，不记录异常体或源内容。 */
@@ -362,8 +504,8 @@ public class QuestionRepository {
 
     /** 返回任务实际创建的题目 ID；dry-run/复核项不会出现在结果中。 */
     public List<String> legacyCreatedQuestionIds(String taskId, String ownerId) {
-        return jdbc.query("SELECT question_id FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=? AND question_id IS NOT NULL",
-                (rs, row) -> rs.getString(1), taskId, ownerId);
+        return jdbc.query("SELECT question_id FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=? AND question_id IS NOT NULL UNION SELECT question_id FROM question_legacy_review_item WHERE import_task_id=? AND owner_id=? AND question_id IS NOT NULL",
+                (rs, row) -> rs.getString(1), taskId, ownerId, taskId, ownerId);
     }
 
     /** 返回待清理版本媒体引用，调用方先写 Released Outbox 再删除本域关系。 */
@@ -388,6 +530,8 @@ public class QuestionRepository {
     public CleanupCounts deleteLegacyTaskQuestions(String taskId, String ownerId, Instant now) {
         List<String> roots = legacyCreatedQuestionIds(taskId, ownerId);
         if (roots.isEmpty()) {
+            jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
+            jdbc.update("DELETE FROM question_legacy_review_item WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
             int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
             jdbc.update("UPDATE question_import_task SET status='CLEANED',cleaned_at=?,updated_at=? WHERE id=?", ts(now), ts(now), taskId);
             return new CleanupCounts(0, refs);
@@ -401,6 +545,8 @@ public class QuestionRepository {
         Integer unsafe = jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE id IN (" + marks + ") AND (owner_id<>? OR status<>'DRAFT')",
                 Integer.class, concat(all, ownerId));
         if (unsafe != null && unsafe > 0) throw new IllegalStateException("Legacy cleanup includes non-DRAFT or foreign questions");
+        jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
+        jdbc.update("DELETE FROM question_legacy_review_item WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         jdbc.update("DELETE FROM question_version_child WHERE parent_question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + ")) OR child_question_id IN (" + marks + ")",
                 concat(all, all));
@@ -408,6 +554,7 @@ public class QuestionRepository {
         jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + "))", all.toArray());
         jdbc.update("DELETE FROM question_idempotency_request WHERE resource_type='QUESTION' AND resource_id IN (" + marks + ")", all.toArray());
         jdbc.update("DELETE FROM question_version WHERE question_id IN (" + marks + ")", all.toArray());
+        jdbc.update("UPDATE question_aggregate SET parent_question_id=NULL WHERE id IN (" + marks + ")", all.toArray());
         int deleted = jdbc.update("DELETE FROM question_aggregate WHERE id IN (" + marks + ")", all.toArray());
         jdbc.update("UPDATE question_import_task SET status='CLEANED',cleaned_at=?,updated_at=? WHERE id=?", ts(now), ts(now), taskId);
         return new CleanupCounts(deleted, refs);
@@ -512,6 +659,18 @@ public class QuestionRepository {
                 instant(rs, "updated_at"));
     }
 
+    private LegacyReviewItem legacyReviewItem(ResultSet rs, int row) throws SQLException {
+        String action = rs.getString("resolution_action");
+        return new LegacyReviewItem(rs.getString("id"), rs.getString("import_task_id"), rs.getString("batch_id"),
+                rs.getString("owner_id"), rs.getString("source_ref_id"), rs.getString("external_id"),
+                rs.getString("content_sha256"), rs.getString("path_edition"), rs.getString("json_edition"),
+                rs.getString("path_grade"), rs.getString("json_grade"), rs.getString("original_difficulty"),
+                QuestionModels.ImportOutcome.valueOf(rs.getString("outcome")), rs.getString("question_id"),
+                List.of(read(rs.getString("issue_codes_json"), String[].class)), rs.getLong("revision"),
+                action == null ? null : QuestionModels.ResolutionAction.valueOf(action),
+                nullableInstant(rs, "resolved_at"), instant(rs, "created_at"), instant(rs, "updated_at"));
+    }
+
     private Outbox outbox(ResultSet rs, int row) throws SQLException {
         return new Outbox(rs.getString("event_id"), rs.getString("event_type"), rs.getInt("event_version"),
                 rs.getString("aggregate_id"), rs.getString("exchange_name"), rs.getString("routing_key"), rs.getString("trace_id"),
@@ -547,7 +706,11 @@ public class QuestionRepository {
             int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Grade grade,
             String stem, Instant createdAt, Instant updatedAt, List<String> knowledgePointIds) {}
     public record PagedRows(List<SummaryRow> rows, long total) {}
-    public record ChildRow(String questionId, int sequence, QuestionModels.Type type, String stem) {}
+    public record VersionSummaryRow(String id, int versionNumber, QuestionModels.Type type,
+            QuestionModels.Difficulty difficulty, String stem, int childCount, Instant createdAt, boolean current) {}
+    public record ChildLink(String questionId, String versionId) {}
+    public record ChildSnapshotRow(String questionId, String versionId, int sequence) {}
+    public record LegacyResolutionRow(String itemId, String fingerprint, String action, String questionId) {}
     public record CleanupCounts(int questionsDeleted, int sourceReferencesDeleted) {}
     public record Outbox(String eventId, String eventType, int eventVersion, String aggregateId, String exchange,
             String routingKey, String traceId, String payloadJson, String status, int attempts, Instant nextAttemptAt,

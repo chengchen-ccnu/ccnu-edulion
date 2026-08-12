@@ -106,6 +106,25 @@ public class TeacherQuestionController {
                 request.expectedRevision(), request.status());
     }
 
+    @GetMapping("/api/v1/teacher/questions/{questionId}/versions")
+    /** 分页返回本人题目的不可变版本历史；读取不会移动当前指针。 */
+    public QuestionDtos.VersionPage versions(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String questionId, @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        return questions.versions(LearningIdentity.teacher(userId, roles, permissions).userId(), questionId, page, size);
+    }
+
+    @GetMapping("/api/v1/teacher/questions/{questionId}/versions/{versionId}")
+    /** 返回本人题目的指定历史版本完整结构；他人题目或不归属版本统一 404。 */
+    public QuestionDtos.VersionResponse version(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String questionId, @PathVariable String versionId) {
+        return questions.version(LearningIdentity.teacher(userId, roles, permissions).userId(), questionId, versionId);
+    }
+
     @GetMapping("/api/v1/teacher/question-imports")
     /** 分页返回本人导入任务状态、进度和计数摘要。 */
     public QuestionDtos.ImportPage imports(@RequestHeader("X-User-Id") String userId,
@@ -133,6 +152,38 @@ public class TeacherQuestionController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable String importTaskId) {
         return imports.get(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId);
+    }
+
+    @GetMapping("/api/v1/teacher/question-imports/{importTaskId}/items")
+    /** 分页返回本人历史 JSON 逐项结果；CSV/XLSX 或他人任务按不存在处理。 */
+    public QuestionDtos.LegacyReviewPage importItems(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String importTaskId, @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @RequestParam(required = false) QuestionModels.ImportOutcome outcome) {
+        return legacyImports.items(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId,
+                page, size, outcome);
+    }
+
+    @GetMapping("/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}")
+    /** 返回可刷新恢复的单项复核投影，不回显原始 JSON、题干或答案。 */
+    public QuestionDtos.LegacyReviewItem importItem(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String importTaskId, @PathVariable String itemId) {
+        return legacyImports.item(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId, itemId);
+    }
+
+    @PostMapping("/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution")
+    /** 以 revision 和 clientRequestId 幂等执行结构化修正后导入或确认跳过。 */
+    public QuestionDtos.LegacyReviewItem resolveImportItem(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader("X-User-Roles") String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String importTaskId, @PathVariable String itemId,
+            @Valid @RequestBody QuestionDtos.ResolveLegacyItemRequest request, HttpServletRequest servlet) {
+        return legacyImports.resolve(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId,
+                itemId, request, trace(servlet));
     }
 
     @PostMapping("/api/v1/teacher/legacy-question-imports")

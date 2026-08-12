@@ -262,3 +262,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 页面冻结：教师题库高亮组固定为 `/teacher/questions`、`/teacher/questions/new`、`/teacher/questions/:questionId`、`/teacher/questions/:questionId/edit`、`/teacher/question-imports` 和 `/teacher/question-imports/:importTaskId`。列表、新建、只读详情/版本、编辑、导入列表和导入详情/复核职责互不混入临时弹层，刷新后必须由 URL 与服务端恢复。
 - 任务拆分：新增 T09B 先向前补齐组合题结构化写入、版本历史、统一导入查询和逐项人工解决契约；T10 只在 T09B 冻结后实现 Vue 页面。T09B 不创建前端页面、不修改已合并 V1/V2、不授权全量迁移；T10 不实现组卷、学生作答、成绩或自动导入 44,441 份题库。
 - 范围与数据：本轮只修改页面规格、路线图、T09A 状态和验证记录，没有修改 OpenAPI、生成代码、Java/Python/Vue、数据库迁移或配置；未连接 MySQL、Redis、OSS、RabbitMQ、FFmpeg 或外部题库，未创建数据库、表、Seed、伪数据、媒体对象或消息。Markdown 差异检查通过即可，不把未执行的工程构建宣称为验证结果。
+
+## 2026-08-12 T09B 题库前端契约闭环实施
+
+- 门禁与范围：开始时分支为 `codex/t09b-question-bank-ui-contract`，HEAD、merge-base 和本地 `main` 均为 `c358c8e7dd971dd57c31f7040252b6715a1256ae`，工作区干净。完整读取 `docs/frontend/page-specs.md`，保持教师题库六组稳定路由不变；未创建 T10 Vue 页面、组卷/作答/成绩接口或 Python 智能体修改。
+- 契约先行：主体实现先把 OpenAPI 升级到 0.10.0 并生成客户端，独立验收修复再向前升级到 0.10.1，明确人工复核终态门禁、409 业务码与并发相同请求结果复用。普通题与 `COMPOSITE` 共用完整父版本字段，组合题以 `children` 提交一层有序完整子题；父/子均含题型、题干、选项、答案、解析、知识点和 `mediaId` 引用。
+- 不可变历史与权限：V3 只向前增加 `parent_question_id`、精确 `child_question_version_id`、复核项表和解决幂等表，V1/V2 未修改。历史父版本读取精确子版本，不跟随子聚合指针；子聚合不进入根列表或独立教师路由。他人题目、版本、任务和复核项统一 404，列表 SQL 不读取答案或完整解析。
+- 复核状态机：每个提交项保存安全元数据、问题码、outcome、revision 和解决状态，不保存原始 JSON、题干、答案、路径明文或外部 URL。只有最终批次完成且任务处于 `COMPLETED/PARTIAL_SUCCESS` 才允许显式完整修正导入或确认跳过；`PENDING/PROCESSING/FAILED/CLEANED` 返回 409 `QUESTION_IMPORT.TASK_NOT_REVIEWABLE`，不会提前结束多批次任务。批次 20、任务 1000 上限未改变，未执行全量题库迁移。
+- 并发幂等：相同 `clientRequestId`/请求指纹在任务锁前后双查；锁后二查及结果项均使用 `FOR UPDATE` 当前读，兼容 MySQL `REPEATABLE READ`。两个并发相同解决请求返回第一次结果，只创建一题、只写一条解决记录且统一计数只累计一次；不同指纹或旧 revision 仍返回 409。
+- 自动化：OpenAPI 0.10.1 `generate:api`/`check:api` 和全 workspace `typecheck` 通过；最终 Java 8 模块 `clean verify` 全部通过，learning-service 20 项中 18 通过、2 个显式真实环境用例默认跳过。新增覆盖非最终批次产生 NEEDS_REVIEW、提前解决 409、任务保持 PROCESSING、后续最终批次继续提交、最终解决成功及双线程相同请求一致结果/单题/单计数。
+- 真实 MySQL 与数据：通过规定凭据包装脚本在既有 `edu_platform_learning_dev`、V3 Schema 上复跑；应用未创建数据库或迁移。仅创建随机 owner 下的最小虚构知识点、单子题组合题、一项含糊历史 JSON 复核项和并发修正题。初轮验收发现结果详情旧快照，改为当前读后 MySQL 8 双线程复跑通过；按精确 ID 逆序清理，owner 题目、幂等键、任务、复核项和解决记录均断言为 0。没有读取真实历史题库、连接 OSS/RabbitMQ 或创建媒体/Seed。
+- 完整工程门禁：独立验收修复后的 Java 8 模块 `clean verify` 全部通过（2 分 14 秒）；Frontend 生成客户端与全 workspace 类型检查通过。主体实现阶段的 Vitest 沙箱外 13 文件 91 项及三端生产构建结果保持通过，本轮未修改 Vue 运行时代码。
+- 发布：关键主体提交 `86a9176` 和独立验收修复提交 `db4ee5a` 均位于现有 Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 分支；修复提交后的 `check:api`、差异检查、V1/V2/V3 不变校验和本地完整验证通过。PR 保持非 Draft 且不会由本任务自行合并；推送后继续等待最新 Java、Python、Frontend、OpenAPI CI 全绿。
