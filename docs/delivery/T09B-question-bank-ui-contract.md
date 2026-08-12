@@ -63,7 +63,7 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 - `pnpm.cmd --dir web-apps run test`：沙箱内因既有 `esbuild spawn EPERM` 无法启动，经批准在沙箱外复跑后 13 个文件、91 项全部通过。
 - `pnpm.cmd --dir web-apps run build`：三端生产构建通过；只有既有 `hls.js` 超过 500 kB 的提示，本任务没有新增前端 bundle。
 
-提交后 API 一致性门禁、敏感信息审计和 Ready PR CI 状态将在发布前执行并同步到本文件及 `docs/roadmap/verification.md`。
+提交后的 API 一致性、差异/敏感信息审计均通过；Ready PR #21 首轮 Java、Python、Frontend、OpenAPI 四项 CI 全绿。GitHub Actions 仅报告 action runtime 的 Node 20 平台级弃用提示，不影响本任务构建结果。
 
 ## 人工演示步骤
 

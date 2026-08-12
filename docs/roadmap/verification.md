@@ -272,4 +272,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：`generate:api` 通过；learning-service 相关 Reactor 测试共 19 项，17 通过、2 个显式真实环境用例默认跳过。新增覆盖结构化组合新建/更新、父子字段、根列表、旧子版本冻结、历史读取不移动当前指针、owner 404、复核分页/详情/问题码、修正导入、确认跳过、幂等重放、revision 冲突和统一计数。
 - 真实 MySQL 与数据：通过规定凭据包装脚本在既有 `edu_platform_learning_dev` 将 Flyway V2 向前迁移到 V3；应用未创建数据库。仅创建随机 owner 下的最小虚构知识点、单子题组合题和一项含糊历史 JSON 复核项，MySQL 8 用例通过后按精确 ID 逆序清理，owner 题目、幂等键、任务、复核项和解决记录均断言为 0。没有读取真实历史题库、连接 OSS/RabbitMQ 或创建媒体/Seed。
 - 完整工程门禁：Java 8 模块 `clean verify` 全部通过（2 分 29 秒）；Frontend 生成客户端与全 workspace 类型检查通过。Vitest 在沙箱内因既有 `esbuild spawn EPERM` 受阻，经批准沙箱外复跑后 13 文件 91 项全过；三端生产构建通过，仅有既有 HLS chunk 大小提示。
-- 发布：关键实现提交 `86a9176` 已按规定使用 `git push origin HEAD` 推送；提交后的 `check:api`、差异检查、V1/V2 不变校验和敏感信息审计通过。Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 已创建且不是 Draft；本任务等待 CI 结果但不会自行合并。
+- 发布：关键实现提交 `86a9176` 已按规定使用 `git push origin HEAD` 推送；提交后的 `check:api`、差异检查、V1/V2 不变校验和敏感信息审计通过。Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 已创建且不是 Draft，首轮 Java、Python、Frontend、OpenAPI 四项 CI 全绿；仅有 GitHub Actions action runtime 的 Node 20 平台级弃用提示。本任务不会自行合并。
