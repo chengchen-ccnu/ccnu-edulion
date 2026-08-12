@@ -252,3 +252,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化结果：完整 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 的 8 个 Reactor 模块通过，共 70 项测试、67 通过、3 个真实环境用例默认跳过；最终变更后又定向复跑 gateway 11 项、learning 17 项和 media 18 项，均无失败。OpenAPI 生成和全 workspace 类型检查通过；Vitest 在沙箱内因 `esbuild spawn EPERM` 无法启动，经批准在沙箱外复跑后 13 个文件 91 项全通过，学生/教师/管理三端生产构建通过。两个 PowerShell 脚本完成语法解析，聚合统计脚本以 3 文件上限验证只输出计数。
 - 真实小样本与数据：通过凭据包装脚本在既有专用 `edu_platform_learning_dev` 验证 V1/V2，程序化选择 1 份无图片且无需复核的真实文件，执行 1 项 dry-run、1 项实际导入及任务级精确清理；加入任务行锁后最终复跑仍为 2 项通过且未输出内容/路径。未创建数据库；V2 表和列作为迁移结果保留，题目、来源、批次、问题、Outbox 与任务验收行均按精确 ID 清理。未连接或修改 media 开发库，外部图片使用虚构 Fixture 自动化验证。
 - 边界：未执行 44,441 份全量迁移，未实现 T10 页面、T11 组卷/作答，也未修改 Python 智能体。真实外部站点图片与 OSS 转存 E2E 尚未执行，启用前必须由人工审核来源主机白名单并另行授权。
+- 发布：实现提交 `ac69319` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19) 已创建并保持 Open/非 Draft，未自行合并。PR 创建后的纯文档状态提交继续复用同一分支与 CI。

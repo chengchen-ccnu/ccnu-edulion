@@ -103,8 +103,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 
 - 分支：`codex/t09a-legacy-json-import`
 - 基线：`main@71bd7d85`
-- Ready PR：创建后补记；不得自行合并。
-- 关键提交：以本分支 `git log` 为准，PR 创建后补记。
+- Ready PR：[#19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19)，Open、非 Draft；不得自行合并。
+- 关键实现提交：`ac69319`（`feat(question): add controlled legacy JSON migration`）。
 
 ## 人工可读性检查
 
