@@ -285,4 +285,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：最终 `generate:api`、`check:api`、全 workspace `typecheck` 均通过；完整 Vitest 为 18 个文件 115 项全通过；学生端、教师端、管理端三个生产构建全通过。教师题库路由按路由懒加载，标准 HTML 文档模式消除了 KaTeX quirks 警告。
 - 浏览器验收：使用只绑定 `127.0.0.1` 的最小合成 Gateway 验证六路由、桌面/820×1180 平板、无横向溢出、同组导航、键盘原生控件、深链接与刷新恢复，并覆盖 403、404、409、422、429、5xx、公式清洗、版本历史和清理确认；401/刷新一次由共享 auth 27 项测试覆盖。Fixture 只有一个合成教师/知识点/组合题/导入任务/复核项，没有读取或扫描历史题库。
 - 数据与清理：未调用真实环境凭据脚本，未创建数据库、表、Seed、真实题目、上传会话、OSS 对象、RabbitMQ/通知消息。验收专用 Vite、Prism 和合成 Gateway 进程均已停止，临时日志在提交前删除，因此测试数据、媒体和消息均无持久对象需要清理。
-- 边界与发布：未实现 T11/T12、组卷、学生作答、成绩或错题，未修改 Python 智能体、已合并迁移、OpenAPI 或全局页面规格，也未执行 44,441 份题库。分支为 `codex/t10-question-bank-web`；提交和 Ready PR 创建后回填，不自行合并。
+- 边界与发布：未实现 T11/T12、组卷、学生作答、成绩或错题，未修改 Python 智能体、已合并迁移、OpenAPI 或全局页面规格，也未执行 44,441 份题库。关键实现提交为 `32371d0`，已使用规定命令推送分支 `codex/t10-question-bank-web` 并创建 Ready [PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22)，未自行合并。

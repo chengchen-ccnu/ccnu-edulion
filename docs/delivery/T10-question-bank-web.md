@@ -83,5 +83,5 @@ pnpm.cmd --dir web-apps --filter @edu/teacher-web run dev
 
 - 分支：`codex/t10-question-bank-web`
 - 基线：`main@82ca1fbe`，状态提交 `74b6b7c`
-- 关键提交：提交后回填
-- Ready PR：创建后回填；不得由本任务自行合并
+- 关键实现提交：`32371d0`
+- Ready PR：[PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22)；不得由本任务自行合并
