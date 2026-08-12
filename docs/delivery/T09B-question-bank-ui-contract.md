@@ -113,7 +113,7 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 - 专项 HTTP 绑定：7 项全部通过，覆盖省略 `children`、显式空数组、合法组合题、非法枚举、未知字段、非法 UUID 和缺少必填字段。
 - learning-service：共 27 项执行，25 通过，2 个显式真实 MySQL 用例按条件跳过。
 - Java：8 模块 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 最终复跑全部通过，耗时 2 分 21 秒。
-- OpenAPI/Frontend：`generate:api` 通过并生成两处说明；全部 8 个 workspace `typecheck` 通过。生成文件提交前的首次 `check:api` 正确报告预期差异，提交后需再次验证无漂移。
+- OpenAPI/Frontend：`generate:api` 通过并生成两处说明；提交后 `check:api` 通过且无生成漂移；全部 8 个 workspace `typecheck` 通过。
 
 本轮没有执行真实 MySQL/Gateway 验收，没有连接 OSS、RabbitMQ 或外部题库；没有创建持久数据库、表、Seed、真实题目、媒体对象或消息，因此没有外部数据需要清理或重新生成。
 
@@ -127,5 +127,5 @@ DTO 严格 creator/可选后置属性、业务规范化、异常安全路径提�
 
 - 分支：`codex/t09b1-question-http-binding`
 - 基线：`origin/main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`
-- 关键提交：待创建
-- Ready PR：待创建；不得由本任务自行合并，且不修改 T10 PR #22
+- 关键实现提交：`8c1049a`（`fix(question): align HTTP request binding`）
+- Ready PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)；不得由本任务自行合并，且不修改 T10 PR #22
