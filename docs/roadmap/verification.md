@@ -228,3 +228,17 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 响应式与可访问性：真实 Vite 页面在 1440×900 与 390×844 同源视口下均保持冻结顺序且无横向溢出；浏览器 DOM 断言所有建设中入口 href/tabindex 均为空，`aria-disabled=true`，可聚焦元素按启用主导航、账号工具、页面表单顺序出现。临时视口文件已删除，控制台无 warning/error。
 - 账号菜单回归：实际登录学生页面复现到账号工具区 `overflow-x:auto` 连带生成 `overflow-y:auto`，将向下弹层裁进 46px 高滚动容器。修复后账号菜单从滚动上下文释放，桌面浮层宽 248px；390×844 同源视口下页面宽度为 375/375、弹层完整可见且账号工具溢出为 `visible/visible`。个人中心和布局设置明确建设中、无 href 且禁用，退出登录是唯一可操作项；原生 `summary` 的 `tabIndex=0`、标签为“打开账号菜单”。
 - 真实链路边界：复用现有 dev 服务和两门已发布课程，只读确认公开详情品牌/高亮正确、无播放器且提供真实 `/learn/...`；匿名点击后统一登录完整保留深链接。学生登录后真实进入既有 `/learn/...`，只高亮“我的学习”、没有重复“学生学习中心”，当前课时/目录/退出学习存在，单个 HLS 播放器 `readyState=4`、`muted=false`、`volume=1`；刷新深链接后恢复，退出后播放器数为 0。控制台无 warning/error。未创建数据库、表、迁移、课程、媒体、报名、进度、OSS 对象或 RabbitMQ 消息。
+
+## 2026-08-09 T09 题库与知识点后端
+
+- 门禁与证据：开始时工作区干净，分支为 `codex/t09-question-bank-backend`，`HEAD=6839eab1577d559bd83417baaf8cf3d807fef305`。完整阅读契约、事件、媒体/MQ ADR、环境、路线图和 T09/T10/T11 边界。外部题库以逐文件流式程序做聚合统计，仅人工打开 5 个代表文件；没有输出/提交完整题目、扫描缓存或原始样本。
+- 契约：先冻结 OpenAPI 0.8.0 和 `QuestionImportRequested` v1，再实现服务；新增教师知识点、本人题目、状态和导入接口及管理员知识点写接口。生成客户端来自同一 OpenAPI，未手写 DTO，未创建 T10 页面或学生取题端点。
+- Learning：实现树形知识点、五种初中数学题型、稳定聚合 ID、不可变版本、DRAFT/ACTIVE/ARCHIVED、owner 404、`clientRequestId` 幂等、revision 乐观锁和无答案列表投影。Flyway V1 只有题库/导入/可靠消息 10 张表，不含 T11 报名、进度、试卷、作答、成绩或错题。
+- 媒体与导入：media-service 评审并启用四种教师用途；learning-service 只保存 mediaId/用途/顺序，通过 JSON 校验 owner/用途/READY，不引入 OSS SDK。CSV/XLSX 规范化导入保留文本/LaTeX、不猜拆选项，对公式、嵌图、外部图片和坏结构返回行错误；Outbox、mandatory confirm/return、有限退避、3 次总消费、DLQ、eventId 与确定性行请求双重幂等已覆盖。
+- Java：最终完整 `clean verify` 的 8 个 Reactor 模块全部成功；2026-08-12 在 MySQL 保留字修复后复跑耗时 1 分 40 秒，默认构建 0 失败/错误。Gateway 11 项通过；learning-service 14 项中 H2/Mock 13 项通过、MySQL 验收 1 项默认跳过；另行显式执行 `LearningMysqlMigrationAcceptanceTest`，1 项通过、0 跳过。
+- Frontend：`generate:api`、全 workspace `typecheck` 通过。Vitest/Vite 在沙箱内因既有 esbuild `spawn EPERM` 无法启动，批准沙箱外复跑后 13 文件 91 项和学生/教师/管理三端生产构建全部通过；只更新生成客户端，没有实现 T10 Vue 页面。
+- MySQL 与数据：2026-08-12 在既有专用 `edu_platform_learning_dev` 上显式验收。首次发现 V1 内部列 `row_number` 与 MySQL 8 保留字冲突并以 1064 停止；V1 尚未合入主线，改为 `source_row_number` 并同步 Repository SQL 后，Flyway V1 校验和真实迁移测试通过。真实验收创建的合成题目、知识点、导入任务、行错误、Outbox、消费记录均按精确 ID 清理；验收前已有的 1 道 DRAFT 题和 2 个知识点未修改。
+- 真实业务链路：用户先经 Gateway 完成题目创建与完全相同幂等重放；其余领域场景在 learning-service 可信身份边界执行，并补验 Gateway 伪造身份头无 Bearer Token 返回 401。五种题型、不同 Body 幂等冲突、列表答案防泄漏、他人 404、不可变 v2、旧 revision 409、发布/归档、归档后拒绝编辑全部通过。四类 T09 媒体用途使用真实 OSS 小型合成对象达到 READY；错用途、他人、非 READY、历史版本引用、6 个 Bound Outbox/Media 引用通过。
+- RabbitMQ 与清理：两行合成 CSV 经真实队列得到 `PARTIAL_SUCCESS`（1 成功、1 个 `QUESTION_IMPORT.EXTERNAL_IMAGE_REQUIRES_UPLOAD`）；相同 `eventId` 重投前后题目数不变且消费记录为 1。契约合法但任务缺失的测试事件经有限重试进入专用 DLQ并带 `x-death`，随后精确 ACK，主队列/DLQ 归零。到期导入源写 Released Outbox 并由 Media 置为 RELEASED。7 个精确 OSS 对象由 media-service 回收器删除，7 条资产、9 个上传会话及本轮数据库记录归零；未列举 Bucket 或批量删除既有数据。真实 XLSX E2E 未执行，公式/嵌图拒绝由自动化覆盖。
+- 安全与可读性：未知/缺失 JSON 字段、错角色/权限、答案泄漏、媒体错绑定、重复消息和失败语义均有验证；人工维护的业务边界、复杂流程、SQL、契约和事件均有中文说明。最终 `git diff --check`、敏感信息审计、暂存范围和提交后 `check:api` 在推送前复核。
+- 发布：关键实现提交 `169457d` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建且未合并。首轮 CI run #98 的 Python、Frontend、Java 与 OpenAPI 四个 Job 全部成功；落盘发布状态的后续纯文档提交仍需通过同一 CI。

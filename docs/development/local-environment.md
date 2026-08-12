@@ -174,6 +174,47 @@ source java-platform/course-service/src/main/resources/db/seed/cleanup-course-se
 
 脚本只删除上述固定课程 Fixture（包括验收期间由它派生出的草稿版本）和不再被任何课程版本引用的固定测试分类，不删除 Flyway 表或其他课程。重新生成时再次设置 `COURSE_SEED_ENABLED=true` 并重启 `course-service`；完成验收后恢复为 `false`。
 
+## T09 题库、媒体绑定与异步导入
+
+T09 只允许把 `LEARNING_MYSQL_DATABASE` 指向用途明确的 `edu_platform_learning_dev`（自动化环境可使用 `learning_test`）。应用不会创建数据库；`local` profile 的向前 Flyway V1 只创建知识点、题目聚合/版本/版本知识点/版本媒体、导入任务/行错误、幂等请求、Outbox 和消费幂等共 10 张 learning 域表，不创建报名、进度、试卷、作答、成绩或错题表，也不建立跨 Schema 外键。
+
+本任务不提供默认 Seed。H2 集成测试以 `teacher_test_01` 对应的固定 UUID 和合成题目/知识点为最小 Fixture，测试进程退出即销毁；没有把真实题库样本写入仓库或数据库。若后续人工演示需要数据，应通过教师 API 创建并记录精确 `questionId`/`knowledgePointId`，验收后只清理这些 ID，禁止清空共享开发 Schema。
+
+本地启动必须经凭据包装脚本注入 MySQL/RabbitMQ 配置，不读取或打印 DPAPI 凭据：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:SPRING_PROFILES_ACTIVE = 'local'
+    $env:RABBITMQ_ENABLED = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service -am spring-boot:run
+}
+```
+
+learning-service 只通过 `MEDIA_SERVICE_BASE_URL` 调用 media-service 的绑定校验与短期读取授权，不配置 OSS SDK、Bucket、Object Key 或 AccessKey。题目版本可绑定当前教师本人、用途匹配且 `READY` 的 `QUESTION_IMAGE`、`QUESTION_AUDIO`、`QUESTION_ATTACHMENT`；导入任务只接受 `QUESTION_IMPORT_SOURCE`。四种用途的上传策略为：图片 `jpg/jpeg/png/webp`、最多 10 MiB、单对象；音频 `mp3/m4a/wav/ogg`、最多 50 MiB、允许 Multipart；附件 `pdf/docx`、最多 50 MiB、允许 Multipart；导入源 `csv/xlsx`、最多 100 MiB、允许 Multipart。浏览器上传仍由 T10 实现。
+
+| 变量 | 默认值 | 含义 |
+|---|---:|---|
+| `MEDIA_SERVICE_BASE_URL` | `http://127.0.0.1:8083` | media-service JSON API；只用于绑定验证和短期读取授权 |
+| `LEARNING_MEDIA_REQUEST_TIMEOUT` | `5s` | learning-service 调用 media-service 的连接/请求上限 |
+| `QUESTION_IMPORT_MAX_SOURCE_BYTES` | `104857600` | CSV/XLSX 源文件读取上限（100 MiB） |
+| `QUESTION_IMPORT_RETENTION` | `7d` | 导入终态后继续保留源引用的期限，到期以 Outbox 发布 Released |
+| `RABBITMQ_ENABLED` | `false` | 是否声明并启用题目导入消费者和 Outbox 发布器 |
+| `LEARNING_OUTBOX_POLL_DELAY` | `2s` | Outbox 扫描间隔 |
+| `LEARNING_OUTBOX_CONFIRM_TIMEOUT` | `10s` | mandatory publisher confirm 等待上限 |
+| `LEARNING_OUTBOX_MAX_ATTEMPTS` | `20` | 发布失败的有限尝试上限，耗尽后保留 `FAILED` 审计记录 |
+
+导入模板的首行必须精确为 `type,difficulty,grade,stem,optionsJson,answersJson,analysis,knowledgePointCodesJson,mediaJson`。CSV 使用 UTF-8；XLSX 只允许一个普通工作表，不执行公式，也不接受嵌入图片。`optionsJson`、`answersJson`、`knowledgePointCodesJson` 和 `mediaJson` 必须是 JSON 数组；服务端不会从题干猜测或拆分选项。外部图片、内嵌图片、公式单元格、不支持的工作簿结构和坏 JSON 都会形成明确逐行错误。
+
+RabbitMQ 资源为 `edu.learning.events.v1`、队列 `edu.learning.question-import.v1`、死信交换机 `edu.learning.dlx.v1` 和 DLQ `edu.learning.question-import.dlq.v1`。生产者使用事务 Outbox、持久消息、mandatory、publisher confirm/return 和有限退避；消费者总计最多尝试 3 次，超限拒绝进入 DLQ，并以数据库 `eventId` 幂等。重复消费的每一行还使用任务 ID 与行号生成确定性 `clientRequestId`，不会重复创建题目。
+
+真实 MySQL 迁移验收默认跳过，并且不会创建数据库。先由环境管理员创建用途明确的 `edu_platform_learning_dev`，再通过安全包装脚本显式执行；测试在建立 Spring 上下文前复核 Schema 名，创建随机的一个知识点和题目，最后按精确 ID 逆序清理测试行，保留 Flyway V1 空表：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\Invoke-WithLocalEnvironment.ps1' -ScriptBlock { `$env:LEARNING_MYSQL_ACCEPTANCE='true'; `$env:RABBITMQ_ENABLED='false'; mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service -am '-Dtest=LearningMysqlMigrationAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test }"
+```
+
+若目标数据库不存在，Flyway 应以 `Unknown database 'edu_platform_learning_dev'` 停止；不得为通过验收而由应用或 Codex 自动创建 Schema。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。

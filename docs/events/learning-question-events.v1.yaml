@@ -1,0 +1,66 @@
+contract: edu.learning.question.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.learning.events.v1
+compatibility: backward
+producer: learning-service question application transactions
+consumers:
+  - learning-service question import worker
+deliverySemantics: at-least-once; consumers persist eventId in the learning schema before ACK
+description: |
+  T09 asynchronous question-import contract. The request and its Outbox row commit in the
+  same learning-service transaction. A consumer downloads only through a short-lived
+  media-service grant and never receives a Bucket, Object Key, credential or signed URL in
+  this event. Optional payload fields may be added in version 1; incompatible changes require
+  a new eventVersion and routing key.
+
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId:
+      type: string
+      format: uuid
+      description: Global idempotency key persisted before the RabbitMQ message is acknowledged.
+    eventType:
+      type: string
+      const: QuestionImportRequested
+    eventVersion:
+      type: integer
+      const: 1
+    aggregateId:
+      type: string
+      format: uuid
+      description: learning-service import task ID.
+    occurredAt:
+      type: string
+      format: date-time
+      description: UTC time at which the import task and Outbox record committed.
+    traceId:
+      type: string
+      minLength: 8
+      maxLength: 64
+    payload:
+      $ref: '#/events/QuestionImportRequested/payload'
+
+events:
+  QuestionImportRequested:
+    routingKey: question.import.requested.v1
+    aggregate: question_import_task
+    description: Requests processing of one already-validated teacher-owned QUESTION_IMPORT_SOURCE.
+    payload:
+      type: object
+      additionalProperties: false
+      required: [importTaskId, sourceMediaId, sourceFormat]
+      properties:
+        importTaskId:
+          type: string
+          format: uuid
+        sourceMediaId:
+          type: string
+          format: uuid
+          description: Stable media ID only; no provider address or signed URL.
+        sourceFormat:
+          type: string
+          enum: [CSV, XLSX]

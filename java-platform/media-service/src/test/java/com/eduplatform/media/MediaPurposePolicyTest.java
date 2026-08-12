@@ -12,7 +12,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** 验证 T08A 新用途逐项开放，同时确保仅存在于枚举中的后续用途仍保持关闭。 */
+/** 验证 T08A/T09 已评审用途逐项开放，同时确保后续用途仍保持关闭。 */
 class MediaPurposePolicyTest {
     private final MediaPurposePolicy policy = new MediaPurposePolicy();
 
@@ -30,9 +30,27 @@ class MediaPurposePolicyTest {
     @Test
     void rejectsUnreviewedEnumPurpose() {
         assertThatThrownBy(() -> policy.validate(request(
-                MediaPurpose.QUESTION_IMAGE, "question.png", "image/png", 5), Set.of("TEACHER"), 10))
+                MediaPurpose.AI_QUESTION_IMAGE, "question.png", "image/png", 5), Set.of("TEACHER"), 10))
                 .isInstanceOfSatisfying(MediaException.class,
                         error -> assertThat(error.code()).isEqualTo("MEDIA.PURPOSE_NOT_ENABLED"));
+    }
+
+    @Test
+    void enablesReviewedQuestionPurposesAndSelectsMultipartOnlyForLargeEligibleFiles() {
+        assertMode(MediaPurpose.QUESTION_IMAGE, "diagram.png", "image/png", 20, UploadMode.SINGLE_PUT);
+        assertMode(MediaPurpose.QUESTION_AUDIO, "prompt.mp3", "audio/mpeg", 20, UploadMode.MULTIPART);
+        assertMode(MediaPurpose.QUESTION_ATTACHMENT, "proof.pdf", "application/pdf", 20, UploadMode.MULTIPART);
+        assertMode(MediaPurpose.QUESTION_IMPORT_SOURCE, "questions.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 20, UploadMode.MULTIPART);
+    }
+
+    @Test
+    void questionPurposeRejectsWrongRoleMimeAndExtension() {
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.QUESTION_IMPORT_SOURCE,
+                "questions.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 5), Set.of("STUDENT"), 10))
+                .isInstanceOfSatisfying(MediaException.class, error -> assertThat(error.code()).isEqualTo("MEDIA.PURPOSE_FORBIDDEN"));
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.QUESTION_IMAGE,
+                "diagram.svg", "image/svg+xml", 5), Set.of("TEACHER"), 10)).isInstanceOf(MediaException.class);
     }
 
     private void assertMode(MediaPurpose purpose, String filename, String mimeType, long size, UploadMode expected) {

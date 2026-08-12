@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 /**
  * 媒体用途白名单，统一校验上传角色、MIME、扩展名、大小与直传模式。
  *
- * <p>T08A 显式启用课程封面、视频、海报、字幕、课件与图文附件；其余冻结枚举仍返回未启用，
+ * <p>T08A 显式启用课程用途；T09 追加题目图片、音频、附件与 CSV/XLSX 导入源；其余冻结枚举仍返回未启用，
  * 避免仅因枚举存在就绕过所属领域的权限和文件策略评审。</p>
  */
 @Component
@@ -36,7 +36,19 @@ public class MediaPurposePolicy {
                     Set.of("pdf", "pptx"), 200L * 1024 * 1024, true),
             MediaPurpose.ARTICLE_ATTACHMENT, new Policy(Set.of("TEACHER"),
                     Set.of("application/pdf", "text/plain", "image/jpeg", "image/png", "image/webp"),
-                    Set.of("pdf", "txt", "jpg", "jpeg", "png", "webp"), 50L * 1024 * 1024, true));
+                    Set.of("pdf", "txt", "jpg", "jpeg", "png", "webp"), 50L * 1024 * 1024, true),
+            MediaPurpose.QUESTION_IMAGE, new Policy(Set.of("TEACHER"),
+                    Set.of("image/jpeg", "image/png", "image/webp"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
+            MediaPurpose.QUESTION_AUDIO, new Policy(Set.of("TEACHER"),
+                    Set.of("audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/ogg"),
+                    Set.of("mp3", "m4a", "wav", "ogg"), 50L * 1024 * 1024, true),
+            MediaPurpose.QUESTION_ATTACHMENT, new Policy(Set.of("TEACHER"),
+                    Set.of("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                    Set.of("pdf", "docx"), 50L * 1024 * 1024, true),
+            MediaPurpose.QUESTION_IMPORT_SOURCE, new Policy(Set.of("TEACHER"),
+                    Set.of("text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                    Set.of("csv", "xlsx"), 100L * 1024 * 1024, true));
 
     /**
      * 校验客户端声明并选择上传模式。

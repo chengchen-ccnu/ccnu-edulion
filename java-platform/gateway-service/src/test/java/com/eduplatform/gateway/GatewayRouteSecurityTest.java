@@ -36,6 +36,7 @@ class GatewayRouteSecurityTest {
     private static HttpServer iamStub;
     private static HttpServer courseStub;
     private static HttpServer mediaStub;
+    private static HttpServer learningStub;
 
     @DynamicPropertySource
     static void iamServiceUrl(DynamicPropertyRegistry registry) {
@@ -52,6 +53,10 @@ class GatewayRouteSecurityTest {
             mediaStub.createContext("/", GatewayRouteSecurityTest::handleMediaRequest);
             mediaStub.start();
             registry.add("MEDIA_SERVICE_URL", () -> "http://127.0.0.1:" + mediaStub.getAddress().getPort());
+            learningStub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            learningStub.createContext("/", GatewayRouteSecurityTest::handleLearningRequest);
+            learningStub.start();
+            registry.add("LEARNING_SERVICE_URL", () -> "http://127.0.0.1:" + learningStub.getAddress().getPort());
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
@@ -62,6 +67,7 @@ class GatewayRouteSecurityTest {
         if (iamStub != null) iamStub.stop(0);
         if (courseStub != null) courseStub.stop(0);
         if (mediaStub != null) mediaStub.stop(0);
+        if (learningStub != null) learningStub.stop(0);
     }
 
     @Value("${local.server.port}") int port;
@@ -206,6 +212,29 @@ class GatewayRouteSecurityTest {
                 .jsonPath("$.roles").isEqualTo("TEACHER");
     }
 
+    @Test
+    /** 题库教师路由要求 TEACHER，知识点写路由额外要求 administration:access，并转发可信权限头。 */
+    void questionBankRoutesEnforceTeacherAndAdministrationCapabilities() {
+        Instant now = Instant.now();
+        client.get().uri("/api/v1/teacher/questions")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isForbidden();
+        client.get().uri("/api/v1/teacher/questions")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
+
+        client.post().uri("/api/v1/admin/knowledge-points").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "ADMIN", "operation:read")))
+                .exchange().expectStatus().isForbidden();
+        client.post().uri("/api/v1/admin/knowledge-points").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "ADMIN", "administration:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.permissions").isEqualTo("administration:access");
+    }
+
     private String token(Instant issuedAt, Instant expiresAt) {
         return token(issuedAt, expiresAt, "STUDENT", "learning:access");
     }
@@ -276,5 +305,19 @@ class GatewayRouteSecurityTest {
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    /** 学习域替身仅回显 Gateway 根据 JWT 重建的身份与权限，不持有题库数据。 */
+    private static void handleLearningRequest(HttpExchange exchange) throws IOException {
+        exchange.getRequestBody().readAllBytes();
+        String userId = exchange.getRequestHeaders().getFirst("X-User-Id");
+        String roles = exchange.getRequestHeaders().getFirst("X-User-Roles");
+        String permissions = exchange.getRequestHeaders().getFirst("X-User-Permissions");
+        String body = "{\"route\":\"learning\",\"userId\":\"" + userId + "\",\"roles\":\"" + roles
+                + "\",\"permissions\":\"" + permissions + "\"}";
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes); exchange.close();
     }
 }

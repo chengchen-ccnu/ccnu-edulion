@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:learning_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
+
+platform:
+  learning:
+    media:
+      base-url: http://127.0.0.1:8083
+      request-timeout: 1s
+    import:
+      max-source-bytes: 1048576
+      retention: 1h
+      messaging-enabled: false
+      outbox-poll-delay: 2s
+      confirm-timeout: 1s
+      max-publish-attempts: 3

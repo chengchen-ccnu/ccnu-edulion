@@ -5,6 +5,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashSet;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -22,6 +23,7 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
@@ -68,13 +70,23 @@ public class GatewaySecurityConfig {
         JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
         authorities.setAuthoritiesClaimName("roles");
         authorities.setAuthorityPrefix("ROLE_");
-        converter.setJwtGrantedAuthoritiesConverter(jwt -> Flux.fromIterable(authorities.convert(jwt)));
+        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            LinkedHashSet<SimpleGrantedAuthority> combined = new LinkedHashSet<>();
+            authorities.convert(jwt).forEach(value -> combined.add(new SimpleGrantedAuthority(value.getAuthority())));
+            List<String> permissions = jwt.getClaimAsStringList("permissions");
+            if (permissions != null) permissions.forEach(value -> combined.add(new SimpleGrantedAuthority(value)));
+            return Flux.fromIterable(combined);
+        });
         return http.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(auth -> auth
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/api/v1/teacher/courses", "/api/v1/teacher/courses/**").hasRole("TEACHER")
+                        .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")
+                        .pathMatchers("/api/v1/teacher/questions", "/api/v1/teacher/questions/**",
+                                "/api/v1/teacher/knowledge-points", "/api/v1/teacher/knowledge-points/**",
+                                "/api/v1/teacher/question-imports", "/api/v1/teacher/question-imports/**").hasRole("TEACHER")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
