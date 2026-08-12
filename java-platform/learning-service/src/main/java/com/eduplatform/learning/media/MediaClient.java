@@ -14,4 +14,12 @@ public interface MediaClient {
 
     /** 为教师本人导入源申请一次性原件读取并返回流；调用者必须关闭，短期 URL 不得持久化。 */
     InputStream openOriginal(String mediaId, String teacherId, String traceId);
+
+    /**
+     * 请求 media-service 将一张允许主机的 HTTPS 历史图片转存为 READY QUESTION_IMAGE。
+     * @param clientRequestId 来源题目和图片序号派生的稳定 UUID，重试不得重复建资产
+     * @param sourceUrl 仅用于本次调用的外部地址；实现不得记录或持久化
+     * @return media-service 生成的稳定 mediaId
+     */
+    String transferExternalImage(String clientRequestId, String sourceUrl, String teacherId, String traceId);
 }

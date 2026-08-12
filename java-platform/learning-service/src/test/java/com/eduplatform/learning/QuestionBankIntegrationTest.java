@@ -14,6 +14,7 @@ import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.persistence.QuestionRepository;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.service.QuestionImportService;
+import com.eduplatform.learning.service.LegacyQuestionImportService;
 import com.eduplatform.learning.service.QuestionService;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.io.ByteArrayInputStream;
@@ -53,6 +54,7 @@ class QuestionBankIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
     @Autowired QuestionImportService imports;
+    @Autowired LegacyQuestionImportService legacyImports;
     @Autowired QuestionImportProcessor processor;
     @Autowired QuestionImportParser parser;
     @Autowired QuestionRepository repository;
@@ -64,6 +66,8 @@ class QuestionBankIntegrationTest {
     @BeforeEach
     void reset() {
         jdbc.update("DELETE FROM learning_consumed_event"); jdbc.update("DELETE FROM learning_outbox_event");
+        jdbc.update("DELETE FROM question_legacy_import_issue"); jdbc.update("DELETE FROM question_legacy_source_ref");
+        jdbc.update("DELETE FROM question_legacy_import_batch"); jdbc.update("DELETE FROM question_version_child");
         jdbc.update("DELETE FROM question_import_row_error"); jdbc.update("DELETE FROM question_import_task");
         jdbc.update("DELETE FROM question_version_media"); jdbc.update("DELETE FROM question_version_knowledge_point");
         jdbc.update("DELETE FROM question_idempotency_request"); jdbc.update("DELETE FROM question_version");
@@ -236,6 +240,69 @@ class QuestionBankIntegrationTest {
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.code()).isEqualTo("QUESTION.ARCHIVED"));
     }
 
+    @Test
+    void legacyDryRunIsBoundedIdempotentAndRoutesAmbiguousOptionsToReview() throws Exception {
+        var task = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                "LEGACY_FIXTURE", "a".repeat(64), true, 2)).response();
+        var validJson = objectMapper.readTree("""
+                {"exerciseID":"fixture-fill-01","exerciseType":"fillin","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"计算 $x+1$","queAns":"2","solution":"","subQues":[]}
+                """);
+        var ambiguousJson = objectMapper.readTree("""
+                {"exerciseID":"fixture-choice-01","exerciseType":"select_single","difficulty":5,"gradeIndex":7,
+                 "gradeName":"七年级","question":"选择正确结果 A 1 B 2","queAns":"A","solution":"","optCount":2,"subQues":[]}
+                """);
+        var request = new QuestionDtos.LegacyImportBatchRequest(UUID.randomUUID(), true, List.of(
+                legacyItem("fixture-fill-01", validJson), legacyItem("fixture-choice-01", ambiguousJson)));
+        var first = legacyImports.submit(TEACHER, task.id(), request, "trace-legacy-dry-01");
+        var replay = legacyImports.submit(TEACHER, task.id(), request, "trace-legacy-dry-02");
+        assertThat(first.validCount()).isEqualTo(1); assertThat(first.reviewCount()).isEqualTo(1);
+        assertThat(first.items().get(1).issueCodes()).containsExactly("EMBEDDED_OPTIONS_AMBIGUOUS");
+        assertThat(replay.replayed()).isTrue(); assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_import_batch", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_source_ref", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void legacyImportCreatesOrderedCompositeTransfersImagesAndCleansExactTask() throws Exception {
+        UUID transferred = UUID.randomUUID();
+        org.mockito.Mockito.when(media.transferExternalImage(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(transferred.toString());
+        var task = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                "LEGACY_FIXTURE", "b".repeat(64), false, 1)).response();
+        var composite = objectMapper.readTree("""
+                {"exerciseID":"fixture-composite-01","exerciseType":"writeout","difficulty":5,"gradeIndex":7,
+                 "gradeName":"七年级","question":"阅读材料<img src=\\\"https://images.fixture.test/a.png\\\">","queAns":"(1)1 (2)过程",
+                 "solution":"<script>bad()</script><p>安全解析</p>","subQues":[
+                   {"exerciseType":"fillin","question":"第一问","solution":"","sortIndex":1},
+                   {"exerciseType":"writeout","question":"第二问","solution":"","sortIndex":2}]}
+                """);
+        var request = new QuestionDtos.LegacyImportBatchRequest(UUID.randomUUID(), true,
+                List.of(legacyItem("fixture-composite-01", composite)));
+        var rejected = legacyImports.submit(TEACHER, task.id(), request, "trace-legacy-import-unsafe");
+        assertThat(rejected.reviewCount()).isEqualTo(1);
+        assertThat(rejected.items().get(0).issueCodes()).contains("HTML_UNSAFE");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
+
+        var importTask = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                "LEGACY_FIXTURE_SAFE", "c".repeat(64), false, 1)).response();
+        var safeComposite = objectMapper.readTree(composite.toString().replace("<script>bad()</script>", ""));
+        var imported = legacyImports.submit(TEACHER, importTask.id(), new QuestionDtos.LegacyImportBatchRequest(
+                UUID.randomUUID(), true, List.of(legacyItem("fixture-composite-01", safeComposite))), "trace-legacy-import-01");
+        assertThat(imported.importedCount()).isEqualTo(1);
+        String parentId = imported.items().get(0).questionId();
+        var parent = questions.get(TEACHER, parentId);
+        assertThat(parent.currentVersion().type()).isEqualTo(QuestionModels.Type.COMPOSITE);
+        assertThat(parent.currentVersion().children()).extracting(QuestionDtos.ChildResponse::sequence).containsExactly(1, 2);
+        assertThat(parent.currentVersion().stem()).contains("[图片1]").doesNotContain("https://");
+        verify(media).transferExternalImage(anyString(), anyString(), anyString(), anyString());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(3);
+        var cleaned = legacyImports.cleanup(TEACHER, importTask.id(), "trace-legacy-cleanup-01");
+        assertThat(cleaned.questionsDeleted()).isEqualTo(3); assertThat(cleaned.mediaReferencesReleased()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM learning_outbox_event WHERE event_type='MediaReferenceReleased'", Integer.class)).isEqualTo(1);
+    }
+
     private QuestionDtos.VersionInput single(String answer, List<QuestionDtos.MediaInput> mediaRows) {
         return new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE, QuestionModels.Difficulty.EASY,
                 QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
@@ -252,6 +319,13 @@ class QuestionBankIntegrationTest {
     private static String row(String... values) {
         return java.util.Arrays.stream(values).map(value -> "\"" + value.replace("\"", "\"\"") + "\"")
                 .collect(java.util.stream.Collectors.joining(","));
+    }
+
+    private QuestionDtos.LegacyImportItem legacyItem(String externalId, tools.jackson.databind.JsonNode json) throws Exception {
+        String hash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(objectMapper.writeValueAsBytes(json)));
+        return new QuestionDtos.LegacyImportItem(externalId, "虚构版/七年级上/text/" + externalId + ".json",
+                "虚构版", "七年级上", hash, json);
     }
 
     private static byte[] xlsx(String sheet, boolean image) throws Exception {

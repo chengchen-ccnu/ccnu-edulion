@@ -49,6 +49,12 @@ public class QuestionService {
     /** 创建 DRAFT 与版本 1；相同 clientRequestId/指纹返回原聚合，不再次发布引用事件。 */
     @Transactional
     public Creation create(String ownerId, String requestId, QuestionDtos.VersionInput input, String traceId) {
+        return createInternal(ownerId, requestId, input, traceId, false);
+    }
+
+    /** 共享普通创建与受控组合题迁移写入；只有专用迁移入口可将 allowComposite 设为 true。 */
+    private Creation createInternal(String ownerId, String requestId, QuestionDtos.VersionInput input,
+            String traceId, boolean allowComposite) {
         String fingerprint = fingerprint(input);
         var replay = repository.findIdempotency(ownerId, requestId);
         if (replay.isPresent()) {
@@ -57,7 +63,7 @@ public class QuestionService {
             }
             return new Creation(get(ownerId, replay.get().resourceId()), false);
         }
-        Prepared prepared = prepare(input, ownerId, traceId);
+        Prepared prepared = prepare(input, ownerId, traceId, allowComposite);
         Instant now = Instant.now(); String questionId = UUID.randomUUID().toString(); String versionId = UUID.randomUUID().toString();
         List<Media> versionMedia = mediaRows(prepared.media());
         Aggregate aggregate = new Aggregate(questionId, ownerId, QuestionModels.Status.DRAFT, null, 0, now, now);
@@ -70,9 +76,22 @@ public class QuestionService {
     }
 
     /** 导入行使用任务 ID + 行号派生的请求 ID，因此 Worker 崩溃重放也不会重复生成题目。 */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public Creation createImported(String ownerId, String deterministicRequestId, QuestionDtos.VersionInput input, String traceId) {
-        return create(ownerId, deterministicRequestId, input, traceId);
+        return createInternal(ownerId, deterministicRequestId, input, traceId, false);
+    }
+
+    /**
+     * 在同一事务中创建组合题父题并连接已创建的有序子题；重放由父题请求 ID 和唯一子题顺序共同保护。
+     * @param childQuestionIds 按历史 subQues 顺序排列的同 owner 子题 ID
+     * @return 组合题父聚合；任何连接失败都会回滚父子题的当前导入事务
+     */
+    @Transactional
+    public Creation createImportedComposite(String ownerId, String deterministicRequestId,
+            QuestionDtos.VersionInput input, List<String> childQuestionIds, String traceId) {
+        Creation parent = createInternal(ownerId, deterministicRequestId, input, traceId, true);
+        if (parent.created()) repository.insertVersionChildren(parent.response().currentVersion().id(), childQuestionIds);
+        return parent;
     }
 
     /** 写入新版本并乐观移动指针；ARCHIVED 聚合拒绝修改。 */
@@ -82,7 +101,7 @@ public class QuestionService {
         Aggregate aggregate = owned(ownerId, questionId);
         if (aggregate.status() == QuestionModels.Status.ARCHIVED) throw conflict("QUESTION.ARCHIVED", "归档题目不能修改");
         if (aggregate.revision() != expectedRevision) throw conflict("QUESTION.REVISION_CONFLICT", "题目已被更新，请刷新后重试");
-        Prepared prepared = prepare(input, ownerId, traceId); Instant now = Instant.now();
+        Prepared prepared = prepare(input, ownerId, traceId, false); Instant now = Instant.now();
         String versionId = UUID.randomUUID().toString(); List<Media> versionMedia = mediaRows(prepared.media());
         Version version = version(versionId, questionId, repository.nextVersionNumber(questionId), input,
                 prepared.knowledge(), versionMedia, now);
@@ -128,7 +147,10 @@ public class QuestionService {
                 page, size, rows.total());
     }
 
-    private Prepared prepare(QuestionDtos.VersionInput input, String ownerId, String traceId) {
+    private Prepared prepare(QuestionDtos.VersionInput input, String ownerId, String traceId, boolean allowComposite) {
+        if (input.type() == QuestionModels.Type.COMPOSITE && !allowComposite) {
+            throw invalid("type", "组合题只能由 T09A 受控迁移创建，普通编辑契约尚未开放子题编排");
+        }
         validateContent(input);
         List<String> ids = input.knowledgePointIds().stream().map(UUID::toString).distinct().toList();
         if (ids.size() != input.knowledgePointIds().size()) throw invalid("knowledgePointIds", "知识点不能重复");
@@ -173,6 +195,9 @@ public class QuestionService {
             case FILL_BLANK, SHORT_ANSWER -> {
                 if (!keys.isEmpty()) throw invalid("options", "填空题和简答题不能包含选项");
             }
+            case COMPOSITE -> {
+                if (!keys.isEmpty()) throw invalid("options", "组合题父题不能包含选项");
+            }
         }
     }
 
@@ -202,7 +227,12 @@ public class QuestionService {
                 version.options().stream().map(value -> new QuestionDtos.OptionInput(value.key(), value.content())).toList(),
                 version.answers(), version.analysis(), knowledge, version.media().stream().map(value ->
                         new QuestionDtos.MediaResponse(value.id(), value.mediaId(), value.purpose(), value.sequence())).toList(),
-                version.createdAt());
+                repository.findLegacySourceByQuestion(aggregate.id()).map(source -> new QuestionDtos.LegacySourceResponse(
+                        source.sourceSystem(), source.externalId(), source.originalDifficulty(), source.pathEdition(),
+                        source.jsonEdition(), source.pathGrade(), source.jsonGrade(),
+                        source.issueCodes().contains("PATH_JSON_METADATA_CONFLICT"))).orElse(null),
+                repository.versionChildren(version.id()).stream().map(child -> new QuestionDtos.ChildResponse(
+                        child.questionId(), child.sequence(), child.type(), child.stem())).toList(), version.createdAt());
         return new QuestionDtos.QuestionResponse(aggregate.id(), aggregate.status(), aggregate.revision(), responseVersion,
                 aggregate.createdAt(), aggregate.updatedAt());
     }

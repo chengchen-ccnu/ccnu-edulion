@@ -223,6 +223,11 @@ class GatewayRouteSecurityTest {
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
+        client.post().uri("/api/v1/teacher/legacy-question-imports").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
 
         client.post().uri("/api/v1/admin/knowledge-points").bodyValue("{}")
                 .header("Content-Type", "application/json")

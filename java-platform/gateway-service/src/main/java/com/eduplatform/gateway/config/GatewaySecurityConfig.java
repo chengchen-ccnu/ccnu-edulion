@@ -86,7 +86,8 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")
                         .pathMatchers("/api/v1/teacher/questions", "/api/v1/teacher/questions/**",
                                 "/api/v1/teacher/knowledge-points", "/api/v1/teacher/knowledge-points/**",
-                                "/api/v1/teacher/question-imports", "/api/v1/teacher/question-imports/**").hasRole("TEACHER")
+                                "/api/v1/teacher/question-imports", "/api/v1/teacher/question-imports/**",
+                                "/api/v1/teacher/legacy-question-imports", "/api/v1/teacher/legacy-question-imports/**").hasRole("TEACHER")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))

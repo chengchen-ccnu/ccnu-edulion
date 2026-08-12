@@ -429,6 +429,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/legacy-question-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an explicitly bounded legacy JSON migration task
+         * @description The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
+         *     to true in migration tooling; the API never scans a server path. Creating a task does not import
+         *     any item and does not authorize full migration of the historical corpus.
+         */
+        post: operations["createLegacyQuestionImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/legacy-question-imports/{importTaskId}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit one idempotent legacy JSON batch of at most 20 items
+         * @description Each item is parsed independently. The response contains only stable source keys, outcomes and
+         *     issue codes; it never echoes question text, answers or raw JSON. Dry-run performs no media transfer
+         *     and creates no question. A duplicate batchId returns its original aggregate result.
+         */
+        post: operations["submitLegacyQuestionImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Precisely clean resources created by one non-dry-run acceptance task
+         * @description Only DRAFT questions still owned by the caller and linked to this exact task are removed; media references are released through Outbox. The historical source directory and unrelated questions are never touched.
+         */
+        delete: operations["cleanupLegacyQuestionImport"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/external-image-transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Idempotently transfer one allow-listed HTTPS question image into media-service
+         * @description Teacher-only T09A compatibility endpoint. media-service validates the HTTPS host before and after
+         *     redirects, blocks private/link-local destinations, enforces image MIME and size limits, stores the
+         *     object through its own storage port and returns only a stable mediaId. The source URL is neither
+         *     persisted nor logged. Dry-run callers must not invoke this endpoint.
+         */
+        post: operations["transferExternalQuestionImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/uploads": {
         parameters: {
             query?: never;
@@ -852,7 +939,12 @@ export interface components {
         /** @enum {string} */
         QuestionSubject: "MATHEMATICS";
         /** @enum {string} */
-        QuestionType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER";
+        QuestionType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER" | "COMPOSITE";
+        /**
+         * @description COMPOSITE is created only by the bounded T09A migration contract; T10 editing is not implemented.
+         * @enum {string}
+         */
+        QuestionInputType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER";
         /** @enum {string} */
         QuestionDifficulty: "EASY" | "MEDIUM" | "HARD";
         /** @enum {string} */
@@ -908,7 +1000,7 @@ export interface components {
             sequence: number;
         };
         QuestionVersionInput: {
-            type: components["schemas"]["QuestionType"];
+            type: components["schemas"]["QuestionInputType"];
             difficulty: components["schemas"]["QuestionDifficulty"];
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
@@ -951,6 +1043,24 @@ export interface components {
             purpose: components["schemas"]["QuestionMediaPurpose"];
             sequence: number;
         };
+        QuestionLegacySource: {
+            sourceSystem: string;
+            externalId: string;
+            originalDifficulty: string | null;
+            pathEdition: string | null;
+            jsonEdition: string | null;
+            pathGrade: string | null;
+            jsonGrade: string | null;
+            /** @description Both values are retained; true means no value won automatically. */
+            metadataConflict: boolean;
+        };
+        QuestionChild: {
+            /** Format: uuid */
+            questionId: string;
+            sequence: number;
+            type: components["schemas"]["QuestionType"];
+            stem: string;
+        };
         QuestionVersion: {
             /** Format: uuid */
             id: string;
@@ -968,6 +1078,9 @@ export interface components {
             analysis: string;
             knowledgePoints: components["schemas"]["KnowledgePoint"][];
             media: components["schemas"]["QuestionMedia"][];
+            legacySource: components["schemas"]["QuestionLegacySource"] | null;
+            /** @description Immutable ordered subquestion projection; empty for non-composite questions. */
+            children: components["schemas"]["QuestionChild"][];
             /** Format: date-time */
             createdAt: string;
         };
@@ -1012,7 +1125,9 @@ export interface components {
         /** @enum {string} */
         QuestionImportSourceFormat: "CSV" | "XLSX";
         /** @enum {string} */
-        QuestionImportStatus: "PENDING" | "PROCESSING" | "COMPLETED" | "PARTIAL_SUCCESS" | "FAILED";
+        QuestionImportStatus: "PENDING" | "PROCESSING" | "COMPLETED" | "PARTIAL_SUCCESS" | "FAILED" | "CLEANED";
+        /** @enum {string} */
+        QuestionImportItemOutcome: "IMPORTED" | "VALID" | "NEEDS_REVIEW" | "SKIPPED" | "FAILED";
         CreateQuestionImportRequest: {
             /** Format: uuid */
             clientRequestId: string;
@@ -1032,13 +1147,18 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            sourceMediaId: string;
-            sourceFormat: components["schemas"]["QuestionImportSourceFormat"];
+            sourceMediaId: string | null;
+            sourceFormat: components["schemas"]["QuestionImportSourceFormat"] | "LEGACY_JSON";
+            /** @description Stable migration namespace; null for CSV/XLSX. */
+            sourceSystem: string | null;
+            dryRun: boolean;
             status: components["schemas"]["QuestionImportStatus"];
             progress: number;
             totalRows: number;
             processedRows: number;
             successCount: number;
+            reviewCount: number;
+            skippedCount: number;
             failureCount: number;
             errors: components["schemas"]["QuestionImportRowError"][];
             failureCode?: string | null;
@@ -1055,12 +1175,90 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        CreateLegacyQuestionImportRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** @description Stable namespace such as LEGACY_RAWSTON_V3; it is not a filesystem path. */
+            sourceSystem: string;
+            /** @description SHA-256 of the normalized read-only root label; the directory path is not stored. */
+            sourceRootFingerprint: string;
+            dryRun: boolean;
+            /** @description Hard task ceiling. Full-corpus migration is deliberately impossible through this contract. */
+            maxItems: number;
+        };
+        LegacyQuestionImportItem: {
+            externalId: string;
+            /** @description Normalized relative path only; absolute paths and `..` are rejected and only its hash is persisted. */
+            relativePath: string;
+            pathEdition: string;
+            pathGrade: string;
+            /** @description SHA-256 of the original UTF-8 file bytes; treated as an opaque source idempotency fingerprint. */
+            contentSha256: string;
+            /** @description One legacy per-question object. It is bounded to 256 KiB by the server and never echoed or logged. */
+            json: {
+                [key: string]: unknown;
+            };
+        };
+        LegacyQuestionImportBatchRequest: {
+            /** Format: uuid */
+            batchId: string;
+            /** @description Marks the task terminal after this batch; later new batches are rejected. */
+            finalBatch: boolean;
+            items: components["schemas"]["LegacyQuestionImportItem"][];
+        };
+        LegacyQuestionImportIssue: {
+            /** @enum {string} */
+            code: "EMBEDDED_OPTIONS_AMBIGUOUS" | "IMPLICIT_MULTI_PART" | "SUBQUESTION_ANSWER_MISSING" | "PATH_JSON_METADATA_CONFLICT" | "SOURCE_CONTENT_CONFLICT" | "TYPE_UNSUPPORTED" | "FIELD_INVALID" | "HTML_UNSAFE" | "EXTERNAL_IMAGE_TRANSFER_FAILED";
+            message: string;
+        };
+        LegacyQuestionImportItemResult: {
+            externalId: string;
+            outcome: components["schemas"]["QuestionImportItemOutcome"];
+            /** Format: uuid */
+            questionId: string | null;
+            issueCodes: string[];
+        };
+        LegacyQuestionImportBatchResult: {
+            /** Format: uuid */
+            importTaskId: string;
+            /** Format: uuid */
+            batchId: string;
+            replayed: boolean;
+            finalBatch: boolean;
+            processedCount: number;
+            importedCount: number;
+            validCount: number;
+            reviewCount: number;
+            skippedCount: number;
+            failedCount: number;
+            items: components["schemas"]["LegacyQuestionImportItemResult"][];
+        };
+        LegacyQuestionImportCleanupResult: {
+            /** Format: uuid */
+            importTaskId: string;
+            questionsDeleted: number;
+            sourceReferencesDeleted: number;
+            mediaReferencesReleased: number;
+            alreadyCleaned: boolean;
+        };
         QuestionImportPage: {
             items: components["schemas"]["QuestionImportTask"][];
             page: number;
             size: number;
             /** Format: int64 */
             total: number;
+        };
+        ExternalImageTransferRequest: {
+            /**
+             * Format: uuid
+             * @description Deterministically derived from sourceSystem/externalId/image index for safe retry.
+             */
+            clientRequestId: string;
+            /**
+             * Format: uri
+             * @description Used only during this call; media-service must not persist or log it.
+             */
+            sourceUrl: string;
         };
         /**
          * @description Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
@@ -2357,6 +2555,138 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    createLegacyQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLegacyQuestionImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical task replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            /** @description Empty legacy migration task created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    submitLegacyQuestionImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegacyQuestionImportBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded batch processed or safely replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportBatchResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
+        };
+    };
+    cleanupLegacyQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact cleanup counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportCleanupResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    transferExternalQuestionImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalImageTransferRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical transfer replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAsset"];
+                };
+            };
+            /** @description Image transferred and READY asset created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAsset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
     createMediaUpload: {

@@ -3,6 +3,7 @@ package com.eduplatform.media.web;
 import com.eduplatform.media.domain.MediaPurpose;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.service.MediaAssetService;
+import com.eduplatform.media.service.ExternalImageTransferService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -31,9 +32,23 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/media")
 public class MediaController {
     private final MediaAssetService service;
+    private final ExternalImageTransferService externalImages;
 
-    public MediaController(MediaAssetService service) {
-        this.service = service;
+    public MediaController(MediaAssetService service, ExternalImageTransferService externalImages) {
+        this.service = service; this.externalImages = externalImages;
+    }
+
+    @PostMapping("/external-image-transfers")
+    /** 受限转存一张历史题目 HTTPS 图片；响应和日志均不回显来源 URL。 */
+    ResponseEntity<MediaDtos.Asset> transferExternalImage(
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @Valid @RequestBody MediaDtos.ExternalImageTransferRequest request,
+            HttpServletRequest servletRequest) {
+        MediaIdentity identity = MediaIdentity.require(userId, roles);
+        ExternalImageTransferService.Result result = externalImages.transfer(identity.userId(), identity.roles(),
+                request, trace(servletRequest));
+        return result.created() ? ResponseEntity.status(201).body(result.asset()) : ResponseEntity.ok(result.asset());
     }
 
     @PostMapping("/uploads")

@@ -94,3 +94,7 @@ T08A.1 将课程可见性判断与媒体签发连接成服务端闭环。浏览�
 课程域批准后签发只发往 media-service 的短时 HMAC JWT，绑定 issuer/audience、访问者、mediaId、用途、访问类型、变体、处置方式、有效期、traceId 与一次性 jti。首期精确允许两组课程读取投影：`LESSON_VIDEO`/`COURSE_PLAYBACK`/`hls-v1`/`INLINE` 用于课程视频，`COURSE_COVER`/`COURSE_COVER_DISPLAY`/`ORIGINAL`/`INLINE` 用于课程列表和详情的原图封面。Gateway 不路由 `/internal/**`；media-service 校验全部字段并在 `consumed_service_authorization` 以唯一 jti 原子拒绝重放，再独立复核资产用途和 `READY` 状态。密钥只由 DPAPI/CI Secret 注入，令牌和短期 URL 均不写数据库、事件或日志。
 
 首期只完整开放 `LESSON_VIDEO` 播放；封面展示授权仅能由 course-service 在确认草稿 owner 或已发布课程可见后申请，浏览器不能凭 `mediaId` 直接调用内部接口。字幕与课件保持稳定绑定但不被播放接口当作视频授权。T08B 负责 Vue 播放器与授权刷新，T11 负责真实报名/学习权限；media-service 仍不查询课程或学习 Schema。
+
+## T09A 历史图片转存补充
+
+历史题库中的 HTTPS 图片不是可长期保存的业务 URL。T09A 仅允许 `media-service` 通过显式主机白名单、DNS/重定向复核、图片 MIME 白名单、单图大小上限和请求超时执行服务端转存；转存结果走既有 `QUESTION_IMAGE` 资产、READY 状态和引用台账。`learning-service` 只提交临时外部地址并接收稳定 `mediaId`，不得保存该地址、接入 OSS SDK或记录短期签名结果。dry-run 只报告图片数量和风险，不发起网络请求。来源地址哈希与幂等键可用于重复转存去重，但外部 URL 明文不进入数据库、事件或日志。

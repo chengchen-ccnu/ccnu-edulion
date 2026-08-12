@@ -242,3 +242,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - RabbitMQ 与清理：两行合成 CSV 经真实队列得到 `PARTIAL_SUCCESS`（1 成功、1 个 `QUESTION_IMPORT.EXTERNAL_IMAGE_REQUIRES_UPLOAD`）；相同 `eventId` 重投前后题目数不变且消费记录为 1。契约合法但任务缺失的测试事件经有限重试进入专用 DLQ并带 `x-death`，随后精确 ACK，主队列/DLQ 归零。到期导入源写 Released Outbox 并由 Media 置为 RELEASED。7 个精确 OSS 对象由 media-service 回收器删除，7 条资产、9 个上传会话及本轮数据库记录归零；未列举 Bucket 或批量删除既有数据。真实 XLSX E2E 未执行，公式/嵌图拒绝由自动化覆盖。
 - 安全与可读性：未知/缺失 JSON 字段、错角色/权限、答案泄漏、媒体错绑定、重复消息和失败语义均有验证；人工维护的业务边界、复杂流程、SQL、契约和事件均有中文说明。最终 `git diff --check`、敏感信息审计、暂存范围和提交后 `check:api` 在推送前复核。
 - 发布：关键实现提交 `169457d` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建且未合并。首轮 CI run #98 的 Python、Frontend、Java 与 OpenAPI 四个 Job 全部成功；落盘发布状态的后续纯文档提交仍需通过同一 CI。
+
+## 2026-08-12 T09A 历史 JSON 题库兼容与迁移
+
+- 门禁与样本边界：分支 `codex/t09a-legacy-json-import` 基于最新 `main@71bd7d8`；开始时工作区干净。只读目录以逐文件流式脚本完成聚合统计，共 44,441 份 JSON、0 个解析失败、7,359 个显式 `subQues` 容器、28,646 份含外部图片、8,152 份空 `solution`。模型人工阅读 6 个代表文件，每种结构不超过 3 个；未复制、修改、提交或在终端输出真实题干、答案和 JSON。
+- 契约与迁移：先更新 OpenAPI 0.9.0、`learning-question-events.v2.yaml`、ADR 0006、媒体 ADR 与 backlog，再实现代码。既有 Flyway V1 未修改；V2 新增历史批次、来源引用、问题记录和有序子题关系，保留目录/JSON 教材与年级元数据、原始难度及内容/路径哈希，不引入跨 Schema 外键。
+- 兼容结果：`select_single`、`select_multiple`、`fillin`、`writeout` 和显式 `subQues` 可导入；组合题保存父题、子题及稳定顺序。严格匹配的内嵌选项才拆分；无法可靠拆分的选项、隐式多问、子题答案缺失、未知结构、路径/JSON 元数据冲突和清洗到不安全 HTML 均进入 `NEEDS_REVIEW`。HTML 使用白名单清洗，LaTeX 原样保留，`solution` 允许为空。
+- 有界与安全：PowerShell 迁移器逐文件读取，默认 dry-run，每批最多 20、每任务最多 1000，当前脚本并发固定为 1，仅输出聚合计数。任务、批次和来源均可幂等重放；失败项可在新受控任务中重试。外部图片由 media-service 以 HTTPS 精确主机白名单、逐跳 DNS/重定向复核、大小/MIME/魔数限制下载后写入对象存储并返回 `mediaId`；learning-service 未引入 OSS SDK，也不保存外部 URL。
+- 自动化结果：最终完整 `clean verify` 的 8 个 Reactor 模块通过，共 71 项测试、67 通过、4 个真实环境用例默认跳过；media-service 共 19 项，17 通过、2 个真实环境用例默认跳过。受控真实图片用例另在显式启用真实环境后 1 项通过。OpenAPI 生成和全 workspace 类型检查通过；Vitest 在沙箱内因 `esbuild spawn EPERM` 无法启动，经批准在沙箱外复跑后 13 个文件 91 项全通过，学生/教师/管理三端生产构建通过。两个 PowerShell 脚本完成语法解析，聚合统计脚本以 3 文件上限验证只输出计数。
+- 真实小样本与数据：先通过凭据包装脚本在既有专用 `edu_platform_learning_dev` 验证 V1/V2，程序化选择 1 份无图片且无需复核的真实文件完成 dry-run、实际导入及任务级精确清理。最终验收另只选择 1 份含 1 张图片的 `fillin` 真实 JSON，media-service 白名单仅为精确主机 `v3.rawstonedu.net` 且禁止重定向；真实 Gateway → learning-service → media-service → 阿里云 OSS 链路通过，生成 `QUESTION_IMAGE/READY`，learning 题目版本只保存 `mediaId`。同源请求幂等重放保持 1 个媒体/上传记录；dry-run 媒体、审计、对象和临时文件增量均为 0；非法主机返回 422 且无上传记录。
+- 真实外部系统与清理：RabbitMQ 实际完成 Bound/Released 事件发布、消费与状态转换；OSS `HEAD` 和短期签名读取验证成功。随后按精确任务、题目、媒体、上传、事件和 Object Key 清理，得到 `mysqlRemainingRows=0`、`ossObjectDeleted=true`、6 个相关队列为空、本机临时文件增量为 0。最终复跑证据哈希前缀为任务 `ea90ccf387d38207`、题目 `be3404bf0b8b4e7b`、媒体 `01afe8b6a742604e`、上传 `aacd4baa5800f90e`、对象键 `64bf9dd968cac53b`；没有输出真实文件路径、内容、完整 URL、Bucket、Object Key 或签名 URL。未创建数据库、Seed 或持久伪数据。
+- 边界：未执行 44,441 份全量迁移，未实现 T10 页面、T11 组卷/作答，也未修改 Python 智能体。本次单文件 E2E 只证明经审核主机上的该图片在验收时可安全转存，不代表全站下载授权或全量兼容；全量前仍须另行确认来源授权、最小白名单、限流和迁移计划。
+- 发布：实现提交 `ac69319` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #19](https://github.com/chengchen-ccnu/ccnu-edulion/pull/19) 已创建并保持 Open/非 Draft，未自行合并。PR 创建后的纯文档状态提交继续复用同一分支与 CI。

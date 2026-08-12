@@ -3,6 +3,8 @@ package com.eduplatform.learning.persistence;
 import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.domain.QuestionModels.Aggregate;
 import com.eduplatform.learning.domain.QuestionModels.ImportTask;
+import com.eduplatform.learning.domain.QuestionModels.LegacyBatch;
+import com.eduplatform.learning.domain.QuestionModels.LegacySource;
 import com.eduplatform.learning.domain.QuestionModels.KnowledgePoint;
 import com.eduplatform.learning.domain.QuestionModels.Media;
 import com.eduplatform.learning.domain.QuestionModels.Option;
@@ -26,7 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * learning-service 题库持久化边界。
  *
- * <p>只访问本服务 Flyway V1 表；题目版本没有更新方法，媒体只保存稳定 ID。动态列表参数均通过
+ * <p>只访问本服务 Flyway 向前迁移表；题目版本没有更新方法，媒体只保存稳定 ID。动态列表参数均通过
  * 命名参数绑定，避免把筛选值拼入 SQL。</p>
  */
 @Repository
@@ -185,11 +187,13 @@ public class QuestionRepository {
 
     /** 插入等待异步消费的教师导入任务，不保存源文件地址。 */
     public void insertImportTask(ImportTask value) {
-        jdbc.update("INSERT INTO question_import_task(id,owner_id,client_request_id,request_fingerprint,source_media_id,source_format,status,progress,total_rows,processed_rows,success_count,failure_count,failure_code,failure_message,retain_until,source_released_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO question_import_task(id,owner_id,client_request_id,request_fingerprint,source_media_id,source_format,status,progress,total_rows,processed_rows,success_count,review_count,skipped_count,failure_count,source_system,source_root_fingerprint,dry_run,max_items,failure_code,failure_message,retain_until,source_released_at,cleaned_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 value.id(), value.ownerId(), value.clientRequestId(), value.requestFingerprint(), value.sourceMediaId(),
                 value.sourceFormat().name(), value.status().name(), value.progress(), value.totalRows(), value.processedRows(),
-                value.successCount(), value.failureCount(), value.failureCode(), value.failureMessage(), ts(value.retainUntil()),
-                value.sourceReleasedAt() == null ? null : ts(value.sourceReleasedAt()), ts(value.createdAt()), ts(value.updatedAt()));
+                value.successCount(), value.reviewCount(), value.skippedCount(), value.failureCount(), value.sourceSystem(),
+                value.sourceRootFingerprint(), value.dryRun(), value.maxItems(), value.failureCode(), value.failureMessage(),
+                ts(value.retainUntil()), value.sourceReleasedAt() == null ? null : ts(value.sourceReleasedAt()),
+                value.cleanedAt() == null ? null : ts(value.cleanedAt()), ts(value.createdAt()), ts(value.updatedAt()));
     }
 
     /** Worker 按任务 ID 查询内部导入事实。 */
@@ -200,6 +204,12 @@ public class QuestionRepository {
     /** 教师按 owner 查询导入任务，不暴露他人任务。 */
     public Optional<ImportTask> findImportTask(String id, String ownerId) {
         return jdbc.query("SELECT * FROM question_import_task WHERE id=? AND owner_id=?", this::importTask, id, ownerId).stream().findFirst();
+    }
+
+    /** 锁定一个导入任务直至当前事务结束，串行化不同 batchId 的上限累计与清理。 */
+    public Optional<ImportTask> findImportTaskForUpdate(String id, String ownerId) {
+        return jdbc.query("SELECT * FROM question_import_task WHERE id=? AND owner_id=? FOR UPDATE",
+                this::importTask, id, ownerId).stream().findFirst();
     }
 
     /** 查询导入创建幂等键及原任务。 */
@@ -246,6 +256,84 @@ public class QuestionRepository {
                 status.name(), total, total, success, errors.size(), ts(retainUntil), ts(now), id);
     }
 
+    /** 保存一个 T09A 批次的无内容计数；主键保证重复 batchId 不能二次累计。 */
+    public void insertLegacyBatch(LegacyBatch value) {
+        jdbc.update("INSERT INTO question_legacy_import_batch(import_task_id,batch_id,request_fingerprint,final_batch,processed_count,imported_count,valid_count,review_count,skipped_count,failed_count,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                value.importTaskId(), value.batchId(), value.requestFingerprint(), value.finalBatch(), value.processedCount(),
+                value.importedCount(), value.validCount(), value.reviewCount(), value.skippedCount(),
+                value.failedCount(), value.resultJson(), ts(value.createdAt()));
+    }
+
+    /** 按任务/batchId 查询安全重放计数，不读取或保存原始 JSON。 */
+    public Optional<LegacyBatch> findLegacyBatch(String taskId, String batchId) {
+        return jdbc.query("SELECT * FROM question_legacy_import_batch WHERE import_task_id=? AND batch_id=?",
+                (rs, row) -> new LegacyBatch(rs.getString("import_task_id"), rs.getString("batch_id"),
+                        rs.getString("request_fingerprint"), rs.getBoolean("final_batch"), rs.getInt("processed_count"),
+                        rs.getInt("imported_count"), rs.getInt("valid_count"), rs.getInt("review_count"),
+                        rs.getInt("skipped_count"), rs.getInt("failed_count"), rs.getString("result_json"), instant(rs, "created_at")),
+                taskId, batchId).stream().findFirst();
+    }
+
+    /** 保存一项来源幂等引用和复核摘要；不保存题干、答案、外部 URL 或源路径明文。 */
+    public void insertLegacySource(LegacySource value) {
+        jdbc.update("INSERT INTO question_legacy_source_ref(id,import_task_id,batch_id,owner_id,source_system,external_id,dry_run,content_sha256,relative_path_sha256,path_edition,json_edition,path_grade,json_grade,original_difficulty,outcome,question_id,issue_codes_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                value.id(), value.importTaskId(), value.batchId(), value.ownerId(), value.sourceSystem(),
+                value.externalId(), value.dryRun(), value.contentSha256(), value.relativePathSha256(), value.pathEdition(),
+                value.jsonEdition(), value.pathGrade(), value.jsonGrade(), value.originalDifficulty(), value.outcome().name(),
+                value.questionId(), json(value.issueCodes()), ts(value.createdAt()), ts(value.updatedAt()));
+    }
+
+    /** 用 owner/sourceSystem/externalId 查幂等来源，内容哈希变化由服务层转人工复核。 */
+    public Optional<LegacySource> findLegacySource(String ownerId, String sourceSystem, String externalId, boolean dryRun) {
+        return jdbc.query("SELECT * FROM question_legacy_source_ref WHERE owner_id=? AND source_system=? AND external_id=? AND dry_run=?",
+                this::legacySource, ownerId, sourceSystem, externalId, dryRun).stream().findFirst();
+    }
+
+    /** 返回教师详情所需的历史来源元数据；无历史来源的普通 T09 题目返回空。 */
+    public Optional<LegacySource> findLegacySourceByQuestion(String questionId) {
+        return jdbc.query("SELECT * FROM question_legacy_source_ref WHERE question_id=?",
+                this::legacySource, questionId).stream().findFirst();
+    }
+
+    /** 返回一个批次的来源结果用于 batchId 安全重放；仅包含来源键、题目 ID 和问题码。 */
+    public List<LegacySource> legacySourcesByBatch(String taskId, String batchId) {
+        return jdbc.query("SELECT * FROM question_legacy_source_ref WHERE import_task_id=? AND batch_id=? ORDER BY created_at,id",
+                this::legacySource, taskId, batchId);
+    }
+
+    /** 记录来源内容冲突等无法写入唯一来源行的问题；只保存哈希和问题码。 */
+    public void insertLegacyIssue(String taskId, String batchId, String externalId, String contentSha256,
+            String issueCode, Instant now) {
+        jdbc.update("INSERT INTO question_legacy_import_issue(id,import_task_id,batch_id,external_id,content_sha256,issue_code,created_at) VALUES(?,?,?,?,?,?,?)",
+                java.util.UUID.randomUUID().toString(), taskId, batchId, externalId, contentSha256, issueCode, ts(now));
+    }
+
+    /** 原子累计一个已确认批次；finalBatch 决定任务是否进入终态。 */
+    public void applyLegacyBatchProgress(String taskId, LegacyBatch batch, boolean finalBatch, Instant retainUntil, Instant now) {
+        String status = finalBatch
+                ? (batch.failedCount() + batch.reviewCount() == 0 ? QuestionModels.ImportStatus.COMPLETED.name()
+                : QuestionModels.ImportStatus.PARTIAL_SUCCESS.name()) : QuestionModels.ImportStatus.PROCESSING.name();
+        jdbc.update("UPDATE question_import_task SET status=?,total_rows=CASE WHEN ? THEN processed_rows+? ELSE total_rows END,processed_rows=processed_rows+?,success_count=success_count+?,review_count=review_count+?,skipped_count=skipped_count+?,failure_count=failure_count+?,progress=CASE WHEN ? THEN 100 ELSE LEAST(99,(processed_rows+?)*100/NULLIF(total_rows,0)) END,retain_until=?,updated_at=? WHERE id=?",
+                status, finalBatch, batch.processedCount(), batch.processedCount(),
+                batch.importedCount() + batch.validCount(), batch.reviewCount(), batch.skippedCount(),
+                batch.failedCount(), finalBatch, batch.processedCount(), ts(retainUntil), ts(now), taskId);
+    }
+
+    /** 将不可变父版本连接到有序子题；子题自身仍是独立题目聚合。 */
+    public void insertVersionChildren(String parentVersionId, List<String> childQuestionIds) {
+        for (int index = 0; index < childQuestionIds.size(); index++) {
+            jdbc.update("INSERT INTO question_version_child(parent_question_version_id,child_question_id,sequence_no) VALUES(?,?,?)",
+                    parentVersionId, childQuestionIds.get(index), index + 1);
+        }
+    }
+
+    /** 返回不可变父版本的有序子题轻量投影，不读取子题答案或解析。 */
+    public List<ChildRow> versionChildren(String parentVersionId) {
+        return jdbc.query("SELECT c.child_question_id,c.sequence_no,v.question_type,v.stem_md FROM question_version_child c JOIN question_aggregate q ON q.id=c.child_question_id JOIN question_version v ON v.id=q.current_version_id WHERE c.parent_question_version_id=? ORDER BY c.sequence_no",
+                (rs, row) -> new ChildRow(rs.getString(1), rs.getInt(2),
+                        QuestionModels.Type.valueOf(rs.getString(3)), rs.getString(4)), parentVersionId);
+    }
+
     /** 重试耗尽后写安全失败码与保留期限，不记录异常体或源内容。 */
     public void failImport(String id, String code, String message, Instant retainUntil, Instant now) {
         jdbc.update("UPDATE question_import_task SET status=?,progress=100,failure_code=?,failure_message=?,retain_until=?,updated_at=? WHERE id=?",
@@ -261,7 +349,7 @@ public class QuestionRepository {
 
     /** 查找已到保留期限且尚未解除源引用的终态任务。 */
     public List<ImportTask> releasableImports(Instant now, int limit) {
-        return jdbc.query("SELECT * FROM question_import_task WHERE status IN (?,?,?) AND retain_until<=? AND source_released_at IS NULL ORDER BY retain_until,id LIMIT ?",
+        return jdbc.query("SELECT * FROM question_import_task WHERE status IN (?,?,?) AND retain_until<=? AND source_media_id IS NOT NULL AND source_released_at IS NULL ORDER BY retain_until,id LIMIT ?",
                 this::importTask, QuestionModels.ImportStatus.COMPLETED.name(), QuestionModels.ImportStatus.PARTIAL_SUCCESS.name(),
                 QuestionModels.ImportStatus.FAILED.name(), ts(now), limit);
     }
@@ -270,6 +358,59 @@ public class QuestionRepository {
     public int markSourceReleased(String id, Instant now) {
         return jdbc.update("UPDATE question_import_task SET source_released_at=?,updated_at=? WHERE id=? AND source_released_at IS NULL",
                 ts(now), ts(now), id);
+    }
+
+    /** 返回任务实际创建的题目 ID；dry-run/复核项不会出现在结果中。 */
+    public List<String> legacyCreatedQuestionIds(String taskId, String ownerId) {
+        return jdbc.query("SELECT question_id FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=? AND question_id IS NOT NULL",
+                (rs, row) -> rs.getString(1), taskId, ownerId);
+    }
+
+    /** 返回待清理版本媒体引用，调用方先写 Released Outbox 再删除本域关系。 */
+    public List<Media> mediaForQuestions(List<String> questionIds) {
+        if (questionIds.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(questionIds.size(), "?"));
+        List<String> all = new ArrayList<>(questionIds);
+        all.addAll(jdbc.query("SELECT DISTINCT c.child_question_id FROM question_version_child c JOIN question_version v ON v.id=c.parent_question_version_id WHERE v.question_id IN (" + placeholders + ")",
+                (rs, row) -> rs.getString(1), questionIds.toArray()));
+        all = all.stream().distinct().toList();
+        placeholders = String.join(",", java.util.Collections.nCopies(all.size(), "?"));
+        return jdbc.query("SELECT m.* FROM question_version_media m JOIN question_version v ON v.id=m.question_version_id WHERE v.question_id IN (" + placeholders + ") ORDER BY m.id",
+                (rs, row) -> new Media(rs.getString("id"), rs.getString("media_id"),
+                        QuestionModels.MediaPurpose.valueOf(rs.getString("purpose")), rs.getInt("sequence_no")),
+                all.toArray());
+    }
+
+    /**
+     * 精确删除一个验收任务创建且仍为 DRAFT 的题目图；调用方必须已写媒体解除事件。
+     * @return 实际删除的聚合数；其他任务、非 DRAFT 题目和历史源目录均不受影响
+     */
+    public CleanupCounts deleteLegacyTaskQuestions(String taskId, String ownerId, Instant now) {
+        List<String> roots = legacyCreatedQuestionIds(taskId, ownerId);
+        if (roots.isEmpty()) {
+            int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
+            jdbc.update("UPDATE question_import_task SET status='CLEANED',cleaned_at=?,updated_at=? WHERE id=?", ts(now), ts(now), taskId);
+            return new CleanupCounts(0, refs);
+        }
+        String rootMarks = String.join(",", java.util.Collections.nCopies(roots.size(), "?"));
+        List<String> all = new ArrayList<>(roots);
+        all.addAll(jdbc.query("SELECT DISTINCT c.child_question_id FROM question_version_child c JOIN question_version v ON v.id=c.parent_question_version_id WHERE v.question_id IN (" + rootMarks + ")",
+                (rs, row) -> rs.getString(1), roots.toArray()));
+        all = all.stream().distinct().toList();
+        String marks = String.join(",", java.util.Collections.nCopies(all.size(), "?"));
+        Integer unsafe = jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE id IN (" + marks + ") AND (owner_id<>? OR status<>'DRAFT')",
+                Integer.class, concat(all, ownerId));
+        if (unsafe != null && unsafe > 0) throw new IllegalStateException("Legacy cleanup includes non-DRAFT or foreign questions");
+        int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
+        jdbc.update("DELETE FROM question_version_child WHERE parent_question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + ")) OR child_question_id IN (" + marks + ")",
+                concat(all, all));
+        jdbc.update("DELETE FROM question_version_media WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + "))", all.toArray());
+        jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + "))", all.toArray());
+        jdbc.update("DELETE FROM question_idempotency_request WHERE resource_type='QUESTION' AND resource_id IN (" + marks + ")", all.toArray());
+        jdbc.update("DELETE FROM question_version WHERE question_id IN (" + marks + ")", all.toArray());
+        int deleted = jdbc.update("DELETE FROM question_aggregate WHERE id IN (" + marks + ")", all.toArray());
+        jdbc.update("UPDATE question_import_task SET status='CLEANED',cleaned_at=?,updated_at=? WHERE id=?", ts(now), ts(now), taskId);
+        return new CleanupCounts(deleted, refs);
     }
 
     /** 在调用方业务事务内写可靠事件，Broker 不可用不丢失业务事实。 */
@@ -354,8 +495,21 @@ public class QuestionRepository {
                 rs.getString("request_fingerprint"), rs.getString("source_media_id"),
                 QuestionModels.ImportFormat.valueOf(rs.getString("source_format")), QuestionModels.ImportStatus.valueOf(rs.getString("status")),
                 rs.getInt("progress"), rs.getInt("total_rows"), rs.getInt("processed_rows"), rs.getInt("success_count"),
-                rs.getInt("failure_count"), rs.getString("failure_code"), rs.getString("failure_message"),
-                instant(rs, "retain_until"), nullableInstant(rs, "source_released_at"), instant(rs, "created_at"), instant(rs, "updated_at"));
+                rs.getInt("review_count"), rs.getInt("skipped_count"), rs.getInt("failure_count"),
+                rs.getString("source_system"), rs.getString("source_root_fingerprint"), rs.getBoolean("dry_run"),
+                nullableInt(rs, "max_items"), rs.getString("failure_code"), rs.getString("failure_message"),
+                instant(rs, "retain_until"), nullableInstant(rs, "source_released_at"), nullableInstant(rs, "cleaned_at"),
+                instant(rs, "created_at"), instant(rs, "updated_at"));
+    }
+
+    private LegacySource legacySource(ResultSet rs, int row) throws SQLException {
+        return new LegacySource(rs.getString("id"), rs.getString("import_task_id"), rs.getString("batch_id"),
+                rs.getString("owner_id"), rs.getString("source_system"), rs.getString("external_id"), rs.getBoolean("dry_run"),
+                rs.getString("content_sha256"), rs.getString("relative_path_sha256"), rs.getString("path_edition"),
+                rs.getString("json_edition"), rs.getString("path_grade"), rs.getString("json_grade"), rs.getString("original_difficulty"),
+                QuestionModels.ImportOutcome.valueOf(rs.getString("outcome")), rs.getString("question_id"),
+                List.of(read(rs.getString("issue_codes_json"), String[].class)), instant(rs, "created_at"),
+                instant(rs, "updated_at"));
     }
 
     private Outbox outbox(ResultSet rs, int row) throws SQLException {
@@ -378,12 +532,23 @@ public class QuestionRepository {
     private static Instant nullableInstant(ResultSet rs, String column) throws SQLException {
         Timestamp value = rs.getTimestamp(column); return value == null ? null : value.toInstant();
     }
+    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        int value = rs.getInt(column); return rs.wasNull() ? null : value;
+    }
+    private static Object[] concat(List<String> first, Object last) {
+        List<Object> values = new ArrayList<>(first); values.add(last); return values.toArray();
+    }
+    private static Object[] concat(List<String> first, List<String> second) {
+        List<Object> values = new ArrayList<>(first); values.addAll(second); return values.toArray();
+    }
 
     public record Idempotency(String fingerprint, String resourceType, String resourceId) {}
     public record SummaryRow(String id, QuestionModels.Status status, long revision, String currentVersionId,
             int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Grade grade,
             String stem, Instant createdAt, Instant updatedAt, List<String> knowledgePointIds) {}
     public record PagedRows(List<SummaryRow> rows, long total) {}
+    public record ChildRow(String questionId, int sequence, QuestionModels.Type type, String stem) {}
+    public record CleanupCounts(int questionsDeleted, int sourceReferencesDeleted) {}
     public record Outbox(String eventId, String eventType, int eventVersion, String aggregateId, String exchange,
             String routingKey, String traceId, String payloadJson, String status, int attempts, Instant nextAttemptAt,
             String lastError, Instant occurredAt, Instant publishedAt, Instant updatedAt) {}

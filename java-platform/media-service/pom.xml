@@ -18,9 +18,25 @@
         <dependency><groupId>com.mysql</groupId><artifactId>mysql-connector-j</artifactId><scope>runtime</scope></dependency>
         <dependency><groupId>com.aliyun.oss</groupId><artifactId>aliyun-sdk-oss</artifactId><version>3.18.4</version></dependency>
         <dependency><groupId>com.eduplatform</groupId><artifactId>shared-kernel</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.eduplatform</groupId><artifactId>learning-service</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>com.eduplatform</groupId><artifactId>gateway-service</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.springframework.amqp</groupId><artifactId>spring-rabbit-test</artifactId><scope>test</scope></dependency>
     </dependencies>
-    <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+    <build>
+        <testResources>
+            <testResource><directory>src/test/resources</directory></testResource>
+            <!-- Spring Boot 上游模块在 package 后是可执行 JAR；T09A 跨服务验收仅把所需业务类复制到测试类路径。 -->
+            <testResource>
+                <directory>../learning-service/target/classes</directory>
+                <includes><include>com/eduplatform/learning/**/*.class</include></includes>
+            </testResource>
+            <testResource>
+                <directory>../gateway-service/target/classes</directory>
+                <includes><include>com/eduplatform/gateway/**/*.class</include></includes>
+            </testResource>
+        </testResources>
+        <plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins>
+    </build>
 </project>

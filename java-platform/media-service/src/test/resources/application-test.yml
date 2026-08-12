@@ -6,11 +6,37 @@ spring:
     driver-class-name: org.h2.Driver
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    # T09A 真实链路测试在 test classpath 引入 learning-service；限定到本模块，避免拾取下游同版本迁移。
+    locations: filesystem:src/main/resources/db/migration
   autoconfigure:
     exclude:
       - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
       - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
+      # gateway-service 仅作为 T09A 跨服务验收依赖；普通 servlet 测试不得启动 Gateway 或其默认安全链。
+      - org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayResilience4JCircuitBreakerAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayNoLoadBalancerClientAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayFunctionAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayMetricsAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayStreamAutoConfiguration
+      - org.springframework.cloud.gateway.discovery.GatewayDiscoveryClientAutoConfiguration
+      - org.springframework.cloud.gateway.config.SimpleUrlHandlerMappingGlobalCorsAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayReactiveLoadBalancerClientAutoConfiguration
+      - org.springframework.cloud.gateway.config.LocalResponseCacheAutoConfiguration
+      - org.springframework.cloud.gateway.config.GatewayTracingAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.actuate.web.servlet.ManagementWebSecurityAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration
+  cloud:
+    gateway:
+      enabled: false
+      server:
+        webflux:
+          enabled: false
 
 platform:
   media:
@@ -41,6 +67,12 @@ platform:
       timeout: 30s
       max-concurrent-jobs: 1
       hls-segment-duration: 2s
+    external-image-import:
+      enabled: true
+      allowed-hosts: [images.fixture.test]
+      max-bytes: 1048576
+      request-timeout: 1s
+      max-redirects: 1
     oss:
       enabled: false
       endpoint: ""
