@@ -108,13 +108,14 @@ CREATE INDEX idx_import_retention ON question_import_task(status, retain_until, 
 CREATE TABLE question_import_row_error (
     id VARCHAR(36) PRIMARY KEY,
     import_task_id VARCHAR(36) NOT NULL,
-    row_number INT NOT NULL,
+    source_row_number INT NOT NULL,
     error_code VARCHAR(80) NOT NULL,
     error_message VARCHAR(500) NOT NULL,
     created_at TIMESTAMP(6) NOT NULL,
     CONSTRAINT fk_import_error_task FOREIGN KEY (import_task_id) REFERENCES question_import_task(id)
 );
-CREATE INDEX idx_import_error_row ON question_import_row_error(import_task_id, row_number, id);
+CREATE INDEX idx_import_error_row
+    ON question_import_row_error(import_task_id, source_row_number, id);
 
 CREATE TABLE learning_outbox_event (
     event_id VARCHAR(36) PRIMARY KEY,

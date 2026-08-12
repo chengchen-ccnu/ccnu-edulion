@@ -237,7 +237,7 @@ public class QuestionRepository {
     /** 原子保存最终计数和行错误，并计算完成、部分成功或失败状态。 */
     public void completeImport(String id, int total, int success, List<RowError> errors, Instant retainUntil, Instant now) {
         for (RowError error : errors) {
-            jdbc.update("INSERT INTO question_import_row_error(id,import_task_id,row_number,error_code,error_message,created_at) VALUES(?,?,?,?,?,?)",
+            jdbc.update("INSERT INTO question_import_row_error(id,import_task_id,source_row_number,error_code,error_message,created_at) VALUES(?,?,?,?,?,?)",
                     error.id(), id, error.rowNumber(), error.code(), error.message(), ts(error.createdAt()));
         }
         QuestionModels.ImportStatus status = errors.isEmpty() ? QuestionModels.ImportStatus.COMPLETED
@@ -254,8 +254,8 @@ public class QuestionRepository {
 
     /** 按行号返回可展示的脱敏导入错误。 */
     public List<RowError> importErrors(String taskId) {
-        return jdbc.query("SELECT * FROM question_import_row_error WHERE import_task_id=? ORDER BY row_number,id",
-                (rs, row) -> new RowError(rs.getString("id"), rs.getString("import_task_id"), rs.getInt("row_number"),
+        return jdbc.query("SELECT * FROM question_import_row_error WHERE import_task_id=? ORDER BY source_row_number,id",
+                (rs, row) -> new RowError(rs.getString("id"), rs.getString("import_task_id"), rs.getInt("source_row_number"),
                         rs.getString("error_code"), rs.getString("error_message"), instant(rs, "created_at")), taskId);
     }
 

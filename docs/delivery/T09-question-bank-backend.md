@@ -74,17 +74,17 @@ CSV 必须为 UTF-8；CSV/XLSX 首行字段为 `type,difficulty,grade,stem,optio
 
 ## 8. 测试数据与清理
 
-没有创建或修改真实 MySQL Schema、OSS 对象或 RabbitMQ 消息，也没有创建正式 Seed 或持久伪数据。安全包装脚本只读确认本机 MySQL 可达且目标名为 `edu_platform_learning_dev`；显式验收随后在 Flyway 连接阶段因该数据库不存在而停止。按照仓库规则没有自动创建数据库，因此这次尝试未创建表或行，也没有其他数据需要清理。自动化使用随 JVM 退出销毁的 H2 `learning_test`，Fixture 使用固定测试 owner/管理员 UUID、合成知识点、合成题目、内存 CSV/XLSX 和 Mock media-service，不包含真实姓名、邮箱或原始题库文本；重新运行测试即可重建隔离数据。
+2026-08-12 在用途明确的既有 `edu_platform_learning_dev` 上完成真实验收。首次执行发现 MySQL 8 将 `ROW_NUMBER` 作为保留字，Flyway V1 在创建导入行错误表时以 1064 停止；V1 尚未进入 `main`，因此将内部列安全改名为 `source_row_number`，并同步 Repository 插入、排序和映射 SQL。修复后显式 `LearningMysqlMigrationAcceptanceTest` 未跳过且通过，Flyway V1 校验成功；随机知识点和题目 Fixture 由测试按精确 ID 自动清理。
 
-若后续启用真实 local 环境，只允许既有的 `edu_platform_learning_dev`，命令必须经 `scripts/Invoke-WithLocalEnvironment.ps1`；本任务没有获得创建数据库或清空既有表的授权。导入源对象的实际删除由 media-service 根据 Released、引用计数和宽限期处理，learning-service 不执行 OSS 清理。
+真实业务验收只使用固定测试 owner、合成知识点/题目、7 个小型合成媒体对象和 1 个两行 CSV，不包含真实姓名、邮箱或原始题库文本。验收覆盖五种题型、幂等冲突、答案防泄漏、所有权、不可变版本、乐观锁、生命周期、四类媒体用途、错用途/他人/非 READY、历史引用、部分成功导入、重复事件、DLQ 和保留期 Released。结束后按精确 questionId/importTaskId/mediaId/uploadId/eventId 逆序清理：7 个 OSS 对象、7 条媒体资产、9 个上传会话、RabbitMQ 测试死信以及本轮 learning/media 行均归零；验收前已有的 1 道 DRAFT 题和 2 个知识点未修改。短期服务授权审计按 TTL 自动过期，没有按教师 ID 批量删除，避免触碰用户手工验收记录。
 
 ## 9. 验证结果
 
 - 契约：OpenAPI 0.8.0、`media-events.v1.yaml` 和 `learning-question-events.v1.yaml` 均可解析；TypeScript 客户端由 OpenAPI 成功重新生成。`check:api` 在提交前会按设计报告生成文件相对 HEAD 的本任务差异，提交后复跑一致性门禁。
-- Java：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 的 8 个 Reactor 模块全部成功（2 分 20 秒）；17 个报告共 65 项，63 项通过、0 失败、0 错误，media 真实环境和 learning MySQL 验收各 1 项按开关跳过。learning-service 14 项中 13 项 H2/Mock 通过。
+- Java：2026-08-12 重新执行完整 `clean verify`，8 个 Reactor 模块全部成功（1 分 40 秒）；默认构建中 learning-service 14 项有 13 项 H2/Mock 通过、真实 MySQL 项按开关跳过。随后经安全包装脚本显式执行 `LearningMysqlMigrationAcceptanceTest`，1 项通过、0 跳过，MySQL 8 Flyway V1 和精确清理均成功。
 - 覆盖：所有权、管理员权限、幂等、乐观锁、版本不可变、答案列表防泄漏、五种题型、生命周期、未知/缺失字段拒绝、媒体错用途/他人/非 READY、历史替换引用、保留期解除、导入进度与部分成功、XLSX 公式/嵌图行错误、重复事件、有限重试和 DLQ。
 - Frontend：`generate:api` 与全 workspace `typecheck` 通过；Vitest 在受限沙箱内因既有 `esbuild spawn EPERM` 未启动，获准沙箱外复跑后 13 文件 91 项全部通过；三端 Vite 生产构建同样在沙箱外通过，只有既有 hls.js chunk 大小提示。本任务没有新增 Vue 页面。
-- MySQL：安全包装脚本确认服务可达和目标名称正确，但专用 Schema 尚不存在；显式验收以 MySQL 1049 停止且没有产生外部状态。`LearningMysqlMigrationAcceptanceTest` 已提供，待环境管理员创建专用库后执行。
+- 真实环境：MySQL、Redis、RabbitMQ、Gateway、IAM、Media、Learning 健康检查通过。领域正向场景在 `learning-service` 可信身份边界执行；用户此前已通过 Gateway 完成创建和完全相同请求重放，另验证无 Bearer Token 即使伪造身份头仍返回 401。真实 OSS 单对象上传、READY、媒体引用 Outbox、CSV 部分成功、同 `eventId` 重投不重复、三次总尝试后 DLQ、`x-death` 和导入源 Released 均通过。XLSX 公式/嵌图错误由 Java 自动化覆盖，本轮没有宣称真实 OSS XLSX E2E。
 - 质量：最终差异检查、敏感信息审计和提交后的 `check:api` 在发布前完成；结果同步记录到 `docs/roadmap/verification.md`。
 
 ## 10. 人工演示步骤
@@ -100,6 +100,6 @@ CSV 必须为 UTF-8；CSV/XLSX 首行字段为 `type,difficulty,grade,stem,optio
 
 新增业务类、公共边界、权限判断、不可变版本、媒体校验、导入解析、Outbox、重试/DLQ、消费幂等、定时释放、SQL 约束、OpenAPI 与事件 Schema 均补充中文职责/输入/结果/失败副作用说明；生成的 TypeScript 客户端未手工补注释。
 
-已知风险：当前导入模板是基于统计证据冻结的规范化 CSV/XLSX，不直接读取历史 JSON；历史题干内嵌选项、外部图片、组合题和年级冲突需要离线清洗映射，不能自动猜测。XLSX 解析支持普通单工作表，不支持公式计算、富文本、合并结构和嵌图；生产大批量容量与病毒/恶意文档扫描仍需真实环境压测和媒体安全能力。T10 负责教师上传、编辑、公式预览与导入结果页面；T11 负责测评快照和学生答案权限，不得复用教师详情作为学生取题接口。
+已知风险：当前导入模板是基于统计证据冻结的规范化 CSV/XLSX，不直接读取历史 JSON；历史题干内嵌选项、外部图片、组合题和年级冲突需要离线清洗映射，不能自动猜测。XLSX 解析支持普通单工作表，不支持公式计算、富文本、合并结构和嵌图；生产大批量容量与病毒/恶意文档扫描仍需真实环境压测和媒体安全能力。验收时常驻 8083 是未重新加载 T09 用途策略的旧进程，真实上传使用当前分支的隔离临时实例完成；后续人工演示前必须重启 media-service。T10 负责教师上传、编辑、公式预览与导入结果页面；T11 负责测评快照和学生答案权限，不得复用教师详情作为学生取题接口。
 
-分支为 `codex/t09-question-bank-backend`，基线为 `main@6839eab`，关键实现提交为 `169457d`。Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建且未合并；首轮 CI run #98 的 Python、Frontend、Java 和 OpenAPI 四个 Job 全部成功。后续仅用于落盘本段发布状态的文档提交仍需通过同一 CI，最终结果在任务交付答复中报告。
+分支为 `codex/t09-question-bank-backend`，基线为 `main@6839eab`，关键实现提交为 `169457d`。Ready [PR #18](https://github.com/chengchen-ccnu/ccnu-edulion/pull/18) 已创建；首轮及文档状态提交的 Python、Frontend、Java 和 OpenAPI Job 全部成功。MySQL 8 保留字修复与本次真实验收记录推送后必须再次等待同一 CI 全绿，方可合并到 `main`。
