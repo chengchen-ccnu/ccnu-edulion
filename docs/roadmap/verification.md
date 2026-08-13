@@ -275,17 +275,18 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 完整工程门禁：独立验收修复后的 Java 8 模块 `clean verify` 全部通过（2 分 14 秒）；Frontend 生成客户端与全 workspace 类型检查通过。主体实现阶段的 Vitest 沙箱外 13 文件 91 项及三端生产构建结果保持通过，本轮未修改 Vue 运行时代码。
 - 发布：关键主体提交 `86a9176` 和独立验收修复提交 `db4ee5a` 经 Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 交付；最新 Java、Python、Frontend、OpenAPI 检查全部成功，并于 2026-08-12 合并到 `main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`。合并后本地 `main` 已快进同步，T09B 本地和远端功能分支均已清理；T10 前置审计确认 T07/T09B、OpenAPI 0.10.1、生成客户端、六组稳定路由规格和教师端固定题库导航槽位均已具备。
 
-## 2026-08-12 T10 教师题库前端实施
+## 2026-08-12～13 T10 教师题库前端实施与真实验收
 
 - 门禁与契约：开始时分支为 `codex/t10-question-bank-web`、工作区干净、`HEAD=74b6b7c09b...`，并确认 `82ca1fbe` 与 `74b6b7c` 都是 HEAD 祖先。完整阅读仓库规则、页面规格、OpenAPI 0.10.1、T09B 交付和路线图；T07、T09、T09A、T09B 提交与生成客户端均可用，初始 `check:api` 通过。
-- 页面与权限：页面规格冻结的六组路由全部使用真实页面和 `teaching:access` 守卫；既有“题库”导航槽位启用且六路由同组高亮，没有调整标签、顺序或其他槽位。列表只使用本人摘要投影，筛选/分页、历史版本和导入复核状态通过 URL 深链接与刷新恢复；他人或不可见资源统一展示 404。
-- 结构化编辑：单选、多选、判断、填空、简答和一层有序组合题共用生成类型表单；父题和每个子题都保存完整结构，不拼接自由文本。编辑用 `expectedRevision` 创建不可变新版本；浏览器实际验证 409/422 均保留输入，409 要求重载，422 映射到 `version.stem` 等字段。
-- 内容与媒体：`marked` + KaTeX + DOMPurify 形成唯一安全 HTML 渲染入口，脚本、事件属性、外链媒体和嵌入框架被清洗；浏览器确认公式和上标可见且无危险脚本/图片节点。既有 MediaUploadField 小范围泛化到四类题目用途，继续复用 T07 会话、直传、READY 轮询和短期授权；离开页面中止请求/轮询并撤销临时 URL，业务体只保存 `mediaId`。
-- 导入边界：CSV/XLSX 先上传 `QUESTION_IMPORT_SOURCE` 再创建真实任务；历史 JSON 只读取浏览器显式选择，默认 dry-run、单文件 256 KiB、每批 20、每任务 1000，提交规范化相对路径和 SHA-256，不提交绝对路径。导入详情支持分页问题码、结构化修正、确认跳过、非最终任务门禁、409 保留和任务级影响提示/二次确认/精确清理。
-- 自动化：最终 `generate:api`、`check:api`、全 workspace `typecheck` 均通过；完整 Vitest 为 18 个文件 115 项全通过；学生端、教师端、管理端三个生产构建全通过。教师题库路由按路由懒加载，标准 HTML 文档模式消除了 KaTeX quirks 警告。
-- 浏览器验收：使用只绑定 `127.0.0.1` 的最小合成 Gateway 验证六路由、桌面/820×1180 平板、无横向溢出、同组导航、键盘原生控件、深链接与刷新恢复，并覆盖 403、404、409、422、429、5xx、公式清洗、版本历史和清理确认；401/刷新一次由共享 auth 27 项测试覆盖。Fixture 只有一个合成教师/知识点/组合题/导入任务/复核项，没有读取或扫描历史题库。
-- 数据与清理：未调用真实环境凭据脚本，未创建数据库、表、Seed、真实题目、上传会话、OSS 对象、RabbitMQ/通知消息。验收专用 Vite、Prism 和合成 Gateway 进程均已停止，临时日志在提交前删除，因此测试数据、媒体和消息均无持久对象需要清理。
-- 边界与发布：未实现 T11/T12、组卷、学生作答、成绩或错题，未修改 Python 智能体、已合并迁移、OpenAPI 或全局页面规格，也未执行 44,441 份题库。关键实现提交为 `32371d0`，已使用规定命令推送分支 `codex/t10-question-bank-web` 并创建 Ready [PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22)，未自行合并。
+- 页面与权限：页面规格冻结的六组路由全部使用真实页面和 `teaching:access` 守卫；既有“题库”导航槽位启用且六路由同组高亮，没有调整标签、顺序或其他槽位。本人列表摘要、筛选/分页、历史版本、导入复核通过 URL 深链接与刷新恢复；匿名 401、学生访问教师端 403、他人/随机资源统一 404 均通过真实浏览器验证。
+- 结构化编辑与内容：真实创建普通题和含 2 个有序结构化子题的一层组合题；`expectedRevision` 不可变 v2/v3、指定历史快照、两个浏览器标签制造的 409 本地输入保留、422 字段映射、DRAFT→ACTIVE→ARCHIVED 及归档只读均通过。`marked` + KaTeX + DOMPurify 预览可显示公式和上标，危险事件属性与不允许的嵌入图片没有进入 DOM。
+- 媒体与导入：QUESTION_IMAGE、QUESTION_AUDIO、QUESTION_ATTACHMENT 经真实上传会话/直传/校验到 READY 并绑定组合题；CSV 导入 1/1，原一行 18 列 XLSX 为 0/0，修正最小 XLSX 为 1/1。LEGACY_JSON 验证默认 dry-run、3≤20/1000、有界文件读取、稳定问题码、结构化修正、确认跳过、结果筛选刷新和任务级二次确认清理；没有读取个人 PDF、扫描完整历史目录或提交客户端绝对路径。
+- 自动化与响应式：`generate:api`、`check:api`、全 workspace `typecheck` 通过；Vitest 18 个文件 115 项全通过；学生、教师、管理三端生产构建通过。真实浏览器另覆盖 45 条内存分页、429、503、partial-error 保留旧卡片、空态，以及六路由逐一 820×1180 无横向溢出。
+- 未完成项：Tab/Shift+Tab 聚焦与可见焦点环已经通过，但 Codex 内置浏览器不能可靠派发 Enter/Space 激活；内置控制也不提供真实网络 offline，2026-08-13 收尾重试又在控制内核初始化前发生本地运行时路径错误。两项均提供最短人工步骤，尚未执行前不得写为通过；当前总体结论为**有条件通过**。
+- 题目清理：普通题 `ab10bf99-ca6d-4be7-9f97-5da699e7a4fb`、组合父题 `2a9134bc-5c96-407e-b507-1fa43deeaa35`、CSV 题 `eeae94bc-35c9-4de8-85a5-7c5e5f5a7d4d` 和修正 XLSX 题 `1a0c426a-30a1-4e2a-8974-709581bfea03` 均已归档；组合的两个 DRAFT 子聚合作为父版本内部组成保留，不进入根列表。正式契约没有普通题删除端点，未跨库删行或新增生产清理 API。
+- 任务与媒体清理：LEGACY_JSON 成功任务 `ba0baf11-198f-4aa8-9f89-c037b7d54fba` 已精确清理（题目 1、来源引用 3、媒体引用 0），空任务 `e4e0276c-5d0b-48fd-a09e-0e4584592222` 已零影响清理。三个 CSV/XLSX 任务和三项题目媒体、三项导入源仍按正式契约保留且只读复核为 READY/BOUND；导入源到 7 天保留期后发布 Released，media-service 最后引用释放后再经 24 小时宽限和每小时回收器精确删除。归档题媒体为保持不可变详情而继续绑定；如后续要求零残留，需要另建仅 local/test 可启用、按 run ID/显式 ID 的跨服务精确清理任务。
+- 消息审计：3 条 `QuestionImportRequested`、6 条 `MediaReferenceBound` 以及相关 `MediaUploaded/MediaReady` 均已发布；learning/media 六个既有主队列与 DLQ 收尾只读计数均为 0，未清共享队列，未创建通知消息。唯一 `LegacyQuestionImportBatchProcessed` 事件 `8ed81ec4-4b96-49e4-9a31-ff5786f19c76` 为 PENDING、10/20 次；文档与源码确认 v2 当前没有 Queue/Binding/消费者。Publisher 最大 20 次、最大 256 秒退避，耗尽转 FAILED，不会无限重试或堆积 Rabbit 队列；无订阅阶段每批会留下失败 Outbox 和有限告警，记录为独立消息治理已知风险，不在 T10 扩展业务。
+- 边界与发布：未实现 T11/T12、组卷、学生作答、成绩或错题，未修改 Python 智能体、已合并迁移、OpenAPI 或全局页面规格，也未执行 44,441 份题库。关键实现提交为 `32371d0`，真实验收基线为 `aaaaf73`；Ready [PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22) 继续承载本次收尾，不创建重复 PR且不自行合并。
 
 ## 2026-08-12 T09B.1 题目 HTTP 绑定一致性修复
 
