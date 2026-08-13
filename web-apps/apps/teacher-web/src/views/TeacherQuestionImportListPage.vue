@@ -106,6 +106,8 @@ function legacyMessage(error: unknown): string {
   if (error instanceof Error && error.message === "LEGACY_TASK_LIMIT") return "每个历史导入任务最多 1000 项。";
   if (error instanceof Error && error.message.startsWith("LEGACY_FILE_TOO_LARGE")) return "单个 JSON 超过 256 KiB 有界读取上限。";
   if (error instanceof Error && error.message.startsWith("LEGACY_JSON_OBJECT_REQUIRED")) return "历史 JSON 必须是单题对象，不能是数组或空值。";
+  if (error instanceof Error && error.message.startsWith("LEGACY_EXTERNAL_ID_INVALID")) return "历史 JSON 的 exerciseID 为空白、过长或格式不安全，请先修正该文件。";
+  if (error instanceof Error && error.message === "LEGACY_RELATIVE_PATH_INVALID") return "所选 JSON 的相对路径为空、过长或包含越界目录。";
   return messageFor(error, "历史 JSON 导入失败；已停止后续批次，不会扫描其他文件。");
 }
 </script>
