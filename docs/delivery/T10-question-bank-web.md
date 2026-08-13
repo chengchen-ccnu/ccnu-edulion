@@ -119,4 +119,5 @@ CSV/XLSX 契约没有任务删除端点，三个任务必须作为导入审计�
 - 基线：`main@82ca1fbe`，状态提交 `74b6b7c`
 - 关键实现提交：`32371d0`
 - 真实验收基线提交：`aaaaf73`
-- Ready PR：[PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22)；本任务只继续更新该 PR，不创建重复 PR，不自行合并
+- 最终离线修复提交：`5fbdc72`
+- 合并 PR：[PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22)，于 2026-08-13 合并到 `main@f05c555252ea27054f459f0ae93dc9dbaaff136e`；合并后主分支 Java、Python、Frontend 和 OpenAPI CI 全部成功，本地 `main` 已同步，T10 本地和远端分支均已清理。
