@@ -375,7 +375,9 @@ export interface AuthGuardOptions {
 /**
  * 安装路由守卫：恢复当前用户、校验目标页面声明的能力或旧工作台角色，并安全跳转到统一登录页。
  * 标记 restoreSession 的公开路由只在后台尝试恢复一次会话，不等待结果也不阻断匿名访问；
- * 受保护路由必须完成身份恢复，权限不足进入 forbidden 页面。
+ * 受保护路由在没有已认证快照时必须完成身份恢复，权限不足进入 forbidden 页面。
+ * 应用内导航复用内存中的用户与能力，避免临时断网被误判为退出登录并触发整页登录跳转；
+ * 后续业务请求如遇真实 401，仍由 authorizedRequest 负责刷新或清除失效会话。
  */
 export function installAuthGuard(router: Router, store: AuthStore, options: AuthGuardOptions = {}): void {
   let publicRestoreStarted = false;
@@ -387,7 +389,8 @@ export function installAuthGuard(router: Router, store: AuthStore, options: Auth
       }
       return true;
     }
-    if (!(await store.ensureCurrentUser())) {
+    const hasAuthenticatedSnapshot = store.state.status === "authenticated" && store.state.currentUser !== null;
+    if (!hasAuthenticatedSnapshot && !(await store.ensureCurrentUser())) {
       const loginUrl = buildUnifiedLoginUrl(to.fullPath);
       if (options.onLoginRedirect) {
         options.onLoginRedirect(loginUrl);
