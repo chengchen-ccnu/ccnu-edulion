@@ -128,4 +128,4 @@ DTO 严格 creator/可选后置属性、业务规范化、异常安全路径提�
 - 分支：`codex/t09b1-question-http-binding`
 - 基线：`origin/main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`
 - 关键实现提交：`8c1049a`（`fix(question): align HTTP request binding`）
-- Ready PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)；不得由本任务自行合并，且不修改 T10 PR #22
+- 合并 PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)，于 2026-08-13 合并到 `main@0df0ae6cc8b7da999c540a040fcb9b53761aaff5`；本地 `main` 已快进同步，T09B.1 本地和远端分支均已清理，修复随后通过普通 merge 纳入现有 T10 PR #22。
