@@ -2,7 +2,7 @@
 
 ## 任务目标与边界
 
-本任务在已合并的 T09 CSV/XLSX 题库能力之外，增加对只读历史逐题 JSON 的受控迁移。实现不会复制、修改或提交原题库，不提供自动全量入口；每次任务最多 1000 项、每批最多 20 项，仓库脚本默认 dry-run 且并发固定为 1。T10 页面、T11 组卷/作答和 Python 智能体均不在范围内。
+本任务在已合并的 T09 CSV/XLSX 题库能力之外，增加对只读历史逐题 JSON 的受控迁移。T09A 初始交付不会复制、修改或提交原题库，也未提供自动全量入口；每次任务最多 1000 项、每批最多 20 项，仓库脚本默认 dry-run 且并发固定为 1。T10A 后续在不改变这些服务端上限的前提下增加显式多任务全量编排和断点续传，详见本页“全量编排扩展”。T10 页面、T11 组卷/作答和 Python 智能体均不在范围内。
 
 程序化盘点发现 44,441 份 JSON、0 个解析失败、7,359 个显式 `subQues` 容器、28,646 份含外部图片、8,152 份空 `solution`。模型仅人工阅读 6 个代表文件，每种结构不超过 3 个；盘点和迁移脚本只输出聚合计数。
 
@@ -64,7 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
   -MaxItems 5 -BatchSize 5
 ```
 
-人工检查聚合计数和复核问题后，才可把 `DryRun` 改为 `Import`；本任务不授权扩大 `MaxItems` 做全量迁移。记录脚本返回的 `importTaskId`，验收完成后精确清理：
+人工检查聚合计数和复核问题后，才可把 `DryRun` 改为 `Import`；T09A 初始任务不授权扩大 `MaxItems` 做全量迁移。记录脚本返回的 `importTaskId`，验收完成后精确清理：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
@@ -72,6 +72,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 ```
 
 清理只处理该任务创建且仍为 DRAFT 的题目；若题目已人工发布或修改，接口会拒绝静默删除，需要人工确认后另行处理。dry-run 不创建题目或媒体。
+
+### T10A 全量编排扩展
+
+经用户明确授权，脚本新增 `-AllItems`，将稳定排序后的来源清单自动拆为多个任务；`TaskSize` 仍限定为 1～1000，`BatchSize` 仍限定为 1～20。正式全量导入必须同时指定 `-Action Import -AllItems -ConfirmFullMigration`，缺少确认会在任何请求前拒绝。脚本使用确定性任务/批次 UUID 和本机检查点，响应丢失时安全重放同一请求，令牌或网络中断后用完全相同参数恢复。
+
+检查点保存清单/根指纹、源索引、任务 ID、下一批次和聚合计数，不保存令牌、绝对源路径、题干、答案、图片 URL 或原始 JSON；路径必须位于来源目录之外。来源文件名、大小或修改时间发生变化会改变清单指纹，脚本拒绝把旧检查点套到新清单。`Cleanup` 可读取正式 Import 检查点并逐任务调用原有精确清理接口。
+
+全量编排只保证所有选定 JSON 都被提交一次或幂等重放，不会绕过 `NEEDS_REVIEW`、外部图片白名单或字段校验。正式创建数量以 `importedCount` 为准；其余项目仍按 T09B 流程人工修正或确认跳过。
 
 ## 测试与实际结果
 

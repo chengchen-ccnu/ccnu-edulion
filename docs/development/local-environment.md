@@ -207,7 +207,7 @@ learning-service 只通过 `MEDIA_SERVICE_BASE_URL` 调用 media-service 的绑�
 
 RabbitMQ 资源为 `edu.learning.events.v1`、队列 `edu.learning.question-import.v1`、死信交换机 `edu.learning.dlx.v1` 和 DLQ `edu.learning.question-import.dlq.v1`。生产者使用事务 Outbox、持久消息、mandatory、publisher confirm/return 和有限退避；消费者总计最多尝试 3 次，超限拒绝进入 DLQ，并以数据库 `eventId` 幂等。重复消费的每一行还使用任务 ID 与行号生成确定性 `clientRequestId`，不会重复创建题目。
 
-T09A/T09B 的历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。T09B 只允许教师对单个 `NEEDS_REVIEW` 项携带 revision，显式提交完整结构化修正后导入或确认跳过；不会启发式放行，也不会提高批次/任务上限。实际批量导入仍必须显式使用 `-Action Import`；清理必须携带原任务 ID。示例只做 5 项 dry-run：
+T09A/T09B 的历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。T09B 只允许教师对单个 `NEEDS_REVIEW` 项携带 revision，显式提交完整结构化修正后导入或确认跳过；不会启发式放行，也不会提高批次/任务上限。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前教师的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
 
@@ -216,6 +216,33 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
   -Action DryRun -SourceRoot 'I:\大模型学习\edu_agent\智能体项目\data\题库' `
   -MaxItems 5 -BatchSize 5
 ```
+
+T10A 后脚本支持显式全量编排，但仍不会放大后端边界。先执行全部文件 dry-run；脚本对相对路径稳定排序，自动按最多 1000 项拆任务、按最多 20 项拆批次，并把非敏感检查点默认写入当前用户 LocalAppData。网络中断或短期令牌过期后，更新当前进程令牌并原样重跑即可从已确认批次继续：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action DryRun -SourceRoot 'I:\大模型学习\edu_agent\智能体项目\data\题库' `
+  -AllItems -TaskSize 1000 -BatchSize 20
+```
+
+核对 dry-run 的 `validCount/reviewCount/failedCount` 和全部任务详情后，正式全量导入还必须额外提供确认开关：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Import -SourceRoot 'I:\大模型学习\edu_agent\智能体项目\data\题库' `
+  -AllItems -ConfirmFullMigration -TaskSize 1000 -BatchSize 20
+```
+
+`AllItems` 表示每份 JSON 都会被提交处理，不表示所有数据都会绕过校验直接创建题目。`NEEDS_REVIEW`、图片转存失败或字段错误仍须在教师端逐项解决；只有 `importedCount` 计入已创建草稿。全量运行期间不得增删或改写源目录文件，否则清单指纹变化会拒绝复用旧检查点。检查点不能放在 `SourceRoot` 内，不保存 Token、绝对源路径、题干、答案或原始 JSON。
+
+如需撤销尚未发布/修改的全量 Import 草稿，使用正式导入结果中的 `checkpointPath`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Cleanup -CheckpointPath '<import-checkpoint.json>'
+```
+
+清理逐任务调用既有精确端点；已发布、已人工修改或不属于该任务的题目不会被静默删除。操作结束后必须从当前进程移除 `EDU_MIGRATION_ACCESS_TOKEN`。
 
 外部图片仅由 media-service 转存。默认 `MEDIA_EXTERNAL_IMAGE_IMPORT_ENABLED=false`；人工实际导入图片前必须显式启用，并把 `MEDIA_EXTERNAL_IMAGE_ALLOWED_HOSTS` 设置为逗号分隔的精确 HTTPS 主机白名单。`MEDIA_EXTERNAL_IMAGE_MAX_BYTES` 默认 10 MiB、`MEDIA_EXTERNAL_IMAGE_TIMEOUT` 默认 10 秒、`MEDIA_EXTERNAL_IMAGE_MAX_REDIRECTS` 默认 2。每次请求和重定向都复核白名单、DNS 私网/回环地址、MIME、大小和图片魔数；URL 明文不写数据库、事件或日志。learning-service 仍只配置 `MEDIA_SERVICE_BASE_URL`，不配置 OSS SDK 或凭据。
 
