@@ -1117,7 +1117,7 @@ export interface components {
             analysis: string;
             knowledgePointIds: string[];
             media: components["schemas"]["QuestionMediaInput"][];
-            /** @description Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question. */
+            /** @description Optional for ordinary questions, where omission and an empty array are equivalent. Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question. */
             children?: components["schemas"]["QuestionChildInput"][];
         };
         QuestionChildInput: {
@@ -1645,6 +1645,7 @@ export interface components {
             fieldErrors: components["schemas"]["FieldError"][];
         };
         FieldError: {
+            /** @description Safe dotted request-field path when the server can locate the failure (for example, version.type); request is the fallback for malformed bodies without a reliable field path. */
             field: string;
             reason: string;
         };

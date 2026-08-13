@@ -7,17 +7,22 @@ import com.eduplatform.shared.api.FieldError;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.exc.UnrecognizedPropertyException;
 
 /** 将题库权限、并发、参数和依赖错误映射为统一错误信封，不泄露答案、SQL 或签名 URL。 */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Pattern SAFE_FIELD = Pattern.compile("[A-Za-z][A-Za-z0-9_]*");
     @ExceptionHandler(QuestionException.class)
     ResponseEntity<ApiError> handleQuestion(QuestionException exception, HttpServletRequest request) {
         return ResponseEntity.status(exception.status()).body(error(exception.code(), exception.getMessage(), request,
@@ -38,8 +43,8 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    ResponseEntity<ApiError> handleUnreadable(HttpServletRequest request) {
-        return invalid(request, List.of(new FieldError("request", "请求体格式或枚举值不合法")));
+    ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException exception, HttpServletRequest request) {
+        return invalid(request, List.of(new FieldError(unreadableField(exception), "请求体字段格式或枚举值不合法")));
     }
 
     @ExceptionHandler(Exception.class)
@@ -50,6 +55,39 @@ public class ApiExceptionHandler {
 
     private ResponseEntity<ApiError> invalid(HttpServletRequest request, List<FieldError> fields) {
         return ResponseEntity.unprocessableEntity().body(error("COMMON.VALIDATION_FAILED", "请求参数不合法", request, fields));
+    }
+
+    /**
+     * 只从 Jackson 的结构化引用链提取安全字段名和数组下标；不解析异常文本，也不暴露类名、请求体或堆栈。
+     * 无结构化路径的截断 JSON 等错误统一回退到 request。
+     */
+    private static String unreadableField(HttpMessageNotReadableException exception) {
+        JacksonException jackson = jacksonCause(exception);
+        if (jackson == null) return "request";
+        List<String> segments = new ArrayList<>();
+        for (JacksonException.Reference reference : jackson.getPath()) {
+            String property = reference.getPropertyName();
+            if (property != null && SAFE_FIELD.matcher(property).matches()) {
+                segments.add(property);
+            } else if (reference.getIndex() >= 0 && !segments.isEmpty()) {
+                int last = segments.size() - 1;
+                segments.set(last, segments.get(last) + "[" + reference.getIndex() + "]");
+            }
+        }
+        if (jackson instanceof UnrecognizedPropertyException unknown
+                && SAFE_FIELD.matcher(unknown.getPropertyName()).matches()
+                && (segments.isEmpty() || !unknown.getPropertyName().equals(segments.get(segments.size() - 1)))) {
+            segments.add(unknown.getPropertyName());
+        }
+        return segments.isEmpty() ? "request" : String.join(".", segments);
+    }
+
+    private static JacksonException jacksonCause(Throwable exception) {
+        Throwable current = exception;
+        for (int depth = 0; current != null && depth < 10; depth++, current = current.getCause()) {
+            if (current instanceof JacksonException jackson) return jackson;
+        }
+        return null;
     }
 
     private ApiError error(String code, String message, HttpServletRequest request, List<FieldError> fields) {

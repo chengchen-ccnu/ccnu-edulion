@@ -2490,7 +2490,7 @@ components:
         children:
           type: array
           maxItems: 100
-          description: Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question.
+          description: Optional for ordinary questions, where omission and an empty array are equivalent. Required and non-empty only when type is COMPOSITE; order is authoritative and each child is a complete immutable structured question.
           items:
             $ref: '#/components/schemas/QuestionChildInput'
     QuestionChildInput:
@@ -3457,6 +3457,7 @@ components:
       properties:
         field:
           type: string
+          description: Safe dotted request-field path when the server can locate the failure (for example, version.type); request is the fallback for malformed bodies without a reliable field path.
         reason:
           type: string
 security:
