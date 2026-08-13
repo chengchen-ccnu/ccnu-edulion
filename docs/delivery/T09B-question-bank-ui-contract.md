@@ -91,3 +91,41 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 - Ready PR：[#21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21)，保持打开且不由本任务合并。
 - 关键实现提交：`86a9176`（`feat(question): close T09B UI contracts`）。
 - 独立验收修复提交：`db4ee5a`（`fix(question): guard legacy review resolution`）。
+
+## T09B.1 题目 HTTP 绑定一致性修复
+
+### 目标、边界与调用流程
+
+该修复只解除 T10 普通题写请求在 learning-service Controller 前被错误拒绝的阻断，不新增页面、题型、接口字段、数据库表或产品能力。OpenAPI 0.10.1 继续允许普通题省略 `children`，显式空数组与省略语义一致；组合题仍必须提交非空的一层有序完整子题。
+
+`QuestionVersionInput` 的 11 个必填字段继续通过严格 Jackson creator 反序列化，`children` 改为 creator 之后的可选属性且显式 JSON null 仍被拒绝。`QuestionService` 在创建与更新入口把省略值规范为空列表后再计算幂等指纹、校验结构和持久化，因此同一语义不会因省略形式不同而分叉。`fail-on-missing-creator-properties`、`fail-on-unknown-properties` 和 `fail-on-null-for-primitives` 均保持开启；未知字段、非法枚举/UUID 及真正缺少的必填 creator 字段继续返回 422。
+
+反序列化失败时，异常处理器只遍历 Jackson 的结构化属性/数组引用链并筛选安全字段名，返回 `version.type` 等路径；不读取或解析异常全文，不回显原始请求体、非法值、类名或堆栈。无法可靠定位的畸形请求体才使用 `field=request`。OpenAPI 只补充 `children` 省略语义和 `FieldError.field` 安全路径说明，版本保持 0.10.1，并从同一契约重新生成 TypeScript 客户端。
+
+### API、数据库、配置与启动
+
+受影响边界是既有 `POST /api/v1/teacher/questions`，同一 `QuestionVersionInput` 也让既有更新和历史复核修正入口获得一致绑定语义；没有新增或删除端点。V1/V2/V3 Flyway 文件完全未修改，没有创建新迁移、业务表或跨服务依赖。没有新增环境变量，learning-service 启动方式和严格 Jackson 配置保持不变。
+
+### Fixture、清理与测试结果
+
+新增 `QuestionHttpBindingIntegrationTest` 使用真实随机 HTTP 端口和独立 H2 MySQL 模式内存库。每项只创建固定合成 owner、固定合成知识点，以及成功场景所需的两道普通题和一道单子题组合题；按固定 owner、知识点和关联版本/关系精确清理，既不遍历历史题库，也不清空共享数据库。内存进程结束后全部测试对象自然销毁。
+
+- 专项 HTTP 绑定：7 项全部通过，覆盖省略 `children`、显式空数组、合法组合题、非法枚举、未知字段、非法 UUID 和缺少必填字段。
+- learning-service：共 27 项执行，25 通过，2 个显式真实 MySQL 用例按条件跳过。
+- Java：8 模块 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 最终复跑全部通过，耗时 2 分 21 秒。
+- OpenAPI/Frontend：`generate:api` 通过并生成两处说明；提交后 `check:api` 通过且无生成漂移；全部 8 个 workspace `typecheck` 通过。
+
+本轮没有执行真实 MySQL/Gateway 验收，没有连接 OSS、RabbitMQ 或外部题库；没有创建持久数据库、表、Seed、真实题目、媒体对象或消息，因此没有外部数据需要清理或重新生成。
+
+### 人工复核、注释与风险
+
+人工复核步骤：以教师身份分别提交省略 `children` 的普通单选题、显式空数组的普通题和含一个子题的组合题，确认前三者分别按契约创建；再把 `version.type` 改为非法值、加入未知字段、删除 `version.stem`，确认 422 的 `fieldErrors` 可安全定位且响应不包含请求原文或内部异常信息。
+
+DTO 严格 creator/可选后置属性、业务规范化、异常安全路径提取和精确 Fixture 清理均补充了中文 Javadoc/测试说明；自动生成客户端未手工编辑。已知边界是畸形 JSON 没有可靠结构化引用链时只能返回 `request`，这是避免从异常文本猜测字段并泄露内部信息的有意降级。未做真实 Gateway/MySQL 写验收，因为随机端口 H2 已覆盖本缺陷的实际 HTTP 反序列化边界，且本轮没有数据库或跨服务行为变更。
+
+### 分支、提交与 PR
+
+- 分支：`codex/t09b1-question-http-binding`
+- 基线：`origin/main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`
+- 关键实现提交：`8c1049a`（`fix(question): align HTTP request binding`）
+- Ready PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)；不得由本任务自行合并，且不修改 T10 PR #22

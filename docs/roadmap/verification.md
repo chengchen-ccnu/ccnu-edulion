@@ -274,3 +274,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实 MySQL 与数据：通过规定凭据包装脚本在既有 `edu_platform_learning_dev`、V3 Schema 上复跑；应用未创建数据库或迁移。仅创建随机 owner 下的最小虚构知识点、单子题组合题、一项含糊历史 JSON 复核项和并发修正题。初轮验收发现结果详情旧快照，改为当前读后 MySQL 8 双线程复跑通过；按精确 ID 逆序清理，owner 题目、幂等键、任务、复核项和解决记录均断言为 0。没有读取真实历史题库、连接 OSS/RabbitMQ 或创建媒体/Seed。
 - 完整工程门禁：独立验收修复后的 Java 8 模块 `clean verify` 全部通过（2 分 14 秒）；Frontend 生成客户端与全 workspace 类型检查通过。主体实现阶段的 Vitest 沙箱外 13 文件 91 项及三端生产构建结果保持通过，本轮未修改 Vue 运行时代码。
 - 发布：关键主体提交 `86a9176` 和独立验收修复提交 `db4ee5a` 均位于现有 Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 分支；修复提交后的 `check:api`、差异检查、V1/V2/V3 不变校验和本地完整验证通过。PR 保持非 Draft 且不会由本任务自行合并；推送后继续等待最新 Java、Python、Frontend、OpenAPI CI 全绿。
+
+## 2026-08-12 T09B.1 题目 HTTP 绑定一致性修复
+
+- 门禁与范围：开始时工作区干净且位于 `codex/t10-question-bank-web`，只读核对其 T10 交付说明后，从最新 `origin/main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e` 新建 `codex/t09b1-question-http-binding`。未修改或覆盖 T10 分支与 Ready PR #22，未新增产品能力、接口字段、数据库迁移或业务表。
+- 根因与修复：OpenAPI 0.10.1 的 `QuestionVersionInput.children` 本来就是可选字段，但 Java record 把它作为 creator 参数，和 `fail-on-missing-creator-properties=true` 组合后在 Controller 前错误拒绝普通题。`VersionInput` 现保留 11 个必填字段的严格 creator，仅把 `children` 作为拒绝显式 null 的可选后置属性；`QuestionService` 在创建/更新入口将省略值规范为空列表，使校验与幂等指纹统一。全局严格配置未放松，未知字段、非法枚举/UUID 和真正缺少的必填 creator 字段继续返回 422。
+- 安全错误定位：`HttpMessageNotReadableException` 只读取 Jackson 结构化引用链中的安全属性名和数组下标，不解析异常全文；非法枚举可返回 `version.type`，未知字段可返回 `version.unexpected`，没有可靠路径的畸形 JSON 才回退 `request`。统一响应不包含原始请求体、非法值、Jackson/DTO 类名或内部堆栈。
+- HTTP 自动化：新增独立随机端口测试，覆盖普通单选题省略 `children` 返回 201、显式 `children=[]` 返回 201、合法单子题组合题返回 201、非法枚举定位 `version.type`、未知字段定位 `version.unexpected`、非法 UUID 定位 `version.knowledgePointIds[0]`、缺少 `stem` 定位 `version.stem`。专项 7 项全部通过；learning-service 共 27 项执行、25 通过、2 个显式真实环境用例按条件跳过。
+- 完整门禁：`pnpm generate:api` 已把两处 OpenAPI 说明生成到唯一客户端，提交后 `check:api` 通过且无生成漂移，8 个 workspace 的 `typecheck` 通过；最终 8 模块 Java `clean verify` 全部通过，耗时 2 分 21 秒。
+- 数据与外部系统：自动化仅在独立 H2 内存库中创建固定合成 owner、一个合成知识点、两道普通题和一道单子题组合题；每项前后按 owner、知识点和关联版本精确清理，进程结束后内存库销毁。未连接真实 MySQL/Gateway、OSS、RabbitMQ 或历史题库，未创建持久数据库、表、Seed、媒体或消息，因此没有外部数据需要清理。
+- 发布：实现提交 `8c1049a` 已按规定推送到 `codex/t09b1-question-http-binding`；Ready [PR #23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23) 已创建并保持非 Draft。本任务不会自行合并，也不会修改 T10 PR #22。

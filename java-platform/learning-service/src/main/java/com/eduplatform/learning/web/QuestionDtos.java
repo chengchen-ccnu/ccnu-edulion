@@ -1,5 +1,9 @@
 package com.eduplatform.learning.web;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
 import com.eduplatform.learning.domain.QuestionModels;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -13,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 
-/** OpenAPI 0.10.0 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
+/** OpenAPI 0.10.1 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
 public final class QuestionDtos {
     private QuestionDtos() {}
 
@@ -23,26 +27,89 @@ public final class QuestionDtos {
     public record MediaInput(@NotNull UUID mediaId, @NotNull QuestionModels.MediaPurpose purpose,
             @Min(1) @Max(100) int sequence) {}
 
-    public record VersionInput(@NotNull QuestionModels.Type type, @NotNull QuestionModels.Difficulty difficulty,
-            @NotNull QuestionModels.Stage stage, @NotNull QuestionModels.Grade grade,
-            @NotNull QuestionModels.Subject subject, @NotBlank @Size(max = 50000) String stem,
-            @NotNull @Size(max = 8) List<@Valid OptionInput> options,
-            @NotNull @Size(min = 1, max = 20) List<@NotBlank @Size(max = 20000) String> answers,
-            @NotNull @Size(max = 50000) String analysis,
-            @NotNull @Size(max = 30) List<@NotNull UUID> knowledgePointIds,
-            @NotNull @Size(max = 100) List<@Valid MediaInput> media,
-            @Size(max = 100) List<@Valid ChildInput> children) {
-        /** 兼容 T09/T09A 内部调用；普通题和历史迁移父题默认没有内嵌写子题。 */
+    /**
+     * 题目完整版本写模型。11 个 OpenAPI 必填字段继续由严格 creator 绑定，只有可选的 children
+     * 在 creator 之后注入，因此无需放松 learning-service 的全局 Jackson 严格策略。
+     */
+    public static final class VersionInput {
+        @NotNull private final QuestionModels.Type type;
+        @NotNull private final QuestionModels.Difficulty difficulty;
+        @NotNull private final QuestionModels.Stage stage;
+        @NotNull private final QuestionModels.Grade grade;
+        @NotNull private final QuestionModels.Subject subject;
+        @NotBlank @Size(max = 50000) private final String stem;
+        @NotNull @Size(max = 8) private final List<@Valid OptionInput> options;
+        @NotNull @Size(min = 1, max = 20)
+        private final List<@NotBlank @Size(max = 20000) String> answers;
+        @NotNull @Size(max = 50000) private final String analysis;
+        @NotNull @Size(max = 30) private final List<@NotNull UUID> knowledgePointIds;
+        @NotNull @Size(max = 100) private final List<@Valid MediaInput> media;
+        @Size(max = 100) private List<@Valid ChildInput> children;
+
+        /**
+         * 反序列化并校验 OpenAPI 声明的全部必填版本字段；缺少任一参数仍由严格 creator 直接拒绝。
+         * children 不属于 creator 参数，省略时保留为 null，随后由业务层规范化为空列表。
+         */
+        @JsonCreator
+        public VersionInput(@JsonProperty("type") QuestionModels.Type type,
+                @JsonProperty("difficulty") QuestionModels.Difficulty difficulty,
+                @JsonProperty("stage") QuestionModels.Stage stage,
+                @JsonProperty("grade") QuestionModels.Grade grade,
+                @JsonProperty("subject") QuestionModels.Subject subject,
+                @JsonProperty("stem") String stem,
+                @JsonProperty("options") List<OptionInput> options,
+                @JsonProperty("answers") List<String> answers,
+                @JsonProperty("analysis") String analysis,
+                @JsonProperty("knowledgePointIds") List<UUID> knowledgePointIds,
+                @JsonProperty("media") List<MediaInput> media) {
+            this(type, difficulty, stage, grade, subject, stem, options, answers, analysis,
+                    knowledgePointIds, media, null);
+        }
+
+        /** 供组合题、导入与测试等内部调用显式携带有序子题。 */
         public VersionInput(QuestionModels.Type type, QuestionModels.Difficulty difficulty,
                 QuestionModels.Stage stage, QuestionModels.Grade grade, QuestionModels.Subject subject,
                 String stem, List<OptionInput> options, List<String> answers, String analysis,
-                List<UUID> knowledgePointIds, List<MediaInput> media) {
-            this(type, difficulty, stage, grade, subject, stem, options, answers, analysis,
-                    knowledgePointIds, media, List.of());
+                List<UUID> knowledgePointIds, List<MediaInput> media, List<ChildInput> children) {
+            this.type = type;
+            this.difficulty = difficulty;
+            this.stage = stage;
+            this.grade = grade;
+            this.subject = subject;
+            this.stem = stem;
+            this.options = options;
+            this.answers = answers;
+            this.analysis = analysis;
+            this.knowledgePointIds = knowledgePointIds;
+            this.media = media;
+            this.children = children;
         }
 
-        /** 将缺省 children 规范为空列表，保持旧客户端请求的向前兼容。 */
+        /** 显式 children 只接受数组；JSON null 不等同于字段省略。 */
+        @JsonSetter(value = "children", nulls = Nulls.FAIL)
+        public void setChildren(List<ChildInput> children) { this.children = children; }
+
+        @JsonProperty("type") public QuestionModels.Type type() { return type; }
+        @JsonProperty("difficulty") public QuestionModels.Difficulty difficulty() { return difficulty; }
+        @JsonProperty("stage") public QuestionModels.Stage stage() { return stage; }
+        @JsonProperty("grade") public QuestionModels.Grade grade() { return grade; }
+        @JsonProperty("subject") public QuestionModels.Subject subject() { return subject; }
+        @JsonProperty("stem") public String stem() { return stem; }
+        @JsonProperty("options") public List<OptionInput> options() { return options; }
+        @JsonProperty("answers") public List<String> answers() { return answers; }
+        @JsonProperty("analysis") public String analysis() { return analysis; }
+        @JsonProperty("knowledgePointIds") public List<UUID> knowledgePointIds() { return knowledgePointIds; }
+        @JsonProperty("media") public List<MediaInput> media() { return media; }
+        @JsonProperty("children") public List<ChildInput> children() { return children; }
+
+        /** 将缺省 children 规范为空列表，供题目业务校验、写入和指纹计算统一使用。 */
         public List<ChildInput> childItems() { return children == null ? List.of() : children; }
+
+        /** 返回 children 已规范化的新值，避免修改反序列化完成后的请求对象。 */
+        public VersionInput withChildren(List<ChildInput> normalizedChildren) {
+            return new VersionInput(type, difficulty, stage, grade, subject, stem, options, answers, analysis,
+                    knowledgePointIds, media, normalizedChildren);
+        }
     }
 
     /** 组合题有序子题完整写模型；子题不能再次嵌套组合题。 */

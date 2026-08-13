@@ -55,6 +55,7 @@ public class QuestionService {
     /** 共享普通创建与受控组合题写入；结构化入口要求组合父题携带完整有序子题。 */
     private Creation createInternal(String ownerId, String requestId, QuestionDtos.VersionInput input,
             String traceId, boolean allowComposite, boolean requireCompositeChildren) {
+        input = normalizeChildren(input);
         String fingerprint = fingerprint(input);
         var replay = repository.findIdempotency(ownerId, requestId);
         if (replay.isPresent()) {
@@ -109,6 +110,7 @@ public class QuestionService {
     @Transactional
     public QuestionDtos.QuestionResponse update(String ownerId, String questionId, long expectedRevision,
             QuestionDtos.VersionInput input, String traceId) {
+        input = normalizeChildren(input);
         Aggregate aggregate = owned(ownerId, questionId);
         if (aggregate.status() == QuestionModels.Status.ARCHIVED) throw conflict("QUESTION.ARCHIVED", "归档题目不能修改");
         if (aggregate.revision() != expectedRevision) throw conflict("QUESTION.REVISION_CONFLICT", "题目已被更新，请刷新后重试");
@@ -205,6 +207,11 @@ public class QuestionService {
         return new QuestionDtos.VersionInput(child.type(), child.difficulty(), child.stage(), child.grade(),
                 child.subject(), child.stem(), child.options(), child.answers(), child.analysis(),
                 child.knowledgePointIds(), child.media(), List.of());
+    }
+
+    /** 将 HTTP 省略的可选 children 转为空列表，使校验、幂等指纹和持久化采用同一语义。 */
+    private static QuestionDtos.VersionInput normalizeChildren(QuestionDtos.VersionInput input) {
+        return input.children() == null ? input.withChildren(List.of()) : input;
     }
 
     private void validateStructure(QuestionDtos.VersionInput input, boolean allowComposite,
