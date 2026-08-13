@@ -12,7 +12,8 @@ import type { MediaUploadViewState } from "../media-upload";
 
 const props = defineProps<{
   modelValue: string | null;
-  purpose: Extract<MediaPurpose, "COURSE_COVER" | "LESSON_VIDEO">;
+  purpose: Extract<MediaPurpose, "COURSE_COVER" | "LESSON_VIDEO" | "QUESTION_IMAGE" | "QUESTION_AUDIO"
+    | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE">;
   checkpointKey: string;
   accept: string;
   label: string;
@@ -34,9 +35,10 @@ const uploader = new MediaUploader({ api: teacherMediaApi, purpose: props.purpos
 const busy = computed(() => ["RESTORING", "HASHING", "CREATING", "UPLOADING", "COMPLETING", "PROCESSING"]
   .includes(state.value.stage));
 const percent = computed(() => Math.round(state.value.progress * 100));
+const imagePurpose = computed(() => props.purpose === "COURSE_COVER" || props.purpose === "QUESTION_IMAGE");
 const displayUrl = computed(() => previewUrl.value ?? props.currentUrl ?? null);
 const placeholderLabel = computed(() => state.value.fileName ?? (props.modelValue
-  ? props.purpose === "COURSE_COVER" ? "已绑定课程封面，展示地址暂不可用" : "已绑定课时视频"
+  ? imagePurpose.value ? "已绑定图片，展示地址暂不可用" : "已绑定媒体文件"
   : "尚未选择文件"));
 
 onMounted(() => { void uploader.restore(); });
@@ -47,7 +49,7 @@ async function chooseFile(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
   selectedFile.value = file;
-  if (props.purpose === "COURSE_COVER") {
+  if (imagePurpose.value) {
     revokePreview();
     previewUrl.value = URL.createObjectURL(file);
   }
@@ -77,9 +79,7 @@ async function remove() {
   if (input.value) input.value.value = "";
   revokePreview();
   state.value = { stage: "IDLE", progress: 0, uploadedBytes: 0, totalBytes: 0,
-    statusLabel: props.purpose === "COURSE_COVER"
-      ? "课程封面已从当前编辑表单移除，保存后才会解除课程引用。"
-      : "课时视频已从当前编辑表单移除，保存后才会解除目录引用。",
+    statusLabel: "媒体已从当前表单移除，保存后才会解除业务引用。",
     errorMessage: "" };
 }
 
@@ -103,10 +103,10 @@ function formatBytes(bytes: number): string {
 <template>
   <section class="media-upload-field" :aria-busy="busy">
     <header>
-      <div><strong>{{ label }}</strong><small>{{ purpose === "COURSE_COVER" ? "图片直传 OSS，READY 后绑定" : "视频直传 OSS 并转码 HLS，READY 后绑定" }}</small></div>
+      <div><strong>{{ label }}</strong><small>文件经 media-service 上传会话直传，READY 后仅绑定 mediaId</small></div>
       <span v-if="modelValue" class="media-upload-field__ready">READY</span>
     </header>
-    <img v-if="purpose === 'COURSE_COVER' && displayUrl" class="media-upload-field__preview" :src="displayUrl" alt="课程封面预览">
+    <img v-if="imagePurpose && displayUrl" class="media-upload-field__preview" :src="displayUrl" :alt="`${label}本地预览`">
     <div v-else class="media-upload-field__placeholder">
       <strong>{{ placeholderLabel }}</strong>
       <span v-if="state.totalBytes">{{ formatBytes(state.totalBytes) }}</span>

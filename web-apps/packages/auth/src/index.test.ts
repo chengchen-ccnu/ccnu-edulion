@@ -272,6 +272,21 @@ describe("application route guard", () => {
     expect(router.currentRoute.value.name).toBe("protected");
   });
 
+  it("reuses the authenticated snapshot during offline in-app navigation", async () => {
+    const router = permissionRouter("/teacher/questions", "teaching:access");
+    const onLoginRedirect = vi.fn();
+    const store = guardStore(true, true);
+    vi.mocked(store.ensureCurrentUser).mockRejectedValue(new TypeError("offline"));
+    installAuthGuard(router, store, { onLoginRedirect });
+
+    await router.push("/teacher/questions");
+    await router.push({ path: "/teacher/questions", query: { keyword: "offline-check" } });
+
+    expect(router.currentRoute.value.fullPath).toBe("/teacher/questions?keyword=offline-check");
+    expect(store.ensureCurrentUser).not.toHaveBeenCalled();
+    expect(onLoginRedirect).not.toHaveBeenCalled();
+  });
+
   it("guards a learning route by capability without requiring a STUDENT role", async () => {
     const router = permissionRouter("/learn/course-1/lesson-1", "learning:access");
     const store = guardStore(true, true);

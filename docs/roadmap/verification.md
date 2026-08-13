@@ -273,7 +273,20 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：OpenAPI 0.10.1 `generate:api`/`check:api` 和全 workspace `typecheck` 通过；最终 Java 8 模块 `clean verify` 全部通过，learning-service 20 项中 18 通过、2 个显式真实环境用例默认跳过。新增覆盖非最终批次产生 NEEDS_REVIEW、提前解决 409、任务保持 PROCESSING、后续最终批次继续提交、最终解决成功及双线程相同请求一致结果/单题/单计数。
 - 真实 MySQL 与数据：通过规定凭据包装脚本在既有 `edu_platform_learning_dev`、V3 Schema 上复跑；应用未创建数据库或迁移。仅创建随机 owner 下的最小虚构知识点、单子题组合题、一项含糊历史 JSON 复核项和并发修正题。初轮验收发现结果详情旧快照，改为当前读后 MySQL 8 双线程复跑通过；按精确 ID 逆序清理，owner 题目、幂等键、任务、复核项和解决记录均断言为 0。没有读取真实历史题库、连接 OSS/RabbitMQ 或创建媒体/Seed。
 - 完整工程门禁：独立验收修复后的 Java 8 模块 `clean verify` 全部通过（2 分 14 秒）；Frontend 生成客户端与全 workspace 类型检查通过。主体实现阶段的 Vitest 沙箱外 13 文件 91 项及三端生产构建结果保持通过，本轮未修改 Vue 运行时代码。
-- 发布：关键主体提交 `86a9176` 和独立验收修复提交 `db4ee5a` 均位于现有 Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 分支；修复提交后的 `check:api`、差异检查、V1/V2/V3 不变校验和本地完整验证通过。PR 保持非 Draft 且不会由本任务自行合并；推送后继续等待最新 Java、Python、Frontend、OpenAPI CI 全绿。
+- 发布：关键主体提交 `86a9176` 和独立验收修复提交 `db4ee5a` 经 Ready [PR #21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21) 交付；最新 Java、Python、Frontend、OpenAPI 检查全部成功，并于 2026-08-12 合并到 `main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`。合并后本地 `main` 已快进同步，T09B 本地和远端功能分支均已清理；T10 前置审计确认 T07/T09B、OpenAPI 0.10.1、生成客户端、六组稳定路由规格和教师端固定题库导航槽位均已具备。
+
+## 2026-08-12～13 T10 教师题库前端实施与真实验收
+
+- 门禁与契约：开始时分支为 `codex/t10-question-bank-web`、工作区干净、`HEAD=74b6b7c09b...`，并确认 `82ca1fbe` 与 `74b6b7c` 都是 HEAD 祖先。完整阅读仓库规则、页面规格、OpenAPI 0.10.1、T09B 交付和路线图；T07、T09、T09A、T09B 提交与生成客户端均可用，初始 `check:api` 通过。
+- 页面与权限：页面规格冻结的六组路由全部使用真实页面和 `teaching:access` 守卫；既有“题库”导航槽位启用且六路由同组高亮，没有调整标签、顺序或其他槽位。本人列表摘要、筛选/分页、历史版本、导入复核通过 URL 深链接与刷新恢复；匿名 401、学生访问教师端 403、他人/随机资源统一 404 均通过真实浏览器验证。
+- 结构化编辑与内容：真实创建普通题和含 2 个有序结构化子题的一层组合题；`expectedRevision` 不可变 v2/v3、指定历史快照、两个浏览器标签制造的 409 本地输入保留、422 字段映射、DRAFT→ACTIVE→ARCHIVED 及归档只读均通过。`marked` + KaTeX + DOMPurify 预览可显示公式和上标，危险事件属性与不允许的嵌入图片没有进入 DOM。
+- 媒体与导入：QUESTION_IMAGE、QUESTION_AUDIO、QUESTION_ATTACHMENT 经真实上传会话/直传/校验到 READY 并绑定组合题；CSV 导入 1/1，原一行 18 列 XLSX 为 0/0，修正最小 XLSX 为 1/1。LEGACY_JSON 验证默认 dry-run、3≤20/1000、有界文件读取、稳定问题码、结构化修正、确认跳过、结果筛选刷新和任务级二次确认清理；没有读取个人 PDF、扫描完整历史目录或提交客户端绝对路径。
+- 自动化与响应式：`generate:api`、`check:api`、全 workspace `typecheck` 通过；Vitest 18 个文件 116 项全通过；学生、教师、管理三端生产构建通过。真实浏览器另覆盖 45 条内存分页、429、503、partial-error 保留旧卡片、空态，以及六路由逐一 820×1180 无横向溢出。
+- 最终人工补验：Tab/Shift+Tab 与可见焦点环通过；“导入任务”“新建题目”可由 Enter 激活，“应用筛选”可由 Space 激活。首次 offline 补验暴露受保护的应用内路由会再次请求当前用户，断网后误清认证状态并整页跳登录；共享守卫改为仅在缺少已认证快照时恢复身份，真实 401 仍由授权请求处理，并新增离线路由专项测试。修复后人工复验确认断网筛选保留旧列表、URL 和输入并显示离线提示，恢复网络重试正常；总体结论更新为**无保留通过**。
+- 题目清理：普通题 `ab10bf99-ca6d-4be7-9f97-5da699e7a4fb`、组合父题 `2a9134bc-5c96-407e-b507-1fa43deeaa35`、CSV 题 `eeae94bc-35c9-4de8-85a5-7c5e5f5a7d4d` 和修正 XLSX 题 `1a0c426a-30a1-4e2a-8974-709581bfea03` 均已归档；组合的两个 DRAFT 子聚合作为父版本内部组成保留，不进入根列表。正式契约没有普通题删除端点，未跨库删行或新增生产清理 API。
+- 任务与媒体清理：LEGACY_JSON 成功任务 `ba0baf11-198f-4aa8-9f89-c037b7d54fba` 已精确清理（题目 1、来源引用 3、媒体引用 0），空任务 `e4e0276c-5d0b-48fd-a09e-0e4584592222` 已零影响清理。三个 CSV/XLSX 任务和三项题目媒体、三项导入源仍按正式契约保留且只读复核为 READY/BOUND；导入源到 7 天保留期后发布 Released，media-service 最后引用释放后再经 24 小时宽限和每小时回收器精确删除。归档题媒体为保持不可变详情而继续绑定；如后续要求零残留，需要另建仅 local/test 可启用、按 run ID/显式 ID 的跨服务精确清理任务。
+- 消息审计：3 条 `QuestionImportRequested`、6 条 `MediaReferenceBound` 以及相关 `MediaUploaded/MediaReady` 均已发布；learning/media 六个既有主队列与 DLQ 收尾只读计数均为 0，未清共享队列，未创建通知消息。唯一 `LegacyQuestionImportBatchProcessed` 事件 `8ed81ec4-4b96-49e4-9a31-ff5786f19c76` 为 PENDING、10/20 次；文档与源码确认 v2 当前没有 Queue/Binding/消费者。Publisher 最大 20 次、最大 256 秒退避，耗尽转 FAILED，不会无限重试或堆积 Rabbit 队列；无订阅阶段每批会留下失败 Outbox 和有限告警，记录为独立消息治理已知风险，不在 T10 扩展业务。
+- 边界与发布：未实现 T11/T12、组卷、学生作答、成绩或错题，未修改 Python 智能体、已合并迁移、OpenAPI 或全局页面规格，也未执行 44,441 份题库。关键实现提交为 `32371d0`，真实验收基线为 `aaaaf73`；Ready [PR #22](https://github.com/chengchen-ccnu/ccnu-edulion/pull/22) 继续承载本次收尾，不创建重复 PR且不自行合并。
 
 ## 2026-08-12 T09B.1 题目 HTTP 绑定一致性修复
 
@@ -283,4 +296,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - HTTP 自动化：新增独立随机端口测试，覆盖普通单选题省略 `children` 返回 201、显式 `children=[]` 返回 201、合法单子题组合题返回 201、非法枚举定位 `version.type`、未知字段定位 `version.unexpected`、非法 UUID 定位 `version.knowledgePointIds[0]`、缺少 `stem` 定位 `version.stem`。专项 7 项全部通过；learning-service 共 27 项执行、25 通过、2 个显式真实环境用例按条件跳过。
 - 完整门禁：`pnpm generate:api` 已把两处 OpenAPI 说明生成到唯一客户端，提交后 `check:api` 通过且无生成漂移，8 个 workspace 的 `typecheck` 通过；最终 8 模块 Java `clean verify` 全部通过，耗时 2 分 21 秒。
 - 数据与外部系统：自动化仅在独立 H2 内存库中创建固定合成 owner、一个合成知识点、两道普通题和一道单子题组合题；每项前后按 owner、知识点和关联版本精确清理，进程结束后内存库销毁。未连接真实 MySQL/Gateway、OSS、RabbitMQ 或历史题库，未创建持久数据库、表、Seed、媒体或消息，因此没有外部数据需要清理。
-- 发布：实现提交 `8c1049a` 已按规定推送到 `codex/t09b1-question-http-binding`；Ready [PR #23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23) 已创建并保持非 Draft。本任务不会自行合并，也不会修改 T10 PR #22。
+- 发布：实现提交 `8c1049a` 经 Ready [PR #23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23) 交付；Java、Python、Frontend 与 OpenAPI 检查全部成功，并于 2026-08-13 合并到 `main@0df0ae6cc8b7da999c540a040fcb9b53761aaff5`。T09B.1 本地和远端分支均已清理；该修复作为 T10 真实写请求验收前置条件，通过普通 merge 纳入现有 T10 PR #22。

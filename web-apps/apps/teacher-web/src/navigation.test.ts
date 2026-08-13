@@ -17,7 +17,7 @@ describe("teacher navigation", () => {
 
     expect(items.map(item => item.label)).toEqual(labels);
     expect(items.filter(item => item.state === "enabled").map(item => item.label))
-      .toEqual(["课程中心", "课程管理"]);
+      .toEqual(["课程中心", "课程管理", "题库"]);
     expect(items.find(item => item.id === "course-center")?.href).toBe("https://learn.example.test/courses");
     expect(items.find(item => item.id === "course-management")?.href).toBe("/teacher/courses");
     expect(items.filter(item => item.current).map(item => item.label)).toEqual(["课程管理"]);
@@ -45,6 +45,15 @@ describe("teacher navigation", () => {
     const items = buildTeacherNavigation("teacher-dashboard", user(["TEACHER"], ["teaching:access"]), urls);
 
     expect(items.filter(item => item.state === "coming-soon").every(item => item.href === undefined)).toBe(true);
+  });
+
+  it.each(["teacher-questions", "teacher-question-new", "teacher-question-detail", "teacher-question-edit",
+    "teacher-question-imports", "teacher-question-import-detail"])("keeps all T10 routes in one question-bank highlight group", routeName => {
+    const items = buildTeacherNavigation(routeName, user(["TEACHER"], ["teaching:access"]), urls);
+    expect(items.filter(item => item.current).map(item => item.label)).toEqual(["题库"]);
+    expect(items.find(item => item.id === "question-bank")).toMatchObject({
+      state: "enabled", href: "/teacher/questions", kind: "router"
+    });
   });
 });
 

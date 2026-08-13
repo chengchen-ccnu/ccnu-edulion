@@ -439,10 +439,11 @@ function ratio(value: number, total: number): number { return total > 0 ? Math.m
 function processingStatusLabel(purpose: MediaPurpose, status: MediaAsset["status"]): string {
   if (status === "PROCESSING") {
     return purpose === "LESSON_VIDEO" ? "视频正在转码为 HLS…"
-      : purpose === "COURSE_COVER" ? "封面正在校验和处理…" : "媒体正在处理…";
+      : purpose === "COURSE_COVER" ? "封面正在校验和处理…"
+        : purpose === "QUESTION_IMAGE" ? "图片正在校验和处理…" : "媒体正在处理…";
   }
   if (status === "VERIFYING") {
-    return purpose === "COURSE_COVER" ? "正在核验封面文件完整性…" : "正在核验文件完整性…";
+    return purpose === "COURSE_COVER" || purpose === "QUESTION_IMAGE" ? "正在核验图片文件完整性…" : "正在核验文件完整性…";
   }
   return purpose === "COURSE_COVER" ? "封面已接收，等待处理…" : "文件已接收，等待处理…";
 }
@@ -456,7 +457,9 @@ function initialProcessingStatusLabel(purpose: MediaPurpose): string {
 /** READY 只回写同用途的稳定 mediaId，并向教师说明实际可绑定对象。 */
 function readyStatusLabel(purpose: MediaPurpose): string {
   return purpose === "COURSE_COVER" ? "课程封面已就绪，可以绑定到课程。"
-    : purpose === "LESSON_VIDEO" ? "课时视频已就绪，可以绑定到目录。" : "媒体已就绪，可以绑定到课程。";
+    : purpose === "LESSON_VIDEO" ? "课时视频已就绪，可以绑定到目录。"
+      : purpose === "QUESTION_IMPORT_SOURCE" ? "导入源文件已就绪，可以创建导入任务。"
+        : "题目媒体已就绪，可以绑定到题目版本。";
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

@@ -64,7 +64,7 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 - `pnpm.cmd --dir web-apps run test`：沙箱内因既有 `esbuild spawn EPERM` 无法启动，经批准在沙箱外复跑后 13 个文件、91 项全部通过。
 - `pnpm.cmd --dir web-apps run build`：三端生产构建通过；只有既有 `hls.js` 超过 500 kB 的提示，本任务没有新增前端 bundle。
 
-提交后的 API 一致性、差异/敏感信息审计均通过；Ready PR #21 首轮 Java、Python、Frontend、OpenAPI 四项 CI 全绿。GitHub Actions 仅报告 action runtime 的 Node 20 平台级弃用提示，不影响本任务构建结果。
+提交后的 API 一致性、差异/敏感信息审计均通过；PR #21 最终 Java、Python、Frontend、OpenAPI 检查全部成功，并于 2026-08-12 合并。GitHub Actions 仅报告 action runtime 的 Node 20 平台级弃用提示，不影响本任务构建结果。
 
 ## 人工演示步骤
 
@@ -88,7 +88,7 @@ T09B 没有新增环境变量。learning-service 仍通过 `MEDIA_SERVICE_BASE_U
 
 - 分支：`codex/t09b-question-bank-ui-contract`
 - 基线：`main@c358c8e7dd971dd57c31f7040252b6715a1256ae`
-- Ready PR：[#21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21)，保持打开且不由本任务合并。
+- 合并 PR：[#21](https://github.com/chengchen-ccnu/ccnu-edulion/pull/21)，于 2026-08-12 合并到 `main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`；本地 `main` 已快进同步，T09B 本地和远端分支均已清理。
 - 关键实现提交：`86a9176`（`feat(question): close T09B UI contracts`）。
 - 独立验收修复提交：`db4ee5a`（`fix(question): guard legacy review resolution`）。
 
@@ -128,4 +128,4 @@ DTO 严格 creator/可选后置属性、业务规范化、异常安全路径提�
 - 分支：`codex/t09b1-question-http-binding`
 - 基线：`origin/main@82ca1fbe5c98ee8fbc010304bdfb16deeb6ac84e`
 - 关键实现提交：`8c1049a`（`fix(question): align HTTP request binding`）
-- Ready PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)；不得由本任务自行合并，且不修改 T10 PR #22
+- 合并 PR：[#23](https://github.com/chengchen-ccnu/ccnu-edulion/pull/23)，于 2026-08-13 合并到 `main@0df0ae6cc8b7da999c540a040fcb9b53761aaff5`；本地 `main` 已快进同步，T09B.1 本地和远端分支均已清理，修复随后通过普通 merge 纳入现有 T10 PR #22。

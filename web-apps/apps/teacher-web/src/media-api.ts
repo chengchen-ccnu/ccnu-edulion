@@ -4,6 +4,7 @@ import type {
   CompleteMediaUploadRequest,
   CreateMediaUploadRequest,
   GatewayClient,
+  MediaAccessGrant,
   MediaAsset,
   MediaUploadGrant,
   MediaUploadSession
@@ -20,6 +21,8 @@ export interface TeacherMediaApi {
   authorizePart(uploadId: string, body: AuthorizeMediaPartRequest, signal?: AbortSignal): Promise<MediaUploadGrant>;
   complete(uploadId: string, body: CompleteMediaUploadRequest, signal?: AbortSignal): Promise<MediaAsset>;
   getMedia(mediaId: string, signal?: AbortSignal): Promise<MediaAsset>;
+  accessGrant(mediaId: string, disposition: "INLINE" | "ATTACHMENT",
+    signal?: AbortSignal): Promise<MediaAccessGrant>;
 }
 
 /** 构造经 Gateway 和统一认证状态机调用的媒体适配器；401 最多由 AuthStore 刷新并重放一次。 */
@@ -66,6 +69,14 @@ export function createTeacherMediaApi(
     async getMedia(mediaId, signal) {
       const result = await authorized(Authorization => client.GET("/api/v1/media/{mediaId}", {
         headers: { Authorization }, params: { path: { mediaId } }, signal
+      }));
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async accessGrant(mediaId, disposition, signal) {
+      const result = await authorized(Authorization => client.POST("/api/v1/media/{mediaId}/access-grants", {
+        headers: { Authorization }, params: { path: { mediaId } },
+        body: { variant: "ORIGINAL", disposition }, signal
       }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
