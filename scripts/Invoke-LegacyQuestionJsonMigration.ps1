@@ -32,6 +32,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $accessToken = [Environment]::GetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', 'Process')
 if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'EDU_MIGRATION_ACCESS_TOKEN is required in the current process.' }
 $headers = @{ 'Authorization' = "Bearer $accessToken"; 'Content-Type' = 'application/json' }
+. (Join-Path $PSScriptRoot 'private\LegacyMigrationHttpDiagnostics.ps1')
 
 # 输入任意来源字节，输出小写 SHA-256；用于来源与检查点幂等，不输出原文。
 function Get-Sha256Hex([byte[]]$Bytes) {
@@ -276,6 +277,32 @@ function Convert-SourceFileToItem([string]$Path, [int]$SourceIndex) {
     }
 }
 
+# 输入当前有界批次，输出仅在错误字段原因中需要遮蔽的题干、答案和解析文本。
+# 返回值只在内存中交给诊断函数，不写入检查点，也不单独输出。
+function Get-BatchSensitiveValues([object[]]$BatchItems) {
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($fixedValue in @($accessToken, $resolvedRoot, $SourceRoot)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$fixedValue)) { $values.Add([string]$fixedValue) }
+    }
+    $pending = New-Object System.Collections.Generic.Stack[object]
+    foreach ($item in @($BatchItems)) { if ($null -ne $item.json) { $pending.Push($item.json) } }
+    while ($pending.Count -gt 0) {
+        $json = $pending.Pop()
+        foreach ($name in @('question', 'queAns', 'solution')) {
+            $value = $json.$name
+            if ($null -ne $value -and $value -isnot [Array] -and
+                    $value -isnot [System.Management.Automation.PSCustomObject] -and
+                    -not [string]::IsNullOrWhiteSpace([string]$value)) {
+                $values.Add([string]$value)
+            }
+        }
+        foreach ($child in @($json.subQues)) {
+            if ($null -ne $child -and $child -is [System.Management.Automation.PSCustomObject]) { $pending.Push($child) }
+        }
+    }
+    return @($values | Select-Object -Unique)
+}
+
 while ([int]$checkpoint.nextSourceIndex -lt $totalItems) {
     $startIndex = [int]$checkpoint.nextSourceIndex
     $endExclusive = [Math]::Min($startIndex + $effectiveTaskSize, $totalItems)
@@ -309,9 +336,15 @@ while ([int]$checkpoint.nextSourceIndex -lt $totalItems) {
         dryRun = ($Action -eq 'DryRun')
         maxItems = $items.Count
     } | ConvertTo-Json -Compress
+    # Windows PowerShell 5.1 会把字符串请求体按本机 ANSI 代码页编码；显式传 UTF-8 字节可避免中文题目被替换或形成非法 JSON。
+    $createBodyBytes = $utf8NoBom.GetBytes($createBody)
     try {
-        $task = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports" -Headers $headers -Body $createBody
-    } catch { throw "Legacy import task $taskOrdinal could not be created or replayed; progress is checkpointed and response content was suppressed." }
+        $task = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports" -Headers $headers -Body $createBodyBytes
+    } catch {
+        $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ `
+            -SensitiveValues @($accessToken, $resolvedRoot, $SourceRoot)
+        throw ($diagnostic | ConvertTo-Json -Depth 4 -Compress)
+    }
     if (-not [string]::IsNullOrWhiteSpace([string]$checkpoint.activeTask.importTaskId) -and
             [string]$checkpoint.activeTask.importTaskId -ne [string]$task.id) {
         throw 'Idempotent task replay returned a different task ID.'
@@ -330,10 +363,13 @@ while ([int]$checkpoint.nextSourceIndex -lt $totalItems) {
             finalBatch = ($batchIndex -eq $batchCount - 1)
             items = $batchItems
         } | ConvertTo-Json -Depth 30 -Compress
+        $bodyBytes = $utf8NoBom.GetBytes($body)
         try {
-            $response = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports/$($task.id)/batches" -Headers $headers -Body $body
+            $response = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports/$($task.id)/batches" -Headers $headers -Body $bodyBytes
         } catch {
-            throw "Legacy batch $batchIndex in task $taskOrdinal failed; progress is checkpointed and response content was suppressed. Re-run the same command to resume."
+            $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ `
+                -SensitiveValues (Get-BatchSensitiveValues $batchItems)
+            throw ($diagnostic | ConvertTo-Json -Depth 4 -Compress)
         }
         $checkpoint.activeTask.totals.processed += [int]$response.processedCount
         $checkpoint.activeTask.totals.imported += [int]$response.importedCount
