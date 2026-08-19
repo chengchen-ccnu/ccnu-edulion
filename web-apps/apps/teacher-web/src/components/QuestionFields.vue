@@ -14,6 +14,7 @@ import { computed, ref, watch } from "vue";
 
 import { emptyQuestionChild } from "../question-form";
 import MediaUploadField from "./MediaUploadField.vue";
+import KnowledgePointPicker from "./KnowledgePointPicker.vue";
 import SafeRichText from "./SafeRichText.vue";
 
 defineOptions({ name: "QuestionFields" });
@@ -71,10 +72,6 @@ function toggleChoiceAnswer(key: string, checked: boolean) {
   replace({ answers });
 }
 function setTextAnswers(value: string) { replace({ answers: value.split("\n") }); }
-function toggleKnowledge(id: string, checked: boolean) {
-  replace({ knowledgePointIds: checked ? [...new Set([...version.value.knowledgePointIds, id])]
-    : version.value.knowledgePointIds.filter(item => item !== id) });
-}
 function mediaId(purpose: QuestionMediaPurpose): string | null {
   return version.value.media.find(item => item.purpose === purpose)?.mediaId ?? null;
 }
@@ -156,12 +153,8 @@ function busy(key: string, value: boolean) {
       <textarea :value="version.analysis" rows="5" placeholder="支持 Markdown 与 LaTeX" @input="replace({ analysis: ($event.target as HTMLTextAreaElement).value })" />
       <small v-if="fieldError('analysis')" class="field-error">{{ fieldError("analysis") }}</small>
     </label>
-    <details class="knowledge-picker"><summary>知识点（已选 {{ version.knowledgePointIds.length }}）</summary>
-      <div><label v-for="point in knowledgePoints" :key="point.id">
-        <input type="checkbox" :checked="version.knowledgePointIds.includes(point.id)"
-          @change="toggleKnowledge(point.id, ($event.target as HTMLInputElement).checked)">{{ point.name }}
-      </label></div>
-    </details>
+    <KnowledgePointPicker :model-value="version.knowledgePointIds" :seed="knowledgePoints"
+      @update:model-value="replace({ knowledgePointIds: $event })" />
     <section class="question-media-grid" aria-label="题目媒体">
       <MediaUploadField :model-value="mediaId('QUESTION_IMAGE')" purpose="QUESTION_IMAGE" accept="image/jpeg,image/png,image/webp,image/gif"
         label="题目图片" :checkpoint-key="`${checkpointPrefix}:image`" @update:model-value="setMedia('QUESTION_IMAGE', $event)" @busy-change="busy('image', $event)" />

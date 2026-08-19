@@ -82,15 +82,17 @@ public class LegacyQuestionJsonParser {
             for (JsonNode child : subQues) {
                 index++;
                 String fallbackAnswer = explicitAnswers == null ? null : explicitAnswers.get(index - 1);
-                Candidate parsedChild = child(child, grade, difficulty, index, fallbackAnswer);
-                if (parsedChild == null) issues.add("SUBQUESTION_ANSWER_MISSING");
-                else children.add(parsedChild);
+                ChildParsed parsedChild = child(child, grade, difficulty, index, fallbackAnswer);
+                if (parsedChild.candidate() == null) issues.addAll(parsedChild.issues());
+                else children.add(parsedChild.candidate());
             }
             if (children.size() != subQues.size()) children.clear();
         } else if (type == QuestionModels.Type.SHORT_ANSWER && multiPartCount(stem.text()) >= 2) {
             issues.add("IMPLICIT_MULTI_PART");
         }
 
+        TagResult tags = tags(json);
+        issues.addAll(tags.issues());
         issues = issues.stream().distinct().toList();
         if (!issues.isEmpty() || type == null || grade == null || difficulty == null) {
             return Parsed.review(issues, originalDifficulty, jsonEdition, jsonGrade, grade);
@@ -99,28 +101,54 @@ public class LegacyQuestionJsonParser {
                 grade, QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(),
                 List.of(), List.of());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        return new Parsed(new Candidate(input, List.copyOf(images), List.copyOf(children)), List.of(),
+        return new Parsed(new Candidate(input, List.copyOf(images), List.copyOf(children), tags.tags()), List.of(),
                 originalDifficulty, jsonEdition, jsonGrade, grade);
     }
 
-    private Candidate child(JsonNode json, QuestionModels.Grade grade, QuestionModels.Difficulty difficulty,
+    private ChildParsed child(JsonNode json, QuestionModels.Grade grade, QuestionModels.Difficulty difficulty,
             int sequence, String fallbackAnswer) {
         QuestionModels.Type type = type(text(json, "exerciseType"));
-        if (type == null || type == QuestionModels.Type.COMPOSITE) return null;
+        if (type == null || type == QuestionModels.Type.COMPOSITE) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
         Cleaned stem = clean(text(json, "question")); Cleaned solution = clean(text(json, "solution"));
         List<String> answers = answers(text(json, "queAns"), type);
         if (answers.isEmpty() && fallbackAnswer != null && !fallbackAnswer.isBlank()) answers = answers(fallbackAnswer, type);
-        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe()) return null;
+        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe()) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
         List<QuestionDtos.OptionInput> options = List.of();
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
-            if (split == null) return null;
+            if (split == null) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
             stem = new Cleaned(split.stem(), stem.images(), stem.unsafe()); options = split.options();
         }
+        TagResult tags = tags(json);
+        if (!tags.issues().isEmpty()) return new ChildParsed(null, tags.issues());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        return new Candidate(new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR, grade,
+        return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR, grade,
                 QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(), List.of(), List.of()),
-                List.copyOf(images), List.of());
+                List.copyOf(images), List.of(), tags.tags()), List.of());
+    }
+
+    /** 读取各题自己的 tags；只按 knowId 去重，名称绝不用于建立外键。 */
+    private static TagResult tags(JsonNode json) {
+        JsonNode values = json.get("tags");
+        if (values == null || values.isNull()) return new TagResult(List.of(), List.of());
+        if (!values.isArray()) return new TagResult(List.of(), List.of("KNOWLEDGE_POINT_BINDING_INVALID"));
+        List<LegacyTag> tags = new ArrayList<>(); List<String> issues = new ArrayList<>(); Set<String> ids = new HashSet<>();
+        int sourceOrder = 0;
+        for (JsonNode value : values) {
+            sourceOrder++;
+            String knowId = text(value, "knowId"), name = text(value, "knowName"), typeId = text(value, "knowTypeId");
+            if (knowId == null || knowId.isBlank() || name == null || name.isBlank() || typeId == null || typeId.isBlank()) {
+                issues.add("KNOWLEDGE_POINT_BINDING_INVALID"); continue;
+            }
+            if (!ids.add(knowId)) { issues.add("KNOWLEDGE_POINT_DUPLICATE"); continue; }
+            tags.add(new LegacyTag(knowId, name.trim(), typeId, nullableInteger(value, "priority"),
+                    nullableInteger(value, "sortIndex"), nullableBoolean(value, "coreFlag"),
+                    nullableBoolean(value, "examPointFlag"), nullableBoolean(value, "lastExamPointFlag"),
+                    sourceOrder, null));
+        }
+        tags.sort(java.util.Comparator.comparing((LegacyTag tag) -> tag.sortIndex() == null ? Integer.MAX_VALUE : tag.sortIndex())
+                .thenComparingInt(LegacyTag::sourceOrder).thenComparing(LegacyTag::knowId));
+        return new TagResult(List.copyOf(tags), issues.stream().distinct().toList());
     }
 
     /** 清洗危险 HTML 属性/标签并提取 HTTPS 图片；安全展示标签与 LaTeX 字符保持原序。 */
@@ -223,7 +251,37 @@ public class LegacyQuestionJsonParser {
     private static int integer(JsonNode json, String field) { JsonNode value = json.get(field); return value == null || !value.isNumber() ? 0 : value.asInt(); }
     private static String numberText(JsonNode json, String field) { JsonNode value = json.get(field); return value == null || value.isNull() ? null : value.asString(); }
 
-    public record Candidate(QuestionDtos.VersionInput input, List<String> imageUrls, List<Candidate> children) {}
+    private static Integer nullableInteger(JsonNode json, String field) {
+        JsonNode value = json.get(field); if (value == null || value.isNull()) return null;
+        if (value.isNumber()) return value.asInt();
+        try { return Integer.valueOf(value.asString()); } catch (RuntimeException ignored) { return null; }
+    }
+    private static Boolean nullableBoolean(JsonNode json, String field) {
+        JsonNode value = json.get(field); if (value == null || value.isNull()) return null;
+        if (value.isBoolean()) return value.asBoolean();
+        String text = value.asString();
+        if ("1".equals(text) || "true".equalsIgnoreCase(text)) return true;
+        if ("0".equals(text) || "false".equalsIgnoreCase(text)) return false;
+        return null;
+    }
+
+    public record Candidate(QuestionDtos.VersionInput input, List<String> imageUrls, List<Candidate> children,
+            List<LegacyTag> tags) {
+        /** 用平台 UUID 替换来源 tag 键；来源标记仍保留在 tags 供版本关联落库。 */
+        public Candidate withResolvedTags(List<LegacyTag> resolved) {
+            var value = input;
+            var mapped = new QuestionDtos.VersionInput(value.type(), value.difficulty(), value.stage(), value.grade(),
+                    value.subject(), value.stem(), value.options(), value.answers(), value.analysis(),
+                    resolved.stream().map(tag -> UUID.fromString(tag.knowledgePointId())).toList(), value.media());
+            return new Candidate(mapped, imageUrls, children, List.copyOf(resolved));
+        }
+    }
+    public record LegacyTag(String knowId, String knowName, String knowTypeId, Integer priority,
+            Integer sortIndex, Boolean coreFlag, Boolean examPointFlag, Boolean lastExamPointFlag,
+            int sourceOrder, String knowledgePointId) {
+        public LegacyTag resolved(String id) { return new LegacyTag(knowId, knowName, knowTypeId, priority, sortIndex,
+                coreFlag, examPointFlag, lastExamPointFlag, sourceOrder, id); }
+    }
     public record Parsed(Candidate candidate, List<String> issueCodes, String originalDifficulty,
             String jsonEdition, String jsonGrade, QuestionModels.Grade grade) {
         static Parsed review(List<String> issues, String difficulty, String jsonEdition, String jsonGrade, QuestionModels.Grade grade) {
@@ -233,4 +291,8 @@ public class LegacyQuestionJsonParser {
     }
     private record Cleaned(String text, List<String> images, boolean unsafe) {}
     private record OptionSplit(String stem, List<QuestionDtos.OptionInput> options) {}
+    private record TagResult(List<LegacyTag> tags, List<String> issues) {}
+    private record ChildParsed(Candidate candidate, List<String> issues) {
+        static ChildParsed invalid(String issue) { return new ChildParsed(null, List.of(issue)); }
+    }
 }

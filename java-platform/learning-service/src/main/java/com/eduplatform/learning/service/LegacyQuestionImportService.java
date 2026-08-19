@@ -10,6 +10,7 @@ import com.eduplatform.learning.importing.LegacyQuestionJsonParser;
 import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.messaging.LearningEvents;
 import com.eduplatform.learning.persistence.QuestionRepository;
+import com.eduplatform.learning.persistence.KnowledgeGraphRepository;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -39,13 +40,14 @@ public class LegacyQuestionImportService {
     private final QuestionRepository repository; private final LegacyQuestionJsonParser parser;
     private final QuestionService questions; private final MediaClient media; private final LearningEvents events;
     private final LearningProperties properties; private final ObjectMapper mapper;
+    private final KnowledgeGraphRepository knowledgeGraph;
     private final TransactionTemplate itemTransactions;
 
     public LegacyQuestionImportService(QuestionRepository repository, LegacyQuestionJsonParser parser,
             QuestionService questions, MediaClient media, LearningEvents events, LearningProperties properties,
-            ObjectMapper mapper, PlatformTransactionManager transactionManager) {
+            ObjectMapper mapper, PlatformTransactionManager transactionManager, KnowledgeGraphRepository knowledgeGraph) {
         this.repository = repository; this.parser = parser; this.questions = questions; this.media = media;
-        this.events = events; this.properties = properties; this.mapper = mapper;
+        this.events = events; this.properties = properties; this.mapper = mapper; this.knowledgeGraph = knowledgeGraph;
         this.itemTransactions = new TransactionTemplate(transactionManager);
         this.itemTransactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
@@ -117,20 +119,27 @@ public class LegacyQuestionImportService {
                 persistSource(task, request, item, parsed, QuestionModels.ImportOutcome.NEEDS_REVIEW, null);
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.NEEDS_REVIEW, null, parsed.issueCodes())); review++; continue;
             }
+            ResolvedCandidate resolved = resolveTags(task.sourceSystem(), parsed.candidate());
+            if (!resolved.issues().isEmpty()) {
+                persistSource(task, request, item, parsed, QuestionModels.ImportOutcome.NEEDS_REVIEW, null, resolved.issues());
+                results.add(result(item.externalId(), QuestionModels.ImportOutcome.NEEDS_REVIEW, null, resolved.issues())); review++; continue;
+            }
+            LegacyQuestionJsonParser.Parsed accepted = new LegacyQuestionJsonParser.Parsed(resolved.candidate(), List.of(), parsed.originalDifficulty(),
+                    parsed.jsonEdition(), parsed.jsonGrade(), parsed.grade());
             if (task.dryRun()) {
-                persistSource(task, request, item, parsed, QuestionModels.ImportOutcome.VALID, null);
+                persistSource(task, request, item, accepted, QuestionModels.ImportOutcome.VALID, null);
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.VALID, null, List.of())); valid++; continue;
             }
             try {
                 String questionId = itemTransactions.execute(status -> {
-                    String created = importCandidate(task, request.batchId().toString(), item.externalId(), parsed.candidate(), traceId);
-                    persistSource(task, request, item, parsed, QuestionModels.ImportOutcome.IMPORTED, created);
+                    String created = importCandidate(task, request.batchId().toString(), item.externalId(), accepted.candidate(), traceId);
+                    persistSource(task, request, item, accepted, QuestionModels.ImportOutcome.IMPORTED, created);
                     return created;
                 });
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.IMPORTED, questionId, List.of())); imported++;
             } catch (QuestionException dependency) {
-                String issue = parsed.candidate().imageUrls().isEmpty() ? "FIELD_INVALID" : "EXTERNAL_IMAGE_TRANSFER_FAILED";
-                persistSource(task, request, item, parsed, QuestionModels.ImportOutcome.NEEDS_REVIEW, null,
+                String issue = accepted.candidate().imageUrls().isEmpty() ? "FIELD_INVALID" : "EXTERNAL_IMAGE_TRANSFER_FAILED";
+                persistSource(task, request, item, accepted, QuestionModels.ImportOutcome.NEEDS_REVIEW, null,
                         List.of(issue));
                 results.add(result(item.externalId(), QuestionModels.ImportOutcome.NEEDS_REVIEW, null,
                         List.of(issue))); review++;
@@ -247,13 +256,43 @@ public class LegacyQuestionImportService {
             childIndex++;
             var input = withMedia(task, externalId + ":child:" + childIndex, child, traceId);
             String requestId = deterministic(task.id(), externalId + ":child:" + childIndex);
-            childIds.add(questions.createImported(task.ownerId(), requestId, input, traceId).response().id());
+            String childId = questions.createImported(task.ownerId(), requestId, input, traceId).response().id();
+            repository.applyLegacyKnowledgeMetadata(childId, child.tags());
+            childIds.add(childId);
         }
         QuestionDtos.VersionInput parent = withMedia(task, externalId + ":parent", candidate, traceId);
         String requestId = deterministic(task.id(), externalId + ":parent");
-        return candidate.children().isEmpty()
+        String created = candidate.children().isEmpty()
                 ? questions.createImported(task.ownerId(), requestId, parent, traceId).response().id()
                 : questions.createImportedComposite(task.ownerId(), requestId, parent, childIds, traceId).response().id();
+        repository.applyLegacyKnowledgeMetadata(created, candidate.tags());
+        return created;
+    }
+
+    /** 逐题、逐子题按 sourceSystem+knowId 解析 UUID，并校验名称、类型和已确认学段映射。 */
+    private ResolvedCandidate resolveTags(String sourceSystem, LegacyQuestionJsonParser.Candidate candidate) {
+        List<String> issues = new ArrayList<>(); List<LegacyQuestionJsonParser.LegacyTag> tags = new ArrayList<>();
+        for (var tag : candidate.tags()) {
+            var point = knowledgeGraph.findSourcePoint(sourceSystem, tag.knowId());
+            if (point.isEmpty()) { issues.add("KNOWLEDGE_POINT_UNKNOWN"); continue; }
+            boolean nameMatches = point.get().name().equals(tag.knowName());
+            boolean typeMatches = point.get().knowledgeTypeId().equals(tag.knowTypeId());
+            boolean stageMatches = "JUNIOR".equals(point.get().normalizedStage());
+            if (!nameMatches) issues.add("KNOWLEDGE_POINT_NAME_CONFLICT");
+            if (!typeMatches) issues.add("KNOWLEDGE_POINT_TYPE_CONFLICT");
+            if (!stageMatches) issues.add("KNOWLEDGE_POINT_STAGE_MISMATCH");
+            if (nameMatches && typeMatches && stageMatches) tags.add(tag.resolved(point.get().id()));
+        }
+        List<LegacyQuestionJsonParser.Candidate> children = new ArrayList<>();
+        for (var child : candidate.children()) {
+            ResolvedCandidate resolved = resolveTags(sourceSystem, child); issues.addAll(resolved.issues());
+            if (resolved.candidate() != null) children.add(resolved.candidate());
+        }
+        issues = issues.stream().distinct().toList();
+        if (!issues.isEmpty()) return new ResolvedCandidate(null, issues);
+        var resolved = candidate.withResolvedTags(tags);
+        return new ResolvedCandidate(new LegacyQuestionJsonParser.Candidate(resolved.input(), resolved.imageUrls(),
+                List.copyOf(children), resolved.tags()), List.of());
     }
 
     private QuestionDtos.VersionInput withMedia(ImportTask task, String sourceKey,
@@ -374,6 +413,12 @@ public class LegacyQuestionImportService {
             case "TYPE_UNSUPPORTED" -> "历史题型无法安全映射";
             case "HTML_UNSAFE" -> "历史 HTML 含不安全或被移除结构";
             case "EXTERNAL_IMAGE_TRANSFER_FAILED" -> "外部图片转存失败";
+            case "KNOWLEDGE_POINT_UNKNOWN" -> "来源 knowId 未找到已导入知识点";
+            case "KNOWLEDGE_POINT_NAME_CONFLICT" -> "tag 名称与知识点来源名称不一致";
+            case "KNOWLEDGE_POINT_TYPE_CONFLICT" -> "tag 类型与知识点来源类型不一致";
+            case "KNOWLEDGE_POINT_STAGE_MISMATCH" -> "知识点尚未确认映射为题目学段";
+            case "KNOWLEDGE_POINT_DUPLICATE" -> "同一题目 tags 含重复 knowId";
+            case "KNOWLEDGE_POINT_BINDING_INVALID" -> "题目 tag 缺少必要来源字段或字段类型无效";
             default -> "字段无法安全转换，需要人工复核";
         };
     }
@@ -413,4 +458,5 @@ public class LegacyQuestionImportService {
     private static QuestionException invalid(String field, String reason) { return new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "COMMON.VALIDATION_FAILED", "请求参数不合法", List.of(new com.eduplatform.shared.api.FieldError(field, reason))); }
     private static QuestionException conflict(String code, String message) { return new QuestionException(HttpStatus.CONFLICT, code, message); }
     private static QuestionException notFound() { return new QuestionException(HttpStatus.NOT_FOUND, "QUESTION.NOT_FOUND", "历史导入任务不存在或不可见"); }
+    private record ResolvedCandidate(LegacyQuestionJsonParser.Candidate candidate, List<String> issues) {}
 }

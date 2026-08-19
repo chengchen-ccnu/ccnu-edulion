@@ -58,6 +58,30 @@ describe("teacher question API", () => {
     await expect(api.resolveLegacyItem("task-1", "item-1", { clientRequestId: "request-1", expectedRevision: 2,
       action: "CONFIRM_SKIP", correctedVersion: null })).resolves.toMatchObject({ outcome: "SKIPPED" });
   });
+
+  it("searches a bounded junior knowledge page and requests only a one-hop graph", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      if (calls === 1) {
+        expect(url.pathname).toBe("/api/v1/teacher/knowledge-points/search");
+        expect(url.searchParams.get("normalizedStage")).toBe("JUNIOR");
+        expect(url.searchParams.get("size")).toBe("20");
+        expect(url.searchParams.get("keyword")).toBe("有理数");
+        return json({ items: [], page: 1, size: 20, total: 0 });
+      }
+      expect(url.pathname).toBe("/api/v1/teacher/knowledge-points/point-1/graph");
+      expect(url.searchParams.get("depth")).toBe("1");
+      return json({ center: { id: "point-1", name: "有理数", normalizedStage: "JUNIOR", knowledgeTypeId: "type-a",
+        knowledgeTypeName: "概念", knowledgeTypeColour: null, levelSortIndex: 1, enabled: true },
+      directPrerequisites: [], directDependents: [], nodes: [], edges: [], depth: 1 });
+    }));
+    const api = createTeacherQuestionApi(store(), createGatewayClient("http://gateway.test"));
+    await api.searchKnowledgePoints({ normalizedStage: "JUNIOR", keyword: "有理数", page: 1, size: 20 });
+    await expect(api.knowledgePointGraph("point-1", 1)).resolves.toMatchObject({ depth: 1 });
+  });
 });
 
 function store(): AuthStore {

@@ -278,6 +278,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\Invoke-
 
 若目标数据库不存在，Flyway 应以 `Unknown database 'edu_platform_learning_dev'` 停止；不得为通过验收而由应用或 Codex 自动创建 Schema。
 
+## T10B 知识图谱迁移
+
+T10B 的图谱脚本只经 Gateway 调用管理员接口，不读取本地凭据文件，也不连接 MySQL。短期管理员令牌只能放在当前 PowerShell 进程的 `EDU_MIGRATION_ACCESS_TOKEN`；脚本不会打印或写入令牌。检查点必须位于两个只读来源文件所在目录之外，只保存文件指纹、任务 ID、批次位置和聚合计数。
+
+默认执行 DryRun：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-KnowledgeGraphMigration.ps1 `
+  -NodeFile '<只读节点 JSON>' -RelationFile '<只读关系 JSON>' `
+  -SourceSystem 'KG_MATH_T10B_V1' -ApiBaseUrl 'http://127.0.0.1:8080' `
+  -BatchSize 200 -CheckpointPath '<来源目录之外\kg-dryrun-checkpoint.json>'
+```
+
+正式 Import 除 `-Action Import -ConfirmImport` 外，还必须同时给出 `-ConfirmStageMapping`、`-ConfirmStatusMapping`、`-ConfirmTypeNames` 与 `-ConfirmParentKeySemantics`。这些开关只表示业务语义已经由负责人确认，不会猜测映射；导入节点仍默认 `enabled=false`，来源 `parentId` 只写 `source_parent_key`。当前 `status=0`、`02/03/04`、六类名称和 479 个来源分组键均未确认，因此不得执行正式 Import。完成后使用 `Remove-Item Env:EDU_MIGRATION_ACCESS_TOKEN` 清除当前进程令牌。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。

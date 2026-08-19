@@ -11,6 +11,7 @@ import com.eduplatform.learning.domain.QuestionModels.Media;
 import com.eduplatform.learning.domain.QuestionModels.Option;
 import com.eduplatform.learning.domain.QuestionModels.RowError;
 import com.eduplatform.learning.domain.QuestionModels.Version;
+import com.eduplatform.learning.importing.LegacyQuestionJsonParser.LegacyTag;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -47,7 +48,8 @@ public class QuestionRepository {
 
     /** 按启用状态和可选年级读取知识点，结果供服务层组树。 */
     public List<KnowledgePoint> listKnowledgePoints(boolean enabledOnly, QuestionModels.Grade grade) {
-        String sql = "SELECT * FROM knowledge_point WHERE 1=1"
+        // 旧树接口只服务管理员手工知识树；图谱来源必须走分页搜索，避免一次返回数千个根节点。
+        String sql = "SELECT * FROM knowledge_point WHERE source_system IS NULL"
                 + (enabledOnly ? " AND enabled=TRUE" : "")
                 + (grade == null ? "" : " AND grade=?")
                 + " ORDER BY parent_id, sort_order, code";
@@ -149,6 +151,17 @@ public class QuestionRepository {
         for (Media media : value.media()) {
             jdbc.update("INSERT INTO question_version_media(id,question_version_id,media_id,purpose,sequence_no,created_at) VALUES(?,?,?,?,?,?)",
                     media.id(), value.id(), media.mediaId(), media.purpose().name(), media.sequence(), ts(value.createdAt()));
+        }
+    }
+
+    /** 历史导入创建版本后补写 tags 的来源语义；知识点 UUID 与顺序行本身保持不可变。 */
+    public void applyLegacyKnowledgeMetadata(String questionId, List<LegacyTag> tags) {
+        if (tags.isEmpty()) return;
+        String versionId = jdbc.queryForObject("SELECT current_version_id FROM question_aggregate WHERE id=?", String.class, questionId);
+        for (LegacyTag tag : tags) {
+            jdbc.update("UPDATE question_version_knowledge_point SET priority=?,core_flag=?,exam_point_flag=?,last_exam_point_flag=?,source_tag_sort_index=? WHERE question_version_id=? AND knowledge_point_id=?",
+                    tag.priority(), tag.coreFlag(), tag.examPointFlag(), tag.lastExamPointFlag(), tag.sortIndex(),
+                    versionId, tag.knowledgePointId());
         }
     }
 
@@ -626,9 +639,10 @@ public class QuestionRepository {
     }
 
     private KnowledgePoint knowledge(ResultSet rs, int row) throws SQLException {
+        String stage = rs.getString("stage"), grade = rs.getString("grade"), subject = rs.getString("subject");
         return new KnowledgePoint(rs.getString("id"), rs.getString("code"), rs.getString("name"), rs.getString("parent_id"),
-                QuestionModels.Stage.valueOf(rs.getString("stage")), QuestionModels.Grade.valueOf(rs.getString("grade")),
-                QuestionModels.Subject.valueOf(rs.getString("subject")), rs.getInt("sort_order"), rs.getBoolean("enabled"),
+                stage == null ? null : QuestionModels.Stage.valueOf(stage), grade == null ? null : QuestionModels.Grade.valueOf(grade),
+                subject == null ? null : QuestionModels.Subject.valueOf(subject), rs.getInt("sort_order"), rs.getBoolean("enabled"),
                 rs.getLong("revision"), instant(rs, "created_at"), instant(rs, "updated_at"));
     }
 

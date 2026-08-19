@@ -68,6 +68,9 @@ class QuestionBankIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM knowledge_point_prerequisite"); jdbc.update("DELETE FROM knowledge_graph_import_issue");
+        jdbc.update("DELETE FROM knowledge_graph_import_relation"); jdbc.update("DELETE FROM knowledge_graph_import_node");
+        jdbc.update("DELETE FROM knowledge_graph_import_batch"); jdbc.update("DELETE FROM knowledge_graph_import_task");
         jdbc.update("DELETE FROM learning_consumed_event"); jdbc.update("DELETE FROM learning_outbox_event");
         jdbc.update("DELETE FROM question_legacy_item_resolution"); jdbc.update("DELETE FROM question_legacy_review_item");
         jdbc.update("DELETE FROM question_legacy_import_issue"); jdbc.update("DELETE FROM question_legacy_source_ref");

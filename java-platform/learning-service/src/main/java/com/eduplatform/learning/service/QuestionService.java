@@ -237,8 +237,10 @@ public class QuestionService {
         List<String> ids = input.knowledgePointIds().stream().map(UUID::toString).distinct().toList();
         if (ids.size() != input.knowledgePointIds().size()) throw invalid("knowledgePointIds", "知识点不能重复");
         List<KnowledgePoint> knowledge = repository.findKnowledgePoints(ids);
+        // 图谱来源没有年级字段；确认到同一学段后 grade=null 表示整个学段适用，不能虚构七/八/九年级。
         if (knowledge.size() != ids.size() || knowledge.stream().anyMatch(point -> !point.enabled()
-                || point.stage() != input.stage() || point.grade() != input.grade() || point.subject() != input.subject())) {
+                || point.stage() != input.stage() || (point.grade() != null && point.grade() != input.grade())
+                || point.subject() != input.subject())) {
             throw invalid("knowledgePointIds", "知识点不存在、未启用或与题目学段年级学科不匹配");
         }
         Set<String> mediaIds = new HashSet<>(); Set<String> order = new HashSet<>();

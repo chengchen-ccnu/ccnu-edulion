@@ -283,6 +283,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/knowledge-points/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search enabled knowledge points without loading the complete graph
+         * @description Returns only platform-enabled points. Source identifiers and source grouping keys are not exposed as user labels.
+         */
+        get: operations["searchTeacherKnowledgePoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/knowledge-points/{knowledgePointId}/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get direct and bounded prerequisite neighbourhood */
+        get: operations["getTeacherKnowledgePointGraph"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-graph-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an administrator-only knowledge graph import task
+         * @description Defaults are enforced by the migration client; a non-dry-run task never enables imported nodes automatically.
+         */
+        post: operations["createKnowledgeGraphImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-graph-imports/{importTaskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get aggregate-only import status and dry-run result */
+        get: operations["getKnowledgeGraphImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-graph-imports/{importTaskId}/node-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit one deterministic node batch */
+        post: operations["submitKnowledgeGraphNodeBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-graph-imports/{importTaskId}/relation-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit prerequisite-to-dependent relations after all nodes
+         * @description Each item is explicitly `prerequisite -> dependent`; Neo4j start/end metadata is not accepted.
+         */
+        post: operations["submitKnowledgeGraphRelationBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/knowledge-graph-imports/{importTaskId}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List bounded, content-free import issues */
+        get: operations["listKnowledgeGraphImportIssues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/knowledge-points": {
         parameters: {
             query?: never;
@@ -1062,13 +1190,49 @@ export interface components {
             /** Format: uuid */
             parentId: string | null;
             stage: components["schemas"]["QuestionStage"];
-            grade: components["schemas"]["QuestionGrade"];
+            /** @description Null means the knowledge point applies to the confirmed whole stage because the source has no grade field. */
+            grade: components["schemas"]["QuestionGrade"] | null;
             subject: components["schemas"]["QuestionSubject"];
             sortOrder: number;
             enabled: boolean;
             /** Format: int64 */
             revision: number;
             children: components["schemas"]["KnowledgePoint"][];
+        };
+        KnowledgePointSearchItem: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            normalizedStage: components["schemas"]["QuestionStage"];
+            knowledgeTypeId: string;
+            knowledgeTypeName: string | null;
+            /** @description Presentation hint only; it never defines type identity. */
+            knowledgeTypeColour: string | null;
+            levelSortIndex: number;
+            enabled: boolean;
+        };
+        KnowledgePointSearchPage: {
+            items: components["schemas"]["KnowledgePointSearchItem"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        KnowledgePointGraphEdge: {
+            /** Format: uuid */
+            prerequisiteId: string;
+            /** Format: uuid */
+            dependentId: string;
+            /** @enum {string} */
+            relationType: "PREREQUISITE";
+        };
+        KnowledgePointGraph: {
+            center: components["schemas"]["KnowledgePointSearchItem"];
+            directPrerequisites: components["schemas"]["KnowledgePointSearchItem"][];
+            directDependents: components["schemas"]["KnowledgePointSearchItem"][];
+            nodes: components["schemas"]["KnowledgePointSearchItem"][];
+            edges: components["schemas"]["KnowledgePointGraphEdge"][];
+            depth: number;
         };
         CreateKnowledgePointRequest: {
             code: string;
@@ -1090,6 +1254,122 @@ export interface components {
             grade: components["schemas"]["QuestionGrade"];
             sortOrder: number;
             enabled: boolean;
+        };
+        CreateKnowledgeGraphImportRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            sourceSystem: string;
+            dryRun: boolean;
+            nodeFileSha256: string;
+            relationFileSha256: string;
+            expectedNodeCount: number;
+            expectedRelationCount: number;
+        };
+        KnowledgeGraphNodeInput: {
+            sourceKnowId: string;
+            name: string;
+            disciplineCode: string;
+            educationStageCode: string;
+            knowledgeTypeId: string;
+            knowledgeTypeColour: string | null;
+            levelSortIndex: number;
+            nodeKind: string;
+            /** @description Opaque source grouping key; never used as a knowledge-point foreign key. */
+            sourceParentKey: string | null;
+            sourceStatus: string;
+            contentSha256: string;
+        };
+        KnowledgeGraphRelationInput: {
+            prerequisiteSourceKnowId: string;
+            dependentSourceKnowId: string;
+            sourceRelationType: string;
+            contentSha256: string;
+        };
+        KnowledgeGraphNodeBatchRequest: {
+            /** Format: uuid */
+            batchId: string;
+            finalBatch: boolean;
+            nodes: components["schemas"]["KnowledgeGraphNodeInput"][];
+        };
+        KnowledgeGraphRelationBatchRequest: {
+            /** Format: uuid */
+            batchId: string;
+            finalBatch: boolean;
+            relations: components["schemas"]["KnowledgeGraphRelationInput"][];
+        };
+        /** @enum {string} */
+        KnowledgeGraphImportStatus: "AWAITING_NODES" | "AWAITING_RELATIONS" | "VALIDATING" | "COMPLETED" | "COMPLETED_WITH_ISSUES" | "FAILED";
+        KnowledgeGraphImportSummary: {
+            nodeCount: number;
+            relationCount: number;
+            stageDistribution: {
+                [key: string]: number;
+            };
+            typeDistribution: {
+                [key: string]: number;
+            };
+            invalidNodeCount: number;
+            duplicateNameCount: number;
+            isolatedNodeCount: number;
+            unresolvedParentKeyCount: number;
+            addedNodeCount: number;
+            reusedNodeCount: number;
+            conflictNodeCount: number;
+            addedRelationCount: number;
+            reusedRelationCount: number;
+            skippedRelationCount: number;
+            missingEndpointCount: number;
+            duplicateEdgeCount: number;
+            selfLoopCount: number;
+            crossDisciplineEdgeCount: number;
+            crossStageEdgeCount: number;
+            cycleDetected: boolean;
+            maxInDegree: number;
+            maxOutDegree: number;
+            longestPrerequisiteChain: number;
+        };
+        KnowledgeGraphImportTask: {
+            /** Format: uuid */
+            id: string;
+            sourceSystem: string;
+            dryRun: boolean;
+            status: components["schemas"]["KnowledgeGraphImportStatus"];
+            expectedNodeCount: number;
+            expectedRelationCount: number;
+            processedNodeCount: number;
+            processedRelationCount: number;
+            summary: components["schemas"]["KnowledgeGraphImportSummary"] | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        KnowledgeGraphBatchResult: {
+            /** Format: uuid */
+            importTaskId: string;
+            /** Format: uuid */
+            batchId: string;
+            replayed: boolean;
+            acceptedCount: number;
+            status: components["schemas"]["KnowledgeGraphImportStatus"];
+        };
+        KnowledgeGraphImportIssue: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            issueCode: "FIELD_INVALID" | "NODE_DUPLICATE" | "NODE_CONTENT_CONFLICT" | "RELATION_DUPLICATE" | "ENDPOINT_MISSING" | "SELF_LOOP" | "CROSS_DISCIPLINE" | "CROSS_STAGE" | "CYCLE_DETECTED" | "SOURCE_PARENT_UNRESOLVED";
+            /** @enum {string} */
+            subjectKind: "TASK" | "NODE" | "RELATION";
+            occurrenceCount: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        KnowledgeGraphImportIssuePage: {
+            items: components["schemas"]["KnowledgeGraphImportIssue"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
         };
         QuestionOptionInput: {
             key: string;
@@ -1365,7 +1645,7 @@ export interface components {
         };
         LegacyQuestionImportIssue: {
             /** @enum {string} */
-            code: "EMBEDDED_OPTIONS_AMBIGUOUS" | "IMPLICIT_MULTI_PART" | "SUBQUESTION_ANSWER_MISSING" | "PATH_JSON_METADATA_CONFLICT" | "SOURCE_CONTENT_CONFLICT" | "TYPE_UNSUPPORTED" | "FIELD_INVALID" | "HTML_UNSAFE" | "EXTERNAL_IMAGE_TRANSFER_FAILED";
+            code: "EMBEDDED_OPTIONS_AMBIGUOUS" | "IMPLICIT_MULTI_PART" | "SUBQUESTION_ANSWER_MISSING" | "PATH_JSON_METADATA_CONFLICT" | "SOURCE_CONTENT_CONFLICT" | "TYPE_UNSUPPORTED" | "FIELD_INVALID" | "HTML_UNSAFE" | "EXTERNAL_IMAGE_TRANSFER_FAILED" | "KNOWLEDGE_POINT_UNKNOWN" | "KNOWLEDGE_POINT_NAME_CONFLICT" | "KNOWLEDGE_POINT_TYPE_CONFLICT" | "KNOWLEDGE_POINT_STAGE_MISMATCH" | "KNOWLEDGE_POINT_DUPLICATE" | "KNOWLEDGE_POINT_BINDING_INVALID";
             message: string;
         };
         LegacyQuestionImportItemResult: {
@@ -2459,6 +2739,218 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    searchTeacherKnowledgePoints: {
+        parameters: {
+            query: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                normalizedStage: components["schemas"]["QuestionStage"];
+                knowledgeTypeId?: string;
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One bounded page ordered deterministically. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePointSearchPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getTeacherKnowledgePointGraph: {
+        parameters: {
+            query?: {
+                depth?: number;
+            };
+            header?: never;
+            path: {
+                knowledgePointId: components["parameters"]["KnowledgePointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The selected point and a bounded graph projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePointGraph"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createKnowledgeGraphImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKnowledgeGraphImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphImportTask"];
+                };
+            };
+            /** @description Task created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getKnowledgeGraphImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe aggregate result without full source identifiers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    submitKnowledgeGraphNodeBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeGraphNodeBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch accepted or idempotently replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphBatchResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    submitKnowledgeGraphRelationBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeGraphRelationBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch accepted; a final batch performs whole-graph validation before import. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphBatchResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listKnowledgeGraphImportIssues: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe issue page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphImportIssuePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
         };
     };
     createKnowledgePoint: {

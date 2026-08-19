@@ -5,6 +5,8 @@ import type {
   CreateQuestionRequest,
   GatewayClient,
   KnowledgePoint,
+  KnowledgePointGraph,
+  KnowledgePointSearchPage,
   LegacyQuestionImportBatchRequest,
   LegacyQuestionImportBatchResult,
   LegacyQuestionImportCleanupResult,
@@ -20,6 +22,7 @@ import type {
   QuestionVersion,
   QuestionVersionPage,
   ResolveLegacyQuestionImportItemRequest,
+  SearchTeacherKnowledgePointsQuery,
   TeacherQuestion,
   UpdateQuestionRequest,
   UpdateQuestionStatusRequest
@@ -34,6 +37,8 @@ import { authStore } from "./auth";
  */
 export interface TeacherQuestionApi {
   knowledgePoints(signal?: AbortSignal): Promise<KnowledgePoint[]>;
+  searchKnowledgePoints(query: SearchTeacherKnowledgePointsQuery, signal?: AbortSignal): Promise<KnowledgePointSearchPage>;
+  knowledgePointGraph(knowledgePointId: string, depth?: number, signal?: AbortSignal): Promise<KnowledgePointGraph>;
   list(query: ListTeacherQuestionsQuery, signal?: AbortSignal): Promise<QuestionPage>;
   detail(questionId: string, signal?: AbortSignal): Promise<TeacherQuestion>;
   create(body: CreateQuestionRequest, signal?: AbortSignal): Promise<TeacherQuestion>;
@@ -74,6 +79,16 @@ export function createTeacherQuestionApi(
     async knowledgePoints(signal) {
       return data(await authorized(Authorization => client.GET("/api/v1/teacher/knowledge-points", {
         headers: { Authorization }, signal
+      })));
+    },
+    async searchKnowledgePoints(query, signal) {
+      return data(await authorized(Authorization => client.GET("/api/v1/teacher/knowledge-points/search", {
+        headers: { Authorization }, params: { query }, signal
+      })));
+    },
+    async knowledgePointGraph(knowledgePointId, depth = 1, signal) {
+      return data(await authorized(Authorization => client.GET("/api/v1/teacher/knowledge-points/{knowledgePointId}/graph", {
+        headers: { Authorization }, params: { path: { knowledgePointId }, query: { depth } }, signal
       })));
     },
     async list(query, signal) {

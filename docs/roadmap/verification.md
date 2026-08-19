@@ -327,3 +327,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 图片边界：只对所选 VALID 合成项提取与 Java 解析器一致的带引号 HTTPS `<img src>`，正式执行要求 `AllowedImageHost` 完整覆盖且拒绝通配符/URL/端口/路径。URL 随原 JSON 进入既有 API，图片仍由 learning-service 调 media-service 执行精确白名单、逐跳 DNS/重定向、大小、MIME、魔数和 OSS 转存；脚本不下载图片、不连接 OSS，也不修改服务配置。远端正式失败仍按 `EXTERNAL_IMAGE_TRANSFER_FAILED` 复核，不能以 DryRun VALID 或主机门禁替代媒体校验。
 - VALID-only 合成验收：PowerShell Pester 新增 4 项并全部通过；仅使用 3 份临时合成 JSON 和本地 TCP Fixture，覆盖计划无写入、两个 VALID/一个复核项的精确筛选、图片 URL 保留、图片主机未批准时 POST 前停止和 401 安全诊断。与既有迁移/汇总测试合计 17/17；输出断言不含 Token、题目、来源路径、原始 JSON或完整任务 ID。没有读取真实题库正文、调用真实 Gateway、数据库、media-service、OSS 或外部图片主机。
 - 边界说明：本轮没有执行正式 Import，没有创建正式题目、媒体或 OSS 对象，也没有删除、重建或清理检查点、45 个 DryRun 任务及复核记录。全量迁移脚本逐项有界读取来源以提交预检，但本次后续验收与汇总不得再次批量读取 44,441 份 JSON 正文。`AllItems` 只保证全部文件提交处理；`NEEDS_REVIEW`、字段失败和图片失败仍需人工处理，不能把 `processedCount` 当作全部成功导入。
+
+## 2026-08-19 T10B 数学知识图谱导入与题目知识点绑定
+
+- 门禁与范围：从 T10A `df73fb0` 的干净工作区创建 `codex/t10b-knowledge-graph-import`；完整阅读页面规格和现有 OpenAPI 后实施。没有新增路由、改动 Python 智能体、读取本地凭据，或删除/重建 T10A 的 45 个 DryRun 任务、复核记录及检查点。T11 预留 V4，本任务只新增向前 V5。
+- 契约与权限：OpenAPI 0.11.0 新增管理员图谱任务/节点批次/关系批次/安全问题分页接口，以及教师端分页搜索和 1～5 层有限邻域接口；生成客户端同步更新。Gateway 只路由请求，管理员写接口要求 `administration:access`，教师查询要求 `teaching:access`，浏览器不直连 learning-service。
+- 数据模型与导入：`knowledge_point` 保留内部 UUID，并以 `(source_system, source_know_id)` 唯一识别来源节点；来源 parent key 仅作不透明元数据，不写树自外键。新增同 Schema 双外键的显式 `prerequisite -> dependent` 边、任务/批次/staging/安全问题表及题目 tag 元数据。节点后关系两阶段幂等；正式写入前合并同来源既有边校验缺失端点、自环、跨学科、跨学段和环，且新节点默认禁用、不删除旧数据。
+- 只读图谱复核：3,671 节点、2,107 关系；学段来源分布 `02=817`、`03=1,386`、`04=1,468`，六种类型合计一致；必要字段空值、重复 ID、缺失端点、重复边、自环、跨学科、跨学段和环均为 0，重复名称组 110。关系语义确认为文件 `b` 是 `a` 的先修，平台写作 `b -> a`；孤立节点 2,267，最大入度 11、最大出度 19、最长链按边数 21。479 个不同来源 parent key 全部不可解析，未据此造父节点。
+- 历史 tags 只读复核：44,441 份 JSON 全部可解析；37,082 个普通根题、7,359 个组合父题、18,316 个子题，共 62,757 个候选，其中 44,232 个带 tag。1,260 个唯一知识点 ID 全部可在节点源中找到，类型冲突 0；精确 ID/名称/类型匹配 112,873 条，名称冲突 679 条，题内重复 tag 6,034 条，子题当前无独立 tag。所有精确匹配来源学段为 `03`，但该值尚未被业务确认等同 `JUNIOR`，因此没有执行绑定写入。
+- 脚本：新增 `Invoke-KnowledgeGraphMigration.ps1`，默认 DryRun，确定性排序和批次 ID，先节点后关系，UTF-8 无 BOM；检查点不保存 Token、绝对路径、节点列表或原始 JSON。正式 Import 在任何 HTTP 前同时要求导入确认和 stage/status/type/parent 四项语义确认。四个 PowerShell 套件合计 22/22 通过，其中 T10B 专项 5/5；Windows PowerShell 5.1 语法解析通过。
+- 自动化：Java 8 模块 `clean verify` 全部成功，learning-service 32 项执行、30 通过、2 个显式真实 MySQL 用例按开关跳过，新增图谱专项 5/5；H2 MySQL 模式成功应用 V1/V2/V3/V5。OpenAPI 重新生成和全 workspace `typecheck` 通过；Vitest 18 文件 122 项与学生/教师/管理三端生产构建在获批沙箱外全部通过，仅保留既有 hls.js 大 chunk 提示。提交前 `check:api` 按预期检测到生成文件相对旧 HEAD 的待提交差异，提交后复跑作为最终一致性门禁。
+- 真实环境与数据：Gateway 8080、IAM 8081、learning-service 8084 健康检查为 `UP`，但当前进程没有 `EDU_MIGRATION_ACCESS_TOKEN`，且运行服务未加载本分支，所以没有经真实 Gateway 创建图谱 DryRun 任务。没有创建或修改真实数据库、表、业务知识点、边、题目绑定、检查点或伪数据；自动化仅使用随测试进程销毁的 H2 Schema/最小合成 Fixture，本地只读审计临时 HTTP/检查点已清理。
+- 语义阻塞与发布边界：`status=0` 启用含义、`02/03/04` 正式学段、六类正式名称、479 个 parent key 分类语义、高中无边是否不完整及无年级字段是否代表整个学段仍待确认。代码只保存原始来源值并默认禁用。正式图谱 Import、历史题库新 SourceSystem DryRun 和题目 Import 均未执行；获得短期管理员 Token、部署当前分支并确认语义后，应先经 Gateway 做图谱 DryRun 和人工审核，再考虑正式导入及后续历史题目 DryRun。
