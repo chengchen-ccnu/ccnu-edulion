@@ -1270,15 +1270,28 @@ export interface components {
             name: string;
             disciplineCode: string;
             educationStageCode: string;
+            /** @description Confirmed platform stage mapping; formal imports reject values inconsistent with educationStageCode. */
+            normalizedStage: components["schemas"]["KnowledgeGraphEducationStage"];
             knowledgeTypeId: string;
+            /**
+             * @description Confirmed textual type name; colour remains presentation metadata only.
+             * @enum {string}
+             */
+            knowledgeTypeName: "知识点" | "题型";
             knowledgeTypeColour: string | null;
             levelSortIndex: number;
             nodeKind: string;
             /** @description Opaque source grouping key; never used as a knowledge-point foreign key. */
             sourceParentKey: string | null;
+            /** @description Preserved source value. This import never derives platform enabled state from it; imported nodes remain disabled. */
             sourceStatus: string;
             contentSha256: string;
         };
+        /**
+         * @description Confirmed whole-stage scope for imported graph nodes; the current question editor still exposes only JUNIOR.
+         * @enum {string}
+         */
+        KnowledgeGraphEducationStage: "PRIMARY" | "JUNIOR" | "SENIOR";
         KnowledgeGraphRelationInput: {
             prerequisiteSourceKnowId: string;
             dependentSourceKnowId: string;

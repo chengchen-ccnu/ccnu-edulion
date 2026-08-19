@@ -65,9 +65,9 @@ public class KnowledgeGraphRepository {
     }
 
     public void insertNode(String taskId, KnowledgeGraphDtos.NodeInput node, Instant now) {
-        jdbc.update("INSERT INTO knowledge_graph_import_node(import_task_id,source_know_id,name,discipline_code,education_stage_code,knowledge_type_id,knowledge_type_colour,level_sort_index,node_kind,source_parent_key,source_status,content_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO knowledge_graph_import_node(import_task_id,source_know_id,name,discipline_code,education_stage_code,normalized_stage,knowledge_type_id,knowledge_type_name,knowledge_type_colour,level_sort_index,node_kind,source_parent_key,source_status,content_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 taskId, node.sourceKnowId(), node.name().trim(), node.disciplineCode(), node.educationStageCode(),
-                node.knowledgeTypeId(), node.knowledgeTypeColour(), node.levelSortIndex(), node.nodeKind(),
+                node.normalizedStage().name(), node.knowledgeTypeId(), node.knowledgeTypeName(), node.knowledgeTypeColour(), node.levelSortIndex(), node.nodeKind(),
                 node.sourceParentKey(), node.sourceStatus(), node.contentSha256(), ts(now));
     }
 
@@ -113,10 +113,10 @@ public class KnowledgeGraphRepository {
         String id = UUID.randomUUID().toString();
         String code = "KG_" + UUID.nameUUIDFromBytes((sourceSystem + "\0" + node.sourceKnowId())
                 .getBytes(StandardCharsets.UTF_8)).toString().replace("-", "");
-        jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at,source_system,source_know_id,discipline_code,education_stage_code,normalized_stage,source_parent_key,taxonomy_parent_id,knowledge_type_id,knowledge_type_colour,level_sort_index,node_kind,source_status,source_content_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                id, code, node.name(), null, null, null, "MATHEMATICS", node.levelSortIndex(), false, 0,
+        jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at,source_system,source_know_id,discipline_code,education_stage_code,normalized_stage,source_parent_key,taxonomy_parent_id,knowledge_type_id,knowledge_type_name,knowledge_type_colour,level_sort_index,node_kind,source_status,source_content_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                id, code, node.name(), null, node.normalizedStage(), null, "MATHEMATICS", node.levelSortIndex(), false, 0,
                 ts(now), ts(now), sourceSystem, node.sourceKnowId(), node.disciplineCode(), node.educationStageCode(),
-                null, node.sourceParentKey(), null, node.knowledgeTypeId(), node.knowledgeTypeColour(),
+                node.normalizedStage(), node.sourceParentKey(), null, node.knowledgeTypeId(), node.knowledgeTypeName(), node.knowledgeTypeColour(),
                 node.levelSortIndex(), node.nodeKind(), node.sourceStatus(), node.contentSha256());
         return id;
     }
@@ -199,7 +199,7 @@ public class KnowledgeGraphRepository {
                 instant(rs, "created_at"), instant(rs, "updated_at"));
     }
     private BatchRow batch(ResultSet rs, int row) throws SQLException { return new BatchRow(rs.getString("batch_kind"), rs.getString("request_fingerprint"), rs.getBoolean("final_batch"), rs.getInt("accepted_count")); }
-    private NodeRow node(ResultSet rs, int row) throws SQLException { return new NodeRow(rs.getString("source_know_id"), rs.getString("name"), rs.getString("discipline_code"), rs.getString("education_stage_code"), rs.getString("knowledge_type_id"), rs.getString("knowledge_type_colour"), rs.getInt("level_sort_index"), rs.getString("node_kind"), rs.getString("source_parent_key"), rs.getString("source_status"), rs.getString("content_sha256")); }
+    private NodeRow node(ResultSet rs, int row) throws SQLException { return new NodeRow(rs.getString("source_know_id"), rs.getString("name"), rs.getString("discipline_code"), rs.getString("education_stage_code"), rs.getString("normalized_stage"), rs.getString("knowledge_type_id"), rs.getString("knowledge_type_name"), rs.getString("knowledge_type_colour"), rs.getInt("level_sort_index"), rs.getString("node_kind"), rs.getString("source_parent_key"), rs.getString("source_status"), rs.getString("content_sha256")); }
     private RelationRow relation(ResultSet rs, int row) throws SQLException { return new RelationRow(rs.getString("prerequisite_source_know_id"), rs.getString("dependent_source_know_id"), rs.getString("source_relation_type"), rs.getString("content_sha256")); }
     private SourcePointRow sourcePoint(ResultSet rs, int row) throws SQLException { return new SourcePointRow(rs.getString("id"), rs.getString("source_content_sha256"), rs.getString("name"), rs.getString("knowledge_type_id"), rs.getString("education_stage_code"), rs.getString("normalized_stage"), rs.getBoolean("enabled")); }
     private KnowledgeGraphDtos.SearchItem searchItem(ResultSet rs, int row) throws SQLException { return new KnowledgeGraphDtos.SearchItem(rs.getString("id"), rs.getString("name"), rs.getString("normalized_stage"), rs.getString("knowledge_type_id"), rs.getString("knowledge_type_name"), rs.getString("knowledge_type_colour"), rs.getInt("level_sort_index"), rs.getBoolean("enabled")); }
@@ -214,7 +214,7 @@ public class KnowledgeGraphRepository {
             KnowledgeGraphDtos.Status status, KnowledgeGraphDtos.ImportSummary summary, Instant createdAt, Instant updatedAt) {}
     public record BatchRow(String kind, String fingerprint, boolean finalBatch, int acceptedCount) {}
     public record NodeRow(String sourceKnowId, String name, String disciplineCode, String educationStageCode,
-            String knowledgeTypeId, String knowledgeTypeColour, int levelSortIndex, String nodeKind,
+            String normalizedStage, String knowledgeTypeId, String knowledgeTypeName, String knowledgeTypeColour, int levelSortIndex, String nodeKind,
             String sourceParentKey, String sourceStatus, String contentSha256) {}
     public record RelationRow(String prerequisiteSourceKnowId, String dependentSourceKnowId,
             String sourceRelationType, String contentSha256) {}

@@ -90,7 +90,22 @@ class KnowledgeGraphIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE enabled=TRUE", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE parent_id IS NOT NULL OR taxonomy_parent_id IS NOT NULL", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE stage='JUNIOR' AND normalized_stage='JUNIOR' AND grade IS NULL AND knowledge_type_name='知识点'", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point_prerequisite r JOIN knowledge_point p ON p.id=r.prerequisite_id JOIN knowledge_point d ON d.id=r.dependent_id WHERE p.source_know_id='b' AND d.source_know_id='a'", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void formalImportRejectsUnconfirmedStageMappingBeforeBusinessWrites() {
+        var task = create(false, 1, 0, "KG_MAPPING_INVALID");
+        var invalid = new KnowledgeGraphDtos.NodeInput("a", "整数", "math", "03", KnowledgeGraphDtos.EducationStage.SENIOR,
+                "TYPE_A", "知识点", "#112233", 1, "point", null, "0", "a".repeat(64));
+        graphs.nodes(ADMIN, task.id(), new KnowledgeGraphDtos.NodeBatchRequest(UUID.randomUUID(), true, List.of(invalid)));
+        var completed = graphs.get(ADMIN, task.id());
+        assertThat(completed.status()).isEqualTo(KnowledgeGraphDtos.Status.COMPLETED_WITH_ISSUES);
+        assertThat(completed.summary().invalidNodeCount()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point", Integer.class)).isZero();
+        assertThat(graphs.issues(ADMIN, task.id(), 1, 20).items())
+                .extracting(KnowledgeGraphDtos.ImportIssue::issueCode).contains("STAGE_MAPPING_INVALID");
     }
 
     @Test
@@ -119,9 +134,9 @@ class KnowledgeGraphIntegrationTest {
                 List.of(node("a", "整数", "03", null, "a".repeat(64)), node("b", "有理数", "03", null, "b".repeat(64)))));
         graphs.relations(ADMIN, task.id(), new KnowledgeGraphDtos.RelationBatchRequest(UUID.randomUUID(), true,
                 List.of(relation("b", "a", "c".repeat(64)))));
-        jdbc.update("UPDATE knowledge_point SET normalized_stage='JUNIOR',stage='JUNIOR',enabled=TRUE,knowledge_type_name='概念' WHERE source_system='KG_QUERY'");
+        jdbc.update("UPDATE knowledge_point SET enabled=TRUE WHERE source_system='KG_QUERY'");
         var page = graphs.search("JUNIOR", null, "数", 1, 20);
-        assertThat(page.items()).hasSize(2); assertThat(page.items()).allMatch(item -> "概念".equals(item.knowledgeTypeName()));
+        assertThat(page.items()).hasSize(2); assertThat(page.items()).allMatch(item -> "知识点".equals(item.knowledgeTypeName()));
         String center = jdbc.queryForObject("SELECT id FROM knowledge_point WHERE source_know_id='b'", String.class);
         var graph = graphs.graph(center, 1);
         assertThat(graph.directDependents()).singleElement().satisfies(item -> assertThat(item.name()).isEqualTo("整数"));
@@ -153,7 +168,14 @@ class KnowledgeGraphIntegrationTest {
                 "e".repeat(64), "f".repeat(64), nodes, relations)).response();
     }
     private static KnowledgeGraphDtos.NodeInput node(String id, String name, String stage, String parent, String hash) {
-        return new KnowledgeGraphDtos.NodeInput(id, name, "math", stage, "TYPE_A", "#112233", 1, "point", parent, "0", hash);
+        KnowledgeGraphDtos.EducationStage normalized = switch (stage) {
+            case "02" -> KnowledgeGraphDtos.EducationStage.PRIMARY;
+            case "03" -> KnowledgeGraphDtos.EducationStage.JUNIOR;
+            case "04" -> KnowledgeGraphDtos.EducationStage.SENIOR;
+            default -> throw new IllegalArgumentException("fixture stage is not mapped");
+        };
+        return new KnowledgeGraphDtos.NodeInput(id, name, "math", stage, normalized, "TYPE_A", "知识点",
+                "#112233", 1, "point", parent, "0", hash);
     }
     private static KnowledgeGraphDtos.RelationInput relation(String prerequisite, String dependent, String hash) {
         return new KnowledgeGraphDtos.RelationInput(prerequisite, dependent, "PRECEDES", hash);

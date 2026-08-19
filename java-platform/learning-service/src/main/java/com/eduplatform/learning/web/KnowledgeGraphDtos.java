@@ -17,6 +17,7 @@ public final class KnowledgeGraphDtos {
 
     public enum Status { AWAITING_NODES, AWAITING_RELATIONS, VALIDATING, COMPLETED, COMPLETED_WITH_ISSUES, FAILED }
     public enum SubjectKind { TASK, NODE, RELATION }
+    public enum EducationStage { PRIMARY, JUNIOR, SENIOR }
 
     public record CreateImportRequest(@NotNull UUID clientRequestId,
             @NotBlank @Pattern(regexp = "^[A-Z0-9][A-Z0-9_-]{2,79}$") String sourceSystem,
@@ -30,7 +31,9 @@ public final class KnowledgeGraphDtos {
             @NotBlank @Size(max = 100) String name,
             @NotBlank @Size(max = 30) String disciplineCode,
             @NotBlank @Size(max = 20) String educationStageCode,
+            @NotNull EducationStage normalizedStage,
             @NotBlank @Size(max = 80) String knowledgeTypeId,
+            @NotBlank @Pattern(regexp = "^(知识点|题型)$") String knowledgeTypeName,
             @Size(max = 40) String knowledgeTypeColour,
             int levelSortIndex,
             @NotBlank @Size(max = 40) String nodeKind,

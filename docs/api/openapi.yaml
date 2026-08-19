@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.11.0
-  description: T09B Gateway contract. Adds structured ordinary/composite question writes, immutable version history, unified import-task projections and refresh-safe legacy JSON item review/resolution. No T10 Vue page, full-corpus migration or T11 attempt/grading API is exposed.
+  version: 0.11.1
+  description: T10B Gateway contract. Adds confirmed graph stage/type mappings while preserving structured question writes, immutable versions and bounded migration tasks. No full-corpus formal question migration or T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2640,13 +2640,20 @@ components:
     KnowledgeGraphNodeInput:
       type: object
       additionalProperties: false
-      required: [sourceKnowId, name, disciplineCode, educationStageCode, knowledgeTypeId, knowledgeTypeColour, levelSortIndex, nodeKind, sourceParentKey, sourceStatus, contentSha256]
+      required: [sourceKnowId, name, disciplineCode, educationStageCode, normalizedStage, knowledgeTypeId, knowledgeTypeName, knowledgeTypeColour, levelSortIndex, nodeKind, sourceParentKey, sourceStatus, contentSha256]
       properties:
         sourceKnowId: {type: string, minLength: 1, maxLength: 80}
         name: {type: string, minLength: 1, maxLength: 100}
         disciplineCode: {type: string, minLength: 1, maxLength: 30}
         educationStageCode: {type: string, minLength: 1, maxLength: 20}
+        normalizedStage:
+          $ref: '#/components/schemas/KnowledgeGraphEducationStage'
+          description: Confirmed platform stage mapping; formal imports reject values inconsistent with educationStageCode.
         knowledgeTypeId: {type: string, minLength: 1, maxLength: 80}
+        knowledgeTypeName:
+          type: string
+          enum: [知识点, 题型]
+          description: Confirmed textual type name; colour remains presentation metadata only.
         knowledgeTypeColour: {type: [string, 'null'], maxLength: 40}
         levelSortIndex: {type: integer}
         nodeKind: {type: string, minLength: 1, maxLength: 40}
@@ -2654,8 +2661,15 @@ components:
           type: [string, 'null']
           maxLength: 80
           description: Opaque source grouping key; never used as a knowledge-point foreign key.
-        sourceStatus: {type: string, maxLength: 40}
+        sourceStatus:
+          type: string
+          maxLength: 40
+          description: Preserved source value. This import never derives platform enabled state from it; imported nodes remain disabled.
         contentSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    KnowledgeGraphEducationStage:
+      type: string
+      enum: [PRIMARY, JUNIOR, SENIOR]
+      description: Confirmed whole-stage scope for imported graph nodes; the current question editor still exposes only JUNIOR.
     KnowledgeGraphRelationInput:
       type: object
       additionalProperties: false

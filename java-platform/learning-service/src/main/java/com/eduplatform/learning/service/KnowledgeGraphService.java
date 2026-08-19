@@ -182,6 +182,7 @@ public class KnowledgeGraphService {
         GraphMetrics metrics = metrics(bySource.keySet(), outgoing, inDegree);
         boolean combinedCycle = metrics.cycle() || combinedCycle(task.sourceSystem(), bySource.keySet(), relations);
         if (combinedCycle) repository.issue(taskId, "CYCLE_DETECTED", KnowledgeGraphDtos.SubjectKind.TASK, hash(taskId + ":cycle"), 1, now);
+        MappingValidation mapping = validateConfirmedMappings(taskId, nodes, now);
         int unresolvedParents = (int) nodes.stream().map(NodeRow::sourceParentKey).filter(java.util.Objects::nonNull)
                 .filter(value -> !value.isBlank() && !bySource.containsKey(value)).distinct().count();
         if (unresolvedParents > 0) repository.issue(taskId, "SOURCE_PARENT_UNRESOLVED", KnowledgeGraphDtos.SubjectKind.TASK, hash(taskId + ":parents"), unresolvedParents, now);
@@ -203,12 +204,14 @@ public class KnowledgeGraphService {
         int duplicateNodes = repository.issueCount(taskId, "NODE_DUPLICATE");
         int duplicateEdges = repository.issueCount(taskId, "RELATION_DUPLICATE");
         int skippedRelations = Math.max(0, task.expectedRelationCount() - addedRelations - reusedRelations);
-        int structural = missing + self + crossDiscipline + crossStage + conflictNodes + (combinedCycle ? 1 : 0);
+        int structural = missing + self + crossDiscipline + crossStage + conflictNodes
+                + mapping.invalidNodeCount() + (combinedCycle ? 1 : 0);
         int isolated = (int) bySource.keySet().stream().filter(id -> inDegree.getOrDefault(id, 0) == 0 && outDegree.getOrDefault(id, 0) == 0).count();
         Map<String, Integer> stages = new java.util.TreeMap<>(), types = new java.util.TreeMap<>(), names = new HashMap<>();
         nodes.forEach(node -> { stages.merge(node.educationStageCode(), 1, Integer::sum); types.merge(node.knowledgeTypeId(), 1, Integer::sum); names.merge(node.name(), 1, Integer::sum); });
         int duplicateNames = (int) names.values().stream().filter(count -> count > 1).count();
-        var summary = new KnowledgeGraphDtos.ImportSummary(task.expectedNodeCount(), task.expectedRelationCount(), stages, types, 0, duplicateNames, isolated, unresolvedParents,
+        var summary = new KnowledgeGraphDtos.ImportSummary(task.expectedNodeCount(), task.expectedRelationCount(), stages, types,
+                mapping.invalidNodeCount(), duplicateNames, isolated, unresolvedParents,
                 addedNodes, reusedNodes, conflictNodes, addedRelations, reusedRelations, skippedRelations,
                 missing, duplicateEdges, self, crossDiscipline, crossStage, combinedCycle, inDegree.values().stream().mapToInt(Integer::intValue).max().orElse(0),
                 outDegree.values().stream().mapToInt(Integer::intValue).max().orElse(0), metrics.longest());
@@ -226,6 +229,58 @@ public class KnowledgeGraphService {
             String from = businessIds.get(relation.prerequisiteSourceKnowId()), to = businessIds.get(relation.dependentSourceKnowId());
             if (!repository.relationExists(from, to)) repository.insertBusinessRelation(from, to, task.sourceSystem(), relation.sourceRelationType(), now);
         }
+    }
+
+    /**
+     * 复核负责人确认的来源语义，防止调用方只打开脚本确认开关却提交空映射或错误映射。
+     * 输入是当前任务的完整 staging 节点；返回不合规节点数，并以安全聚合问题阻止正式业务写入。
+     */
+    private MappingValidation validateConfirmedMappings(String taskId, List<NodeRow> nodes, Instant now) {
+        Set<String> invalidNodes = new HashSet<>(), conflictingTypes = new HashSet<>();
+        Map<String, String> typeNames = new HashMap<>(), typeStages = new HashMap<>();
+        int invalidStages = 0, invalidTypeNames = 0, unconfirmedStatuses = 0;
+        for (NodeRow node : nodes) {
+            if (!confirmedStage(node.educationStageCode(), node.normalizedStage())) {
+                invalidNodes.add(node.sourceKnowId()); invalidStages++;
+            }
+            if (!"知识点".equals(node.knowledgeTypeName()) && !"题型".equals(node.knowledgeTypeName())) {
+                invalidNodes.add(node.sourceKnowId()); invalidTypeNames++;
+            }
+            if (!"0".equals(node.sourceStatus())) {
+                invalidNodes.add(node.sourceKnowId()); unconfirmedStatuses++;
+            }
+            String previousName = typeNames.putIfAbsent(node.knowledgeTypeId(), node.knowledgeTypeName());
+            String previousStage = typeStages.putIfAbsent(node.knowledgeTypeId(), node.normalizedStage());
+            if ((previousName != null && !previousName.equals(node.knowledgeTypeName()))
+                    || (previousStage != null && !previousStage.equals(node.normalizedStage()))) {
+                conflictingTypes.add(node.knowledgeTypeId());
+            }
+        }
+        if (!conflictingTypes.isEmpty()) {
+            nodes.stream().filter(node -> conflictingTypes.contains(node.knowledgeTypeId()))
+                    .map(NodeRow::sourceKnowId).forEach(invalidNodes::add);
+        }
+        aggregateMappingIssue(taskId, "STAGE_MAPPING_INVALID", invalidStages, now);
+        aggregateMappingIssue(taskId, "TYPE_NAME_INVALID", invalidTypeNames, now);
+        aggregateMappingIssue(taskId, "SOURCE_STATUS_UNCONFIRMED", unconfirmedStatuses, now);
+        aggregateMappingIssue(taskId, "TYPE_MAPPING_CONFLICT", conflictingTypes.size(), now);
+        return new MappingValidation(invalidNodes.size());
+    }
+
+    /** 来源学段代码只接受本次业务负责人已经确认的三组精确映射。 */
+    private static boolean confirmedStage(String source, String normalized) {
+        return switch (source) {
+            case "02" -> "PRIMARY".equals(normalized);
+            case "03" -> "JUNIOR".equals(normalized);
+            case "04" -> "SENIOR".equals(normalized);
+            default -> false;
+        };
+    }
+
+    /** 映射问题只保存问题码、数量和任务级指纹，不保存来源 ID 或名称。 */
+    private void aggregateMappingIssue(String taskId, String code, int count, Instant now) {
+        if (count > 0) repository.issue(taskId, code, KnowledgeGraphDtos.SubjectKind.TASK,
+                hash(taskId + ":mapping:" + code), count, now);
     }
 
     private static GraphMetrics metrics(Set<String> nodes, Map<String, List<String>> outgoing, Map<String, Integer> originalIn) {
@@ -273,4 +328,5 @@ public class KnowledgeGraphService {
 
     public record Creation(KnowledgeGraphDtos.ImportTask response, boolean created) {}
     private record GraphMetrics(boolean cycle, int longest) {}
+    private record MappingValidation(int invalidNodeCount) {}
 }

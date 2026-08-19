@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('DryRun', 'Import')][string]$Action = 'DryRun',
     [Parameter(Mandatory = $true)][string]$NodeFile,
@@ -17,6 +17,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'private\LegacyMigrationHttpDiagnostics.ps1')
+$KnowledgePointTypeName = [string]([char]0x77e5) + [char]0x8bc6 + [char]0x70b9
+$QuestionTypeName = [string]([char]0x9898) + [char]0x578b
 
 function Get-Sha256Text([string]$Text) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -77,22 +79,71 @@ function Save-Checkpoint($Value, [string]$Path) {
     Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
 
+function Get-NormalizedStage([string]$SourceStage) {
+    switch ($SourceStage) {
+        '02' { return 'PRIMARY' }
+        '03' { return 'JUNIOR' }
+        '04' { return 'SENIOR' }
+        default { throw 'Source contains an education-stage value without a confirmed platform mapping.' }
+    }
+}
+
+function Get-ConfirmedTypeNames([object[]]$NodeWrappers) {
+    # 六类正式名称按负责人确认的“学段 + 类型节点数”签名绑定；源文件增删节点时签名变化并安全停止。
+    $confirmedSignatures = @{
+        '02:540' = $QuestionTypeName; '02:277' = $KnowledgePointTypeName
+        '03:935' = $QuestionTypeName; '03:451' = $KnowledgePointTypeName
+        '04:693' = $QuestionTypeName; '04:775' = $KnowledgePointTypeName
+    }
+    $mapping = @{}
+    $groups = @($NodeWrappers | Group-Object { [string]$_.properties.eduStage + "`0" + [string]$_.properties.knowTypeId })
+    foreach ($group in $groups) {
+        $sample = $group.Group[0].properties
+        $explicitNames = @($group.Group | ForEach-Object {
+                $property = $_.properties.PSObject.Properties['knowTypeName']
+                if ($null -ne $property) { [string]$property.Value }
+            } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+        if ($explicitNames.Count -gt 1) { throw 'A source knowledge type has conflicting textual names.' }
+        if ($explicitNames.Count -eq 1) {
+            $typeName = $explicitNames[0]
+        } else {
+            $signature = [string]$sample.eduStage + ':' + $group.Count
+            if (-not $confirmedSignatures.ContainsKey($signature)) {
+                throw 'Source type distribution no longer matches the confirmed six-type mapping.'
+            }
+            $typeName = $confirmedSignatures[$signature]
+        }
+        if ($typeName -notin @($KnowledgePointTypeName, $QuestionTypeName)) { throw 'Source contains a type name outside the confirmed vocabulary.' }
+        $mapping[$group.Name] = $typeName
+    }
+    return $mapping
+}
+
 function Read-SourceData {
     $nodeDocument = Get-Content -Raw -LiteralPath $NodeFile | ConvertFrom-Json
     $nodeWrappers = @($nodeDocument.mathNodes)
     $relationWrappers = @(Get-Content -Raw -LiteralPath $RelationFile | ConvertFrom-Json)
+    $confirmedTypeNames = Get-ConfirmedTypeNames $nodeWrappers
     $nodes = New-Object System.Collections.ArrayList
     foreach ($wrapper in $nodeWrappers) {
         $p = $wrapper.properties
         $colour = $null; if ($null -ne $p.knowTypeColour) { $colour = [string]$p.knowTypeColour }
         $parentKey = $null; if ($null -ne $p.parentId) { $parentKey = [string]$p.parentId }
-        $nodeHashInput = $p | Select-Object knowId,knowName,discipline,eduStage,knowTypeId,knowTypeColour,lvlSortIndex,nodeKind,parentId,status | ConvertTo-Json -Compress
+        $normalizedStage = Get-NormalizedStage ([string]$p.eduStage)
+        $typeKey = [string]$p.eduStage + "`0" + [string]$p.knowTypeId
+        $typeName = [string]$confirmedTypeNames[$typeKey]
+        $nodeHashInput = [ordered]@{ knowId=$p.knowId;knowName=$p.knowName;discipline=$p.discipline;eduStage=$p.eduStage
+            normalizedStage=$normalizedStage;knowTypeId=$p.knowTypeId;knowledgeTypeName=$typeName;knowTypeColour=$p.knowTypeColour
+            lvlSortIndex=$p.lvlSortIndex;nodeKind=$p.nodeKind;parentId=$p.parentId;status=$p.status } | ConvertTo-Json -Compress
         $node = New-Object PSObject -Property ([ordered]@{
             sourceKnowId = [string]$p.knowId
             name = [string]$p.knowName
             disciplineCode = [string]$p.discipline
             educationStageCode = [string]$p.eduStage
+            normalizedStage = $normalizedStage
             knowledgeTypeId = [string]$p.knowTypeId
+            knowledgeTypeName = $typeName
             knowledgeTypeColour = $colour
             levelSortIndex = [int]$p.lvlSortIndex
             nodeKind = [string]$p.nodeKind
@@ -175,7 +226,8 @@ if ([string]::IsNullOrWhiteSpace($env:EDU_MIGRATION_ACCESS_TOKEN)) { throw 'EDU_
 
 $nodeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $NodeFile).Hash.ToLowerInvariant()
 $relationHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $RelationFile).Hash.ToLowerInvariant()
-$runFingerprint = Get-Sha256Text ($SourceSystem + "`0" + $Action + "`0" + $nodeHash + "`0" + $relationHash + "`0" + $BatchSize)
+$mappingVersion = 'T10B_CONFIRMED_2026_08_19'
+$runFingerprint = Get-Sha256Text ($SourceSystem + "`0" + $Action + "`0" + $nodeHash + "`0" + $relationHash + "`0" + $BatchSize + "`0" + $mappingVersion)
 $data = Read-SourceData
 $summaryParts = Get-GraphSummary $data; $summary = $summaryParts[0]
 foreach ($entry in ($summaryParts[1].GetEnumerator() | Sort-Object Name)) { $summary.stageDistribution[$entry.Name] = $entry.Value }

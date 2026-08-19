@@ -1,12 +1,13 @@
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿$here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $scriptsRoot = Split-Path -Parent $here
 $migrationScript = Join-Path $scriptsRoot 'Invoke-KnowledgeGraphMigration.ps1'
+$knowledgePointTypeName = [string]([char]0x77e5) + [char]0x8bc6 + [char]0x70b9
 
 function Write-GraphFixture([string]$Directory, [switch]$Cycle) {
     New-Item -ItemType Directory -Path $Directory | Out-Null
     $nodes = [ordered]@{ totalCount = 2; mathNodes = @(
-        [ordered]@{ identity=1; labels=@('知识点'); elementId='ignored-1'; properties=[ordered]@{ knowName='整数';knowTypeColour='#112233';knowTypeId='TYPE_A';lvlSortIndex=1;nodeKind='point';discipline='math';eduStage='03';knowId='source-a';parentId='group-1';status=0 } },
-        [ordered]@{ identity=2; labels=@('知识点'); elementId='ignored-2'; properties=[ordered]@{ knowName='有理数';knowTypeColour='#112233';knowTypeId='TYPE_A';lvlSortIndex=2;nodeKind='point';discipline='math';eduStage='03';knowId='source-b';parentId='group-1';status=0 } }
+        [ordered]@{ identity=1; labels=@('知识点'); elementId='ignored-1'; properties=[ordered]@{ knowName='整数';knowTypeColour='#112233';knowTypeId='TYPE_A';knowTypeName=$knowledgePointTypeName;lvlSortIndex=1;nodeKind='point';discipline='math';eduStage='03';knowId='source-a';parentId='group-1';status=0 } },
+        [ordered]@{ identity=2; labels=@('知识点'); elementId='ignored-2'; properties=[ordered]@{ knowName='有理数';knowTypeColour='#112233';knowTypeId='TYPE_A';knowTypeName=$knowledgePointTypeName;lvlSortIndex=2;nodeKind='point';discipline='math';eduStage='03';knowId='source-b';parentId='group-1';status=0 } }
     ) }
     $relation = { param($a,$b) [ordered]@{ a=$a;r=[ordered]@{type='PRECEDES';properties=[ordered]@{id='not-unique'}};b=$b } }
     $a=$nodes.mathNodes[0]; $b=$nodes.mathNodes[1]
@@ -61,6 +62,8 @@ Describe 'Invoke-KnowledgeGraphMigration safety and graph semantics' {
             $relationText|Should Match '"prerequisiteSourceKnowId":"source-b"'
             $relationText|Should Match '"dependentSourceKnowId":"source-a"'
             $nodeText|Should Match '整数'
+            $nodeText|Should Match '"normalizedStage":"JUNIOR"'
+            $nodeText|Should Match ('"knowledgeTypeName":"' + [regex]::Escape($knowledgePointTypeName) + '"')
             $checkpoint=[IO.File]::ReadAllText((Join-Path $TestDrive 'checkpoint.json'),[Text.Encoding]::UTF8)
             $checkpoint|Should Not Match 'fixture-token|source\\|nodes.json|relations.json|整数|source-a'
         }finally{$env:EDU_MIGRATION_ACCESS_TOKEN=$previous;$server.Listener.Stop();Stop-Job $server.Job -ErrorAction SilentlyContinue;Remove-Job $server.Job -Force -ErrorAction SilentlyContinue}
