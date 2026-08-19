@@ -235,6 +235,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
 
 `AllItems` 表示每份 JSON 都会被提交处理，不表示所有数据都会绕过校验直接创建题目。`NEEDS_REVIEW`、图片转存失败或字段错误仍须在教师端逐项解决；只有 `importedCount` 计入已创建草稿。全量运行期间不得增删或改写源目录文件，否则清单指纹变化会拒绝复用旧检查点。检查点不能放在 `SourceRoot` 内，不保存 Token、绝对源路径、题干、答案或原始 JSON。
 
+已有全量 DryRun 时，优先使用 T10A 的 VALID-only 模式，不要再次把已知 `NEEDS_REVIEW` 项提交到正式任务。先只读规划；脚本从 DryRun 检查点自动取得任务，无需复制任务 ID，且只输出安全聚合：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+& .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Import -AllItems -PlanOnly `
+  -SourceRoot '<只读历史题库根目录>' `
+  -ValidatedDryRunCheckpointPath '<completed-dryrun-checkpoint.json>'
+```
+
+核对 `selectedValidCount`、`selectedImageCount` 和 `imageHostCounts`，确认每个图片来源均有合法下载/转存授权，并把精确主机集合配置到 media-service 的 `MEDIA_EXTERNAL_IMAGE_ALLOWED_HOSTS`。正式执行时把同一集合同时交给脚本本地门禁；检查点显式放在来源目录之外，便于恢复和必要时精确清理：
+
+```powershell
+& .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Import -AllItems -ConfirmFullMigration `
+  -SourceRoot '<只读历史题库根目录>' `
+  -ValidatedDryRunCheckpointPath '<completed-dryrun-checkpoint.json>' `
+  -AllowedImageHost @('<exact-image-host-1>', '<exact-image-host-2>') `
+  -TaskSize 1000 -BatchSize 20 `
+  -CheckpointPath '<outside-source-root\import-valid-checkpoint.json>'
+```
+
+该模式再次校验来源根/清单指纹、SourceSystem、DryRun 终态和持久化 VALID 计数，只把匹配的 VALID 来源提交；已知复核项不进入正式任务。图片 URL 由 learning-service 交给 media-service 转存为 OSS 对象，题目版本只保存稳定 `mediaId`。`AllowedImageHost` 只是一道本地审批门禁，不会修改 media-service 配置，也不替代其逐跳 DNS、MIME、大小和图片魔数校验。401 或网络中断后更新当前进程 Token，以完全相同参数重跑即可从已确认批次恢复；脚本不会自动保存或刷新账号、密码和 Token。
+
 如需撤销尚未发布/修改的全量 Import 草稿，使用正式导入结果中的 `checkpointPath`：
 
 ```powershell

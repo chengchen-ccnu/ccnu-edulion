@@ -2,7 +2,7 @@
 
 ## 任务目标与功能边界
 
-本任务修复教师端 `/teacher/question-imports` 的历史 JSON 目录选择：浏览器不再用完整相对路径生成 `externalId`，并能从不同选择层级识别教材版本和年级。经用户随后明确授权，同一修复任务扩展只读 PowerShell 迁移脚本，使其可以在不提高每批 20、每任务 1000 上限的前提下编排全部来源文件，并增加通过 Gateway 汇总已完成 DryRun 持久化结果的安全工具。任务创建和批次 HTTP 失败诊断仅保留状态码、统一错误 `code`、`traceId` 和 `fieldErrors` 的字段/原因。修复不改变页面路由、Java 领域行为，也不修改原题库文件。
+本任务修复教师端 `/teacher/question-imports` 的历史 JSON 目录选择：浏览器不再用完整相对路径生成 `externalId`，并能从不同选择层级识别教材版本和年级。经用户随后明确授权，同一修复任务扩展只读 PowerShell 迁移脚本，使其可以在不提高每批 20、每任务 1000 上限的前提下编排全部来源文件，增加通过 Gateway 汇总已完成 DryRun 持久化结果的安全工具，并提供“只提交既有全量 DryRun 中 VALID 项”的正式导入模式。任务创建和批次 HTTP 失败诊断仅保留状态码、统一错误 `code`、`traceId` 和 `fieldErrors` 的字段/原因。修复不改变页面路由、Java 领域行为，也不修改原题库文件；截至本文更新仍未执行正式 Import。
 
 ## 根因与实现
 
@@ -18,13 +18,17 @@
 
 脚本全量模式额外执行以下流程：稳定排序并生成只含相对路径/文件元数据的清单指纹；显式 `AllItems` 后按 `TaskSize` 切成多个任务；正式导入还必须提供 `ConfirmFullMigration`；任务和批次 UUID 由运行指纹/序号确定；每个确认批次后原子写本机检查点，失败时停止并支持相同命令续传。检查点位于来源目录之外，且不含令牌、绝对源路径或题目内容。`Cleanup` 可以读取 Import 检查点逐任务调用既有精确删除端点。
 
+新增 `ValidatedDryRunCheckpointPath` 模式先验证已完成 DryRun 检查点、来源根/清单指纹、SourceSystem、45 个终态任务和持久化计数，再经 Gateway 分页取得全部 `VALID` externalId。脚本只把这些键在当前冻结来源快照中一一匹配出的文件放入正式任务；原 DryRun 中 `NEEDS_REVIEW` 的 15,314 项不会进入正式任务，也不会因正式来源幂等记录阻塞后续规则修复。`PlanOnly` 只输出来源总数、VALID 选择数、图片数和精确主机聚合，不创建或推进 Import 检查点/任务。正式运行还要求 `AllowedImageHost` 覆盖计划发现的所有图片主机，拒绝通配符、URL、端口和路径。
+
+题干、解析和子题中的带引号 HTTPS `<img src>` URL 会原样随所选 JSON 提交；learning-service 解析后把 URL 交给 media-service，后者按显式启用、精确主机白名单、逐跳 DNS/重定向、大小、MIME 和图片魔数校验转存到 OSS，并只把稳定 `mediaId` 绑定到题目版本。脚本不直连 OSS、不下载图片、不把图片二进制写入 learning 数据库，也不能替代 media-service 的最终网络与内容校验。
+
 安全诊断将 HTTP 响应视为不可信输入：不读取到统一错误结构时只输出可用状态码；识别成功时也忽略 `message/path/timestamp` 和额外字段。`code`、`traceId` 和字段路径经格式白名单验证，字段原因再遮蔽当前进程 Token、Bearer/JWT、绝对路径、题干、答案、解析和结构化原始 JSON。失败 catch 不写检查点、不清空 `activeTask`、不调用清理端点；相同命令仍从原任务和批次续传。
 
 真实全量 dry-run 随后暴露 Windows PowerShell 5.1 的请求编码差异：将 JSON 字符串直接交给 `Invoke-RestMethod` 时会按本机 ANSI 代码页发送，中文可能被替换，也可能产生后端无法按 UTF-8 解码的字节，最终以 `items[n].json` 的 422 表现出来。任务创建体和批次体现在统一转为 UTF-8 无 BOM 字节后再发送，不改变 API 字段、任务或检查点语义。
 
 ## API、数据库、环境与数据
 
-本任务复用既有 `POST /api/v1/teacher/legacy-question-imports`、批次、复核查询和精确清理接口，只澄清 OpenAPI 对“单任务上限与显式多任务编排”的说明；没有修改字段、事件 Schema、数据库迁移、表或长期环境变量。安全汇总脚本从检查点内存读取任务 ID，经 Gateway 调用 `GET /api/v1/teacher/question-imports/{importTaskId}` 和分页 `GET /api/v1/teacher/question-imports/{importTaskId}/items`，只输出聚合结果，不查询数据库、不返回完整 ID 或复核投影。
+本任务复用既有 `POST /api/v1/teacher/legacy-question-imports`、批次、复核查询和精确清理接口，只澄清 OpenAPI 对“单任务上限与显式多任务编排”的说明；没有修改字段、事件 Schema、数据库迁移、表或长期环境变量。安全汇总脚本从检查点内存读取任务 ID，经 Gateway 调用 `GET /api/v1/teacher/question-imports/{importTaskId}` 和分页 `GET /api/v1/teacher/question-imports/{importTaskId}/items`，只输出聚合结果，不查询数据库、不返回完整 ID 或复核投影。VALID-only 模式复用相同 GET 投影选择来源，并只在用户显式执行非 `PlanOnly` 命令后调用既有 POST；它不会直接查询或修改数据库。
 
 全量 DryRun 经 Gateway 创建了 45 个持久化导入任务及支撑复核投影的记录，但 `dryRun=true`，没有创建正式题目、媒体或 OSS 对象；这些 DryRun 任务、复核记录和检查点按本轮要求保留，不执行清理。汇总认证只接受当前进程 `EDU_MIGRATION_ACCESS_TOKEN`；首次运行被 Windows 执行策略阻止，随后仅对当前 PowerShell 进程使用 `ExecutionPolicy Bypass`，进程退出即失效，没有保存账号、密码或 Token。
 
@@ -39,9 +43,10 @@
 - Windows PowerShell 5.1 + 本地 HTTP Fixture：5 个临时合成文件按 `TaskSize=2` 自动拆成 3 个任务，dry-run 处理 5/5，正式导入 5/5，完成态重跑不重复处理，按 Import 检查点清理 3 个任务；检查点不含虚构令牌、绝对来源根或题目正文。
 - 断点恢复 Fixture：在第 2 个批次注入一次 503，首次运行保留 1 个已确认批次且不推进源索引；完全相同命令重跑后恢复并完成 5/5、共 3 个任务。另以 `TaskSize=3` 验证恢复后完成 5/5、共 2 个任务。
 - `pwsh` 中执行两组 Pester 脚本测试：13/13 通过。其中迁移诊断与编码 7 项，安全汇总 6 项；汇总覆盖多任务分页、计数、issueCode 组合、401、422、空任务、中途 503、无部分结果、敏感投影不泄漏，以及只调用 Gateway GET、不遍历题库、不写检查点或调用清理端点。
+- 三组 PowerShell Pester 脚本最终合计 17/17 通过；新增 4 项使用 3 份临时合成 JSON 和本地 HTTP Fixture，验证计划模式无写入、只提交两个 VALID 项、图片 URL 原样进入正式批次、NEEDS_REVIEW 项不进入批次、精确图片主机门禁、401 安全停止，以及输出不含 Token、题目、来源路径、原始 JSON或完整任务 ID。未读取真实 44,441 份 JSON。
 - Windows PowerShell 5.1 + 本地 TCP 捕获：以稳定排序后的前 3 份来源构造批次，请求字节可被严格 UTF-8 解码、可解析为 3 个对象、第 3 个对象保留 17 个属性，且没有 BOM；未向真实 API 提交。
 - Windows PowerShell 5.1 实际 dot-source 新诊断函数：解析成功，保持原迁移命令的运行兼容性。
-- Windows PowerShell 5.1 语法检查：迁移、诊断、汇总及两组测试共 5 个脚本全部通过；汇总脚本保留 UTF-8 BOM 以兼容 5.1 对中文脚本的读取。
+- Windows PowerShell 5.1 语法检查：迁移、诊断、汇总、VALID 筛选及三组测试共 7 个脚本全部通过；所有含中文的新 PowerShell 文件保留 UTF-8 BOM 以兼容 5.1 读取。
 - 真实全量 DryRun：只读来源清单共 44,441 项，按每任务最多 1,000 项完成 45 个任务；最终 `processed=44,441`、`VALID=29,127`、`NEEDS_REVIEW=15,314`、`FAILED=0`、`SKIPPED=0`、`imported=0`。检查点 `completed=true`、无活动任务，并确认不含 Token、题目字段或绝对路径。此结果只证明预检完成，不代表正式题目已创建。
 - 真实安全汇总：在短期 Token 当前进程内经 Gateway 只读完成，17 种 issueCode 组合合计恰为 15,314，和 NEEDS_REVIEW 总数一致；执行完成后 Token 已从进程环境移除。
 - `git diff --check`：通过。
@@ -113,7 +118,7 @@ outcome 以 44,441 条为分母：
 3. **P2：提高诊断精度。** 在 OpenAPI 先行评审后细分 `SUBQUESTION_ANSWER_MISSING` 和 `FIELD_INVALID` 的真实原因，再决定是否存在严格的一一对应答案格式；不以扩大正则为目标。
 4. **P3：重新 DryRun。** 解析规则变更后使用新的 `SourceSystem`/独立检查点创建全新 DryRun，避免确定性请求 ID 重放旧结果；旧任务不得删除或重建。再次运行安全汇总，比较 VALID、各 issueCode 和组合变化，并抽查“新转 VALID”项。
 5. **P4：人工复核。** 优先处理全部 `HTML_UNSAFE`、`FIELD_INVALID`、多问题码组合和真实元数据冲突；随后处理子题答案、隐式多问和无法严格拆分的选项。只能使用既有结构化修正或确认跳过 API。
-6. **决策门禁。** 新 DryRun 和人工抽查经用户确认前，继续禁止 `-Action Import`、`-ConfirmFullMigration`、图片转存和正式题目创建。
+6. **决策门禁。** 现有 29,127 条 VALID 可在图片主机/授权、media-service 配置、服务健康和 `PlanOnly` 结果另行确认后使用 VALID-only 模式导入；当前代码交付本身不执行 Import。其余 15,314 条继续等待规则修复、重新 DryRun 或人工复核，不得混入本轮正式任务。
 
 ## 人工演示步骤
 
@@ -123,6 +128,8 @@ outcome 以 44,441 条为分母：
 4. 在任务详情区分 `VALID` 与数据本身导致的 `NEEDS_REVIEW`；目录/JSON 年级真实冲突、内嵌选项歧义或图片问题仍不得自动放行。
 5. 只有 dry-run 结果经人工确认后才能执行实际导入；含图题仍要求 media-service 外部图片精确主机白名单。
 
+自动化正式导入前先运行 `-Action Import -AllItems -PlanOnly -ValidatedDryRunCheckpointPath <检查点>`，核对 `selectedValidCount=29127` 及图片主机聚合；这一步只读。审核图片来源授权并把同一组精确主机配置到 media-service 后，再以完全相同来源、DryRun 检查点和主机集合增加 `-ConfirmFullMigration` 执行。401 或网络中断时脚本停止，更新当前 PowerShell 进程 Token 后原样重跑即可使用 Import 检查点续传；脚本不保存密码、Token，也不自动登录。
+
 本轮已通过真实 Gateway 完成全量 DryRun，但未执行正式 Import。上述浏览器步骤仍可用于抽查复核页面；不得把 DryRun 的 `VALID` 数描述为已创建题目数。
 
 ## 注释、风险与后续依赖
@@ -131,7 +138,7 @@ outcome 以 44,441 条为分母：
 
 新增 PowerShell 诊断、批次敏感值收集和安全汇总函数均注明输入、输出、内存边界和失败语义。安全诊断不保存也不返回完整响应；当后端未返回统一错误体时，`code/traceId/fieldErrors` 为空，需使用 HTTP 状态码和服务端日志中的安全 Trace 进一步排查，不会为了诊断而回显异常全文。汇总脚本仅在全部任务读取成功后输出结果，中途 401/422/503 不输出部分统计。
 
-浏览器修复只解决目录选择的 ID/路径适配；脚本全量模式只解决任务编排和恢复。历史数据中真实存在的目录与 JSON 年级冲突、重复或缺损选项、外部图片转存失败仍会进入既有人工复核，不能自动放行；`AllItems` 的“全部”指全部提交处理，实际创建以 `importedCount` 为准。全量执行可能超过短期令牌寿命，需更新当前进程令牌后续传；运行期间必须冻结来源目录。T11 后端不依赖本修复，T18 发布验收必须包含目录 dry-run 和全量检查点恢复回归。
+浏览器修复只解决目录选择的 ID/路径适配；脚本全量模式只解决任务编排和恢复。VALID-only 选择以来源快照完全未变和持久化 DryRun 投影一致为前提，不能证明图片站点在正式执行时仍可访问，也不能保证远端内容的 MIME、大小或图片魔数合格；图片最终失败仍会按既有 `EXTERNAL_IMAGE_TRANSFER_FAILED` 进入复核，不能降低 media-service 安全策略。正式创建以 `importedCount` 为准。全量执行可能超过短期令牌寿命，需更新当前进程令牌后续传；每次恢复会重新核对 DryRun 投影和冻结来源，运行期间不得更改来源目录。T11 后端不依赖本修复，T18 发布验收必须包含 VALID-only 选择、图片失败和检查点恢复回归。
 
 ## 分支与发布
 
@@ -139,4 +146,5 @@ outcome 以 44,441 条为分母：
 - 基线：`main@0abc39c`
 - HTTP 安全与 UTF-8 修复提交：`e1dabe6`
 - DryRun 安全汇总提交：`a1c98b5`
+- 真实 issueCode 文档提交：`0dd8994`
 - PR：待创建与验收

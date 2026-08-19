@@ -5,6 +5,7 @@
 .DESCRIPTION
 输入是教师显式指定的只读目录和当前进程中的短期教师令牌；输出是任务 ID 与聚合计数。
 默认最多处理 20 项。只有显式使用 AllItems，且正式导入额外确认 ConfirmFullMigration 时，才会把稳定排序后的全部文件拆成多个任务。
+正式导入可引用已完成的全量 DryRun 检查点，只提交持久化结果为 VALID 的来源；图片 URL 会随题目提交并由 learning-service 调用 media-service 安全转存。
 检查点只保存指纹、索引、任务 ID 和计数，不保存令牌、绝对源路径、题干、答案或原始 JSON；中断后用相同参数重跑即可续传。
 #>
 [CmdletBinding()]
@@ -24,7 +25,10 @@ param(
     [switch]$AllItems,
     [switch]$ConfirmFullMigration,
     [string]$CheckpointPath,
-    [string]$ImportTaskId
+    [string]$ImportTaskId,
+    [string]$ValidatedDryRunCheckpointPath,
+    [string[]]$AllowedImageHost = @(),
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +37,7 @@ $accessToken = [Environment]::GetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN
 if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'EDU_MIGRATION_ACCESS_TOKEN is required in the current process.' }
 $headers = @{ 'Authorization' = "Bearer $accessToken"; 'Content-Type' = 'application/json' }
 . (Join-Path $PSScriptRoot 'private\LegacyMigrationHttpDiagnostics.ps1')
+. (Join-Path $PSScriptRoot 'private\LegacyValidatedImportSelection.ps1')
 
 # 输入任意来源字节，输出小写 SHA-256；用于来源与检查点幂等，不输出原文。
 function Get-Sha256Hex([byte[]]$Bytes) {
@@ -70,6 +75,77 @@ function Read-Checkpoint([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     try { return [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json }
     catch { throw 'Migration checkpoint is invalid; its path and contents were suppressed.' }
+}
+
+# 输入管理员明确批准的图片域名，输出去重小写域名；禁止通配符、URL、端口和路径，避免放宽 media-service 的 SSRF 边界。
+function Get-NormalizedAllowedImageHosts([string[]]$Hosts) {
+    $normalized = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($hostValue in @($Hosts)) {
+        $approvedHostValue = [string]$hostValue
+        if ([string]::IsNullOrWhiteSpace($approvedHostValue) -or $approvedHostValue.Trim() -ne $approvedHostValue -or
+                $approvedHostValue.Contains('*') -or $approvedHostValue.Contains('://') -or
+                $approvedHostValue.Contains('/') -or $approvedHostValue.Contains('\') -or
+                $approvedHostValue.Contains(':') -or
+                $approvedHostValue -notmatch '^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$') {
+            throw 'AllowedImageHost must contain exact DNS host names only; values were suppressed.'
+        }
+        [void]$normalized.Add($approvedHostValue.ToLowerInvariant())
+    }
+    return @($normalized | Sort-Object)
+}
+
+# 输入单个来源文件，输出筛选所需的稳定 externalId；只有已在 DryRun 中为 VALID 的项才进一步提取图片域名。
+# 源正文、图片 URL 和文件路径只在当前进程内使用，错误信息不会回显这些内容。
+function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object]$ValidatedExternalIds) {
+    try {
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -gt 256 * 1024) { throw 'FILE_TOO_LARGE' }
+        $json = $utf8NoBom.GetString($bytes) | ConvertFrom-Json
+        if ($null -eq $json -or $json -is [Array]) { throw 'JSON_OBJECT_REQUIRED' }
+        $idValue = $json.exerciseID
+        if ($null -ne $idValue -and ($idValue -is [Array] -or $idValue -is [System.Management.Automation.PSCustomObject])) {
+            throw 'EXTERNAL_ID_INVALID'
+        }
+        $externalId = [string]$idValue
+        if ([string]::IsNullOrWhiteSpace($externalId)) { $externalId = [IO.Path]::GetFileNameWithoutExtension($Path) }
+        if ([string]::IsNullOrWhiteSpace($externalId) -or $externalId.Trim() -ne $externalId -or $externalId.Length -gt 160) {
+            throw 'EXTERNAL_ID_INVALID'
+        }
+        if (-not $ValidatedExternalIds.Contains($externalId)) {
+            return [pscustomobject]@{ externalId = $externalId; selected = $false; imageHosts = @() }
+        }
+
+        $imageHosts = New-Object System.Collections.Generic.List[string]
+        $pending = New-Object System.Collections.Generic.Stack[object]
+        $pending.Push($json)
+        while ($pending.Count -gt 0) {
+            $node = $pending.Pop()
+            foreach ($fieldName in @('question', 'solution')) {
+                $value = $node.$fieldName
+                if ($null -eq $value -or $value -is [Array] -or
+                        $value -is [System.Management.Automation.PSCustomObject]) { continue }
+                foreach ($match in [Text.RegularExpressions.Regex]::Matches(
+                        [string]$value, '(?is)<img\b[^>]*\bsrc\s*=\s*([''"])(.*?)\1[^>]*>')) {
+                    $source = $match.Groups[2].Value.Trim()
+                    $uri = $null
+                    if (-not [Uri]::TryCreate($source, [UriKind]::Absolute, [ref]$uri) -or
+                            $uri.Scheme -ne 'https' -or -not [string]::IsNullOrEmpty($uri.UserInfo) -or
+                            [string]::IsNullOrWhiteSpace($uri.Host) -or ($uri.Port -ne 443)) {
+                        throw 'EXTERNAL_IMAGE_URL_INVALID'
+                    }
+                    $imageHosts.Add($uri.Host.ToLowerInvariant())
+                }
+            }
+            foreach ($child in @($node.subQues)) {
+                if ($null -ne $child -and $child -is [System.Management.Automation.PSCustomObject]) { $pending.Push($child) }
+            }
+        }
+        return [pscustomobject]@{ externalId = $externalId; selected = $true; imageHosts = @($imageHosts) }
+    } catch {
+        $safeReason = if (@('FILE_TOO_LARGE', 'JSON_OBJECT_REQUIRED', 'EXTERNAL_ID_INVALID', 'EXTERNAL_IMAGE_URL_INVALID') `
+                -contains [string]$_.Exception.Message) { [string]$_.Exception.Message } else { 'SOURCE_INSPECTION_FAILED' }
+        throw "Legacy source item $SourceIndex could not be inspected ($safeReason); source content, image URL and path were suppressed."
+    }
 }
 
 # 输入一个已创建的任务 ID，输出后端精确清理计数；不会清表或扫描其他任务。
@@ -118,10 +194,20 @@ if ($Action -eq 'Cleanup') {
 
 if ([string]::IsNullOrWhiteSpace($SourceRoot)) { throw "$Action requires SourceRoot." }
 if ($SourceSystem -notmatch '^[A-Z0-9][A-Z0-9_-]{2,79}$') { throw 'SourceSystem does not satisfy the API contract.' }
-if ($Action -eq 'Import' -and $AllItems -and -not $ConfirmFullMigration) {
+if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath) -and
+        ($Action -ne 'Import' -or -not $AllItems)) {
+    throw 'ValidatedDryRunCheckpointPath is only valid with -Action Import -AllItems.'
+}
+if ($PlanOnly -and [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
+    throw 'PlanOnly requires ValidatedDryRunCheckpointPath.'
+}
+if ($AllowedImageHost.Count -gt 0 -and [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
+    throw 'AllowedImageHost is only valid with ValidatedDryRunCheckpointPath.'
+}
+if ($Action -eq 'Import' -and $AllItems -and -not $PlanOnly -and -not $ConfirmFullMigration) {
     throw 'Full Import requires both -AllItems and -ConfirmFullMigration.'
 }
-if ($ConfirmFullMigration -and (-not $AllItems -or $Action -ne 'Import')) {
+if ($ConfirmFullMigration -and (-not $AllItems -or $Action -ne 'Import' -or $PlanOnly)) {
     throw 'ConfirmFullMigration is only valid with -Action Import -AllItems.'
 }
 
@@ -154,14 +240,79 @@ foreach ($path in $orderedPaths) {
     $manifestLines.Add("$relative|$($file.Length)|$($file.LastWriteTimeUtc.Ticks)")
 }
 $manifestFingerprint = Get-Sha256Hex ([Text.Encoding]::UTF8.GetBytes(($manifestLines -join "`n")))
+$totalSourceFiles = $orderedPaths.Count
+$selectionMode = 'SOURCE_ORDER'
+$validatedSelection = $null
+$selectedImageCount = 0
+$imageHostCounts = [ordered]@{}
+$normalizedAllowedImageHosts = @(Get-NormalizedAllowedImageHosts $AllowedImageHost)
+
+if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
+    $validatedSelection = Get-ValidatedDryRunSelection `
+        -CheckpointPath $ValidatedDryRunCheckpointPath `
+        -ApiBaseUrl $ApiBaseUrl `
+        -Headers $headers `
+        -AccessToken $accessToken `
+        -ExpectedSourceSystem $SourceSystem `
+        -ExpectedRootFingerprint $rootFingerprint `
+        -ExpectedManifestFingerprint $manifestFingerprint `
+        -ExpectedSourceFileCount $totalSourceFiles
+
+    $selectedPaths = New-Object System.Collections.Generic.List[string]
+    $matchedIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $hostCounts = @{}
+    for ($sourceIndex = 0; $sourceIndex -lt $orderedPaths.Count; $sourceIndex++) {
+        $descriptor = Get-SourceSelectionDescriptor $orderedPaths[$sourceIndex] $sourceIndex $validatedSelection.externalIds
+        if (-not $descriptor.selected) { continue }
+        if (-not $matchedIds.Add([string]$descriptor.externalId)) {
+            throw 'The current source snapshot contains duplicate VALID source keys; source values and paths were suppressed.'
+        }
+        $selectedPaths.Add($orderedPaths[$sourceIndex])
+        foreach ($imageHost in @($descriptor.imageHosts)) {
+            $selectedImageCount++
+            if ($hostCounts.ContainsKey($imageHost)) { $hostCounts[$imageHost]++ } else { $hostCounts[$imageHost] = 1 }
+        }
+    }
+    if ($matchedIds.Count -ne [int]$validatedSelection.validCount) {
+        throw 'The current source snapshot does not contain every persisted VALID source key.'
+    }
+    foreach ($entry in @($hostCounts.GetEnumerator() | Sort-Object -Property @{ Expression = 'Value'; Descending = $true }, Name)) {
+        $imageHostCounts[[string]$entry.Name] = [int]$entry.Value
+    }
+
+    if ($PlanOnly) {
+        [pscustomobject][ordered]@{
+            action = 'ImportPlan'
+            selectionMode = 'DRY_RUN_VALID_ONLY'
+            dryRunTaskCount = [int]$validatedSelection.dryRunTaskCount
+            totalSourceFiles = $totalSourceFiles
+            selectedValidCount = $selectedPaths.Count
+            selectedImageCount = $selectedImageCount
+            imageHostCounts = [pscustomobject]$imageHostCounts
+        } | ConvertTo-Json -Depth 5 -Compress
+        exit 0
+    }
+
+    $missingHosts = @($imageHostCounts.Keys | Where-Object { $normalizedAllowedImageHosts -notcontains $_ })
+    if ($missingHosts.Count -gt 0) {
+        throw 'AllowedImageHost does not cover every image host in the VALID selection; run -PlanOnly and approve exact hosts before Import.'
+    }
+    $orderedPaths = @($selectedPaths)
+    $selectionMode = 'DRY_RUN_VALID_ONLY'
+}
+
 $totalItems = if ($AllItems) { $orderedPaths.Count } else { [Math]::Min($MaxItems, $orderedPaths.Count) }
+if ($totalItems -eq 0) { throw 'No source item is eligible for this migration.' }
 $effectiveTaskSize = if ($AllItems) { $TaskSize } else { $totalItems }
+$validatedRunFingerprint = if ($null -eq $validatedSelection) { '-' } else { [string]$validatedSelection.dryRunRunFingerprint }
+$allowedHostLabel = $normalizedAllowedImageHosts -join ','
 $runFingerprint = Get-Sha256Hex ([Text.Encoding]::UTF8.GetBytes(
-    "$Action|$SourceSystem|$rootFingerprint|$manifestFingerprint|$totalItems|$effectiveTaskSize|$BatchSize"))
+    "$Action|$SourceSystem|$rootFingerprint|$manifestFingerprint|$totalItems|$effectiveTaskSize|$BatchSize|$selectionMode|$validatedRunFingerprint|$allowedHostLabel"))
 
 if ($AllItems -and [string]::IsNullOrWhiteSpace($CheckpointPath)) {
     $checkpointDirectory = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'ccnu-edulion\migration-checkpoints'
-    $CheckpointPath = Join-Path $checkpointDirectory "$($Action.ToLowerInvariant())-$($rootFingerprint.Substring(0, 12))-$($manifestFingerprint.Substring(0, 12)).json"
+    $checkpointAction = if ($selectionMode -eq 'DRY_RUN_VALID_ONLY') { 'import-valid' } else { $Action.ToLowerInvariant() }
+    $CheckpointPath = Join-Path $checkpointDirectory "$checkpointAction-$($rootFingerprint.Substring(0, 12))-$($manifestFingerprint.Substring(0, 12)).json"
 }
 if (-not [string]::IsNullOrWhiteSpace($CheckpointPath)) {
     $checkpointFullPath = [IO.Path]::GetFullPath($CheckpointPath)
@@ -184,8 +335,14 @@ if ($null -ne $checkpoint) {
         sourceSystem = $SourceSystem
         sourceRootFingerprint = $rootFingerprint
         sourceManifestFingerprint = $manifestFingerprint
-        totalSourceFiles = $orderedPaths.Count
+        totalSourceFiles = $totalSourceFiles
         totalItems = $totalItems
+        selectionMode = $selectionMode
+        validatedDryRunFingerprint = $validatedRunFingerprint
+        dryRunTaskCount = if ($null -eq $validatedSelection) { 0 } else { [int]$validatedSelection.dryRunTaskCount }
+        selectedImageCount = $selectedImageCount
+        imageHostCounts = [pscustomobject]$imageHostCounts
+        approvedImageHosts = @($normalizedAllowedImageHosts)
         taskSize = $effectiveTaskSize
         batchSize = $BatchSize
         nextSourceIndex = 0
@@ -198,9 +355,11 @@ if ($null -ne $checkpoint) {
 }
 
 if ([bool]$checkpoint.completed) {
-    [pscustomobject]@{
+    $completedResult = [ordered]@{
         action = $Action
         alreadyComplete = $true
+        selectionMode = if ($null -eq $checkpoint.selectionMode) { 'SOURCE_ORDER' } else { [string]$checkpoint.selectionMode }
+        totalSourceFiles = if ($null -eq $checkpoint.totalSourceFiles) { [int]$checkpoint.totalItems } else { [int]$checkpoint.totalSourceFiles }
         totalItems = [int]$checkpoint.totalItems
         completedTaskCount = @($checkpoint.taskSummaries).Count
         processedCount = [int]$checkpoint.totals.processed
@@ -209,8 +368,15 @@ if ([bool]$checkpoint.completed) {
         reviewCount = [int]$checkpoint.totals.review
         skippedCount = [int]$checkpoint.totals.skipped
         failedCount = [int]$checkpoint.totals.failed
-        checkpointPath = $CheckpointPath
-    } | ConvertTo-Json -Compress
+    }
+    if ([string]$checkpoint.selectionMode -eq 'DRY_RUN_VALID_ONLY') {
+        $completedResult.dryRunTaskCount = [int]$checkpoint.dryRunTaskCount
+        $completedResult.selectedImageCount = [int]$checkpoint.selectedImageCount
+        $completedResult.imageHostCounts = $checkpoint.imageHostCounts
+    } else {
+        $completedResult.checkpointPath = $CheckpointPath
+    }
+    [pscustomobject]$completedResult | ConvertTo-Json -Depth 5 -Compress
     exit 0
 }
 
@@ -411,18 +577,26 @@ Write-Progress -Activity "Legacy JSON $Action" -Completed
 $checkpoint.completed = $true
 Save-Checkpoint $checkpoint $CheckpointPath
 
-[pscustomobject]@{
+$finalResult = [ordered]@{
     action = $Action
     alreadyComplete = $false
-    totalSourceFiles = $orderedPaths.Count
+    selectionMode = $selectionMode
+    totalSourceFiles = $totalSourceFiles
     totalItems = $totalItems
     completedTaskCount = @($checkpoint.taskSummaries).Count
-    importTaskIds = @($checkpoint.taskSummaries | ForEach-Object { $_.importTaskId })
     processedCount = [int]$checkpoint.totals.processed
     importedCount = [int]$checkpoint.totals.imported
     validCount = [int]$checkpoint.totals.valid
     reviewCount = [int]$checkpoint.totals.review
     skippedCount = [int]$checkpoint.totals.skipped
     failedCount = [int]$checkpoint.totals.failed
-    checkpointPath = $CheckpointPath
-} | ConvertTo-Json -Depth 5 -Compress
+}
+if ($selectionMode -eq 'DRY_RUN_VALID_ONLY') {
+    $finalResult.dryRunTaskCount = [int]$validatedSelection.dryRunTaskCount
+    $finalResult.selectedImageCount = $selectedImageCount
+    $finalResult.imageHostCounts = [pscustomobject]$imageHostCounts
+} else {
+    $finalResult.importTaskIds = @($checkpoint.taskSummaries | ForEach-Object { $_.importTaskId })
+    $finalResult.checkpointPath = $CheckpointPath
+}
+[pscustomobject]$finalResult | ConvertTo-Json -Depth 5 -Compress
