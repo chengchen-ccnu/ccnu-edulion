@@ -16,6 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'private\LegacyMigrationHttpDiagnostics.ps1')
 
 function Get-Sha256Text([string]$Text) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -38,15 +39,32 @@ function ConvertTo-Utf8JsonBytes($Value) {
 
 function Invoke-SafeJsonRequest([string]$Method, [string]$Uri, $Body) {
     $headers = @{ Authorization = "Bearer $($env:EDU_MIGRATION_ACCESS_TOKEN)" }
+    $requestStream = $null
     try {
         if ($null -eq $Body) { return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -UseBasicParsing }
-        return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body (ConvertTo-Utf8JsonBytes $Body) -UseBasicParsing
+        # PowerShell 会把直接传入的 byte[] 展开为十进制数字文本；MemoryStream 才会原样写出 UTF-8 JSON 字节。
+        $requestBytes = ConvertTo-Utf8JsonBytes $Body
+        $requestStream = New-Object IO.MemoryStream -ArgumentList (,$requestBytes)
+        return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers `
+            -ContentType 'application/json; charset=utf-8' -Body $requestStream -UseBasicParsing
     } catch {
-        $status = $null
-        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $status = [int]$_.Exception.Response.StatusCode }
+        # 共享诊断器按可选错误字段工作；调用期间关闭 StrictMode，返回后立即恢复。
+        Set-StrictMode -Off
+        try {
+            $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ `
+                -SensitiveValues @([string]$env:EDU_MIGRATION_ACCESS_TOKEN)
+        } finally { Set-StrictMode -Version Latest }
+        $status = $diagnostic.httpStatus
         if ($status -eq 401) { throw 'Gateway returned HTTP 401; refresh EDU_MIGRATION_ACCESS_TOKEN and retry the same checkpoint.' }
-        if ($status) { throw "Gateway returned HTTP $status; no response body was logged." }
+        if ($status) {
+            $safeCode = if ([string]::IsNullOrWhiteSpace([string]$diagnostic.code)) { 'UNKNOWN' } else { [string]$diagnostic.code }
+            $safeFields = @($diagnostic.fieldErrors | ForEach-Object { "{0}: {1}" -f $_.field, $_.reason }) -join '; '
+            if ([string]::IsNullOrWhiteSpace($safeFields)) { $safeFields = 'none' }
+            throw "Gateway returned HTTP $status ($safeCode); safe field errors: $safeFields. Response body was suppressed."
+        }
         throw 'Gateway request failed before a safe HTTP status was available.'
+    } finally {
+        if ($null -ne $requestStream) { $requestStream.Dispose() }
     }
 }
 

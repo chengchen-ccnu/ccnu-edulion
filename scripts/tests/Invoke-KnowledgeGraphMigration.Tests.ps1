@@ -54,10 +54,10 @@ Describe 'Invoke-KnowledgeGraphMigration safety and graph semantics' {
             $result=& $migrationScript -NodeFile $source.Node -RelationFile $source.Relation -SourceSystem 'KG_FIXTURE' -ApiBaseUrl "http://127.0.0.1:$($server.Port)" -BatchSize 1 -CheckpointPath (Join-Path $TestDrive 'checkpoint.json')
             $result.action|Should Be 'DryRun';$result.local.nodeCount|Should Be 2;$result.local.relationCount|Should Be 1;$result.formalImportExecuted|Should Be $false
             Wait-Job $server.Job|Out-Null;$requests=@(Receive-Job $server.Job | Where-Object { $_.PSObject.Properties['Body'] });$requests.Count|Should Be 5
-            $relationBytes=[byte[]]@(([string]$requests[3].Body -split ' ')|ForEach-Object{[byte]$_})
-            $nodeBytes=[byte[]]@(([string]$requests[1].Body -split ' ')|ForEach-Object{[byte]$_})
-            $relationText=[Text.Encoding]::UTF8.GetString($relationBytes)
-            $nodeText=[Text.Encoding]::UTF8.GetString($nodeBytes)
+            $relationText=[string]$requests[3].Body
+            $nodeText=[string]$requests[1].Body
+            { $relationText | ConvertFrom-Json } | Should Not Throw
+            { $nodeText | ConvertFrom-Json } | Should Not Throw
             $relationText|Should Match '"prerequisiteSourceKnowId":"source-b"'
             $relationText|Should Match '"dependentSourceKnowId":"source-a"'
             $nodeText|Should Match '整数'

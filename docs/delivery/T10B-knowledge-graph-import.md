@@ -33,7 +33,7 @@ Gateway 已增加管理员图谱任务路由。管理员接口要求 `administra
 
 `question_version_knowledge_point` 继续作为不可变题目版本绑定，新增 `priority`、`core_flag`、`exam_point_flag`、`last_exam_point_flag`、`source_tag_sort_index`。来源没有年级字段，因此图谱知识点的 `grade` 可以为空，表示经确认后适用于整个学段；题目校验仅在知识点年级非空时要求单一年级相等。
 
-本任务没有创建数据库，没有在真实 MySQL 创建表或数据。自动化只使用 H2 内存 Schema 和最小合成 Fixture，进程结束自动清理；重复运行测试即可重建。
+本任务没有创建数据库；真实验收在既有专用 `edu_platform_learning_dev` 上由 Flyway 向前应用 V5，创建本节列出的图谱任务、staging、问题和关系表并扩展既有表。自动化仍只使用 H2 内存 Schema 和最小合成 Fixture，进程结束自动清理；重复运行测试即可重建。
 
 ## 只读源结构复核
 
@@ -66,9 +66,9 @@ Gateway 已增加管理员图谱任务路由。管理员接口要求 `administra
 
 ## 测试与实际结果
 
-- Java 专项：`KnowledgeGraphIntegrationTest` 5/5 通过，覆盖 DryRun、节点批次、关系方向、幂等、来源 parent 隔离、缺失端点、自环、跨学段、环、默认禁用、分页/有限邻域和 tags 元数据。
-- Java 全量 learning-service：32 项执行，30 通过，2 个真实 MySQL 用例按开关跳过；V1/V2/V3/V5 在 H2 MySQL 模式成功迁移。
-- Pester：T10B 专项 5/5 通过，覆盖多批次、`b -> a`、UTF-8 中文、Import 门禁、环、401 脱敏、最小检查点和不直连数据库。
+- Java 专项：`KnowledgeGraphIntegrationTest` 6/6 通过，覆盖严格 Jackson 请求绑定、DryRun、节点批次、关系方向、幂等、来源 parent 隔离、缺失端点、自环、跨学段、环、默认禁用、分页/有限邻域和 tags 元数据。
+- Java 全量 learning-service：33 项执行，31 通过，2 个真实 MySQL 用例按开关跳过；V1/V2/V3/V5 在 H2 MySQL 模式成功迁移。
+- Pester：T10B 专项 5/5 通过，覆盖多批次、`b -> a`、服务端直接收到可解析的 UTF-8 中文 JSON、Import 门禁、环、401 脱敏、最小检查点和不直连数据库。真实首轮发现 PowerShell 会把函数返回的 `byte[]` 展开成十进制数字文本；脚本改用 `MemoryStream` 原样发送 UTF-8 无 BOM，并复用白名单安全诊断器只显示状态、统一错误码和字段错误。
 - Windows PowerShell 5.1：脚本语法解析通过；合成 HTTP Fixture 实际执行通过。
 - OpenAPI 客户端生成和全 workspace typecheck：通过。
 - Frontend：18 个测试文件、122 项全部通过；管理、学生、教师三端生产构建通过，仅有既有 hls.js 大 chunk 提示。沙箱内 Vitest/Vite 首次因 `esbuild spawn EPERM` 失败，批准后在沙箱外复跑成功。
@@ -76,11 +76,15 @@ Gateway 已增加管理员图谱任务路由。管理员接口要求 `administra
 
 ## 真实环境状态、数据变化与阻塞
 
-Gateway 8080、IAM 8081、learning-service 8084 健康检查均为 `UP`。当前进程没有 `EDU_MIGRATION_ACCESS_TOKEN`，且运行中的服务不能代替当前分支重新加载，因此没有创建真实图谱任务、节点/关系 staging、业务知识点、题目、数据库表数据或检查点。用于本地结构复核的临时合成 HTTP 服务和临时检查点均已清理。
+2026-08-19 使用当前提交的临时 IAM/Gateway/Learning 实例和既有专用本地环境完成真实验收；三个实例使用独立 18081/18080/18084 端口，结束后全部停止，未干扰原 8081/8080/8084 实例。`edu_platform_learning_dev` 已由 Flyway 向前迁移到 V5。管理员密码只从当前 Windows 用户的 DPAPI 凭据读取，短期令牌只存在于进程环境并在结束时清除。
 
-真实 Gateway DryRun 未执行，正式知识图谱 Import 未执行，新的历史题库 DryRun/Import 也未执行。原因是以下业务语义仍未确认：`status=0` 的平台启用含义、`02/03/04` 的正式学段映射、六类正式名称、479 个来源 parent key 的分类含义、高中无关系是否表示不完整，以及无年级字段是否按整个学段适用。代码原样保存来源值，默认不启用节点。
+首个 V1 DryRun 暴露并修复 PowerShell 字节数组发送缺陷；修复后 V1 完成，但服务端“重复名称”按超额节点计 117，与本地“重复名称组”110 不一致。保留该任务作为审计证据，修正服务端口径并使用新的 `KG_MATH_T10B_V2` 与独立检查点再次 DryRun。V2 最终状态为 `COMPLETED`：节点 3,671、关系 2,107、六类类型、三个学段分布、重复名称组 110、孤立节点 2,267、未解析 parent key 479、最大入度 11、最大出度 19、最长链 21，本地与服务端完全一致；缺失端点、重复边、自环、跨学科、跨学段、环、节点冲突和跳过关系均为 0。安全问题页只有 `SOURCE_PARENT_UNRESOLVED=479`。
 
-T10A 的 45 个 DryRun 任务、复核记录和检查点均未查询、删除、重建或修改。由于本轮没有真实持久数据，无清理操作；H2 Fixture 随测试进程销毁。后续获得管理员短期 Token 并确认语义后，应先重启/部署当前 Gateway 与 learning-service，经 Gateway 执行图谱 DryRun；审核聚合后再正式 Import 和映射启用，最后使用新的 SourceSystem 与独立检查点重新执行历史题库 DryRun，确认 679 名称冲突和 6,034 重复 tag 的处理结果后才可考虑题目 Import。
+真实数据库保留 V1/V2 两个 `dry_run=true` 任务及其节点/关系 staging、安全问题和聚合结果，以便审计和确定性恢复；两个忽略型检查点均为 completed。DryRun 没有创建业务 `knowledge_point`、`knowledge_point_prerequisite` 或题目绑定，也没有修改来源文件。正常管理员登录产生本地 IAM 登录审计/刷新会话记录，已取得的访问令牌均已过期或从进程清除；DPAPI 管理员凭据仍保留在本机用户配置目录供后续确认后使用。
+
+正式知识图谱 Import、新的历史题库 DryRun/Import 均未执行。原因是以下业务语义仍未确认：`status=0` 的平台启用含义、`02/03/04` 的正式学段映射、六类正式名称、479 个来源 parent key 的分类含义、高中无关系是否表示不完整，以及无年级字段是否按整个学段适用。代码原样保存来源值，默认不启用节点。
+
+T10A 的 45 个 DryRun 任务、复核记录和检查点均未查询、删除、重建或修改。后续确认语义后，应先评审 V2 聚合，再决定是否以新正式 SourceSystem 执行 Import 和映射启用；最后使用新的 SourceSystem 与独立检查点重新执行历史题库 DryRun，确认 679 名称冲突和 6,034 重复 tag 的处理结果后才可考虑题目 Import。H2 Fixture 随测试进程销毁；若需要清理本次真实 DryRun，必须按两个精确任务 ID 删除对应 staging/问题/任务，不能清表或影响 T10A。
 
 ## 注释覆盖与发布
 

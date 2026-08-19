@@ -207,7 +207,7 @@ public class KnowledgeGraphService {
         int isolated = (int) bySource.keySet().stream().filter(id -> inDegree.getOrDefault(id, 0) == 0 && outDegree.getOrDefault(id, 0) == 0).count();
         Map<String, Integer> stages = new java.util.TreeMap<>(), types = new java.util.TreeMap<>(), names = new HashMap<>();
         nodes.forEach(node -> { stages.merge(node.educationStageCode(), 1, Integer::sum); types.merge(node.knowledgeTypeId(), 1, Integer::sum); names.merge(node.name(), 1, Integer::sum); });
-        int duplicateNames = names.values().stream().filter(count -> count > 1).mapToInt(count -> count - 1).sum();
+        int duplicateNames = (int) names.values().stream().filter(count -> count > 1).count();
         var summary = new KnowledgeGraphDtos.ImportSummary(task.expectedNodeCount(), task.expectedRelationCount(), stages, types, 0, duplicateNames, isolated, unresolvedParents,
                 addedNodes, reusedNodes, conflictNodes, addedRelations, reusedRelations, skippedRelations,
                 missing, duplicateEdges, self, crossDiscipline, crossStage, combinedCycle, inDegree.values().stream().mapToInt(Integer::intValue).max().orElse(0),

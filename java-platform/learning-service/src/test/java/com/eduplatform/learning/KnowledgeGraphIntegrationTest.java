@@ -64,6 +64,20 @@ class KnowledgeGraphIntegrationTest {
     }
 
     @Test
+    void createImportJsonBindsUnderStrictJacksonConfiguration() throws Exception {
+        String json = """
+                {"clientRequestId":"00000000-0000-5000-8000-000000000001","sourceSystem":"KG_HTTP_BINDING",
+                 "dryRun":true,"nodeFileSha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                 "relationFileSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                 "expectedNodeCount":3671,"expectedRelationCount":2107}
+                """;
+        var request = mapper.readValue(json, KnowledgeGraphDtos.CreateImportRequest.class);
+        assertThat(request.sourceSystem()).isEqualTo("KG_HTTP_BINDING");
+        assertThat(request.dryRun()).isTrue();
+        assertThat(request.expectedNodeCount()).isEqualTo(3671);
+    }
+
+    @Test
     void importIsIdempotentStoresBToAAndDefaultsNodesDisabled() {
         var task = create(false, 2, 1, "KG_IMPORT");
         UUID nodeBatch = UUID.randomUUID();
@@ -83,7 +97,8 @@ class KnowledgeGraphIntegrationTest {
     void finalValidationAggregatesMissingSelfCrossStageAndCycleWithoutBusinessWrites() {
         var task = create(false, 3, 5, "KG_INVALID");
         graphs.nodes(ADMIN, task.id(), new KnowledgeGraphDtos.NodeBatchRequest(UUID.randomUUID(), true,
-                List.of(node("a", "A", "03", null, "a".repeat(64)), node("b", "B", "03", null, "b".repeat(64)), node("c", "C", "04", null, "c".repeat(64)))));
+                List.of(node("a", "重复名称", "03", null, "a".repeat(64)), node("b", "重复名称", "03", null, "b".repeat(64)),
+                        node("c", "重复名称", "04", null, "c".repeat(64)))));
         graphs.relations(ADMIN, task.id(), new KnowledgeGraphDtos.RelationBatchRequest(UUID.randomUUID(), true,
                 List.of(relation("a", "b", "1".repeat(64)), relation("b", "a", "2".repeat(64)),
                         relation("a", "a", "3".repeat(64)), relation("a", "c", "4".repeat(64)),
@@ -91,6 +106,7 @@ class KnowledgeGraphIntegrationTest {
         var summary = graphs.get(ADMIN, task.id()).summary();
         assertThat(summary.cycleDetected()).isTrue(); assertThat(summary.selfLoopCount()).isEqualTo(1);
         assertThat(summary.crossStageEdgeCount()).isEqualTo(1); assertThat(summary.missingEndpointCount()).isEqualTo(1);
+        assertThat(summary.duplicateNameCount()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point", Integer.class)).isZero();
         assertThat(graphs.issues(ADMIN, task.id(), 1, 20).items()).extracting(KnowledgeGraphDtos.ImportIssue::issueCode)
                 .contains("SELF_LOOP", "CROSS_STAGE", "ENDPOINT_MISSING", "CYCLE_DETECTED");
