@@ -3,7 +3,7 @@
 以有界任务把历史逐题 JSON 提交到题库导入接口。
 
 .DESCRIPTION
-输入是教师显式指定的只读目录和当前进程中的短期教师令牌；输出是任务 ID 与聚合计数。
+输入是管理员显式指定的只读目录和当前进程中的短期管理员令牌；输出是 SYSTEM 任务 ID 与聚合计数。
 默认最多处理 20 项。只有显式使用 AllItems，且正式导入额外确认 ConfirmFullMigration 时，才会把稳定排序后的全部文件拆成多个任务。
 正式导入可引用已完成的全量 DryRun 检查点，只提交持久化结果为 VALID 的来源；图片 URL 会随题目提交并由 learning-service 调用 media-service 安全转存。
 检查点只保存指纹、索引、任务 ID 和计数，不保存令牌、绝对源路径、题干、答案或原始 JSON；中断后用相同参数重跑即可续传。
@@ -205,13 +205,20 @@ function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object
     }
 }
 
-# 输入已经通过全量 DryRun 和图片域名校验的候选，输出固定数量的确定性均衡样本。
-# 选择器优先补齐题型、年级、难度和图文/纯文本覆盖，其次尽量增加不同来源知识点；同分时保持来源稳定顺序。
+# 输入已经通过全量 DryRun 和图片域名校验的候选，输出固定数量的确定性配额样本。
+# 每个来源分类至少选择 101 道，不足 101 道时全选该分类；含图题至少占样本一半。满足硬配额后再增加知识点覆盖，同分时保持来源稳定顺序。
 function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
     if ($SampleSize -lt 100) { throw 'BalancedSampleSize must be 0 or between 100 and 1000.' }
     if ($Candidates.Count -lt $SampleSize) { throw 'BalancedSampleSize exceeds the validated eligible source count.' }
     $orderedCandidates = @($Candidates | Sort-Object sourceIndex)
-    $availableTypeCounts = @{}; $availableGradeCounts = @{}; $availableDifficultyCounts = @{}
+    $categoryQuota = 101
+    $availableTypeCounts = @{
+        SINGLE_CHOICE = 0; MULTIPLE_CHOICE = 0; TRUE_FALSE = 0
+        FILL_BLANK = 0; SHORT_ANSWER = 0; COMPOSITE = 0
+    }
+    $availableGradeCounts = @{}
+    foreach ($gradeKey in 1..9) { $availableGradeCounts[[string]$gradeKey] = 0 }
+    $availableDifficultyCounts = @{ '1' = 0; '5' = 0; '9' = 0 }
     $availableImageCounts = @{ IMAGE = 0; TEXT = 0 }
     foreach ($candidate in $orderedCandidates) {
         foreach ($pair in @(@($availableTypeCounts, [string]$candidate.questionType),
@@ -221,16 +228,28 @@ function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
         }
         $availableImageCounts[$(if (@($candidate.imageHosts).Count -gt 0) { 'IMAGE' } else { 'TEXT' })]++
     }
-    $typeTarget = @{}; foreach ($key in $availableTypeCounts.Keys) { $typeTarget[$key] = [Math]::Min(10, $availableTypeCounts[$key]) }
-    $gradeTarget = @{}; foreach ($key in $availableGradeCounts.Keys) { $gradeTarget[$key] = [Math]::Min(15, $availableGradeCounts[$key]) }
-    $difficultyTarget = @{}; foreach ($key in $availableDifficultyCounts.Keys) { $difficultyTarget[$key] = [Math]::Min(15, $availableDifficultyCounts[$key]) }
-    $imageTarget = @{ IMAGE = [Math]::Min(30, $availableImageCounts.IMAGE); TEXT = [Math]::Min(30, $availableImageCounts.TEXT) }
+    $typeTarget = @{}; foreach ($key in $availableTypeCounts.Keys) { $typeTarget[$key] = [Math]::Min($categoryQuota, $availableTypeCounts[$key]) }
+    $gradeTarget = @{}; foreach ($key in $availableGradeCounts.Keys) { $gradeTarget[$key] = [Math]::Min($categoryQuota, $availableGradeCounts[$key]) }
+    $difficultyTarget = @{}; foreach ($key in $availableDifficultyCounts.Keys) { $difficultyTarget[$key] = [Math]::Min($categoryQuota, $availableDifficultyCounts[$key]) }
+    $imageQuestionTarget = [int][Math]::Ceiling($SampleSize / 2.0)
+    if ($availableImageCounts.IMAGE -lt $imageQuestionTarget) {
+        throw 'The validated eligible source does not contain enough image questions for the required 50 percent image ratio.'
+    }
     $typeCounts = @{}; $gradeCounts = @{}; $difficultyCounts = @{}; $imageCounts = @{ IMAGE = 0; TEXT = 0 }
     $selectedIndexes = New-Object 'System.Collections.Generic.HashSet[int]'
     $knowledgeIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $selected = New-Object System.Collections.Generic.List[object]
 
-    while ($selected.Count -lt $SampleSize) {
+    # 先只选择能减少至少一个硬配额缺口的题，避免知识点多样性挤占年级、题型、难度或含图名额。
+    while ($true) {
+        $hasQuotaDeficit = $imageCounts.IMAGE -lt $imageQuestionTarget
+        foreach ($key in $typeTarget.Keys) { if (($typeCounts[$key] -as [int]) -lt $typeTarget[$key]) { $hasQuotaDeficit = $true; break } }
+        if (-not $hasQuotaDeficit) { foreach ($key in $gradeTarget.Keys) { if (($gradeCounts[$key] -as [int]) -lt $gradeTarget[$key]) { $hasQuotaDeficit = $true; break } } }
+        if (-not $hasQuotaDeficit) { foreach ($key in $difficultyTarget.Keys) { if (($difficultyCounts[$key] -as [int]) -lt $difficultyTarget[$key]) { $hasQuotaDeficit = $true; break } } }
+        if (-not $hasQuotaDeficit) { break }
+        if ($selected.Count -ge $SampleSize) {
+            throw 'BalancedSampleSize is too small to satisfy every category quota and the 50 percent image ratio.'
+        }
         $best = $null; $bestScore = [int64]::MinValue
         foreach ($candidate in $orderedCandidates) {
             if ($selectedIndexes.Contains([int]$candidate.sourceIndex)) { continue }
@@ -240,11 +259,33 @@ function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
             foreach ($candidateKnowledgeId in @($candidate.knowledgePointIds)) {
                 if (-not $knowledgeIds.Contains([string]$candidateKnowledgeId)) { $newKnowledgeCount++ }
             }
-            $score = [int64]$newKnowledgeCount * 10000
+            $score = [int64]$newKnowledgeCount
             if (($typeCounts[$type] -as [int]) -lt $typeTarget[$type]) { $score += 1000000 }
-            if (($gradeCounts[$grade] -as [int]) -lt $gradeTarget[$grade]) { $score += 500000 }
-            if (($difficultyCounts[$difficulty] -as [int]) -lt $difficultyTarget[$difficulty]) { $score += 500000 }
-            if ($imageCounts[$imageClass] -lt $imageTarget[$imageClass]) { $score += 100000 }
+            if (($gradeCounts[$grade] -as [int]) -lt $gradeTarget[$grade]) { $score += 1000000 }
+            if (($difficultyCounts[$difficulty] -as [int]) -lt $difficultyTarget[$difficulty]) { $score += 1000000 }
+            if ($imageClass -eq 'IMAGE' -and $imageCounts.IMAGE -lt $imageQuestionTarget) { $score += 1000000 }
+            if ($score -gt $bestScore) { $best = $candidate; $bestScore = $score }
+        }
+        if ($null -eq $best -or $bestScore -lt 1000000) { throw 'Balanced sample could not satisfy its remaining category or image quota.' }
+        [void]$selectedIndexes.Add([int]$best.sourceIndex); $selected.Add($best)
+        $bestType = [string]$best.questionType; $bestGrade = [string]$best.grade; $bestDifficulty = [string]$best.difficulty
+        foreach ($pair in @(@($typeCounts, $bestType), @($gradeCounts, $bestGrade), @($difficultyCounts, $bestDifficulty))) {
+            if ($pair[0].ContainsKey($pair[1])) { $pair[0][$pair[1]]++ } else { $pair[0][$pair[1]] = 1 }
+        }
+        $imageCounts[$(if (@($best.imageHosts).Count -gt 0) { 'IMAGE' } else { 'TEXT' })]++
+        foreach ($knowId in @($best.knowledgePointIds)) { [void]$knowledgeIds.Add([string]$knowId) }
+    }
+
+    # 硬配额已经满足后，用剩余名额优先扩展知识点覆盖；来源索引继续充当稳定的最终决胜条件。
+    while ($selected.Count -lt $SampleSize) {
+        $best = $null; $bestScore = [int64]::MinValue
+        foreach ($candidate in $orderedCandidates) {
+            if ($selectedIndexes.Contains([int]$candidate.sourceIndex)) { continue }
+            $newKnowledgeCount = 0
+            foreach ($candidateKnowledgeId in @($candidate.knowledgePointIds)) {
+                if (-not $knowledgeIds.Contains([string]$candidateKnowledgeId)) { $newKnowledgeCount++ }
+            }
+            $score = [int64]$newKnowledgeCount
             if ($score -gt $bestScore) { $best = $candidate; $bestScore = $score }
         }
         if ($null -eq $best) { throw 'Balanced sample selection ended before reaching its requested size.' }
@@ -259,12 +300,20 @@ function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
     foreach ($key in $typeTarget.Keys) { if (($typeCounts[$key] -as [int]) -lt $typeTarget[$key]) { throw 'Balanced sample could not satisfy an available question-type target.' } }
     foreach ($key in $gradeTarget.Keys) { if (($gradeCounts[$key] -as [int]) -lt $gradeTarget[$key]) { throw 'Balanced sample could not satisfy an available grade target.' } }
     foreach ($key in $difficultyTarget.Keys) { if (($difficultyCounts[$key] -as [int]) -lt $difficultyTarget[$key]) { throw 'Balanced sample could not satisfy an available difficulty target.' } }
-    foreach ($key in $imageTarget.Keys) { if ($imageCounts[$key] -lt $imageTarget[$key]) { throw 'Balanced sample could not satisfy the image/text target.' } }
+    if ($imageCounts.IMAGE -lt $imageQuestionTarget) { throw 'Balanced sample could not satisfy the 50 percent image target.' }
     return [pscustomobject][ordered]@{
         candidates = @($selected | Sort-Object sourceIndex)
+        categoryQuota = $categoryQuota
+        questionTypeAvailableCounts = [pscustomobject]$availableTypeCounts
+        gradeAvailableCounts = [pscustomobject]$availableGradeCounts
+        difficultyAvailableCounts = [pscustomobject]$availableDifficultyCounts
+        questionTypeTargets = [pscustomobject]$typeTarget
+        gradeTargets = [pscustomobject]$gradeTarget
+        difficultyTargets = [pscustomobject]$difficultyTarget
         questionTypeCounts = [pscustomobject]$typeCounts
         gradeCounts = [pscustomobject]$gradeCounts
         difficultyCounts = [pscustomobject]$difficultyCounts
+        imageQuestionTarget = $imageQuestionTarget
         imageQuestionCount = [int]$imageCounts.IMAGE
         textQuestionCount = [int]$imageCounts.TEXT
         distinctKnowledgePointCount = $knowledgeIds.Count
@@ -274,7 +323,7 @@ function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
 # 输入一个已创建的任务 ID，输出后端精确清理计数；不会清表或扫描其他任务。
 function Invoke-TaskCleanup([string]$TaskId) {
     try {
-        return Invoke-RestMethod -Method Delete -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports/$TaskId/created-resources" -Headers $headers
+        return Invoke-RestMethod -Method Delete -Uri "$ApiBaseUrl/api/v1/admin/legacy-question-imports/$TaskId/created-resources" -Headers $headers
     } catch { throw "Legacy cleanup request failed for task $TaskId; response content was suppressed." }
 }
 
@@ -459,9 +508,17 @@ if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
             imageHostCounts = [pscustomobject]$imageHostCounts
         }
         if ($null -ne $balancedSample) {
+            $plan.categoryQuota = [int]$balancedSample.categoryQuota
+            $plan.questionTypeAvailableCounts = $balancedSample.questionTypeAvailableCounts
+            $plan.gradeAvailableCounts = $balancedSample.gradeAvailableCounts
+            $plan.difficultyAvailableCounts = $balancedSample.difficultyAvailableCounts
+            $plan.questionTypeTargets = $balancedSample.questionTypeTargets
+            $plan.gradeTargets = $balancedSample.gradeTargets
+            $plan.difficultyTargets = $balancedSample.difficultyTargets
             $plan.questionTypeCounts = $balancedSample.questionTypeCounts
             $plan.gradeCounts = $balancedSample.gradeCounts
             $plan.difficultyCounts = $balancedSample.difficultyCounts
+            $plan.imageQuestionTarget = [int]$balancedSample.imageQuestionTarget
             $plan.imageQuestionCount = [int]$balancedSample.imageQuestionCount
             $plan.textQuestionCount = [int]$balancedSample.textQuestionCount
             $plan.distinctKnowledgePointCount = [int]$balancedSample.distinctKnowledgePointCount
@@ -484,7 +541,7 @@ $effectiveTaskSize = if ($AllItems) { $TaskSize } else { $totalItems }
 $validatedRunFingerprint = if ($null -eq $validatedSelection) { '-' } else { [string]$validatedSelection.dryRunRunFingerprint }
 $allowedHostLabel = $normalizedAllowedImageHosts -join ','
 $imageExclusionLabel = "invalid=$([bool]$ExcludeInvalidImageItems)|unapproved=$([bool]$ExcludeUnapprovedImageHostItems)"
-$sampleLabel = "balanced-v1=$BalancedSampleSize"
+$sampleLabel = "balanced-v3-quota101-image50-answer-images=$BalancedSampleSize"
 $runFingerprint = Get-Sha256Hex ([Text.Encoding]::UTF8.GetBytes(
     "$Action|$SourceSystem|$rootFingerprint|$manifestFingerprint|$totalItems|$effectiveTaskSize|$BatchSize|$selectionMode|$validatedRunFingerprint|$allowedHostLabel|$imageExclusionLabel|$sampleLabel"))
 
@@ -525,9 +582,17 @@ if ($null -ne $checkpoint) {
         imageHostCounts = [pscustomobject]$imageHostCounts
         approvedImageHosts = @($normalizedAllowedImageHosts)
         balancedSampleSize = $BalancedSampleSize
+        categoryQuota = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.categoryQuota }
+        questionTypeAvailableCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.questionTypeAvailableCounts }
+        gradeAvailableCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.gradeAvailableCounts }
+        difficultyAvailableCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.difficultyAvailableCounts }
+        questionTypeTargets = if ($null -eq $balancedSample) { $null } else { $balancedSample.questionTypeTargets }
+        gradeTargets = if ($null -eq $balancedSample) { $null } else { $balancedSample.gradeTargets }
+        difficultyTargets = if ($null -eq $balancedSample) { $null } else { $balancedSample.difficultyTargets }
         questionTypeCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.questionTypeCounts }
         gradeCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.gradeCounts }
         difficultyCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.difficultyCounts }
+        imageQuestionTarget = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.imageQuestionTarget }
         imageQuestionCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.imageQuestionCount }
         textQuestionCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.textQuestionCount }
         distinctKnowledgePointCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.distinctKnowledgePointCount }
@@ -703,7 +768,7 @@ while ([int]$checkpoint.nextSourceIndex -lt $totalItems) {
     # Windows PowerShell 5.1 会把字符串请求体按本机 ANSI 代码页编码；显式传 UTF-8 字节可避免中文题目被替换或形成非法 JSON。
     $createBodyBytes = $utf8NoBom.GetBytes($createBody)
     try {
-        $task = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports" -Headers $headers -Body $createBodyBytes
+        $task = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/admin/legacy-question-imports" -Headers $headers -Body $createBodyBytes
     } catch {
         $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ `
             -SensitiveValues @($accessToken, $resolvedRoot, $SourceRoot)
@@ -729,7 +794,7 @@ while ([int]$checkpoint.nextSourceIndex -lt $totalItems) {
         } | ConvertTo-Json -Depth 30 -Compress
         $bodyBytes = $utf8NoBom.GetBytes($body)
         try {
-            $response = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/teacher/legacy-question-imports/$($task.id)/batches" -Headers $headers -Body $bodyBytes
+            $response = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/v1/admin/legacy-question-imports/$($task.id)/batches" -Headers $headers -Body $bodyBytes
         } catch {
             $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ `
                 -SensitiveValues (Get-BatchSensitiveValues $batchItems)

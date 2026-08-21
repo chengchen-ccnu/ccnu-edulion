@@ -97,11 +97,11 @@ function messageFor(error: unknown, fallback: string): string {
   <div v-if="loading && !question" class="teacher-loading" aria-busy="true">正在加载题目详情…</div>
   <template v-else-if="question">
     <section class="teacher-page-heading question-detail-heading"><div><span class="section-kicker">QUESTION DETAIL</span>
-      <h2>题目详情</h2><p>{{ question.status }} · 当前 v{{ question.currentVersion.versionNumber }} · r{{ question.revision }}</p></div>
-      <div class="heading-actions"><RouterLink v-if="question.status !== 'ARCHIVED'" class="button button--quiet"
+      <h2>题目详情</h2><p>{{ question.scope === "SYSTEM" ? "平台系统题（只读）" : "我的私有题" }} · {{ question.status }} · 当前 v{{ question.currentVersion.versionNumber }} · r{{ question.revision }}</p></div>
+      <div class="heading-actions"><RouterLink v-if="question.editable && question.status !== 'ARCHIVED'" class="button button--quiet"
         :to="{ name: 'teacher-question-edit', params: { questionId: question.id } }">编辑新版本</RouterLink>
-        <button v-if="question.status === 'DRAFT'" class="button button--publish" type="button" :disabled="actionBusy" @click="activate">启用</button>
-        <button v-if="question.status !== 'ARCHIVED'" class="button button--danger" type="button" :disabled="actionBusy" @click="archive">归档</button></div>
+        <button v-if="question.editable && question.status === 'DRAFT'" class="button button--publish" type="button" :disabled="actionBusy" @click="activate">启用</button>
+        <button v-if="question.editable && question.status !== 'ARCHIVED'" class="button button--danger" type="button" :disabled="actionBusy" @click="archive">归档</button></div>
     </section>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }} <button type="button" @click="load">刷新</button></p>
     <p v-if="successMessage" class="feedback feedback--success" role="status">{{ successMessage }}</p>

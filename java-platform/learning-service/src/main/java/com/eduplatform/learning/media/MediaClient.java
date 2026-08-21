@@ -21,5 +21,12 @@ public interface MediaClient {
      * @param sourceUrl 仅用于本次调用的外部地址；实现不得记录或持久化
      * @return media-service 生成的稳定 mediaId
      */
-    String transferExternalImage(String clientRequestId, String sourceUrl, String teacherId, String traceId);
+    String transferExternalImage(String clientRequestId, String sourceUrl, String ownerId,
+            String scope, String traceId);
+
+    /** 既有教师私有导入兼容入口；管理员系统导入必须显式调用带 scope 的方法。 */
+    default String transferExternalImage(String clientRequestId, String sourceUrl, String teacherId,
+            String traceId) {
+        return transferExternalImage(clientRequestId, sourceUrl, teacherId, "TEACHER", traceId);
+    }
 }

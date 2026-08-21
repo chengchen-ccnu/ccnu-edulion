@@ -451,6 +451,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/learning/system-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List ACTIVE public system questions for an authenticated learner
+         * @description Returns only SYSTEM and ACTIVE questions. Answers and analyses are never present in this learner projection.
+         */
+        get: operations["listSystemQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/system-questions/{questionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one ACTIVE system question without answers or analysis */
+        get: operations["getSystemQuestion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/questions": {
         parameters: {
             query?: never;
@@ -459,8 +496,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List questions owned by the current teacher
-         * @description Answers and full analyses are intentionally absent from list projections. Filters apply to the current immutable version only.
+         * List public system questions and questions owned by the current teacher
+         * @description Answers and full analyses are intentionally absent from list projections. SYSTEM rows are read-only; TEACHER rows belong to the current teacher. Filters apply to the current immutable version only.
          */
         get: operations["listTeacherQuestions"];
         put?: never;
@@ -482,11 +519,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the current immutable version of an owned question */
+        /** Get a visible system question or an owned teacher question */
         get: operations["getTeacherQuestion"];
         /**
-         * Create a new immutable version of an owned question
-         * @description Never overwrites a historical version. `expectedRevision` guards the aggregate pointer; historical media references remain retained so old snapshots cannot lose assets.
+         * Create a new immutable version of an owned TEACHER question
+         * @description SYSTEM questions always return 403. TEACHER questions never overwrite a historical version; `expectedRevision` guards the aggregate pointer.
          */
         put: operations["updateTeacherQuestion"];
         post?: never;
@@ -505,8 +542,8 @@ export interface paths {
         };
         get?: never;
         /**
-         * Activate or archive an owned question
-         * @description DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED. Archived questions are retained for historical consumers and cannot be edited or reactivated in T09.
+         * Activate or archive an owned TEACHER question
+         * @description SYSTEM questions always return 403. A TEACHER DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED.
          */
         put: operations["updateTeacherQuestionStatus"];
         post?: never;
@@ -524,8 +561,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Page immutable versions of an owned question
-         * @description History is ordered newest first. Reading history never moves the aggregate current-version pointer.
+         * Page immutable versions of a visible question
+         * @description SYSTEM questions and the current teacher's TEACHER questions are readable. History is ordered newest first and never moves the current pointer.
          */
         get: operations["listTeacherQuestionVersions"];
         put?: never;
@@ -544,8 +581,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get one immutable historical version of an owned question
-         * @description The version must belong to the owned aggregate. This read-only endpoint never changes revision or the current-version pointer.
+         * Get one immutable historical version of a visible question
+         * @description The version must belong to a visible SYSTEM question or the current teacher's TEACHER question. This endpoint is read-only.
          */
         get: operations["getTeacherQuestionVersion"];
         put?: never;
@@ -572,6 +609,97 @@ export interface paths {
          */
         post: operations["createQuestionImport"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/question-imports/{importTaskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one administrator-owned SYSTEM legacy import task */
+        get: operations["getAdminSystemQuestionImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/question-imports/{importTaskId}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page safe item projections for an administrator-owned SYSTEM legacy task */
+        get: operations["listAdminSystemQuestionImportItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/legacy-question-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an administrator-owned bounded SYSTEM legacy migration task
+         * @description Only administration:access may create this task. Dry-run creates no question or media; formal batches create SYSTEM questions and SYSTEM image assets owned by the administrator.
+         */
+        post: operations["createAdminSystemLegacyQuestionImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/legacy-question-imports/{importTaskId}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit one bounded SYSTEM legacy batch */
+        post: operations["submitAdminSystemLegacyQuestionImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/legacy-question-imports/{importTaskId}/created-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Precisely clean resources created by one SYSTEM acceptance task
+         * @description Only resources linked to this task and still safe to remove are affected. Unrelated questions, media and source files are untouched.
+         */
+        delete: operations["cleanupAdminSystemLegacyQuestionImport"];
         options?: never;
         head?: never;
         patch?: never;
@@ -634,96 +762,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Idempotently import an explicit structured correction or confirm skip
-         * @description `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
-         *     ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
-         *     is terminal for the item. Resolution is allowed only after the final batch has completed and the task
-         *     is in `COMPLETED` or `PARTIAL_SUCCESS`; `PENDING`, `PROCESSING`, `FAILED` and `CLEANED` tasks return
-         *     `QUESTION_IMPORT.TASK_NOT_REVIEWABLE` with HTTP 409. Replaying the same clientRequestId and body,
-         *     including two concurrent identical requests, returns the first committed result.
-         */
-        post: operations["resolveLegacyQuestionImportItem"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/teacher/legacy-question-imports": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create an explicitly bounded legacy JSON migration task
-         * @description The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
-         *     to true in migration tooling; the API never scans a server path. Creating a task does not import
-         *     any item and does not by itself authorize full migration of the historical corpus. Explicit
-         *     operator tooling may orchestrate a reviewed corpus as multiple independently bounded tasks.
-         */
-        post: operations["createLegacyQuestionImport"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/teacher/legacy-question-imports/{importTaskId}/batches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit one idempotent legacy JSON batch of at most 20 items
-         * @description Each item is parsed independently. The response contains only stable source keys, outcomes and
-         *     issue codes; it never echoes question text, answers or raw JSON. Dry-run performs no media transfer
-         *     and creates no question. A duplicate batchId returns its original aggregate result.
-         */
-        post: operations["submitLegacyQuestionImportBatch"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Precisely clean resources created by one non-dry-run acceptance task
-         * @description Only DRAFT questions still owned by the caller and linked to this exact task are removed; media references are released through Outbox. The historical source directory and unrelated questions are never touched.
-         */
-        delete: operations["cleanupLegacyQuestionImport"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/media/external-image-transfers": {
         parameters: {
             query?: never;
@@ -735,7 +773,8 @@ export interface paths {
         put?: never;
         /**
          * Idempotently transfer one allow-listed HTTPS question image into media-service
-         * @description Teacher-only T09A compatibility endpoint. media-service validates the HTTPS host before and after
+         * @description TEACHER transfers create owner-only assets; SYSTEM transfers require administration:access and create
+         *     administrator-owned assets readable by authenticated students and teachers. media-service validates the HTTPS host before and after
          *     redirects, blocks private/link-local destinations, enforces image MIME and size limits, stores the
          *     object through its own storage port and returns only a stable mediaId. The source URL is neither
          *     persisted nor logged. Dry-run callers must not invoke this endpoint.
@@ -1180,6 +1219,11 @@ export interface components {
         QuestionDifficulty: "EASY" | "MEDIUM" | "HARD";
         /** @enum {string} */
         QuestionStatus: "DRAFT" | "ACTIVE" | "ARCHIVED";
+        /**
+         * @description SYSTEM is the administrator-owned public bank; TEACHER is private to its creating teacher.
+         * @enum {string}
+         */
+        QuestionScope: "SYSTEM" | "TEACHER";
         /** @enum {string} */
         QuestionMediaPurpose: "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT";
         KnowledgePoint: {
@@ -1513,6 +1557,9 @@ export interface components {
         QuestionSummary: {
             /** Format: uuid */
             id: string;
+            scope: components["schemas"]["QuestionScope"];
+            /** @description True only for the current teacher's TEACHER question. */
+            editable: boolean;
             status: components["schemas"]["QuestionStatus"];
             /** Format: int64 */
             revision: number;
@@ -1533,6 +1580,8 @@ export interface components {
         TeacherQuestion: {
             /** Format: uuid */
             id: string;
+            scope: components["schemas"]["QuestionScope"];
+            editable: boolean;
             status: components["schemas"]["QuestionStatus"];
             /** Format: int64 */
             revision: number;
@@ -1543,6 +1592,51 @@ export interface components {
             updatedAt: string;
         };
         QuestionPage: {
+            items: components["schemas"]["QuestionSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description Learner-safe ACTIVE SYSTEM question; correct answers and analysis are intentionally absent. */
+        SystemQuestion: {
+            /** Format: uuid */
+            id: string;
+            scope: components["schemas"]["QuestionScope"];
+            type: components["schemas"]["QuestionType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            knowledgePoints: components["schemas"]["KnowledgePoint"][];
+            media: components["schemas"]["QuestionMedia"][];
+            children: components["schemas"]["SystemQuestionChild"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SystemQuestionChild: {
+            /** Format: uuid */
+            questionId: string;
+            /** Format: uuid */
+            versionId: string;
+            sequence: number;
+            type: components["schemas"]["QuestionInputType"];
+            difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
+            grade: components["schemas"]["QuestionGrade"];
+            subject: components["schemas"]["QuestionSubject"];
+            stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            knowledgePoints: components["schemas"]["KnowledgePoint"][];
+            media: components["schemas"]["QuestionMedia"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SystemQuestionPage: {
             items: components["schemas"]["QuestionSummary"][];
             page: number;
             size: number;
@@ -1592,6 +1686,7 @@ export interface components {
         QuestionImportTask: {
             /** Format: uuid */
             id: string;
+            questionScope: components["schemas"]["QuestionScope"];
             /** Format: uuid */
             sourceMediaId: string | null;
             sourceFormat: components["schemas"]["QuestionImportSourceFormat"] | "LEGACY_JSON";
@@ -1754,6 +1849,7 @@ export interface components {
              * @description Used only during this call; media-service must not persist or log it.
              */
             sourceUrl: string;
+            scope: components["schemas"]["MediaAssetScope"];
         };
         /**
          * @description Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
@@ -1768,6 +1864,11 @@ export interface components {
         MediaAssetStatus: "UPLOADED" | "VERIFYING" | "PROCESSING" | "READY" | "REJECTED" | "FAILED" | "EXPIRED" | "DELETING" | "DELETED";
         /** @enum {string} */
         MediaProcessingStatus: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+        /**
+         * @description SYSTEM assets are administrator-owned and readable by authenticated users; TEACHER assets remain owner-only.
+         * @enum {string}
+         */
+        MediaAssetScope: "SYSTEM" | "TEACHER";
         CreateMediaUploadRequest: {
             /** Format: uuid */
             clientRequestId: string;
@@ -1855,6 +1956,7 @@ export interface components {
         MediaAsset: {
             /** Format: uuid */
             mediaId: string;
+            scope: components["schemas"]["MediaAssetScope"];
             purpose: components["schemas"]["MediaPurpose"];
             status: components["schemas"]["MediaAssetStatus"];
             processingStatus: components["schemas"]["MediaProcessingStatus"];
@@ -3028,6 +3130,63 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    listSystemQuestions: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                stage?: components["schemas"]["QuestionStage"];
+                grade?: components["schemas"]["QuestionGrade"];
+                type?: components["schemas"]["QuestionType"];
+                difficulty?: components["schemas"]["QuestionDifficulty"];
+                knowledgePointId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe public-question page without answers or analyses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemQuestionPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getSystemQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe learner question content and stable SYSTEM media IDs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
     listTeacherQuestions: {
         parameters: {
             query?: {
@@ -3041,6 +3200,8 @@ export interface operations {
                 status?: components["schemas"]["QuestionStatus"];
                 difficulty?: components["schemas"]["QuestionDifficulty"];
                 knowledgePointId?: string;
+                /** @description Source filter. Omit to return SYSTEM plus the current teacher's TEACHER questions. */
+                scope?: components["schemas"]["QuestionScope"];
             };
             header?: never;
             path?: never;
@@ -3048,7 +3209,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Paged owner-only question summaries. */
+            /** @description Paged visible question summaries with scope and editability. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3112,7 +3273,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Owner editor projection including the answer and analysis. */
+            /** @description Teacher projection including answers and analysis; scope/editable prevent writes to SYSTEM questions. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3308,6 +3469,155 @@ export interface operations {
             503: components["responses"]["QuestionDependencyUnavailable"];
         };
     };
+    getAdminSystemQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Administrator-owned task projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    listAdminSystemQuestionImportItems: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                outcome?: components["schemas"]["QuestionImportItemOutcome"];
+            };
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe item page without raw source or question content. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportItemPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    createAdminSystemLegacyQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLegacyQuestionImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical task replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            /** @description Empty SYSTEM legacy task created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionImportTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    submitAdminSystemLegacyQuestionImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegacyQuestionImportBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch processed or safely replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportBatchResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["QuestionConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["QuestionDependencyUnavailable"];
+        };
+    };
+    cleanupAdminSystemLegacyQuestionImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importTaskId: components["parameters"]["ImportTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact cleanup counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyQuestionImportCleanupResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+        };
+    };
     getQuestionImport: {
         parameters: {
             query?: never;
@@ -3382,133 +3692,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LegacyQuestionImportReviewItem"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["QuestionNotFound"];
-        };
-    };
-    resolveLegacyQuestionImportItem: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importTaskId: components["parameters"]["ImportTaskId"];
-                itemId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResolveLegacyQuestionImportItemRequest"];
-            };
-        };
-        responses: {
-            /** @description Item resolved or identical request safely replayed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LegacyQuestionImportReviewItem"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["QuestionNotFound"];
-            409: components["responses"]["LegacyQuestionReviewConflict"];
-            422: components["responses"]["ValidationFailed"];
-            503: components["responses"]["QuestionDependencyUnavailable"];
-        };
-    };
-    createLegacyQuestionImport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateLegacyQuestionImportRequest"];
-            };
-        };
-        responses: {
-            /** @description Identical task replay. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QuestionImportTask"];
-                };
-            };
-            /** @description Empty legacy migration task created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QuestionImportTask"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["QuestionConflict"];
-            422: components["responses"]["ValidationFailed"];
-        };
-    };
-    submitLegacyQuestionImportBatch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importTaskId: components["parameters"]["ImportTaskId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LegacyQuestionImportBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Bounded batch processed or safely replayed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LegacyQuestionImportBatchResult"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["QuestionNotFound"];
-            409: components["responses"]["QuestionConflict"];
-            422: components["responses"]["ValidationFailed"];
-            503: components["responses"]["QuestionDependencyUnavailable"];
-        };
-    };
-    cleanupLegacyQuestionImport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importTaskId: components["parameters"]["ImportTaskId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Exact cleanup counts. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LegacyQuestionImportCleanupResult"];
                 };
             };
             401: components["responses"]["Unauthorized"];

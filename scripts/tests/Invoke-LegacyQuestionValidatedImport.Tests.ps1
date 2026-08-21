@@ -159,7 +159,7 @@ function Start-ValidatedImportServer([string]$Mode, [string]$TaskId, [string]$Ca
             if ($index -eq 0) {
                 $itemCount = if ($Mode -eq 'ExclusionPlan') { 4 } else { 3 }
                 $body = [ordered]@{
-                    id = $TaskId; sourceFormat = 'LEGACY_JSON'; sourceSystem = 'LEGACY_RAWSTON_V3'
+                    id = $TaskId; sourceFormat = 'LEGACY_JSON'; sourceSystem = 'LEGACY_RAWSTON_V3'; questionScope = 'SYSTEM'
                     dryRun = $true; status = 'COMPLETED'; processedRows = $itemCount
                 } | ConvertTo-Json -Compress
                 Send-TestResponse $client $request '200 OK' $body
@@ -206,7 +206,7 @@ Describe 'Invoke-LegacyQuestionJsonMigration VALID-only Import' {
         }, $true) | Select-Object -First 1
         . ([scriptblock]::Create($definition.Extent.Text))
 
-        $candidates = for ($index = 0; $index -lt 150; $index++) {
+        $candidates = for ($index = 0; $index -lt 650; $index++) {
             [pscustomobject]@{
                 sourceIndex = $index
                 questionType = if ($index -lt 7) { 'MULTIPLE_CHOICE' } else {
@@ -218,21 +218,51 @@ Describe 'Invoke-LegacyQuestionJsonMigration VALID-only Import' {
                 knowledgePointIds = @("knowledge-$index")
             }
         }
-        $first = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 120
-        $second = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 120
+        $first = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 520
+        $second = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 520
 
-        @($first.candidates).Count | Should Be 120
+        @($first.candidates).Count | Should Be 520
+        $first.categoryQuota | Should Be 101
         $first.questionTypeCounts.MULTIPLE_CHOICE | Should Be 7
-        $first.gradeCounts.'7' | Should BeGreaterThan 14
-        $first.gradeCounts.'8' | Should BeGreaterThan 14
-        $first.gradeCounts.'9' | Should BeGreaterThan 14
-        $first.difficultyCounts.'1' | Should BeGreaterThan 14
-        $first.difficultyCounts.'5' | Should BeGreaterThan 14
-        $first.difficultyCounts.'9' | Should BeGreaterThan 14
-        $first.imageQuestionCount | Should BeGreaterThan 29
-        $first.textQuestionCount | Should BeGreaterThan 29
-        $first.distinctKnowledgePointCount | Should Be 120
+        $first.questionTypeTargets.MULTIPLE_CHOICE | Should Be 7
+        $first.questionTypeCounts.SINGLE_CHOICE | Should BeGreaterThan 100
+        $first.questionTypeCounts.FILL_BLANK | Should BeGreaterThan 100
+        $first.questionTypeCounts.SHORT_ANSWER | Should BeGreaterThan 100
+        $first.questionTypeCounts.COMPOSITE | Should BeGreaterThan 100
+        $first.questionTypeAvailableCounts.TRUE_FALSE | Should Be 0
+        $first.gradeCounts.'7' | Should BeGreaterThan 100
+        $first.gradeCounts.'8' | Should BeGreaterThan 100
+        $first.gradeCounts.'9' | Should BeGreaterThan 100
+        $first.gradeAvailableCounts.'1' | Should Be 0
+        $first.difficultyCounts.'1' | Should BeGreaterThan 100
+        $first.difficultyCounts.'5' | Should BeGreaterThan 100
+        $first.difficultyCounts.'9' | Should BeGreaterThan 100
+        $first.imageQuestionTarget | Should Be 260
+        $first.imageQuestionCount | Should BeGreaterThan 259
+        $first.distinctKnowledgePointCount | Should Be 520
         (@($first.candidates.sourceIndex) -join ',') | Should Be (@($second.candidates.sourceIndex) -join ',')
+    }
+
+    It '含图候选不足一半时拒绝生成样本' {
+        $tokens = $null; $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $scriptsRoot 'Invoke-LegacyQuestionJsonMigration.ps1'), [ref]$tokens, [ref]$parseErrors)
+        $definition = $ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Select-BalancedLegacySample'
+        }, $true) | Select-Object -First 1
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $candidates = for ($index = 0; $index -lt 150; $index++) {
+            [pscustomobject]@{
+                sourceIndex = $index; questionType = 'SINGLE_CHOICE'; grade = '7'; difficulty = '1'
+                imageHosts = if ($index -lt 59) { @('images.example.test') } else { @() }
+                knowledgePointIds = @("knowledge-$index")
+            }
+        }
+
+        $caught = $null
+        try { Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 120 } catch { $caught = $_.Exception.Message }
+        $caught | Should Match '50 percent image ratio'
     }
 
     It '正式均衡样本缺少显式确认时在读取来源前停止' {

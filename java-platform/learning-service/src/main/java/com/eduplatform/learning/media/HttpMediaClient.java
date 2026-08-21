@@ -31,8 +31,8 @@ public class HttpMediaClient implements MediaClient {
         this.media = RestClient.builder().baseUrl(properties.media().baseUrl()).requestFactory(requestFactory).build();
     }
 
-    @Override
     /** 调用媒体绑定验证契约；404 隐藏他人资产，409/422 统一映射为不可绑定。 */
+    @Override
     public void requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
         try {
             Binding response = media.post().uri("/api/v1/media/{mediaId}/binding-validations", mediaId)
@@ -55,8 +55,8 @@ public class HttpMediaClient implements MediaClient {
         }
     }
 
-    @Override
     /** 先申请 ORIGINAL/ATTACHMENT 短期授权再打开流；URL 仅保存在当前栈帧。 */
+    @Override
     public InputStream openOriginal(String mediaId, String teacherId, String traceId) {
         try {
             Grant grant = media.post().uri("/api/v1/media/{mediaId}/access-grants", mediaId)
@@ -83,13 +83,17 @@ public class HttpMediaClient implements MediaClient {
         }
     }
 
-    @Override
     /** 调用媒体域受限转存端点；响应只接受稳定 mediaId，不保存或记录 sourceUrl。 */
-    public String transferExternalImage(String clientRequestId, String sourceUrl, String teacherId, String traceId) {
+    @Override
+    public String transferExternalImage(String clientRequestId, String sourceUrl, String ownerId,
+            String scope, String traceId) {
         try {
             Asset response = media.post().uri("/api/v1/media/external-image-transfers")
-                    .header("X-User-Id", teacherId).header("X-User-Roles", "TEACHER").header("X-Trace-Id", traceId)
-                    .body(Map.of("clientRequestId", clientRequestId, "sourceUrl", sourceUrl))
+                    .header("X-User-Id", ownerId)
+                    .header("X-User-Roles", "SYSTEM".equals(scope) ? "ADMIN" : "TEACHER")
+                    .header("X-User-Permissions", "SYSTEM".equals(scope) ? "administration:access" : "teaching:access")
+                    .header("X-Trace-Id", traceId)
+                    .body(Map.of("clientRequestId", clientRequestId, "sourceUrl", sourceUrl, "scope", scope))
                     .retrieve().body(Asset.class);
             if (response == null || response.mediaId() == null || !"QUESTION_IMAGE".equals(response.purpose())
                     || !"READY".equals(response.status())) throw unavailable();

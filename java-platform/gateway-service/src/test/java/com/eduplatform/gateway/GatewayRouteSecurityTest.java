@@ -223,11 +223,20 @@ class GatewayRouteSecurityTest {
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
-        client.post().uri("/api/v1/teacher/legacy-question-imports").bodyValue("{}")
+        client.get().uri("/api/v1/learning/system-questions")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("STUDENT");
+
+        client.post().uri("/api/v1/admin/legacy-question-imports").bodyValue("{}")
                 .header("Content-Type", "application/json")
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isForbidden();
+        client.post().uri("/api/v1/admin/legacy-question-imports").bodyValue("{}")
+                .header("Content-Type", "application/json")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "ADMIN", "administration:access")))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.permissions").isEqualTo("administration:access");
 
         client.post().uri("/api/v1/admin/knowledge-points").bodyValue("{}")
                 .header("Content-Type", "application/json")

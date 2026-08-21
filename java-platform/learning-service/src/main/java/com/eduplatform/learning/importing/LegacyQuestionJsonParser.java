@@ -65,6 +65,9 @@ public class LegacyQuestionJsonParser {
         List<String> answers = type == QuestionModels.Type.COMPOSITE
                 ? (text(json, "queAns") == null ? List.of("") : List.of(text(json, "queAns")))
                 : answers(text(json, "queAns"), type);
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers);
+        answers = cleanedAnswers.answers();
+        if (cleanedAnswers.unsafe()) issues.add("HTML_UNSAFE");
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
             if (split == null) issues.add("EMBEDDED_OPTIONS_AMBIGUOUS");
@@ -101,6 +104,7 @@ public class LegacyQuestionJsonParser {
                 grade, QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(),
                 List.of(), List.of());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
+        images.addAll(cleanedAnswers.images());
         return new Parsed(new Candidate(input, List.copyOf(images), List.copyOf(children), tags.tags()), List.of(),
                 originalDifficulty, jsonEdition, jsonGrade, grade);
     }
@@ -112,7 +116,11 @@ public class LegacyQuestionJsonParser {
         Cleaned stem = clean(text(json, "question")); Cleaned solution = clean(text(json, "solution"));
         List<String> answers = answers(text(json, "queAns"), type);
         if (answers.isEmpty() && fallbackAnswer != null && !fallbackAnswer.isBlank()) answers = answers(fallbackAnswer, type);
-        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe()) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers);
+        answers = cleanedAnswers.answers();
+        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe() || cleanedAnswers.unsafe()) {
+            return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
+        }
         List<QuestionDtos.OptionInput> options = List.of();
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
@@ -122,6 +130,7 @@ public class LegacyQuestionJsonParser {
         TagResult tags = tags(json);
         if (!tags.issues().isEmpty()) return new ChildParsed(null, tags.issues());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
+        images.addAll(cleanedAnswers.images());
         return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, grade.stage(), grade,
                 QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(), List.of(), List.of()),
                 List.copyOf(images), List.of(), tags.tags()), List.of());
@@ -204,6 +213,24 @@ public class LegacyQuestionJsonParser {
                     ? values : List.of();
         }
         return List.of(normalized);
+    }
+
+    /**
+     * 清理结构化答案中的历史 HTML，并把答案图片与题干/解析图片一样交给 media-service 转存。
+     * @param values 题型规则已拆分的答案；选择题通常是 A～H，填简答可含展示 HTML
+     * @return 不含外部 URL 的答案、待转存 URL 列表与不安全 HTML 标记
+     */
+    private static CleanedAnswers cleanAnswers(List<String> values) {
+        List<String> answers = new ArrayList<>();
+        List<String> images = new ArrayList<>();
+        boolean unsafe = false;
+        for (String value : values) {
+            Cleaned cleaned = clean(value);
+            answers.add(cleaned.text());
+            images.addAll(cleaned.images());
+            unsafe |= cleaned.unsafe();
+        }
+        return new CleanedAnswers(List.copyOf(answers), List.copyOf(images), unsafe);
     }
 
     private static QuestionModels.Type type(String value) {
@@ -301,6 +328,7 @@ public class LegacyQuestionJsonParser {
         public boolean review() { return candidate == null || !issueCodes.isEmpty(); }
     }
     private record Cleaned(String text, List<String> images, boolean unsafe) {}
+    private record CleanedAnswers(List<String> answers, List<String> images, boolean unsafe) {}
     private record OptionSplit(String stem, List<QuestionDtos.OptionInput> options) {}
     private record TagResult(List<LegacyTag> tags, List<String> issues) {}
     private record ChildParsed(Candidate candidate, List<String> issues) {

@@ -54,9 +54,10 @@ public class LegacyQuestionImportService {
 
     /** 创建空的受控任务；maxItems 是不可突破的硬上限，接口不接受历史目录路径。 */
     @Transactional
-    public QuestionImportService.Creation create(String ownerId, QuestionDtos.CreateLegacyImportRequest request) {
+    public QuestionImportService.Creation create(String ownerId, QuestionModels.Scope questionScope,
+            QuestionDtos.CreateLegacyImportRequest request) {
         String fingerprint = sha256(request.sourceSystem() + "\0" + request.sourceRootFingerprint() + "\0"
-                + request.dryRun() + "\0" + request.maxItems());
+                + request.dryRun() + "\0" + request.maxItems() + "\0" + questionScope);
         var replay = repository.findImportByRequest(ownerId, request.clientRequestId().toString());
         if (replay.isPresent()) {
             if (!replay.get().requestFingerprint().equals(fingerprint)) throw conflict("QUESTION.IDEMPOTENCY_CONFLICT",
@@ -64,13 +65,28 @@ public class LegacyQuestionImportService {
             return new QuestionImportService.Creation(response(replay.get()), false);
         }
         Instant now = Instant.now();
-        ImportTask task = new ImportTask(UUID.randomUUID().toString(), ownerId, request.clientRequestId().toString(),
+        ImportTask task = new ImportTask(UUID.randomUUID().toString(), ownerId, questionScope,
+                request.clientRequestId().toString(),
                 fingerprint, null, QuestionModels.ImportFormat.LEGACY_JSON, QuestionModels.ImportStatus.PENDING,
                 0, request.maxItems(), 0, 0, 0, 0, 0, request.sourceSystem(), request.sourceRootFingerprint(),
                 request.dryRun(), request.maxItems(), null, null, now.plus(properties.importSettings().retention()),
                 null, null, now, now);
         repository.insertImportTask(task);
         return new QuestionImportService.Creation(response(task), true);
+    }
+
+    /** 仅供既有内部验收兼容；外部教师历史 JSON 写端点已移除，新正式迁移必须走管理员 SYSTEM 入口。 */
+    public QuestionImportService.Creation create(String ownerId,
+            QuestionDtos.CreateLegacyImportRequest request) {
+        return create(ownerId, QuestionModels.Scope.TEACHER, request);
+    }
+
+    /** 返回当前管理员拥有的历史任务；管理员控制器再负责 administration:access。 */
+    public QuestionDtos.ImportTaskResponse get(String ownerId, String taskId) {
+        ImportTask task = repository.findImportTask(taskId, ownerId).orElseThrow(LegacyQuestionImportService::notFound);
+        if (task.sourceFormat() != QuestionModels.ImportFormat.LEGACY_JSON
+                || task.questionScope() != QuestionModels.Scope.SYSTEM) throw notFound();
+        return response(task);
     }
 
     /**
@@ -244,7 +260,7 @@ public class LegacyQuestionImportService {
         var versionMedia = repository.mediaForQuestions(ids); Instant now = Instant.now();
         versionMedia.forEach(item -> repository.insertOutbox(events.mediaReference("MediaReferenceReleased", item.mediaId(),
                 "QUESTION_VERSION_MEDIA", item.id(), traceId, now)));
-        var counts = repository.deleteLegacyTaskQuestions(taskId, ownerId, now);
+        var counts = repository.deleteLegacyTaskQuestions(taskId, ownerId, task.questionScope(), now);
         return new QuestionDtos.LegacyImportCleanupResult(taskId, counts.questionsDeleted(),
                 counts.sourceReferencesDeleted(), versionMedia.size(), false);
     }
@@ -256,15 +272,15 @@ public class LegacyQuestionImportService {
             childIndex++;
             var input = withMedia(task, externalId + ":child:" + childIndex, child, traceId);
             String requestId = deterministic(task.id(), externalId + ":child:" + childIndex);
-            String childId = questions.createImported(task.ownerId(), requestId, input, traceId).response().id();
+            String childId = questions.createImported(task.ownerId(), task.questionScope(), requestId, input, traceId).response().id();
             repository.applyLegacyKnowledgeMetadata(childId, child.tags());
             childIds.add(childId);
         }
         QuestionDtos.VersionInput parent = withMedia(task, externalId + ":parent", candidate, traceId);
         String requestId = deterministic(task.id(), externalId + ":parent");
         String created = candidate.children().isEmpty()
-                ? questions.createImported(task.ownerId(), requestId, parent, traceId).response().id()
-                : questions.createImportedComposite(task.ownerId(), requestId, parent, childIds, traceId).response().id();
+                ? questions.createImported(task.ownerId(), task.questionScope(), requestId, parent, traceId).response().id()
+                : questions.createImportedComposite(task.ownerId(), task.questionScope(), requestId, parent, childIds, traceId).response().id();
         repository.applyLegacyKnowledgeMetadata(created, candidate.tags());
         return created;
     }
@@ -301,7 +317,7 @@ public class LegacyQuestionImportService {
         for (String url : candidate.imageUrls()) {
             sequence++;
             String mediaId = media.transferExternalImage(deterministic(task.id(), sourceKey + ":image:" + sequence),
-                    url, task.ownerId(), traceId);
+                    url, task.ownerId(), task.questionScope().name(), traceId);
             rows.add(new QuestionDtos.MediaInput(UUID.fromString(mediaId), QuestionModels.MediaPurpose.QUESTION_IMAGE, sequence));
         }
         var value = candidate.input();
@@ -424,7 +440,7 @@ public class LegacyQuestionImportService {
     }
 
     private QuestionDtos.ImportTaskResponse response(ImportTask task) {
-        return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(), task.dryRun(),
+        return new QuestionDtos.ImportTaskResponse(task.id(), task.questionScope(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(), task.dryRun(),
                 task.maxItems(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(), task.reviewCount(),
                 repository.countResolvedLegacyItems(task.id()), task.skippedCount(), task.failureCount(), List.of(), task.failureCode(), task.failureMessage(), task.retainUntil(),
                 task.sourceReleasedAt(), task.createdAt(), task.updatedAt());

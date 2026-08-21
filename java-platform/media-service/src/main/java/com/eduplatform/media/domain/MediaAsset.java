@@ -7,6 +7,7 @@ public record MediaAsset(
         String mediaId,
         String uploadId,
         String ownerId,
+        MediaAssetScope scope,
         MediaPurpose purpose,
         MediaStatus status,
         ProcessingStatus processingStatus,

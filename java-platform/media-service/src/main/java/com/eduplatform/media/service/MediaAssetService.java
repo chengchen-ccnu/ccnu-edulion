@@ -2,6 +2,7 @@ package com.eduplatform.media.service;
 
 import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.domain.MediaAsset;
+import com.eduplatform.media.domain.MediaAssetScope;
 import com.eduplatform.media.domain.MediaPurpose;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.MediaVariant;
@@ -205,7 +206,8 @@ public class MediaAssetService {
                 return requireAssetOwned(locked.mediaId(), ownerId);
             }
             String mediaId = UUID.randomUUID().toString();
-            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, locked.purpose(), MediaStatus.PROCESSING,
+            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, MediaAssetScope.TEACHER,
+                    locked.purpose(), MediaStatus.PROCESSING,
                     ProcessingStatus.PENDING, locked.objectKey(), locked.originalFilename(), metadata.mimeType(),
                     metadata.size(), locked.declaredSha256(), metadata.etag(), null, null,
                     now.plus(properties.maintenance().unboundRetention()), null, now, now);
@@ -243,9 +245,9 @@ public class MediaAssetService {
                 session.status().name(), UploadStatus.CANCELED.name(), traceId, null, now);
     }
 
-    /** 查询当前用户所有的资产和处理状态，不包含 Object Key 或 URL。 */
+    /** 查询本人资产或公共 SYSTEM 资产元数据，不包含 Object Key 或 URL。 */
     public MediaDtos.Asset getAsset(String mediaId, String ownerId) {
-        return toAsset(requireAssetOwned(mediaId, ownerId));
+        return toAsset(requireAssetReadable(mediaId, ownerId));
     }
 
     /** 按用途/状态筛选当前用户资产，使用从 1 开始的稳定分页。 */
@@ -279,7 +281,7 @@ public class MediaAssetService {
      */
     public MediaDtos.AccessGrant access(String mediaId, String ownerId,
             MediaDtos.CreateAccessGrantRequest request, String traceId) {
-        MediaAsset asset = requireAssetOwned(mediaId, ownerId);
+        MediaAsset asset = requireAssetReadable(mediaId, ownerId);
         return issueAccess(asset, ownerId, request, traceId);
     }
 
@@ -363,6 +365,13 @@ public class MediaAssetService {
         return repository.findAssetOwned(mediaId, ownerId).orElseThrow(this::notFound);
     }
 
+    /** SYSTEM 资产允许任一已认证访问者只读；TEACHER 资产继续严格校验 owner。 */
+    private MediaAsset requireAssetReadable(String mediaId, String ownerId) {
+        MediaAsset asset = repository.findAsset(mediaId).orElseThrow(this::notFound);
+        if (asset.scope() != MediaAssetScope.SYSTEM && !asset.ownerId().equals(ownerId)) throw notFound();
+        return asset;
+    }
+
     private List<CompletedPart> validateCompletionParts(UploadSession session, List<MediaDtos.CompletedPart> submitted) {
         if (session.mode() == UploadMode.SINGLE_PUT) return List.of();
         if (submitted.isEmpty()) invalid("parts", "分片上传必须提交 parts");
@@ -413,7 +422,7 @@ public class MediaAssetService {
         List<MediaDtos.Variant> variants = repository.listVariants(asset.mediaId()).stream()
                 .map(value -> new MediaDtos.Variant(value.variantName(), value.mimeType(), value.size(),
                         repository.listVariantComponents(value.variantId()).size())).toList();
-        return new MediaDtos.Asset(asset.mediaId(), asset.purpose(), asset.status(), asset.processingStatus(),
+        return new MediaDtos.Asset(asset.mediaId(), asset.scope(), asset.purpose(), asset.status(), asset.processingStatus(),
                 asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), variants,
                 asset.failureCode(), asset.failureMessage(), asset.createdAt(), asset.updatedAt());
     }

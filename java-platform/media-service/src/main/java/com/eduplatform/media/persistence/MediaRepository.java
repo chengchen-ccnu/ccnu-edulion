@@ -1,6 +1,7 @@
 package com.eduplatform.media.persistence;
 
 import com.eduplatform.media.domain.MediaAsset;
+import com.eduplatform.media.domain.MediaAssetScope;
 import com.eduplatform.media.domain.MediaPurpose;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.MediaVariant;
@@ -130,11 +131,11 @@ public class MediaRepository {
     /** 插入已经 OSS HEAD 复核的 PROCESSING 资产。 */
     public void insertAsset(MediaAsset asset) {
         jdbc.update("""
-                INSERT INTO media_asset(media_id, upload_id, owner_id, purpose, status, processing_status,
+                INSERT INTO media_asset(media_id, upload_id, owner_id, scope, purpose, status, processing_status,
                     object_key, original_filename, mime_type, size_bytes, sha256, etag, failure_code,
                     failure_message, unbound_expires_at, deleted_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, asset.mediaId(), asset.uploadId(), asset.ownerId(), asset.purpose().name(), asset.status().name(),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, asset.mediaId(), asset.uploadId(), asset.ownerId(), asset.scope().name(), asset.purpose().name(), asset.status().name(),
                 asset.processingStatus().name(), asset.objectKey(), asset.originalFilename(), asset.mimeType(),
                 asset.size(), asset.sha256(), asset.etag(), asset.failureCode(), asset.failureMessage(),
                 timestamp(asset.unboundExpiresAt()), timestamp(asset.deletedAt()), timestamp(asset.createdAt()),
@@ -513,6 +514,7 @@ public class MediaRepository {
 
     private static final RowMapper<MediaAsset> ASSET_MAPPER = (rs, row) -> new MediaAsset(
             rs.getString("media_id"), rs.getString("upload_id"), rs.getString("owner_id"),
+            MediaAssetScope.valueOf(rs.getString("scope")),
             MediaPurpose.valueOf(rs.getString("purpose")), MediaStatus.valueOf(rs.getString("status")),
             ProcessingStatus.valueOf(rs.getString("processing_status")), rs.getString("object_key"),
             rs.getString("original_filename"), rs.getString("mime_type"), rs.getLong("size_bytes"),

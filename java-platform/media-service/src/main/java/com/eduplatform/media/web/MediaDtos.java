@@ -1,6 +1,7 @@
 package com.eduplatform.media.web;
 
 import com.eduplatform.media.domain.MediaPurpose;
+import com.eduplatform.media.domain.MediaAssetScope;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.ProcessingStatus;
 import com.eduplatform.media.domain.UploadMode;
@@ -31,7 +32,8 @@ public final class MediaDtos {
 
     /** 外部历史图片只在本次调用内使用 HTTPS URL；服务端不得持久化或记录该字段。 */
     public record ExternalImageTransferRequest(@NotNull UUID clientRequestId,
-            @NotBlank @Size(max = 2000) @Pattern(regexp = "^https://.*$") String sourceUrl) {}
+            @NotBlank @Size(max = 2000) @Pattern(regexp = "^https://.*$") String sourceUrl,
+            @NotNull MediaAssetScope scope) {}
 
     public record AuthorizePartRequest(
             @Positive @Max(10000) int partNumber,
@@ -82,6 +84,7 @@ public final class MediaDtos {
 
     public record Asset(
             String mediaId,
+            MediaAssetScope scope,
             MediaPurpose purpose,
             MediaStatus status,
             ProcessingStatus processingStatus,

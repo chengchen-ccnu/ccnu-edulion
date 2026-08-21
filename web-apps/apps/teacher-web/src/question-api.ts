@@ -1,15 +1,11 @@
 import { createGatewayClient, gatewayRequestError } from "@edu/api-client";
 import type {
-  CreateLegacyQuestionImportRequest,
   CreateQuestionImportRequest,
   CreateQuestionRequest,
   GatewayClient,
   KnowledgePoint,
   KnowledgePointGraph,
   KnowledgePointSearchPage,
-  LegacyQuestionImportBatchRequest,
-  LegacyQuestionImportBatchResult,
-  LegacyQuestionImportCleanupResult,
   LegacyQuestionImportItemPage,
   LegacyQuestionImportReviewItem,
   ListTeacherKnowledgePointsQuery,
@@ -22,7 +18,6 @@ import type {
   QuestionPage,
   QuestionVersion,
   QuestionVersionPage,
-  ResolveLegacyQuestionImportItemRequest,
   SearchTeacherKnowledgePointsQuery,
   TeacherQuestion,
   UpdateQuestionRequest,
@@ -51,15 +46,9 @@ export interface TeacherQuestionApi {
   imports(query: ListQuestionImportsQuery, signal?: AbortSignal): Promise<QuestionImportPage>;
   createImport(body: CreateQuestionImportRequest, signal?: AbortSignal): Promise<QuestionImportTask>;
   importDetail(importTaskId: string, signal?: AbortSignal): Promise<QuestionImportTask>;
-  createLegacyImport(body: CreateLegacyQuestionImportRequest, signal?: AbortSignal): Promise<QuestionImportTask>;
-  submitLegacyBatch(importTaskId: string, body: LegacyQuestionImportBatchRequest,
-    signal?: AbortSignal): Promise<LegacyQuestionImportBatchResult>;
   legacyItems(importTaskId: string, query: ListLegacyQuestionImportItemsQuery,
     signal?: AbortSignal): Promise<LegacyQuestionImportItemPage>;
   legacyItem(importTaskId: string, itemId: string, signal?: AbortSignal): Promise<LegacyQuestionImportReviewItem>;
-  resolveLegacyItem(importTaskId: string, itemId: string, body: ResolveLegacyQuestionImportItemRequest,
-    signal?: AbortSignal): Promise<LegacyQuestionImportReviewItem>;
-  cleanupLegacyImport(importTaskId: string, signal?: AbortSignal): Promise<LegacyQuestionImportCleanupResult>;
 }
 
 /**
@@ -143,17 +132,6 @@ export function createTeacherQuestionApi(
         headers: { Authorization }, params: { path: { importTaskId } }, signal
       })));
     },
-    async createLegacyImport(body, signal) {
-      return data(await authorized(Authorization => client.POST("/api/v1/teacher/legacy-question-imports", {
-        headers: { Authorization }, body, signal
-      })));
-    },
-    async submitLegacyBatch(importTaskId, body, signal) {
-      return data(await authorized(Authorization => client.POST(
-        "/api/v1/teacher/legacy-question-imports/{importTaskId}/batches", {
-          headers: { Authorization }, params: { path: { importTaskId } }, body, signal
-        })));
-    },
     async legacyItems(importTaskId, query, signal) {
       return data(await authorized(Authorization => client.GET(
         "/api/v1/teacher/question-imports/{importTaskId}/items", {
@@ -164,18 +142,6 @@ export function createTeacherQuestionApi(
       return data(await authorized(Authorization => client.GET(
         "/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}", {
           headers: { Authorization }, params: { path: { importTaskId, itemId } }, signal
-        })));
-    },
-    async resolveLegacyItem(importTaskId, itemId, body, signal) {
-      return data(await authorized(Authorization => client.POST(
-        "/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution", {
-          headers: { Authorization }, params: { path: { importTaskId, itemId } }, body, signal
-        })));
-    },
-    async cleanupLegacyImport(importTaskId, signal) {
-      return data(await authorized(Authorization => client.DELETE(
-        "/api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources", {
-          headers: { Authorization }, params: { path: { importTaskId } }, signal
         })));
     }
   };
