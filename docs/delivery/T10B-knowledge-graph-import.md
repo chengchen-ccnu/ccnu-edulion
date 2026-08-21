@@ -118,4 +118,4 @@ T10A 的原 45 个 DryRun 任务、复核记录和检查点没有删除、重建
 
 新增 DTO、Repository、Service、Controller、迁移脚本和 Vue 组件均补充中文职责、输入、结果和失败/写入副作用说明；OpenAPI 与 Flyway 对来源键、关系方向、学段启用策略和敏感数据边界有说明；生成客户端未手工补注释。
 
-分支：`codex/t10b-knowledge-graph-import`。PR 未创建，未推送，未合并；初始实现提交为 `a2aba056`，真实 DryRun 传输修复为 `359ce1fd`，确认映射与正式导入记录由本交付文档所在提交承载。
+分支：`codex/t10b-knowledge-graph-import`。PR 未创建，未推送，未合并；初始图谱实现提交为 `a2aba05`，真实 DryRun 传输修复为 `359ce1f`，小学/初中开放为 `fc08bda`，SYSTEM/TEACHER 契约、服务、前端、图片修复和真实导入记录为 `61f87d1`。
