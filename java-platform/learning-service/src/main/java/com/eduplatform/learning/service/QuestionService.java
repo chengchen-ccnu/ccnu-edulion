@@ -160,12 +160,14 @@ public class QuestionService {
 
     /** 列表只从不含答案/解析的 SQL 投影构建，防止后续误接公共端点时字段泄漏。 */
     public QuestionDtos.QuestionPage list(String ownerId, int page, int size, String keyword,
-            QuestionModels.Type type, QuestionModels.Status status, QuestionModels.Difficulty difficulty,
-            String knowledgePointId) {
-        var rows = repository.listQuestions(ownerId, page, size, keyword, type, status, difficulty, knowledgePointId);
+            QuestionModels.Stage stage, QuestionModels.Grade grade, QuestionModels.Type type,
+            QuestionModels.Status status, QuestionModels.Difficulty difficulty, String knowledgePointId) {
+        validateStageGrade(stage, grade);
+        var rows = repository.listQuestions(ownerId, page, size, keyword, stage, grade, type, status, difficulty,
+                knowledgePointId);
         return new QuestionDtos.QuestionPage(rows.rows().stream().map(row -> new QuestionDtos.QuestionSummary(row.id(),
                 row.status(), row.revision(), row.currentVersionId(), row.versionNumber(), row.type(), row.difficulty(),
-                row.grade(), preview(row.stem()), row.knowledgePointIds(), row.createdAt(), row.updatedAt())).toList(),
+                row.stage(), row.grade(), preview(row.stem()), row.knowledgePointIds(), row.createdAt(), row.updatedAt())).toList(),
                 page, size, rows.total());
     }
 
@@ -227,6 +229,10 @@ public class QuestionService {
         if (input.childItems().stream().anyMatch(child -> child.type() == QuestionModels.Type.COMPOSITE)) {
             throw invalid("children", "组合题子题不能再次嵌套组合题");
         }
+        if (input.childItems().stream().anyMatch(child -> child.stage() != input.stage()
+                || child.grade() != input.grade() || child.subject() != input.subject())) {
+            throw invalid("children", "组合题子题必须与父题属于同一学段、年级和学科");
+        }
     }
 
     private Prepared prepare(QuestionDtos.VersionInput input, String ownerId, String traceId, boolean allowComposite) {
@@ -234,6 +240,7 @@ public class QuestionService {
             throw invalid("type", "组合题必须通过结构化父子题契约提交");
         }
         validateContent(input);
+        validateStageGrade(input.stage(), input.grade());
         List<String> ids = input.knowledgePointIds().stream().map(UUID::toString).distinct().toList();
         if (ids.size() != input.knowledgePointIds().size()) throw invalid("knowledgePointIds", "知识点不能重复");
         List<KnowledgePoint> knowledge = repository.findKnowledgePoints(ids);
@@ -251,6 +258,13 @@ public class QuestionService {
             mediaClient.requireBindable(item.mediaId().toString(), item.purpose().name(), ownerId, traceId);
         }
         return new Prepared(knowledge, input.media());
+    }
+
+    /** 校验可选筛选或必填写模型中的学段年级组合；只给出年级时也按年级自身归属生效。 */
+    private static void validateStageGrade(QuestionModels.Stage stage, QuestionModels.Grade grade) {
+        if (stage != null && grade != null && grade.stage() != stage) {
+            throw invalid("grade", "年级与学段不匹配");
+        }
     }
 
     /** 按题型校验选项和答案；不解析或渲染 Markdown/LaTeX，但拒绝绕过 mediaId 的嵌入图片。 */

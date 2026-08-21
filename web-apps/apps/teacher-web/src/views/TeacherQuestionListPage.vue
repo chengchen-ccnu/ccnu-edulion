@@ -4,11 +4,11 @@
  * 列表只消费 QuestionSummary，不请求或展示完整答案/解析；失败时保留上次成功内容并允许定向重试。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { KnowledgePoint, QuestionDifficulty, QuestionPage, QuestionStatus, QuestionType } from "@edu/api-client";
+import type { KnowledgePoint, QuestionDifficulty, QuestionGrade, QuestionPage, QuestionStage, QuestionStatus, QuestionType } from "@edu/api-client";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { flattenKnowledgePoints } from "../question-form";
+import { flattenKnowledgePoints, gradesForStage, JUNIOR_GRADES, PRIMARY_GRADES } from "../question-form";
 import { teacherQuestionApi } from "../question-api";
 
 const route = useRoute();
@@ -21,6 +21,8 @@ const errorMessage = ref("");
 let controller: AbortController | null = null;
 const form = ref(readFilters());
 const pageCount = computed(() => Math.max(1, Math.ceil((result.value?.total ?? 0) / pageSize)));
+const availableGrades = computed(() => form.value.stage ? gradesForStage(form.value.stage)
+  : [...PRIMARY_GRADES, ...JUNIOR_GRADES]);
 
 watch(() => route.fullPath, load, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
@@ -34,11 +36,12 @@ async function load() {
   try {
     const [questions, points] = await Promise.all([
       teacherQuestionApi.list({ page: currentPage(), size: pageSize,
-        keyword: form.value.keyword || undefined, type: form.value.type || undefined,
+        keyword: form.value.keyword || undefined, stage: form.value.stage || undefined,
+        grade: form.value.grade || undefined, type: form.value.type || undefined,
         difficulty: form.value.difficulty || undefined, status: form.value.status || undefined,
         knowledgePointId: form.value.knowledgePointId || undefined }, controller.signal),
-      knowledgePoints.value.length ? Promise.resolve(knowledgePoints.value)
-        : teacherQuestionApi.knowledgePoints(controller.signal).then(flattenKnowledgePoints)
+      teacherQuestionApi.knowledgePoints({ stage: form.value.stage || "JUNIOR",
+        grade: form.value.grade || undefined }, controller.signal).then(flattenKnowledgePoints)
     ]);
     result.value = questions;
     knowledgePoints.value = points;
@@ -50,7 +53,9 @@ async function applyFilters() {
   await router.push({ name: "teacher-questions", query: compactQuery({ ...form.value, page: undefined }) });
 }
 async function resetFilters() {
-  form.value = { keyword: "", type: "", difficulty: "", status: "", knowledgePointId: "" };
+  form.value = { keyword: "", stage: "" as QuestionStage | "", grade: "" as QuestionGrade | "",
+    type: "" as QuestionType | "", difficulty: "" as QuestionDifficulty | "",
+    status: "" as QuestionStatus | "", knowledgePointId: "" };
   await router.push({ name: "teacher-questions" });
 }
 async function changePage(page: number) {
@@ -64,9 +69,16 @@ function currentPage(): number {
 function readFilters() {
   return {
     keyword: stringQuery("keyword"), type: stringQuery("type") as QuestionType | "",
+    stage: stringQuery("stage") as QuestionStage | "", grade: stringQuery("grade") as QuestionGrade | "",
     difficulty: stringQuery("difficulty") as QuestionDifficulty | "",
     status: stringQuery("status") as QuestionStatus | "", knowledgePointId: stringQuery("knowledgePointId")
   };
+}
+function stageChanged() {
+  if (form.value.grade && form.value.stage && !gradesForStage(form.value.stage).includes(form.value.grade)) {
+    form.value.grade = "";
+  }
+  form.value.knowledgePointId = "";
 }
 function stringQuery(key: string): string { return typeof route.query[key] === "string" ? route.query[key] as string : ""; }
 function compactQuery(query: Record<string, unknown>): Record<string, string> {
@@ -83,6 +95,9 @@ const typeLabel = (type: QuestionType) => ({ SINGLE_CHOICE: "单选", MULTIPLE_C
   FILL_BLANK: "填空", SHORT_ANSWER: "简答", COMPOSITE: "组合" })[type];
 const difficultyLabel = (value: QuestionDifficulty) => ({ EASY: "简单", MEDIUM: "中等", HARD: "困难" })[value];
 const statusLabel = (value: QuestionStatus) => ({ DRAFT: "草稿", ACTIVE: "已启用", ARCHIVED: "已归档" })[value];
+const stageLabel = (value: QuestionStage) => value === "PRIMARY" ? "小学" : "初中";
+const gradeLabel = (value: QuestionGrade) => ({ ONE: "一年级", TWO: "二年级", THREE: "三年级", FOUR: "四年级",
+  FIVE: "五年级", SIX: "六年级", SEVEN: "七年级", EIGHT: "八年级", NINE: "九年级" })[value];
 </script>
 
 <template>
@@ -93,6 +108,10 @@ const statusLabel = (value: QuestionStatus) => ({ DRAFT: "草稿", ACTIVE: "已�
   </section>
   <form class="question-filter-panel" @submit.prevent="applyFilters">
     <label><span>关键词</span><input v-model="form.keyword" placeholder="搜索题干摘要"></label>
+    <label><span>学段</span><select v-model="form.stage" @change="stageChanged"><option value="">全部</option>
+      <option value="PRIMARY">小学</option><option value="JUNIOR">初中</option></select></label>
+    <label><span>年级</span><select v-model="form.grade" @change="form.knowledgePointId = ''"><option value="">全部</option>
+      <option v-for="grade in availableGrades" :key="grade" :value="grade">{{ gradeLabel(grade) }}</option></select></label>
     <label><span>知识点</span><select v-model="form.knowledgePointId"><option value="">全部</option>
       <option v-for="point in knowledgePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label>
     <label><span>题型</span><select v-model="form.type"><option value="">全部</option><option value="SINGLE_CHOICE">单选</option>
@@ -110,7 +129,7 @@ const statusLabel = (value: QuestionStatus) => ({ DRAFT: "草稿", ACTIVE: "已�
   <div v-else-if="result?.items.length" class="question-list" :aria-busy="loading">
     <article v-for="question in result.items" :key="question.id" class="question-list-card">
       <header><div><span :class="`status-pill status-pill--${question.status.toLowerCase()}`">{{ statusLabel(question.status) }}</span>
-        <span>{{ typeLabel(question.type) }} · {{ difficultyLabel(question.difficulty) }} · {{ question.grade }}</span></div>
+        <span>{{ typeLabel(question.type) }} · {{ difficultyLabel(question.difficulty) }} · {{ stageLabel(question.stage) }} · {{ gradeLabel(question.grade) }}</span></div>
         <span>v{{ question.versionNumber }} · r{{ question.revision }}</span></header>
       <h3>{{ question.stemPreview }}</h3>
       <p>{{ question.knowledgePointIds.length }} 个知识点 · 更新于 {{ new Date(question.updatedAt).toLocaleString("zh-CN") }}</p>

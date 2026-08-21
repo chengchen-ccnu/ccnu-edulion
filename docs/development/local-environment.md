@@ -291,7 +291,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-Knowled
   -BatchSize 200 -CheckpointPath '<来源目录之外\kg-dryrun-checkpoint.json>'
 ```
 
-正式 Import 除 `-Action Import -ConfirmImport` 外，还必须同时给出 `-ConfirmStageMapping`、`-ConfirmStatusMapping`、`-ConfirmTypeNames` 与 `-ConfirmParentKeySemantics`。这些开关表示负责人已经确认：`02/03/04` 分别为 `PRIMARY/JUNIOR/SENIOR`，无年级适用于整个学段，来源 `status=0` 原样保存但不推导启用，`parentId` 只写 `source_parent_key`，六组来源类型按已确认的“学段 + 数量”签名规范为“知识点”或“题型”。脚本与服务端都会拒绝偏离这些约束的输入；导入节点始终默认 `enabled=false`，两个 parent 外键均为空，高中关系暂不完整也保持禁用。每次正式导入应使用新的、可审计的 `SourceSystem` 和独立检查点；完成后使用 `Remove-Item Env:EDU_MIGRATION_ACCESS_TOKEN` 清除当前进程令牌。
+正式 Import 除 `-Action Import -ConfirmImport` 外，还必须同时给出 `-ConfirmStageMapping`、`-ConfirmStatusMapping`、`-ConfirmTypeNames` 与 `-ConfirmParentKeySemantics`。这些开关表示负责人已经确认：`02/03/04` 分别为 `PRIMARY/JUNIOR/SENIOR`，无年级适用于整个学段，来源 `status=0` 原样保存但不直接决定平台状态，`parentId` 只写 `source_parent_key`，六组来源类型按已确认的“学段 + 数量”签名规范为“知识点”或“题型”。脚本与服务端都会拒绝偏离这些约束的输入；正式导入按平台策略启用小学/初中节点、高中保持禁用，两个 parent 外键均为空。每次正式导入应使用新的、可审计的 `SourceSystem` 和独立检查点；完成后使用 `Remove-Item Env:EDU_MIGRATION_ACCESS_TOKEN` 清除当前进程令牌。
+
+V7 是导入完成后的平台启用策略迁移：只把所有来源图谱的 `PRIMARY/JUNIOR` 节点设为启用，并确保 `SENIOR` 禁用；不写 `parent_id`/`taxonomy_parent_id`，也不新增、删除或重排先修关系。教师题目接口由 OpenAPI 0.12.0 支持小学一至六年级和初中七至九年级，高中仍不进入题目写契约。专用开发库可通过上文 MySQL 验收命令幂等应用并验证该策略。
 
 ## 全量验证
 

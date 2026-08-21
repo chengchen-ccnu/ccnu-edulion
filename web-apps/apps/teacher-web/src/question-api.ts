@@ -12,6 +12,7 @@ import type {
   LegacyQuestionImportCleanupResult,
   LegacyQuestionImportItemPage,
   LegacyQuestionImportReviewItem,
+  ListTeacherKnowledgePointsQuery,
   ListLegacyQuestionImportItemsQuery,
   ListQuestionImportsQuery,
   ListTeacherQuestionsQuery,
@@ -36,7 +37,7 @@ import { authStore } from "./auth";
  * 输入和输出全部引用 OpenAPI 生成类型；所有权、生命周期和 revision 仍由服务端裁决，页面不得本地伪造成功。
  */
 export interface TeacherQuestionApi {
-  knowledgePoints(signal?: AbortSignal): Promise<KnowledgePoint[]>;
+  knowledgePoints(query?: ListTeacherKnowledgePointsQuery, signal?: AbortSignal): Promise<KnowledgePoint[]>;
   searchKnowledgePoints(query: SearchTeacherKnowledgePointsQuery, signal?: AbortSignal): Promise<KnowledgePointSearchPage>;
   knowledgePointGraph(knowledgePointId: string, depth?: number, signal?: AbortSignal): Promise<KnowledgePointGraph>;
   list(query: ListTeacherQuestionsQuery, signal?: AbortSignal): Promise<QuestionPage>;
@@ -76,9 +77,9 @@ export function createTeacherQuestionApi(
   };
 
   return {
-    async knowledgePoints(signal) {
+    async knowledgePoints(query = {}, signal) {
       return data(await authorized(Authorization => client.GET("/api/v1/teacher/knowledge-points", {
-        headers: { Authorization }, signal
+        headers: { Authorization }, params: { query }, signal
       })));
     },
     async searchKnowledgePoints(query, signal) {

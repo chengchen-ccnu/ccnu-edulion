@@ -129,7 +129,7 @@ public class QuestionImportParser {
             var answers = List.of(mapper.readValue(value(row, columns, "answersJson"), String[].class));
             var codes = List.of(mapper.readValue(value(row, columns, "knowledgePointCodesJson"), String[].class));
             var media = List.of(mapper.readValue(value(row, columns, "mediaJson"), QuestionDtos.MediaInput[].class));
-            QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR,
+            QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, grade.stage(),
                     grade, QuestionModels.Subject.MATHEMATICS, stem, options, answers, analysis,
                     List.of(), media);
             return Row.success(row.number(), input, codes);

@@ -28,7 +28,8 @@ const purposeLabels = { QUESTION_IMAGE: "题目图片", QUESTION_AUDIO: "题目�
       <div v-for="(answer, index) in version.answers" :key="index"><SafeRichText :source="answer" /></div>
     </section>
     <section><h3>解析</h3><SafeRichText :source="version.analysis" empty-text="本版本未填写解析" /></section>
-    <dl class="question-preview-meta"><div><dt>年级</dt><dd>{{ version.grade }}</dd></div>
+    <dl class="question-preview-meta"><div><dt>学段</dt><dd>{{ version.stage === "PRIMARY" ? "小学" : "初中" }}</dd></div>
+      <div><dt>年级</dt><dd>{{ ({ ONE: "一年级", TWO: "二年级", THREE: "三年级", FOUR: "四年级", FIVE: "五年级", SIX: "六年级", SEVEN: "七年级", EIGHT: "八年级", NINE: "九年级" } as const)[version.grade] }}</dd></div>
       <div><dt>知识点</dt><dd>{{ version.knowledgePoints.map(point => point.name).join("、") || "未绑定" }}</dd></div></dl>
     <div v-if="version.media.length" class="question-media-list">
       <QuestionMediaPreview v-for="media in version.media" :key="media.id" :media-id="media.mediaId"

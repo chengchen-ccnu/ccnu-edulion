@@ -46,14 +46,20 @@ public class QuestionRepository {
         this.mapper = mapper;
     }
 
-    /** 按启用状态和可选年级读取知识点，结果供服务层组树。 */
-    public List<KnowledgePoint> listKnowledgePoints(boolean enabledOnly, QuestionModels.Grade grade) {
+    /** 按启用状态、学段和可选年级读取人工维护知识点，结果供服务层组树。 */
+    public List<KnowledgePoint> listKnowledgePoints(boolean enabledOnly, QuestionModels.Stage stage,
+            QuestionModels.Grade grade) {
         // 旧树接口只服务管理员手工知识树；图谱来源必须走分页搜索，避免一次返回数千个根节点。
         String sql = "SELECT * FROM knowledge_point WHERE source_system IS NULL"
                 + (enabledOnly ? " AND enabled=TRUE" : "")
+                + (stage == null ? "" : " AND stage=:stage")
                 + (grade == null ? "" : " AND grade=?")
                 + " ORDER BY parent_id, sort_order, code";
-        return grade == null ? jdbc.query(sql, this::knowledge) : jdbc.query(sql, this::knowledge, grade.name());
+        Map<String, Object> args = new HashMap<>();
+        if (stage != null) args.put("stage", stage.name());
+        if (grade != null) args.put("grade", grade.name());
+        sql = sql.replace("grade=?", "grade=:grade");
+        return named.query(sql, args, this::knowledge);
     }
 
     /** 按稳定 ID 查询单个知识点，不跨 Schema 读取其他领域。 */
@@ -209,11 +215,14 @@ public class QuestionRepository {
     }
 
     /** 查询教师当前版本列表；返回行绝不读取 answers_json 或 analysis_md。 */
-    public PagedRows listQuestions(String ownerId, int page, int size, String keyword, QuestionModels.Type type,
-            QuestionModels.Status status, QuestionModels.Difficulty difficulty, String knowledgePointId) {
+    public PagedRows listQuestions(String ownerId, int page, int size, String keyword, QuestionModels.Stage stage,
+            QuestionModels.Grade grade, QuestionModels.Type type, QuestionModels.Status status,
+            QuestionModels.Difficulty difficulty, String knowledgePointId) {
         StringBuilder where = new StringBuilder(" FROM question_aggregate q JOIN question_version v ON v.id=q.current_version_id WHERE q.owner_id=:ownerId AND q.parent_question_id IS NULL");
         Map<String, Object> args = new HashMap<>(); args.put("ownerId", ownerId);
         if (keyword != null && !keyword.isBlank()) { where.append(" AND v.stem_md LIKE :keyword"); args.put("keyword", "%" + keyword.trim() + "%"); }
+        if (stage != null) { where.append(" AND v.stage=:stage"); args.put("stage", stage.name()); }
+        if (grade != null) { where.append(" AND v.grade=:grade"); args.put("grade", grade.name()); }
         if (type != null) { where.append(" AND v.question_type=:type"); args.put("type", type.name()); }
         if (status != null) { where.append(" AND q.status=:status"); args.put("status", status.name()); }
         if (difficulty != null) { where.append(" AND v.difficulty=:difficulty"); args.put("difficulty", difficulty.name()); }
@@ -223,12 +232,12 @@ public class QuestionRepository {
         }
         long total = named.queryForObject("SELECT COUNT(*)" + where, args, Long.class);
         args.put("limit", size); args.put("offset", (page - 1) * size);
-        List<SummaryRow> rows = named.query("SELECT q.id,q.status,q.revision,q.current_version_id,q.created_at,q.updated_at,v.version_number,v.question_type,v.difficulty,v.grade,v.stem_md" + where
+        List<SummaryRow> rows = named.query("SELECT q.id,q.status,q.revision,q.current_version_id,q.created_at,q.updated_at,v.version_number,v.question_type,v.difficulty,v.stage,v.grade,v.stem_md" + where
                         + " ORDER BY q.updated_at DESC,q.id DESC LIMIT :limit OFFSET :offset", args,
                 (rs, row) -> new SummaryRow(rs.getString("id"), QuestionModels.Status.valueOf(rs.getString("status")),
                         rs.getLong("revision"), rs.getString("current_version_id"), rs.getInt("version_number"),
                         QuestionModels.Type.valueOf(rs.getString("question_type")), QuestionModels.Difficulty.valueOf(rs.getString("difficulty")),
-                        QuestionModels.Grade.valueOf(rs.getString("grade")), rs.getString("stem_md"),
+                        QuestionModels.Stage.valueOf(rs.getString("stage")), QuestionModels.Grade.valueOf(rs.getString("grade")), rs.getString("stem_md"),
                         instant(rs, "created_at"), instant(rs, "updated_at"), knowledgeIds(rs.getString("current_version_id"))));
         return new PagedRows(rows, total);
     }
@@ -717,7 +726,8 @@ public class QuestionRepository {
 
     public record Idempotency(String fingerprint, String resourceType, String resourceId) {}
     public record SummaryRow(String id, QuestionModels.Status status, long revision, String currentVersionId,
-            int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Grade grade,
+            int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Stage stage,
+            QuestionModels.Grade grade,
             String stem, Instant createdAt, Instant updatedAt, List<String> knowledgePointIds) {}
     public record PagedRows(List<SummaryRow> rows, long total) {}
     public record VersionSummaryRow(String id, int versionNumber, QuestionModels.Type type,

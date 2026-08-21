@@ -271,8 +271,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the enabled junior-mathematics knowledge-point tree
-         * @description Teachers can query and bind enabled knowledge points but cannot maintain them. Results are ordered by parent, sortOrder and code.
+         * List the enabled primary-or-junior mathematics knowledge-point tree
+         * @description Teachers can query and bind enabled knowledge points but cannot maintain them. PRIMARY and JUNIOR are supported; SENIOR remains disabled. Results are ordered by parent, sortOrder and code.
          */
         get: operations["listTeacherKnowledgePoints"];
         put?: never;
@@ -331,7 +331,7 @@ export interface paths {
         put?: never;
         /**
          * Create an administrator-only knowledge graph import task
-         * @description Defaults are enforced by the migration client; a non-dry-run task never enables imported nodes automatically.
+         * @description Defaults are enforced by the migration client. Formal imports enable confirmed PRIMARY/JUNIOR nodes and retain SENIOR nodes disabled; relationship and parent-key validation remain independent.
          */
         post: operations["createKnowledgeGraphImport"];
         delete?: never;
@@ -1164,9 +1164,9 @@ export interface components {
             updatedAt: string;
         };
         /** @enum {string} */
-        QuestionStage: "JUNIOR";
+        QuestionStage: "PRIMARY" | "JUNIOR";
         /** @enum {string} */
-        QuestionGrade: "SEVEN" | "EIGHT" | "NINE";
+        QuestionGrade: "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE" | "SIX" | "SEVEN" | "EIGHT" | "NINE";
         /** @enum {string} */
         QuestionSubject: "MATHEMATICS";
         /** @enum {string} */
@@ -1283,12 +1283,12 @@ export interface components {
             nodeKind: string;
             /** @description Opaque source grouping key; never used as a knowledge-point foreign key. */
             sourceParentKey: string | null;
-            /** @description Preserved source value. This import never derives platform enabled state from it; imported nodes remain disabled. */
+            /** @description Preserved source value. Platform enabled state is derived only from the confirmed stage policy, never from this source value. */
             sourceStatus: string;
             contentSha256: string;
         };
         /**
-         * @description Confirmed whole-stage scope for imported graph nodes; the current question editor still exposes only JUNIOR.
+         * @description Confirmed whole-stage scope for imported graph nodes. PRIMARY and JUNIOR may be enabled for question binding; SENIOR is retained but remains disabled.
          * @enum {string}
          */
         KnowledgeGraphEducationStage: "PRIMARY" | "JUNIOR" | "SENIOR";
@@ -1521,6 +1521,7 @@ export interface components {
             versionNumber: number;
             type: components["schemas"]["QuestionType"];
             difficulty: components["schemas"]["QuestionDifficulty"];
+            stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
             stemPreview: string;
             knowledgePointIds: string[];
@@ -2729,6 +2730,8 @@ export interface operations {
     listTeacherKnowledgePoints: {
         parameters: {
             query?: {
+                /** @description Defaults to JUNIOR for compatibility with existing teacher links. */
+                stage?: components["schemas"]["QuestionStage"];
                 grade?: components["schemas"]["QuestionGrade"];
                 /** @description Omit for the complete tree; use the literal root UUID only when querying one branch. */
                 parentId?: string;
@@ -3032,6 +3035,8 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
                 keyword?: string;
+                stage?: components["schemas"]["QuestionStage"];
+                grade?: components["schemas"]["QuestionGrade"];
                 type?: components["schemas"]["QuestionType"];
                 status?: components["schemas"]["QuestionStatus"];
                 difficulty?: components["schemas"]["QuestionDifficulty"];

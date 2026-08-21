@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.11.1
+  version: 0.12.0
   description: T10B Gateway contract. Adds confirmed graph stage/type mappings while preserving structured question writes, immutable versions and bounded migration tasks. No full-corpus formal question migration or T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
@@ -598,9 +598,16 @@ paths:
     get:
       tags: [Knowledge Points]
       operationId: listTeacherKnowledgePoints
-      summary: List the enabled junior-mathematics knowledge-point tree
-      description: Teachers can query and bind enabled knowledge points but cannot maintain them. Results are ordered by parent, sortOrder and code.
+      summary: List the enabled primary-or-junior mathematics knowledge-point tree
+      description: Teachers can query and bind enabled knowledge points but cannot maintain them. PRIMARY and JUNIOR are supported; SENIOR remains disabled. Results are ordered by parent, sortOrder and code.
       parameters:
+        - name: stage
+          in: query
+          description: Defaults to JUNIOR for compatibility with existing teacher links.
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/QuestionStage'
+            default: JUNIOR
         - name: grade
           in: query
           schema:
@@ -682,7 +689,7 @@ paths:
       tags: [Knowledge Points]
       operationId: createKnowledgeGraphImport
       summary: Create an administrator-only knowledge graph import task
-      description: Defaults are enforced by the migration client; a non-dry-run task never enables imported nodes automatically.
+      description: Defaults are enforced by the migration client. Formal imports enable confirmed PRIMARY/JUNIOR nodes and retain SENIOR nodes disabled; relationship and parent-key validation remain independent.
       requestBody:
         required: true
         content:
@@ -856,6 +863,14 @@ paths:
           schema:
             type: string
             maxLength: 100
+        - name: stage
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionStage'
+        - name: grade
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionGrade'
         - name: type
           in: query
           schema:
@@ -2454,10 +2469,10 @@ components:
           format: date-time
     QuestionStage:
       type: string
-      enum: [JUNIOR]
+      enum: [PRIMARY, JUNIOR]
     QuestionGrade:
       type: string
-      enum: [SEVEN, EIGHT, NINE]
+      enum: [ONE, TWO, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT, NINE]
     QuestionSubject:
       type: string
       enum: [MATHEMATICS]
@@ -2487,7 +2502,7 @@ components:
           format: uuid
         code:
           type: string
-          pattern: '^(JUNIOR_MATH_[A-Z0-9_]{2,50}|KG_[a-f0-9]{32})$'
+          pattern: '^((PRIMARY|JUNIOR)_MATH_[A-Z0-9_]{2,50}|KG_[a-f0-9]{32})$'
         name:
           type: string
           minLength: 1
@@ -2664,12 +2679,12 @@ components:
         sourceStatus:
           type: string
           maxLength: 40
-          description: Preserved source value. This import never derives platform enabled state from it; imported nodes remain disabled.
+          description: Preserved source value. Platform enabled state is derived only from the confirmed stage policy, never from this source value.
         contentSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
     KnowledgeGraphEducationStage:
       type: string
       enum: [PRIMARY, JUNIOR, SENIOR]
-      description: Confirmed whole-stage scope for imported graph nodes; the current question editor still exposes only JUNIOR.
+      description: Confirmed whole-stage scope for imported graph nodes. PRIMARY and JUNIOR may be enabled for question binding; SENIOR is retained but remains disabled.
     KnowledgeGraphRelationInput:
       type: object
       additionalProperties: false
@@ -3063,7 +3078,7 @@ components:
     QuestionSummary:
       type: object
       additionalProperties: false
-      required: [id, status, revision, currentVersionId, versionNumber, type, difficulty, grade, stemPreview, knowledgePointIds, createdAt, updatedAt]
+      required: [id, status, revision, currentVersionId, versionNumber, type, difficulty, stage, grade, stemPreview, knowledgePointIds, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -3084,6 +3099,8 @@ components:
           $ref: '#/components/schemas/QuestionType'
         difficulty:
           $ref: '#/components/schemas/QuestionDifficulty'
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
         grade:
           $ref: '#/components/schemas/QuestionGrade'
         stemPreview:

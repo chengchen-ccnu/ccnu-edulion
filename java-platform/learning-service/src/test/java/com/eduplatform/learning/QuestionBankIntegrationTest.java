@@ -54,6 +54,7 @@ class QuestionBankIntegrationTest {
     private static final String TEACHER = "00000000-0000-4000-8000-000000009101";
     private static final String OTHER = "00000000-0000-4000-8000-000000009102";
     private static final String KP = "00000000-0000-4000-8000-000000009201";
+    private static final String PRIMARY_KP = "00000000-0000-4000-8000-000000009202";
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
     @Autowired QuestionImportService imports;
@@ -84,6 +85,9 @@ class QuestionBankIntegrationTest {
         jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 KP, "JUNIOR_MATH_NUMBER", "数与式", null, "JUNIOR", "SEVEN", "MATHEMATICS", 1, true, 0,
                 Timestamp.from(now), Timestamp.from(now));
+        jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                PRIMARY_KP, "PRIMARY_MATH_NUMBER", "整数认识", null, "PRIMARY", "ONE", "MATHEMATICS", 1, true, 0,
+                Timestamp.from(now), Timestamp.from(now));
         doNothing().when(media).requireBindable(anyString(), anyString(), anyString(), anyString());
     }
 
@@ -95,10 +99,29 @@ class QuestionBankIntegrationTest {
         assertThat(first.created()).isTrue(); assertThat(replay.created()).isFalse();
         assertThat(replay.response().id()).isEqualTo(first.response().id());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(1);
-        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null).items()).singleElement()
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null).items()).singleElement()
                 .satisfies(item -> assertThat(item.stemPreview()).contains("1+1"));
         assertThatThrownBy(() -> questions.get(OTHER, first.response().id())).isInstanceOfSatisfying(QuestionException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void primaryQuestionCanBeCreatedAndStageGradeMismatchIsRejected() {
+        var primary = new QuestionDtos.VersionInput(QuestionModels.Type.FILL_BLANK, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.PRIMARY, QuestionModels.Grade.ONE, QuestionModels.Subject.MATHEMATICS,
+                "填写 $1+1$ 的结果", List.of(), List.of("2"), "整数加法", List.of(UUID.fromString(PRIMARY_KP)), List.of());
+        var created = questions.create(TEACHER, UUID.randomUUID().toString(), primary, "trace-primary").response();
+        assertThat(created.currentVersion().stage()).isEqualTo(QuestionModels.Stage.PRIMARY);
+        assertThat(questions.list(TEACHER, 1, 20, null, QuestionModels.Stage.PRIMARY,
+                QuestionModels.Grade.ONE, null, null, null, null).items()).singleElement()
+                .satisfies(item -> assertThat(item.stage()).isEqualTo(QuestionModels.Stage.PRIMARY));
+
+        var mismatch = new QuestionDtos.VersionInput(QuestionModels.Type.FILL_BLANK, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.PRIMARY, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                "错误组合", List.of(), List.of("2"), "", List.of(), List.of());
+        assertThatThrownBy(() -> questions.create(TEACHER, UUID.randomUUID().toString(), mismatch, "trace-mismatch"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
     }
 
     @Test
@@ -324,7 +347,7 @@ class QuestionBankIntegrationTest {
             assertThat(child.analysis()).isEqualTo("子题解析");
             assertThat(child.knowledgePoints()).extracting(QuestionDtos.KnowledgePointResponse::id).containsExactly(KP);
         });
-        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null).items())
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null).items())
                 .singleElement().satisfies(item -> assertThat(item.type()).isEqualTo(QuestionModels.Type.COMPOSITE));
 
         var updated = questions.update(TEACHER, created.id(), 0, composite("父题二", "子题二", "B"),

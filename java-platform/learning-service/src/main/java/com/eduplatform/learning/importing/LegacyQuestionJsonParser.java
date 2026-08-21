@@ -97,7 +97,7 @@ public class LegacyQuestionJsonParser {
         if (!issues.isEmpty() || type == null || grade == null || difficulty == null) {
             return Parsed.review(issues, originalDifficulty, jsonEdition, jsonGrade, grade);
         }
-        QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR,
+        QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, grade.stage(),
                 grade, QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(),
                 List.of(), List.of());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
@@ -122,7 +122,7 @@ public class LegacyQuestionJsonParser {
         TagResult tags = tags(json);
         if (!tags.issues().isEmpty()) return new ChildParsed(null, tags.issues());
         List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR, grade,
+        return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, grade.stage(), grade,
                 QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(), List.of(), List.of()),
                 List.copyOf(images), List.of(), tags.tags()), List.of());
     }
@@ -222,12 +222,23 @@ public class LegacyQuestionJsonParser {
             case "5" -> QuestionModels.Difficulty.MEDIUM; case "9" -> QuestionModels.Difficulty.HARD; default -> null; };
     }
     private static QuestionModels.Grade grade(JsonNode json) {
-        return switch (integer(json, "gradeIndex")) { case 7 -> QuestionModels.Grade.SEVEN;
-            case 8 -> QuestionModels.Grade.EIGHT; case 9 -> QuestionModels.Grade.NINE; default -> null; };
+        return switch (integer(json, "gradeIndex")) {
+            case 1 -> QuestionModels.Grade.ONE; case 2 -> QuestionModels.Grade.TWO;
+            case 3 -> QuestionModels.Grade.THREE; case 4 -> QuestionModels.Grade.FOUR;
+            case 5 -> QuestionModels.Grade.FIVE; case 6 -> QuestionModels.Grade.SIX;
+            case 7 -> QuestionModels.Grade.SEVEN; case 8 -> QuestionModels.Grade.EIGHT;
+            case 9 -> QuestionModels.Grade.NINE; default -> null;
+        };
     }
     private static boolean pathMatches(String value, QuestionModels.Grade grade) {
         if (value == null) return false;
-        return switch (grade) { case SEVEN -> value.contains("七"); case EIGHT -> value.contains("八"); case NINE -> value.contains("九"); };
+        return switch (grade) {
+            case ONE -> value.contains("一"); case TWO -> value.contains("二");
+            case THREE -> value.contains("三"); case FOUR -> value.contains("四");
+            case FIVE -> value.contains("五"); case SIX -> value.contains("六");
+            case SEVEN -> value.contains("七"); case EIGHT -> value.contains("八");
+            case NINE -> value.contains("九");
+        };
     }
     private static int multiPartCount(String value) { int count = 0; Matcher matcher = MULTI_PART.matcher(value); while (matcher.find()) count++; return count; }
     /** 只有编号从 1 连续到 N 且每段非空时才拆父级答案，避免按空格或标点猜测子题答案。 */

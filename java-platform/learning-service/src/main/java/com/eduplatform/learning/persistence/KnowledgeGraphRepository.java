@@ -108,13 +108,14 @@ public class KnowledgeGraphRepository {
                 this::sourcePoint, sourceSystem, sourceKnowId).stream().findFirst();
     }
 
-    /** 正式导入节点默认 disabled，且不把来源 parent key 写入任一自外键。 */
+    /** 正式导入按平台学段策略启用小学/初中并禁用高中，且不把来源 parent key 写入任一自外键。 */
     public String insertSourcePoint(String sourceSystem, NodeRow node, Instant now) {
         String id = UUID.randomUUID().toString();
         String code = "KG_" + UUID.nameUUIDFromBytes((sourceSystem + "\0" + node.sourceKnowId())
                 .getBytes(StandardCharsets.UTF_8)).toString().replace("-", "");
+        boolean enabled = "PRIMARY".equals(node.normalizedStage()) || "JUNIOR".equals(node.normalizedStage());
         jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at,source_system,source_know_id,discipline_code,education_stage_code,normalized_stage,source_parent_key,taxonomy_parent_id,knowledge_type_id,knowledge_type_name,knowledge_type_colour,level_sort_index,node_kind,source_status,source_content_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                id, code, node.name(), null, node.normalizedStage(), null, "MATHEMATICS", node.levelSortIndex(), false, 0,
+                id, code, node.name(), null, node.normalizedStage(), null, "MATHEMATICS", node.levelSortIndex(), enabled, 0,
                 ts(now), ts(now), sourceSystem, node.sourceKnowId(), node.disciplineCode(), node.educationStageCode(),
                 node.normalizedStage(), node.sourceParentKey(), null, node.knowledgeTypeId(), node.knowledgeTypeName(), node.knowledgeTypeColour(),
                 node.levelSortIndex(), node.nodeKind(), node.sourceStatus(), node.contentSha256());

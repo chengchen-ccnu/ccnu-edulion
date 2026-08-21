@@ -68,6 +68,11 @@ class LearningMysqlMigrationAcceptanceTest {
         List<String> actual = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
         assertThat(actual).containsAll(TABLES);
+        // V7 只开放小学/初中来源节点，高中必须继续禁用；断言不会修改现有业务数据。
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE source_system IS NOT NULL "
+                + "AND normalized_stage IN ('PRIMARY','JUNIOR') AND enabled=FALSE", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE source_system IS NOT NULL "
+                + "AND normalized_stage='SENIOR' AND enabled=TRUE", Integer.class)).isZero();
 
         String ownerId = UUID.randomUUID().toString();
         String pointId = UUID.randomUUID().toString();

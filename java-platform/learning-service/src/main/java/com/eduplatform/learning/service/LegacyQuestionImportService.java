@@ -277,7 +277,7 @@ public class LegacyQuestionImportService {
             if (point.isEmpty()) { issues.add("KNOWLEDGE_POINT_UNKNOWN"); continue; }
             boolean nameMatches = point.get().name().equals(tag.knowName());
             boolean typeMatches = point.get().knowledgeTypeId().equals(tag.knowTypeId());
-            boolean stageMatches = "JUNIOR".equals(point.get().normalizedStage());
+            boolean stageMatches = candidate.input().stage().name().equals(point.get().normalizedStage());
             if (!nameMatches) issues.add("KNOWLEDGE_POINT_NAME_CONFLICT");
             if (!typeMatches) issues.add("KNOWLEDGE_POINT_TYPE_CONFLICT");
             if (!stageMatches) issues.add("KNOWLEDGE_POINT_STAGE_MISMATCH");

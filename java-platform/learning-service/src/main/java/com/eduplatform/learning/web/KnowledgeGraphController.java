@@ -80,8 +80,11 @@ public class KnowledgeGraphController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         LearningIdentity.teacher(userId, roles, permissions);
-        if (!"JUNIOR".equals(normalizedStage)) throw new com.eduplatform.learning.service.QuestionException(
-                org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT, "KNOWLEDGE_GRAPH.STAGE_UNSUPPORTED", "题目编辑器当前只支持初中学段");
+        if (!"PRIMARY".equals(normalizedStage) && !"JUNIOR".equals(normalizedStage)) {
+            throw new com.eduplatform.learning.service.QuestionException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT,
+                    "KNOWLEDGE_GRAPH.STAGE_UNSUPPORTED", "题目编辑器只支持小学和初中学段");
+        }
         return service.search(normalizedStage, knowledgeTypeId, keyword, page, size);
     }
 

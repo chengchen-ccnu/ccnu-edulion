@@ -81,7 +81,7 @@ async function loadSelectedItem() {
 }
 async function loadKnowledgePoints() {
   if (!knowledgePoints.value.length) knowledgePoints.value = flattenKnowledgePoints(
-    await teacherQuestionApi.knowledgePoints(controller.signal));
+    await teacherQuestionApi.knowledgePoints({}, controller.signal));
 }
 function schedulePoll() {
   if (task.value && ["PENDING", "PROCESSING"].includes(task.value.status)) {

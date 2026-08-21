@@ -4,12 +4,12 @@
  * 每次最多渲染 20 个候选，已选项独立保留；关系摘要只请求一层邻域并可安全失败。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { KnowledgePoint, KnowledgePointGraph, KnowledgePointSearchItem } from "@edu/api-client";
-import { computed, onBeforeUnmount, ref } from "vue";
+import type { KnowledgePoint, KnowledgePointGraph, KnowledgePointSearchItem, QuestionStage } from "@edu/api-client";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 import { teacherQuestionApi } from "../question-api";
 
-const props = defineProps<{ modelValue: string[]; seed: KnowledgePoint[] }>();
+const props = defineProps<{ modelValue: string[]; seed: KnowledgePoint[]; stage: QuestionStage }>();
 const emit = defineEmits<{ "update:modelValue": [value: string[]] }>();
 const items = ref<KnowledgePointSearchItem[]>([]);
 const cache = ref<Record<string, { id: string; name: string; typeName: string | null }>>({});
@@ -27,13 +27,18 @@ const typeOptions = computed(() => [...new Map(items.value.filter(item => item.k
 async function load(targetPage = page.value) {
   controller.abort(); controller = new AbortController(); loading.value = true; error.value = ""; graph.value = null;
   try {
-    const result = await teacherQuestionApi.searchKnowledgePoints({ normalizedStage: "JUNIOR", page: targetPage,
+    const result = await teacherQuestionApi.searchKnowledgePoints({ normalizedStage: props.stage, page: targetPage,
       size: 20, keyword: keyword.value.trim() || undefined, knowledgeTypeId: typeId.value || undefined }, controller.signal);
     items.value = result.items; page.value = result.page; total.value = result.total; loaded.value = true;
     for (const item of result.items) cache.value[item.id] = { id: item.id, name: item.name, typeName: item.knowledgeTypeName };
   } catch (cause) { if (!controller.signal.aborted) error.value = message(cause); }
   finally { if (!controller.signal.aborted) loading.value = false; }
 }
+watch(() => props.stage, () => {
+  controller.abort(); controller = new AbortController();
+  items.value = []; typeId.value = ""; page.value = 1; total.value = 0; loaded.value = false;
+  graph.value = null; graphError.value = ""; error.value = ""; loading.value = false;
+});
 function toggle(id: string, checked: boolean) {
   emit("update:modelValue", checked ? [...new Set([...props.modelValue, id])] : props.modelValue.filter(value => value !== id));
 }
@@ -70,7 +75,7 @@ onBeforeUnmount(() => controller.abort());
     </form>
     <p v-if="error" class="feedback feedback--error" role="alert">{{ error }} <button type="button" @click="load(page)">重试</button></p>
     <p v-else-if="loading" aria-live="polite">正在加载知识点…</p>
-    <p v-else-if="loaded && !items.length" class="empty-state">没有符合条件的已启用初中知识点。</p>
+    <p v-else-if="loaded && !items.length" class="empty-state">没有符合条件的已启用{{ stage === "PRIMARY" ? "小学" : "初中" }}知识点。</p>
     <ul v-else class="knowledge-results">
       <li v-for="point in items" :key="point.id">
         <label><input type="checkbox" :checked="modelValue.includes(point.id)" @change="toggle(point.id, ($event.target as HTMLInputElement).checked)">

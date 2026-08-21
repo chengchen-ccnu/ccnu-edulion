@@ -36,7 +36,7 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const pointsPromise = teacherQuestionApi.knowledgePoints(controller.signal).then(flattenKnowledgePoints);
+    const pointsPromise = teacherQuestionApi.knowledgePoints({}, controller.signal).then(flattenKnowledgePoints);
     if (props.mode === "edit") {
       const [question, points] = await Promise.all([teacherQuestionApi.detail(questionId(), controller.signal), pointsPromise]);
       current.value = question;

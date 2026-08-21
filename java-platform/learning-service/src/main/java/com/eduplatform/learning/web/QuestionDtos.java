@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 
-/** OpenAPI 0.10.1 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
+/** OpenAPI 0.12.0 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
 public final class QuestionDtos {
     private QuestionDtos() {}
 
@@ -127,7 +127,7 @@ public final class QuestionDtos {
     public record UpdateStatusRequest(@Min(0) long expectedRevision, @NotNull QuestionModels.Status status) {}
 
     public record CreateKnowledgePointRequest(
-            @NotBlank @Pattern(regexp = "^JUNIOR_MATH_[A-Z0-9_]{2,50}$") String code,
+            @NotBlank @Pattern(regexp = "^(PRIMARY|JUNIOR)_MATH_[A-Z0-9_]{2,50}$") String code,
             @NotBlank @Size(max = 100) String name, UUID parentId, @NotNull QuestionModels.Stage stage,
             @NotNull QuestionModels.Grade grade, @NotNull QuestionModels.Subject subject,
             @Min(0) @Max(100000) int sortOrder, boolean enabled) {}
@@ -157,7 +157,7 @@ public final class QuestionDtos {
             VersionResponse currentVersion, Instant createdAt, Instant updatedAt) {}
     public record QuestionSummary(String id, QuestionModels.Status status, long revision, String currentVersionId,
             int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty,
-            QuestionModels.Grade grade, String stemPreview, List<String> knowledgePointIds,
+            QuestionModels.Stage stage, QuestionModels.Grade grade, String stemPreview, List<String> knowledgePointIds,
             Instant createdAt, Instant updatedAt) {}
     public record QuestionPage(List<QuestionSummary> items, int page, int size, long total) {}
     public record VersionSummary(String id, int versionNumber, QuestionModels.Type type,

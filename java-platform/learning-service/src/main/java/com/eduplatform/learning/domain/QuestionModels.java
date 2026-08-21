@@ -7,8 +7,19 @@ import java.util.List;
 public final class QuestionModels {
     private QuestionModels() {}
 
-    public enum Stage { JUNIOR }
-    public enum Grade { SEVEN, EIGHT, NINE }
+    public enum Stage { PRIMARY, JUNIOR }
+
+    /** 平台支持的一至九年级；每个年级唯一映射到小学或初中学段。 */
+    public enum Grade {
+        ONE(Stage.PRIMARY), TWO(Stage.PRIMARY), THREE(Stage.PRIMARY), FOUR(Stage.PRIMARY),
+        FIVE(Stage.PRIMARY), SIX(Stage.PRIMARY), SEVEN(Stage.JUNIOR), EIGHT(Stage.JUNIOR), NINE(Stage.JUNIOR);
+
+        private final Stage stage;
+        Grade(Stage stage) { this.stage = stage; }
+
+        /** 返回该年级所属学段，用于导入和写接口统一校验，避免前后端组合出跨学段数据。 */
+        public Stage stage() { return stage; }
+    }
     public enum Subject { MATHEMATICS }
     public enum Type { SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE }
     public enum Difficulty { EASY, MEDIUM, HARD }

@@ -6,13 +6,14 @@
 import type {
   KnowledgePoint,
   QuestionChildInput,
+  QuestionGrade,
   QuestionInputType,
   QuestionMediaPurpose,
   QuestionVersionInput
 } from "@edu/api-client";
 import { computed, ref, watch } from "vue";
 
-import { emptyQuestionChild } from "../question-form";
+import { emptyQuestionChild, gradesForStage } from "../question-form";
 import MediaUploadField from "./MediaUploadField.vue";
 import KnowledgePointPicker from "./KnowledgePointPicker.vue";
 import SafeRichText from "./SafeRichText.vue";
@@ -34,6 +35,9 @@ const localBusy = ref<Record<string, boolean>>({});
 const version = computed({ get: () => props.modelValue, set: value => emit("update:modelValue", value) });
 const choice = computed(() => version.value.type === "SINGLE_CHOICE" || version.value.type === "MULTIPLE_CHOICE");
 const children = computed(() => "children" in version.value ? version.value.children ?? [] : []);
+const gradeOptions = computed(() => gradesForStage(version.value.stage));
+const gradeLabels: Record<QuestionGrade, string> = { ONE: "一年级", TWO: "二年级", THREE: "三年级",
+  FOUR: "四年级", FIVE: "五年级", SIX: "六年级", SEVEN: "七年级", EIGHT: "八年级", NINE: "九年级" };
 
 watch(() => version.value.type, type => {
   const next = { ...version.value } as QuestionVersionInput;
@@ -46,13 +50,29 @@ watch(() => version.value.type, type => {
     next.options = [];
     if (type === "TRUE_FALSE") next.answers = [next.answers[0] === "FALSE" ? "FALSE" : "TRUE"];
     else if (!next.answers.length || ["TRUE", "FALSE"].includes(next.answers[0])) next.answers = [""];
-    if (type === "COMPOSITE") next.children = next.children?.length ? next.children : [emptyQuestionChild()];
+    if (type === "COMPOSITE") next.children = next.children?.length ? next.children
+      : [emptyQuestionChild("SINGLE_CHOICE", next.stage, next.grade)];
     else next.children = undefined;
   }
   version.value = next;
 });
 
 function replace(patch: Partial<EditorValue>) { version.value = { ...version.value, ...patch } as EditorValue; }
+function setStage(stage: QuestionVersionInput["stage"]) {
+  const grade = gradesForStage(stage)[0];
+  const patch: Partial<QuestionVersionInput> = { stage, grade, knowledgePointIds: [] };
+  if ("children" in version.value && version.value.children) patch.children = version.value.children.map(child => ({
+    ...child, stage, grade, knowledgePointIds: []
+  }));
+  replace(patch);
+}
+function setGrade(grade: QuestionVersionInput["grade"]) {
+  const patch: Partial<QuestionVersionInput> = { grade, knowledgePointIds: [] };
+  if ("children" in version.value && version.value.children) patch.children = version.value.children.map(child => ({
+    ...child, grade, knowledgePointIds: []
+  }));
+  replace(patch);
+}
 function addOption() {
   if (version.value.options.length >= 8) return;
   const key = String.fromCharCode(65 + version.value.options.length);
@@ -81,11 +101,13 @@ function setMedia(purpose: QuestionMediaPurpose, mediaId: string | null) {
 }
 function addChild() {
   if (!("children" in version.value) || children.value.length >= 100) return;
-  replace({ children: [...children.value, emptyQuestionChild()] });
+  replace({ children: [...children.value, emptyQuestionChild("SINGLE_CHOICE", version.value.stage, version.value.grade)] });
 }
 function replaceChild(index: number, child: EditorValue) {
   if (!("children" in version.value) || child.type === "COMPOSITE") return;
-  replace({ children: children.value.map((item, at) => at === index ? child as QuestionChildInput : item) });
+  replace({ children: children.value.map((item, at) => at === index ? {
+    ...child, stage: version.value.stage, grade: version.value.grade, subject: version.value.subject
+  } as QuestionChildInput : item) });
 }
 function removeChild(index: number) {
   if (!("children" in version.value) || children.value.length <= 1) return;
@@ -116,9 +138,14 @@ function busy(key: string, value: boolean) {
           <option value="EASY">简单</option><option value="MEDIUM">中等</option><option value="HARD">困难</option>
         </select>
       </label>
+      <label class="editor-field"><span>学段 <em>*</em></span>
+        <select :value="version.stage" @change="setStage(($event.target as HTMLSelectElement).value as QuestionVersionInput['stage'])">
+          <option value="PRIMARY">小学</option><option value="JUNIOR">初中</option>
+        </select><small v-if="fieldError('stage')" class="field-error">{{ fieldError("stage") }}</small>
+      </label>
       <label class="editor-field"><span>年级 <em>*</em></span>
-        <select :value="version.grade" @change="replace({ grade: ($event.target as HTMLSelectElement).value as QuestionVersionInput['grade'] })">
-          <option value="SEVEN">七年级</option><option value="EIGHT">八年级</option><option value="NINE">九年级</option>
+        <select :value="version.grade" @change="setGrade(($event.target as HTMLSelectElement).value as QuestionVersionInput['grade'])">
+          <option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ gradeLabels[grade] }}</option>
         </select>
       </label>
       <label class="editor-field editor-field--wide"><span>题干 <em>*</em></span>
@@ -153,7 +180,7 @@ function busy(key: string, value: boolean) {
       <textarea :value="version.analysis" rows="5" placeholder="支持 Markdown 与 LaTeX" @input="replace({ analysis: ($event.target as HTMLTextAreaElement).value })" />
       <small v-if="fieldError('analysis')" class="field-error">{{ fieldError("analysis") }}</small>
     </label>
-    <KnowledgePointPicker :model-value="version.knowledgePointIds" :seed="knowledgePoints"
+    <KnowledgePointPicker :model-value="version.knowledgePointIds" :seed="knowledgePoints" :stage="version.stage"
       @update:model-value="replace({ knowledgePointIds: $event })" />
     <section class="question-media-grid" aria-label="题目媒体">
       <MediaUploadField :model-value="mediaId('QUESTION_IMAGE')" purpose="QUESTION_IMAGE" accept="image/jpeg,image/png,image/webp,image/gif"

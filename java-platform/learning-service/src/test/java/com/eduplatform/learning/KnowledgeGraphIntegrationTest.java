@@ -78,7 +78,7 @@ class KnowledgeGraphIntegrationTest {
     }
 
     @Test
-    void importIsIdempotentStoresBToAAndDefaultsNodesDisabled() {
+    void importIsIdempotentStoresBToAAndEnablesJuniorNodes() {
         var task = create(false, 2, 1, "KG_IMPORT");
         UUID nodeBatch = UUID.randomUUID();
         var request = new KnowledgeGraphDtos.NodeBatchRequest(nodeBatch, true,
@@ -88,7 +88,7 @@ class KnowledgeGraphIntegrationTest {
         graphs.relations(ADMIN, task.id(), new KnowledgeGraphDtos.RelationBatchRequest(UUID.randomUUID(), true,
                 List.of(relation("b", "a", "c".repeat(64)))));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point", Integer.class)).isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE enabled=TRUE", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE enabled=TRUE", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE parent_id IS NOT NULL OR taxonomy_parent_id IS NOT NULL", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point WHERE stage='JUNIOR' AND normalized_stage='JUNIOR' AND grade IS NULL AND knowledge_type_name='知识点'", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM knowledge_point_prerequisite r JOIN knowledge_point p ON p.id=r.prerequisite_id JOIN knowledge_point d ON d.id=r.dependent_id WHERE p.source_know_id='b' AND d.source_know_id='a'", Integer.class)).isEqualTo(1);

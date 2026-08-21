@@ -43,10 +43,11 @@ public class TeacherQuestionController {
     public List<QuestionDtos.KnowledgePointResponse> knowledgePoints(@RequestHeader("X-User-Id") String userId,
             @RequestHeader("X-User-Roles") String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @RequestParam(defaultValue = "JUNIOR") QuestionModels.Stage stage,
             @RequestParam(required = false) QuestionModels.Grade grade,
             @RequestParam(required = false) String parentId) {
         LearningIdentity.teacher(userId, roles, permissions);
-        return knowledge.teacherTree(grade, parentId);
+        return knowledge.teacherTree(stage, grade, parentId);
     }
 
     @GetMapping("/api/v1/teacher/questions")
@@ -56,12 +57,16 @@ public class TeacherQuestionController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
-            @RequestParam(required = false) String keyword, @RequestParam(required = false) QuestionModels.Type type,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) QuestionModels.Stage stage,
+            @RequestParam(required = false) QuestionModels.Grade grade,
+            @RequestParam(required = false) QuestionModels.Type type,
             @RequestParam(required = false) QuestionModels.Status status,
             @RequestParam(required = false) QuestionModels.Difficulty difficulty,
             @RequestParam(required = false) String knowledgePointId) {
         var identity = LearningIdentity.teacher(userId, roles, permissions);
-        return questions.list(identity.userId(), page, size, keyword, type, status, difficulty, knowledgePointId);
+        return questions.list(identity.userId(), page, size, keyword, stage, grade, type, status, difficulty,
+                knowledgePointId);
     }
 
     @PostMapping("/api/v1/teacher/questions")
