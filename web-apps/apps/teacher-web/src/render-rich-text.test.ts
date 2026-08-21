@@ -19,4 +19,14 @@ describe("safe question rich text", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("iframe");
   });
+
+  it("keeps only validated stable inline-media markers as inert placeholders", () => {
+    const mediaId = "00000000-0000-4000-8000-000000000901";
+    const html = renderSafeQuestionHtml(`根据题意 {{media:${mediaId}}} 得到结论 {{media:not-a-uuid}}`);
+
+    expect(html).toContain(`data-question-media-id="${mediaId}"`);
+    expect(html).toContain("图片加载中…");
+    expect(html).toContain("{{media:not-a-uuid}}");
+    expect(html).not.toContain("<img");
+  });
 });

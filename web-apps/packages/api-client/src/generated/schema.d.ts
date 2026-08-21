@@ -1445,13 +1445,13 @@ export interface components {
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
             subject: components["schemas"]["QuestionSubject"];
-            /** @description Markdown/LaTeX source; rendering is a frontend responsibility. */
+            /** @description Markdown/LaTeX source; `{{media:<uuid>}}` is a stable inline image marker whose UUID must also occur in this version's QUESTION_IMAGE media list. Rendering and short-lived media authorization are frontend responsibilities. */
             stem: string;
             /** @description Required for choice questions and empty for fill/short-answer questions. TRUE_FALSE uses no options. */
             options: components["schemas"]["QuestionOptionInput"][];
             /** @description Canonical answer tokens or Markdown/LaTeX strings. This field is teacher-only in T09. */
             answers: string[];
-            /** @description Full teacher-only analysis; an empty string means no analysis supplied. */
+            /** @description Full teacher-only analysis; an empty string means no analysis supplied. It may use the same stable `{{media:<uuid>}}` inline image marker as stem. */
             analysis: string;
             knowledgePointIds: string[];
             media: components["schemas"]["QuestionMediaInput"][];
@@ -1464,9 +1464,11 @@ export interface components {
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
             subject: components["schemas"]["QuestionSubject"];
+            /** @description Markdown/LaTeX source; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list. */
             stem: string;
             options: components["schemas"]["QuestionOptionInput"][];
             answers: string[];
+            /** @description Teacher-only analysis; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list. */
             analysis: string;
             knowledgePointIds: string[];
             media: components["schemas"]["QuestionMediaInput"][];
@@ -1521,10 +1523,12 @@ export interface components {
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
             subject: components["schemas"]["QuestionSubject"];
+            /** @description Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version. */
             stem: string;
             options: components["schemas"]["QuestionOptionInput"][];
             /** @description Teacher-only correct answers for this immutable child version. */
             answers: string[];
+            /** @description Teacher-only analysis; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version. */
             analysis: string;
             knowledgePoints: components["schemas"]["KnowledgePoint"][];
             media: components["schemas"]["QuestionMedia"][];
@@ -1540,11 +1544,12 @@ export interface components {
             stage: components["schemas"]["QuestionStage"];
             grade: components["schemas"]["QuestionGrade"];
             subject: components["schemas"]["QuestionSubject"];
+            /** @description Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version. */
             stem: string;
             options: components["schemas"]["QuestionOptionInput"][];
             /** @description Teacher-only correct answer projection in T09; never reuse this schema for a student endpoint. */
             answers: string[];
-            /** @description Teacher-only full analysis projection. */
+            /** @description Teacher-only full analysis projection; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version. */
             analysis: string;
             knowledgePoints: components["schemas"]["KnowledgePoint"][];
             media: components["schemas"]["QuestionMedia"][];

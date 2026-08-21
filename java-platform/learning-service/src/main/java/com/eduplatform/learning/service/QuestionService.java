@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,7 @@ import tools.jackson.databind.ObjectMapper;
 @ConditionalOnBean(QuestionRepository.class)
 public class QuestionService {
     private static final Pattern EMBEDDED_IMAGE = Pattern.compile("(?is)<img\\b|!\\[[^]]*]\\(\\s*(?:https?:|data:)");
+    private static final Pattern INLINE_MEDIA = Pattern.compile("\\{\\{media:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})}}");
     private final QuestionRepository repository;
     private final MediaClient mediaClient;
     private final LearningEvents events;
@@ -311,9 +313,11 @@ public class QuestionService {
     /** 按题型校验选项和答案；不解析或渲染 Markdown/LaTeX，但拒绝绕过 mediaId 的嵌入图片。 */
     private void validateContent(QuestionDtos.VersionInput input) {
         if (EMBEDDED_IMAGE.matcher(input.stem()).find() || EMBEDDED_IMAGE.matcher(input.analysis()).find()
-                || input.options().stream().anyMatch(value -> EMBEDDED_IMAGE.matcher(value.content()).find())) {
+                || input.options().stream().anyMatch(value -> EMBEDDED_IMAGE.matcher(value.content()).find())
+                || input.answers().stream().anyMatch(value -> EMBEDDED_IMAGE.matcher(value).find())) {
             throw invalid("version", "图片必须先上传并使用稳定 mediaId，不能嵌入外部或 data URL");
         }
+        validateInlineMedia(input);
         List<String> keys = input.options().stream().map(value -> value.key().toUpperCase(Locale.ROOT)).toList();
         if (new HashSet<>(keys).size() != keys.size()) throw invalid("options", "选项 key 不能重复");
         switch (input.type()) {
@@ -336,6 +340,31 @@ public class QuestionService {
             }
             // 组合父题同样保留结构化选项与答案；子题由独立完整输入逐项校验。
             case COMPOSITE -> { }
+        }
+    }
+
+    /**
+     * 内联图片占位符只能引用当前版本已绑定的 QUESTION_IMAGE。
+     * 输入是题干、选项、答案和解析文本；验证失败返回 422，不写版本或媒体引用。
+     */
+    private static void validateInlineMedia(QuestionDtos.VersionInput input) {
+        Set<String> images = input.media().stream()
+                .filter(media -> media.purpose() == QuestionModels.MediaPurpose.QUESTION_IMAGE)
+                .map(media -> media.mediaId().toString()).collect(java.util.stream.Collectors.toSet());
+        List<String> content = new ArrayList<>();
+        content.add(input.stem()); content.add(input.analysis()); content.addAll(input.answers());
+        content.addAll(input.options().stream().map(QuestionDtos.OptionInput::content).toList());
+        for (String value : content) {
+            Matcher matcher = INLINE_MEDIA.matcher(value); String withoutValidMarkers = matcher.replaceAll("");
+            if (withoutValidMarkers.contains("{{media:")) {
+                throw invalid("version", "内联图片占位符格式不合法");
+            }
+            matcher.reset();
+            while (matcher.find()) {
+                if (!images.contains(matcher.group(1).toLowerCase(Locale.ROOT))) {
+                    throw invalid("version", "内联图片必须引用当前版本已绑定的 QUESTION_IMAGE mediaId");
+                }
+            }
         }
     }
 

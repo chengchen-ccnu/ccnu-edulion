@@ -3,6 +3,7 @@ import katex from "katex";
 import { marked } from "marked";
 
 const mathTokens = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\$([^\n$]+?)\$|\\\(([^\n]+?)\\\)/g;
+const inlineMediaTokens = /\{\{media:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})}}/g;
 
 /**
  * 将教师题目中的 Markdown/LaTeX 转为经过白名单清洗的 HTML。
@@ -10,8 +11,13 @@ const mathTokens = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\$([^\n$]+?)\$|\\\(([^
  * 页面只能渲染此函数的结果，不能把服务端原文直接交给 v-html。
  */
 export function renderSafeQuestionHtml(source: string): string {
+  const mediaIds: string[] = [];
+  const withMediaTokens = source.replace(inlineMediaTokens, (_match, mediaId: string) => {
+    const index = mediaIds.push(mediaId.toLowerCase()) - 1;
+    return `@@EDU_MEDIA_${index}@@`;
+  });
   const formulas: string[] = [];
-  const withTokens = source.replace(mathTokens, (match, blockDollar, blockBracket, inlineDollar, inlineBracket) => {
+  const withTokens = withMediaTokens.replace(mathTokens, (match, blockDollar, blockBracket, inlineDollar, inlineBracket) => {
     const formula = blockDollar ?? blockBracket ?? inlineDollar ?? inlineBracket ?? "";
     const displayMode = Boolean(blockDollar ?? blockBracket);
     const rendered = katex.renderToString(formula.trim(), {
@@ -25,10 +31,17 @@ export function renderSafeQuestionHtml(source: string): string {
     return `@@EDU_MATH_${index}@@`;
   });
   const parsed = marked.parse(withTokens, { async: false, breaks: true, gfm: true }) as string;
-  const restored = parsed.replace(/@@EDU_MATH_(\d+)@@/g, (_match, index: string) => formulas[Number(index)] ?? "");
+  const restored = parsed
+    .replace(/@@EDU_MATH_(\d+)@@/g, (_match, index: string) => formulas[Number(index)] ?? "")
+    .replace(/@@EDU_MEDIA_(\d+)@@/g, (_match, index: string) => {
+      const mediaId = mediaIds[Number(index)];
+      return mediaId
+        ? `<span class="question-inline-media" data-question-media-id="${mediaId}">图片加载中…</span>` : "";
+    });
   return DOMPurify.sanitize(restored, {
     FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "input", "button", "img", "audio", "video", "source"],
     FORBID_ATTR: ["style", "src", "srcset", "onerror", "onclick", "onload"],
-    ALLOW_DATA_ATTR: false
+    ALLOW_DATA_ATTR: false,
+    ADD_ATTR: ["data-question-media-id"]
   });
 }

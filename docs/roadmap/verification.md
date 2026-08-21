@@ -359,3 +359,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实权限验收：教师 SYSTEM 筛选总数 648，详情 `editable=false`，状态改写为 403 `QUESTION.SYSTEM_READ_ONLY`；学生 SYSTEM 列表/详情成功且 JSON 不含 `answers/analysis`；教师/学生读 SYSTEM 媒体均为 200，学生短期访问授权为 201。凭据均经本地环境包装与 DPAPI 注入，未输出或落盘 Token/密码。
 - 自动化门禁：Java 8 模块 `clean verify` 全部成功（Learning 38 项，2 跳过；Media 20 项，2 跳过；Gateway 11/11）；Pester 均衡样本 8/8；OpenAPI 客户端生成、全 workspace 类型检查、Vitest 18 文件 122 项和三端生产构建全部通过；`git diff --check` 无错误。
 - 数据与清理：未创建伪数据；正式样本是用户批准的只读历史来源，用于来源/年级/题型/难度/知识点/含图筛选与学生/教师公共读验收。最终检查点位于未跟踪 `.m2/migration-checkpoints/system-import-kg-math-t10b-v3-sample650-answer-images.json`；`-Action Cleanup -CheckpointPath <该文件>` 可精确撤销未被后续修改的题目/引用，重建时重跑文档中的 Plan/Import 命令。任务与检查点保留作为审计证据，不清表。
+
+### 2026-08-21 组合题原题版式与内联图片补充
+
+- 问题根因：历史解析器把 `<img>` 替换为 `[图片N]` 文本，再把图片只按顺序挂到版本 media 列表；教师端又分开渲染父题、媒体和子题，因此原文位置和完整试题版式丢失。
+- 契约与导入：OpenAPI 升级到 0.13.1，`stem/options/answers/analysis` 允许 `{{media:<uuid>}}` 稳定占位，但 UUID 必须是同一不可变版本已绑定的 `QUESTION_IMAGE`。历史 JSON 在题干、选项、解析和答案之间统一分配顺序，外部图安全转存成功后才替换为稳定 mediaId；未绑定、非图片或格式错误的占位在写入前返回 422。
+- 前端：组合题详情保留子题聚合与顺序，但按“完整父题题干＋连续小问”在同一区域展示；父级答案和解析分别统一展示，小问编号之间换行。内联图片只对当前版本媒体申请短期授权，以 Blob URL 写入清洗占位元素，离页中止请求并撤销 URL。存量 `[图片N]` 按 media 顺序兼容恢复，无需删除或重导 648 道 SYSTEM 根题。
+- 验证：learning-service `verify` 执行 39 项，37 项通过、2 个真实环境用例按开关跳过；OpenAPI 客户端重新生成，teacher-web 类型检查和生产构建通过，Vitest 18 文件 123 项全部通过。Vitest/Vite 在沙箱内因 `esbuild spawn EPERM` 未启动，经批准在沙箱外复跑通过。
+- 数据边界：本补充没有新建或修改数据库、表、迁移、题目、媒体、OSS 对象或伪数据。当前 SYSTEM 样本、知识点绑定、导入任务和精确清理检查点全部保留。

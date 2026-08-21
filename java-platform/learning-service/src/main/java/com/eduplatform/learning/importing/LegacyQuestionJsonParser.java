@@ -28,6 +28,7 @@ public class LegacyQuestionJsonParser {
     private static final Pattern OPTION = Pattern.compile("(?<![A-Za-z])([A-H])[.．、]");
     private static final Pattern MULTI_PART = Pattern.compile("[（(][1-9][)）]");
     private static final Pattern NUMBERED_ANSWER = Pattern.compile("[（(]([1-9][0-9]*)[)）]");
+    private static final String PENDING_IMAGE_PREFIX = "{{question-image:";
     private static final Set<String> SAFE_TAGS = Set.of("p", "br", "sup", "sub", "b", "strong", "i", "em",
             "u", "ul", "ol", "li", "table", "thead", "tbody", "tr", "td", "th");
 
@@ -56,8 +57,9 @@ public class LegacyQuestionJsonParser {
         QuestionModels.Difficulty difficulty = difficulty(originalDifficulty);
         if (difficulty == null) issues.add("FIELD_INVALID");
 
-        Cleaned stem = clean(text(json, "question"));
-        Cleaned solution = clean(text(json, "solution"));
+        ImageCollector images = new ImageCollector();
+        Cleaned stem = clean(text(json, "question"), images);
+        Cleaned solution = clean(text(json, "solution"), images);
         if (stem.unsafe() || solution.unsafe()) issues.add("HTML_UNSAFE");
         if (stem.text().isBlank()) issues.add("FIELD_INVALID");
 
@@ -65,13 +67,13 @@ public class LegacyQuestionJsonParser {
         List<String> answers = type == QuestionModels.Type.COMPOSITE
                 ? (text(json, "queAns") == null ? List.of("") : List.of(text(json, "queAns")))
                 : answers(text(json, "queAns"), type);
-        CleanedAnswers cleanedAnswers = cleanAnswers(answers);
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers, images);
         answers = cleanedAnswers.answers();
         if (cleanedAnswers.unsafe()) issues.add("HTML_UNSAFE");
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
             if (split == null) issues.add("EMBEDDED_OPTIONS_AMBIGUOUS");
-            else { stem = new Cleaned(split.stem(), stem.images(), stem.unsafe()); options = split.options(); }
+            else { stem = new Cleaned(split.stem(), stem.unsafe()); options = split.options(); }
         }
         if (answers.isEmpty() && type != QuestionModels.Type.COMPOSITE) issues.add("FIELD_INVALID");
 
@@ -80,6 +82,8 @@ public class LegacyQuestionJsonParser {
         if (subQues != null && subQues.isArray() && subQues.size() > 0) {
             type = QuestionModels.Type.COMPOSITE;
             if (answers.isEmpty()) answers = List.of("");
+            answers = answers.stream().map(LegacyQuestionJsonParser::numberedLines).toList();
+            solution = new Cleaned(numberedLines(solution.text()), solution.unsafe());
             List<String> explicitAnswers = splitNumbered(text(json, "queAns"), subQues.size());
             int index = 0;
             for (JsonNode child : subQues) {
@@ -103,9 +107,7 @@ public class LegacyQuestionJsonParser {
         QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, grade.stage(),
                 grade, QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(),
                 List.of(), List.of());
-        List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        images.addAll(cleanedAnswers.images());
-        return new Parsed(new Candidate(input, List.copyOf(images), List.copyOf(children), tags.tags()), List.of(),
+        return new Parsed(new Candidate(input, images.urls(), List.copyOf(children), tags.tags()), List.of(),
                 originalDifficulty, jsonEdition, jsonGrade, grade);
     }
 
@@ -113,10 +115,11 @@ public class LegacyQuestionJsonParser {
             int sequence, String fallbackAnswer) {
         QuestionModels.Type type = type(text(json, "exerciseType"));
         if (type == null || type == QuestionModels.Type.COMPOSITE) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
-        Cleaned stem = clean(text(json, "question")); Cleaned solution = clean(text(json, "solution"));
+        ImageCollector images = new ImageCollector();
+        Cleaned stem = clean(text(json, "question"), images); Cleaned solution = clean(text(json, "solution"), images);
         List<String> answers = answers(text(json, "queAns"), type);
         if (answers.isEmpty() && fallbackAnswer != null && !fallbackAnswer.isBlank()) answers = answers(fallbackAnswer, type);
-        CleanedAnswers cleanedAnswers = cleanAnswers(answers);
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers, images);
         answers = cleanedAnswers.answers();
         if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe() || cleanedAnswers.unsafe()) {
             return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
@@ -125,15 +128,13 @@ public class LegacyQuestionJsonParser {
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
             if (split == null) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
-            stem = new Cleaned(split.stem(), stem.images(), stem.unsafe()); options = split.options();
+            stem = new Cleaned(split.stem(), stem.unsafe()); options = split.options();
         }
         TagResult tags = tags(json);
         if (!tags.issues().isEmpty()) return new ChildParsed(null, tags.issues());
-        List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        images.addAll(cleanedAnswers.images());
         return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, grade.stage(), grade,
                 QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(), List.of(), List.of()),
-                List.copyOf(images), List.of(), tags.tags()), List.of());
+                images.urls(), List.of(), tags.tags()), List.of());
     }
 
     /** 读取各题自己的 tags；只按 knowId 去重，名称绝不用于建立外键。 */
@@ -160,16 +161,21 @@ public class LegacyQuestionJsonParser {
         return new TagResult(List.copyOf(tags), issues.stream().distinct().toList());
     }
 
-    /** 清洗危险 HTML 属性/标签并提取 HTTPS 图片；安全展示标签与 LaTeX 字符保持原序。 */
-    private static Cleaned clean(String source) {
+    /**
+     * 清洗危险 HTML 属性/标签并提取 HTTPS 图片；安全展示标签与 LaTeX 字符保持原序。
+     * @param source 一个题干、解析或答案字段的历史 HTML/文本
+     * @param images 当前父题或子题共享的顺序收集器，新图片会追加并返回内存占位
+     * @return 不含外部图片 URL 的文本与不安全标记
+     */
+    private static Cleaned clean(String source, ImageCollector images) {
         String value = source == null ? "" : source;
         boolean unsafe = BLOCKED.matcher(value).find();
         value = BLOCKED.matcher(value).replaceAll("");
-        List<String> images = new ArrayList<>(); Matcher image = IMAGE.matcher(value); StringBuffer buffer = new StringBuffer();
+        Matcher image = IMAGE.matcher(value); StringBuffer buffer = new StringBuffer();
         while (image.find()) {
             String url = image.group(2).trim();
             if (url.toLowerCase(Locale.ROOT).startsWith("https://")) {
-                images.add(url); image.appendReplacement(buffer, Matcher.quoteReplacement("[图片" + images.size() + "]"));
+                image.appendReplacement(buffer, Matcher.quoteReplacement(images.add(url)));
             } else { unsafe = true; image.appendReplacement(buffer, "[图片待复核]"); }
         }
         image.appendTail(buffer); value = buffer.toString();
@@ -181,7 +187,7 @@ public class LegacyQuestionJsonParser {
             tag.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
         }
         tag.appendTail(buffer);
-        return new Cleaned(buffer.toString().trim(), List.copyOf(images), unsafe);
+        return new Cleaned(buffer.toString().trim(), unsafe);
     }
 
     private static OptionSplit splitOptions(String value, int declaredCount) {
@@ -218,19 +224,18 @@ public class LegacyQuestionJsonParser {
     /**
      * 清理结构化答案中的历史 HTML，并把答案图片与题干/解析图片一样交给 media-service 转存。
      * @param values 题型规则已拆分的答案；选择题通常是 A～H，填简答可含展示 HTML
-     * @return 不含外部 URL 的答案、待转存 URL 列表与不安全 HTML 标记
+     * @param images 当前题目共享的图片收集器；答案图在题干/解析图之后继续编号
+     * @return 不含外部 URL 的答案与不安全 HTML 标记；待转存 URL 已追加到 images
      */
-    private static CleanedAnswers cleanAnswers(List<String> values) {
+    private static CleanedAnswers cleanAnswers(List<String> values, ImageCollector images) {
         List<String> answers = new ArrayList<>();
-        List<String> images = new ArrayList<>();
         boolean unsafe = false;
         for (String value : values) {
-            Cleaned cleaned = clean(value);
+            Cleaned cleaned = clean(value, images);
             answers.add(cleaned.text());
-            images.addAll(cleaned.images());
             unsafe |= cleaned.unsafe();
         }
-        return new CleanedAnswers(List.copyOf(answers), List.copyOf(images), unsafe);
+        return new CleanedAnswers(List.copyOf(answers), unsafe);
     }
 
     private static QuestionModels.Type type(String value) {
@@ -268,6 +273,28 @@ public class LegacyQuestionJsonParser {
         };
     }
     private static int multiPartCount(String value) { int count = 0; Matcher matcher = MULTI_PART.matcher(value); while (matcher.find()) count++; return count; }
+    /** 组合题统一答案和解析保留在父版本，仅在连续小问编号前补换行，不改写公式或正文。 */
+    private static String numberedLines(String value) {
+        if (value == null || value.isBlank()) return value == null ? "" : value;
+        Matcher matcher = NUMBERED_ANSWER.matcher(value); StringBuilder result = new StringBuilder();
+        int previous = 0; boolean first = true;
+        while (matcher.find()) {
+            if (first) {
+                result.append(value, previous, matcher.end()); first = false;
+            } else {
+                result.append(value, previous, matcher.start());
+                while (result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
+                    result.setLength(result.length() - 1);
+                }
+                result.append("\n\n").append(matcher.group());
+            }
+            previous = matcher.end();
+        }
+        if (first) return value;
+        result.append(value, previous, value.length());
+        return result.toString();
+    }
+
     /** 只有编号从 1 连续到 N 且每段非空时才拆父级答案，避免按空格或标点猜测子题答案。 */
     private static List<String> splitNumbered(String value, int count) {
         if (value == null || count < 1) return null;
@@ -327,11 +354,26 @@ public class LegacyQuestionJsonParser {
         }
         public boolean review() { return candidate == null || !issueCodes.isEmpty(); }
     }
-    private record Cleaned(String text, List<String> images, boolean unsafe) {}
-    private record CleanedAnswers(List<String> answers, List<String> images, boolean unsafe) {}
+    private record Cleaned(String text, boolean unsafe) {}
+    private record CleanedAnswers(List<String> answers, boolean unsafe) {}
     private record OptionSplit(String stem, List<QuestionDtos.OptionInput> options) {}
     private record TagResult(List<LegacyTag> tags, List<String> issues) {}
     private record ChildParsed(Candidate candidate, List<String> issues) {
         static ChildParsed invalid(String issue) { return new ChildParsed(null, List.of(issue)); }
+    }
+
+    /**
+     * 为单个父题或子题在题干、解析和答案之间分配连续图片序号。
+     * 返回的是导入事务内占位符；媒体转存成功后必须替换为稳定 mediaId，不得持久化外部 URL。
+     */
+    private static final class ImageCollector {
+        private final List<String> urls = new ArrayList<>();
+
+        String add(String url) {
+            urls.add(url);
+            return PENDING_IMAGE_PREFIX + urls.size() + "}}";
+        }
+
+        List<String> urls() { return List.copyOf(urls); }
     }
 }

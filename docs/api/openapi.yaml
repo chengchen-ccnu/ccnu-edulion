@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.13.0
-  description: T10B Gateway contract. Adds SYSTEM/TEACHER question scope, administrator-owned bounded legacy migration, public system-question reads and SYSTEM media assets. No T11 attempt/grading API is exposed.
+  version: 0.13.1
+  description: T10B Gateway contract. Adds SYSTEM/TEACHER question scope, administrator-owned bounded legacy migration, public system-question reads, SYSTEM media assets and stable inline question-image markers. No T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2878,7 +2878,7 @@ components:
           type: string
           minLength: 1
           maxLength: 50000
-          description: Markdown/LaTeX source; rendering is a frontend responsibility.
+          description: Markdown/LaTeX source; `{{media:<uuid>}}` is a stable inline image marker whose UUID must also occur in this version's QUESTION_IMAGE media list. Rendering and short-lived media authorization are frontend responsibilities.
         options:
           type: array
           maxItems: 8
@@ -2897,7 +2897,7 @@ components:
         analysis:
           type: string
           maxLength: 50000
-          description: Full teacher-only analysis; an empty string means no analysis supplied.
+          description: Full teacher-only analysis; an empty string means no analysis supplied. It may use the same stable `{{media:<uuid>}}` inline image marker as stem.
         knowledgePointIds:
           type: array
           uniqueItems: true
@@ -2931,7 +2931,7 @@ components:
           $ref: '#/components/schemas/QuestionGrade'
         subject:
           $ref: '#/components/schemas/QuestionSubject'
-        stem: {type: string, minLength: 1, maxLength: 50000}
+        stem: {type: string, minLength: 1, maxLength: 50000, description: "Markdown/LaTeX source; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list."}
         options:
           type: array
           maxItems: 8
@@ -2941,7 +2941,7 @@ components:
           minItems: 1
           maxItems: 20
           items: {type: string, minLength: 1, maxLength: 20000}
-        analysis: {type: string, maxLength: 50000}
+        analysis: {type: string, maxLength: 50000, description: "Teacher-only analysis; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list."}
         knowledgePointIds:
           type: array
           uniqueItems: true
@@ -3030,7 +3030,7 @@ components:
         stage: {$ref: '#/components/schemas/QuestionStage'}
         grade: {$ref: '#/components/schemas/QuestionGrade'}
         subject: {$ref: '#/components/schemas/QuestionSubject'}
-        stem: {type: string}
+        stem: {type: string, description: "Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version."}
         options:
           type: array
           items: {$ref: '#/components/schemas/QuestionOptionInput'}
@@ -3038,7 +3038,7 @@ components:
           type: array
           description: Teacher-only correct answers for this immutable child version.
           items: {type: string}
-        analysis: {type: string}
+        analysis: {type: string, description: "Teacher-only analysis; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version."}
         knowledgePoints:
           type: array
           items: {$ref: '#/components/schemas/KnowledgePoint'}
@@ -3069,6 +3069,7 @@ components:
           $ref: '#/components/schemas/QuestionSubject'
         stem:
           type: string
+          description: Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version.
         options:
           type: array
           items:
@@ -3080,7 +3081,7 @@ components:
             type: string
         analysis:
           type: string
-          description: Teacher-only full analysis projection.
+          description: Teacher-only full analysis projection; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version.
         knowledgePoints:
           type: array
           items:

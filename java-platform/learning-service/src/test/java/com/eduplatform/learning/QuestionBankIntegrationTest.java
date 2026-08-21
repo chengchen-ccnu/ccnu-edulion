@@ -196,6 +196,20 @@ class QuestionBankIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(1);
     }
 
+    /** 内联占位符不能借机读取未绑定或非图片媒体。 */
+    @Test
+    void inlineImageMarkerMustReferenceBoundQuestionImage() {
+        var base = single("A", List.of()); String foreignMedia = UUID.randomUUID().toString();
+        var unbound = new QuestionDtos.VersionInput(base.type(), base.difficulty(), base.stage(), base.grade(),
+                base.subject(), "观察 {{media:" + foreignMedia + "}}", base.options(), base.answers(), base.analysis(),
+                base.knowledgePointIds(), List.of());
+
+        assertThatThrownBy(() -> questions.create(TEACHER, UUID.randomUUID().toString(), unbound, "trace-inline-media-01"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
+    }
+
     @Test
     void importPartiallySucceedsAndDuplicateEventCreatesNoDuplicateQuestion() {
         UUID source = UUID.randomUUID(); UUID request = UUID.randomUUID();
@@ -349,7 +363,8 @@ class QuestionBankIntegrationTest {
 
         assertThat(parsed.issueCodes()).isEmpty();
         assertThat(parsed.candidate().input().answers()).hasSize(1);
-        assertThat(parsed.candidate().input().answers().get(0)).contains("[图片1]").doesNotContain("https://");
+        assertThat(parsed.candidate().input().answers().get(0)).contains("{{question-image:1}}")
+                .doesNotContain("https://");
         assertThat(parsed.candidate().imageUrls()).containsExactly("https://images.fixture.test/answer.png");
     }
 
@@ -364,7 +379,7 @@ class QuestionBankIntegrationTest {
         var composite = objectMapper.readTree("""
                 {"exerciseID":"fixture-composite-01","exerciseType":"writeout","difficulty":5,"gradeIndex":7,
                  "gradeName":"七年级","question":"阅读材料<img src=\\\"https://images.fixture.test/a.png\\\">","queAns":"(1)1 (2)过程",
-                 "solution":"<script>bad()</script><p>安全解析</p>","subQues":[
+                 "solution":"<script>bad()</script><p>(1)安全解析；(2)代入计算</p>","subQues":[
                    {"exerciseType":"fillin","question":"第一问","solution":"","sortIndex":1},
                    {"exerciseType":"writeout","question":"第二问","solution":"","sortIndex":2}]}
                 """);
@@ -385,7 +400,10 @@ class QuestionBankIntegrationTest {
         var parent = questions.get(TEACHER, parentId);
         assertThat(parent.currentVersion().type()).isEqualTo(QuestionModels.Type.COMPOSITE);
         assertThat(parent.currentVersion().children()).extracting(QuestionDtos.ChildResponse::sequence).containsExactly(1, 2);
-        assertThat(parent.currentVersion().stem()).contains("[图片1]").doesNotContain("https://");
+        assertThat(parent.currentVersion().stem()).contains("{{media:" + transferred + "}}")
+                .doesNotContain("https://");
+        assertThat(parent.currentVersion().answers()).singleElement().asString().contains("(1)1\n\n(2)过程");
+        assertThat(parent.currentVersion().analysis()).contains("(1)安全解析；\n\n(2)代入计算");
         verify(media).transferExternalImage(anyString(), anyString(), anyString(),
                 org.mockito.ArgumentMatchers.eq("TEACHER"), anyString());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(3);

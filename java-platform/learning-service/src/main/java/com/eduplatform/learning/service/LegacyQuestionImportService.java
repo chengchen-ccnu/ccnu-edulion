@@ -311,18 +311,40 @@ public class LegacyQuestionImportService {
                 List.copyOf(children), resolved.tags()), List.of());
     }
 
+    /**
+     * 转存一个父题或子题的全部外图，再把内存序号替换成当前版本稳定 mediaId。
+     * 任意图片转存失败都会中止该题目事务，不会持久化部分题目或外部 URL。
+     */
     private QuestionDtos.VersionInput withMedia(ImportTask task, String sourceKey,
             LegacyQuestionJsonParser.Candidate candidate, String traceId) {
-        List<QuestionDtos.MediaInput> rows = new ArrayList<>(); int sequence = 0;
+        List<QuestionDtos.MediaInput> rows = new ArrayList<>(); List<String> mediaIds = new ArrayList<>(); int sequence = 0;
         for (String url : candidate.imageUrls()) {
             sequence++;
             String mediaId = media.transferExternalImage(deterministic(task.id(), sourceKey + ":image:" + sequence),
                     url, task.ownerId(), task.questionScope().name(), traceId);
+            mediaIds.add(mediaId);
             rows.add(new QuestionDtos.MediaInput(UUID.fromString(mediaId), QuestionModels.MediaPurpose.QUESTION_IMAGE, sequence));
         }
         var value = candidate.input();
+        var options = value.options().stream().map(option -> new QuestionDtos.OptionInput(option.key(),
+                replaceInlineImages(option.content(), mediaIds))).toList();
+        var answers = value.answers().stream().map(answer -> replaceInlineImages(answer, mediaIds)).toList();
         return new QuestionDtos.VersionInput(value.type(), value.difficulty(), value.stage(), value.grade(), value.subject(),
-                value.stem(), value.options(), value.answers(), value.analysis(), value.knowledgePointIds(), rows);
+                replaceInlineImages(value.stem(), mediaIds), options, answers,
+                replaceInlineImages(value.analysis(), mediaIds), value.knowledgePointIds(), rows);
+    }
+
+    /**
+     * 将解析阶段的图片序号替换为已转存的稳定 mediaId。
+     * 输入中不含短期授权 URL；输出占位符只能引用同一题目版本 media 列表中的图片。
+     */
+    private static String replaceInlineImages(String source, List<String> mediaIds) {
+        String result = source == null ? "" : source;
+        for (int index = 0; index < mediaIds.size(); index++) {
+            result = result.replace("{{question-image:" + (index + 1) + "}}",
+                    "{{media:" + mediaIds.get(index) + "}}");
+        }
+        return result;
     }
 
     private void persistSource(ImportTask task, QuestionDtos.LegacyImportBatchRequest batch,
