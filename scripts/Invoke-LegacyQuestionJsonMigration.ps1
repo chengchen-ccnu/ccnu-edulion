@@ -28,6 +28,11 @@ param(
     [string]$ImportTaskId,
     [string]$ValidatedDryRunCheckpointPath,
     [string[]]$AllowedImageHost = @(),
+    [switch]$ExcludeInvalidImageItems,
+    [switch]$ExcludeUnapprovedImageHostItems,
+    [ValidateRange(0, 1000)]
+    [int]$BalancedSampleSize = 0,
+    [switch]$ConfirmSampleImport,
     [switch]$PlanOnly
 )
 
@@ -96,7 +101,8 @@ function Get-NormalizedAllowedImageHosts([string[]]$Hosts) {
 
 # 输入单个来源文件，输出筛选所需的稳定 externalId；只有已在 DryRun 中为 VALID 的项才进一步提取图片域名。
 # 源正文、图片 URL 和文件路径只在当前进程内使用，错误信息不会回显这些内容。
-function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object]$ValidatedExternalIds) {
+function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object]$ValidatedExternalIds,
+        [string[]]$ApprovedImageHosts, [bool]$AllowInvalidImageExclusion, [bool]$AllowUnapprovedHostExclusion) {
     try {
         $bytes = [IO.File]::ReadAllBytes($Path)
         if ($bytes.Length -gt 256 * 1024) { throw 'FILE_TOO_LARGE' }
@@ -112,7 +118,7 @@ function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object
             throw 'EXTERNAL_ID_INVALID'
         }
         if (-not $ValidatedExternalIds.Contains($externalId)) {
-            return [pscustomobject]@{ externalId = $externalId; selected = $false; imageHosts = @() }
+            return [pscustomobject]@{ externalId = $externalId; validated = $false; selected = $false; exclusionReason = $null; imageHosts = @() }
         }
 
         $imageHosts = New-Object System.Collections.Generic.List[string]
@@ -121,30 +127,147 @@ function Get-SourceSelectionDescriptor([string]$Path, [int]$SourceIndex, [object
         while ($pending.Count -gt 0) {
             $node = $pending.Pop()
             foreach ($fieldName in @('question', 'solution')) {
-                $value = $node.$fieldName
+                $fieldProperty = $node.PSObject.Properties[$fieldName]
+                $value = if ($null -eq $fieldProperty) { $null } else { $fieldProperty.Value }
                 if ($null -eq $value -or $value -is [Array] -or
                         $value -is [System.Management.Automation.PSCustomObject]) { continue }
                 foreach ($match in [Text.RegularExpressions.Regex]::Matches(
                         [string]$value, '(?is)<img\b[^>]*\bsrc\s*=\s*([''"])(.*?)\1[^>]*>')) {
                     $source = $match.Groups[2].Value.Trim()
                     $uri = $null
-                    if (-not [Uri]::TryCreate($source, [UriKind]::Absolute, [ref]$uri) -or
-                            $uri.Scheme -ne 'https' -or -not [string]::IsNullOrEmpty($uri.UserInfo) -or
-                            [string]::IsNullOrWhiteSpace($uri.Host) -or ($uri.Port -ne 443)) {
+                    $validImageUri = $false
+                    try {
+                        $validImageUri = [Uri]::TryCreate($source, [UriKind]::Absolute, [ref]$uri) -and
+                            $uri.Scheme -eq 'https' -and [string]::IsNullOrEmpty($uri.UserInfo) -and
+                            -not [string]::IsNullOrWhiteSpace($uri.Host) -and ($uri.Port -eq 443)
+                    } catch { $validImageUri = $false }
+                    if (-not $validImageUri) {
+                        if ($AllowInvalidImageExclusion) {
+                            return [pscustomobject]@{ externalId = $externalId; validated = $true; selected = $false
+                                exclusionReason = 'INVALID_IMAGE_URL'; imageHosts = @() }
+                        }
                         throw 'EXTERNAL_IMAGE_URL_INVALID'
                     }
                     $imageHosts.Add($uri.Host.ToLowerInvariant())
                 }
             }
-            foreach ($child in @($node.subQues)) {
+            $childrenProperty = $node.PSObject.Properties['subQues']
+            $children = if ($null -eq $childrenProperty) { @() } else { @($childrenProperty.Value) }
+            foreach ($child in $children) {
                 if ($null -ne $child -and $child -is [System.Management.Automation.PSCustomObject]) { $pending.Push($child) }
             }
         }
-        return [pscustomobject]@{ externalId = $externalId; selected = $true; imageHosts = @($imageHosts) }
+        $unapprovedHosts = @($imageHosts | Where-Object { $ApprovedImageHosts -notcontains $_ } | Select-Object -Unique)
+        if ($AllowUnapprovedHostExclusion -and $unapprovedHosts.Count -gt 0) {
+            return [pscustomobject]@{ externalId = $externalId; validated = $true; selected = $false
+                exclusionReason = 'UNAPPROVED_IMAGE_HOST'; imageHosts = @() }
+        }
+        $childrenProperty = $json.PSObject.Properties['subQues']
+        $exerciseTypeProperty = $json.PSObject.Properties['exerciseType']
+        $exerciseType = if ($null -eq $exerciseTypeProperty) { '' } else { [string]$exerciseTypeProperty.Value }
+        $questionType = if ($null -ne $childrenProperty -and @($childrenProperty.Value).Count -gt 0) { 'COMPOSITE' } else {
+            switch ($exerciseType) {
+                'select_single' { 'SINGLE_CHOICE' }
+                'select_multiple' { 'MULTIPLE_CHOICE' }
+                'fillin' { 'FILL_BLANK' }
+                'writeout' { 'SHORT_ANSWER' }
+                default { 'UNKNOWN' }
+            }
+        }
+        $gradeProperty = $json.PSObject.Properties['gradeIndex']
+        $grade = if ($null -eq $gradeProperty) { 'UNKNOWN' } else { [string]$gradeProperty.Value }
+        $difficultyProperty = $json.PSObject.Properties['difficulty']
+        $difficulty = if ($null -eq $difficultyProperty) { 'UNKNOWN' } else { [string]$difficultyProperty.Value }
+        $knowledgePointIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        $tagNodes = New-Object System.Collections.Generic.Stack[object]
+        $tagNodes.Push($json)
+        while ($tagNodes.Count -gt 0) {
+            $tagNode = $tagNodes.Pop()
+            $tagsProperty = $tagNode.PSObject.Properties['tags']
+            foreach ($tag in $(if ($null -eq $tagsProperty) { @() } else { @($tagsProperty.Value) })) {
+                if ($null -eq $tag -or $tag -isnot [System.Management.Automation.PSCustomObject]) { continue }
+                $knowIdProperty = $tag.PSObject.Properties['knowId']
+                $knowId = if ($null -eq $knowIdProperty) { '' } else { [string]$knowIdProperty.Value }
+                if (-not [string]::IsNullOrWhiteSpace($knowId)) { [void]$knowledgePointIds.Add($knowId) }
+            }
+            $tagChildrenProperty = $tagNode.PSObject.Properties['subQues']
+            foreach ($tagChild in $(if ($null -eq $tagChildrenProperty) { @() } else { @($tagChildrenProperty.Value) })) {
+                if ($null -ne $tagChild -and $tagChild -is [System.Management.Automation.PSCustomObject]) { $tagNodes.Push($tagChild) }
+            }
+        }
+        return [pscustomobject]@{ externalId = $externalId; validated = $true; selected = $true; exclusionReason = $null
+            imageHosts = @($imageHosts); sourceIndex = $SourceIndex; path = $Path; questionType = $questionType
+            grade = $grade; difficulty = $difficulty; knowledgePointIds = @($knowledgePointIds) }
     } catch {
         $safeReason = if (@('FILE_TOO_LARGE', 'JSON_OBJECT_REQUIRED', 'EXTERNAL_ID_INVALID', 'EXTERNAL_IMAGE_URL_INVALID') `
                 -contains [string]$_.Exception.Message) { [string]$_.Exception.Message } else { 'SOURCE_INSPECTION_FAILED' }
         throw "Legacy source item $SourceIndex could not be inspected ($safeReason); source content, image URL and path were suppressed."
+    }
+}
+
+# 输入已经通过全量 DryRun 和图片域名校验的候选，输出固定数量的确定性均衡样本。
+# 选择器优先补齐题型、年级、难度和图文/纯文本覆盖，其次尽量增加不同来源知识点；同分时保持来源稳定顺序。
+function Select-BalancedLegacySample([object[]]$Candidates, [int]$SampleSize) {
+    if ($SampleSize -lt 100) { throw 'BalancedSampleSize must be 0 or between 100 and 1000.' }
+    if ($Candidates.Count -lt $SampleSize) { throw 'BalancedSampleSize exceeds the validated eligible source count.' }
+    $orderedCandidates = @($Candidates | Sort-Object sourceIndex)
+    $availableTypeCounts = @{}; $availableGradeCounts = @{}; $availableDifficultyCounts = @{}
+    $availableImageCounts = @{ IMAGE = 0; TEXT = 0 }
+    foreach ($candidate in $orderedCandidates) {
+        foreach ($pair in @(@($availableTypeCounts, [string]$candidate.questionType),
+                @($availableGradeCounts, [string]$candidate.grade),
+                @($availableDifficultyCounts, [string]$candidate.difficulty))) {
+            if ($pair[0].ContainsKey($pair[1])) { $pair[0][$pair[1]]++ } else { $pair[0][$pair[1]] = 1 }
+        }
+        $availableImageCounts[$(if (@($candidate.imageHosts).Count -gt 0) { 'IMAGE' } else { 'TEXT' })]++
+    }
+    $typeTarget = @{}; foreach ($key in $availableTypeCounts.Keys) { $typeTarget[$key] = [Math]::Min(10, $availableTypeCounts[$key]) }
+    $gradeTarget = @{}; foreach ($key in $availableGradeCounts.Keys) { $gradeTarget[$key] = [Math]::Min(15, $availableGradeCounts[$key]) }
+    $difficultyTarget = @{}; foreach ($key in $availableDifficultyCounts.Keys) { $difficultyTarget[$key] = [Math]::Min(15, $availableDifficultyCounts[$key]) }
+    $imageTarget = @{ IMAGE = [Math]::Min(30, $availableImageCounts.IMAGE); TEXT = [Math]::Min(30, $availableImageCounts.TEXT) }
+    $typeCounts = @{}; $gradeCounts = @{}; $difficultyCounts = @{}; $imageCounts = @{ IMAGE = 0; TEXT = 0 }
+    $selectedIndexes = New-Object 'System.Collections.Generic.HashSet[int]'
+    $knowledgeIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $selected = New-Object System.Collections.Generic.List[object]
+
+    while ($selected.Count -lt $SampleSize) {
+        $best = $null; $bestScore = [int64]::MinValue
+        foreach ($candidate in $orderedCandidates) {
+            if ($selectedIndexes.Contains([int]$candidate.sourceIndex)) { continue }
+            $type = [string]$candidate.questionType; $grade = [string]$candidate.grade; $difficulty = [string]$candidate.difficulty
+            $imageClass = if (@($candidate.imageHosts).Count -gt 0) { 'IMAGE' } else { 'TEXT' }
+            $newKnowledgeCount = 0
+            foreach ($candidateKnowledgeId in @($candidate.knowledgePointIds)) {
+                if (-not $knowledgeIds.Contains([string]$candidateKnowledgeId)) { $newKnowledgeCount++ }
+            }
+            $score = [int64]$newKnowledgeCount * 10000
+            if (($typeCounts[$type] -as [int]) -lt $typeTarget[$type]) { $score += 1000000 }
+            if (($gradeCounts[$grade] -as [int]) -lt $gradeTarget[$grade]) { $score += 500000 }
+            if (($difficultyCounts[$difficulty] -as [int]) -lt $difficultyTarget[$difficulty]) { $score += 500000 }
+            if ($imageCounts[$imageClass] -lt $imageTarget[$imageClass]) { $score += 100000 }
+            if ($score -gt $bestScore) { $best = $candidate; $bestScore = $score }
+        }
+        if ($null -eq $best) { throw 'Balanced sample selection ended before reaching its requested size.' }
+        [void]$selectedIndexes.Add([int]$best.sourceIndex); $selected.Add($best)
+        $bestType = [string]$best.questionType; $bestGrade = [string]$best.grade; $bestDifficulty = [string]$best.difficulty
+        foreach ($pair in @(@($typeCounts, $bestType), @($gradeCounts, $bestGrade), @($difficultyCounts, $bestDifficulty))) {
+            if ($pair[0].ContainsKey($pair[1])) { $pair[0][$pair[1]]++ } else { $pair[0][$pair[1]] = 1 }
+        }
+        $imageCounts[$(if (@($best.imageHosts).Count -gt 0) { 'IMAGE' } else { 'TEXT' })]++
+        foreach ($knowId in @($best.knowledgePointIds)) { [void]$knowledgeIds.Add([string]$knowId) }
+    }
+    foreach ($key in $typeTarget.Keys) { if (($typeCounts[$key] -as [int]) -lt $typeTarget[$key]) { throw 'Balanced sample could not satisfy an available question-type target.' } }
+    foreach ($key in $gradeTarget.Keys) { if (($gradeCounts[$key] -as [int]) -lt $gradeTarget[$key]) { throw 'Balanced sample could not satisfy an available grade target.' } }
+    foreach ($key in $difficultyTarget.Keys) { if (($difficultyCounts[$key] -as [int]) -lt $difficultyTarget[$key]) { throw 'Balanced sample could not satisfy an available difficulty target.' } }
+    foreach ($key in $imageTarget.Keys) { if ($imageCounts[$key] -lt $imageTarget[$key]) { throw 'Balanced sample could not satisfy the image/text target.' } }
+    return [pscustomobject][ordered]@{
+        candidates = @($selected | Sort-Object sourceIndex)
+        questionTypeCounts = [pscustomobject]$typeCounts
+        gradeCounts = [pscustomobject]$gradeCounts
+        difficultyCounts = [pscustomobject]$difficultyCounts
+        imageQuestionCount = [int]$imageCounts.IMAGE
+        textQuestionCount = [int]$imageCounts.TEXT
+        distinctKnowledgePointCount = $knowledgeIds.Count
     }
 }
 
@@ -195,14 +318,34 @@ if ($Action -eq 'Cleanup') {
 if ([string]::IsNullOrWhiteSpace($SourceRoot)) { throw "$Action requires SourceRoot." }
 if ($SourceSystem -notmatch '^[A-Z0-9][A-Z0-9_-]{2,79}$') { throw 'SourceSystem does not satisfy the API contract.' }
 if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath) -and
-        ($Action -ne 'Import' -or -not $AllItems)) {
-    throw 'ValidatedDryRunCheckpointPath is only valid with -Action Import -AllItems.'
+        ($Action -ne 'Import' -or (-not $AllItems -and $BalancedSampleSize -eq 0))) {
+    throw 'ValidatedDryRunCheckpointPath requires Import plus AllItems or BalancedSampleSize.'
 }
 if ($PlanOnly -and [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
     throw 'PlanOnly requires ValidatedDryRunCheckpointPath.'
 }
 if ($AllowedImageHost.Count -gt 0 -and [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
     throw 'AllowedImageHost is only valid with ValidatedDryRunCheckpointPath.'
+}
+if (($ExcludeInvalidImageItems -or $ExcludeUnapprovedImageHostItems) -and
+        [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
+    throw 'Image item exclusion is only valid with ValidatedDryRunCheckpointPath.'
+}
+if ($ExcludeUnapprovedImageHostItems -and $AllowedImageHost.Count -eq 0) {
+    throw 'ExcludeUnapprovedImageHostItems requires at least one exact AllowedImageHost.'
+}
+if ($BalancedSampleSize -gt 0 -and $BalancedSampleSize -lt 100) {
+    throw 'BalancedSampleSize must be 0 or between 100 and 1000.'
+}
+if ($BalancedSampleSize -gt 0 -and ([string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath) -or
+        $Action -ne 'Import' -or $AllItems)) {
+    throw 'BalancedSampleSize requires validated Import and cannot be combined with AllItems.'
+}
+if ($Action -eq 'Import' -and $BalancedSampleSize -gt 0 -and -not $PlanOnly -and -not $ConfirmSampleImport) {
+    throw 'Balanced sample Import requires ConfirmSampleImport.'
+}
+if ($ConfirmSampleImport -and ($Action -ne 'Import' -or $BalancedSampleSize -eq 0 -or $PlanOnly)) {
+    throw 'ConfirmSampleImport is only valid with a non-PlanOnly balanced Import.'
 }
 if ($Action -eq 'Import' -and $AllItems -and -not $PlanOnly -and -not $ConfirmFullMigration) {
     throw 'Full Import requires both -AllItems and -ConfirmFullMigration.'
@@ -245,7 +388,10 @@ $selectionMode = 'SOURCE_ORDER'
 $validatedSelection = $null
 $selectedImageCount = 0
 $imageHostCounts = [ordered]@{}
+$excludedInvalidImageItemCount = 0
+$excludedUnapprovedImageHostItemCount = 0
 $normalizedAllowedImageHosts = @(Get-NormalizedAllowedImageHosts $AllowedImageHost)
+$balancedSample = $null
 
 if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
     $validatedSelection = Get-ValidatedDryRunSelection `
@@ -258,16 +404,19 @@ if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
         -ExpectedManifestFingerprint $manifestFingerprint `
         -ExpectedSourceFileCount $totalSourceFiles
 
-    $selectedPaths = New-Object System.Collections.Generic.List[string]
+    $selectedDescriptors = New-Object System.Collections.Generic.List[object]
     $matchedIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $hostCounts = @{}
     for ($sourceIndex = 0; $sourceIndex -lt $orderedPaths.Count; $sourceIndex++) {
-        $descriptor = Get-SourceSelectionDescriptor $orderedPaths[$sourceIndex] $sourceIndex $validatedSelection.externalIds
-        if (-not $descriptor.selected) { continue }
-        if (-not $matchedIds.Add([string]$descriptor.externalId)) {
+        $descriptor = Get-SourceSelectionDescriptor $orderedPaths[$sourceIndex] $sourceIndex $validatedSelection.externalIds `
+            $normalizedAllowedImageHosts ([bool]$ExcludeInvalidImageItems) ([bool]$ExcludeUnapprovedImageHostItems)
+        if ([bool]$descriptor.validated -and -not $matchedIds.Add([string]$descriptor.externalId)) {
             throw 'The current source snapshot contains duplicate VALID source keys; source values and paths were suppressed.'
         }
-        $selectedPaths.Add($orderedPaths[$sourceIndex])
+        if ([string]$descriptor.exclusionReason -eq 'INVALID_IMAGE_URL') { $excludedInvalidImageItemCount++; continue }
+        if ([string]$descriptor.exclusionReason -eq 'UNAPPROVED_IMAGE_HOST') { $excludedUnapprovedImageHostItemCount++; continue }
+        if (-not $descriptor.selected) { continue }
+        $selectedDescriptors.Add($descriptor)
         foreach ($imageHost in @($descriptor.imageHosts)) {
             $selectedImageCount++
             if ($hostCounts.ContainsKey($imageHost)) { $hostCounts[$imageHost]++ } else { $hostCounts[$imageHost] = 1 }
@@ -280,16 +429,44 @@ if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
         $imageHostCounts[[string]$entry.Name] = [int]$entry.Value
     }
 
+    if ($BalancedSampleSize -gt 0) {
+        $balancedSample = Select-BalancedLegacySample -Candidates ([object[]]$selectedDescriptors) -SampleSize $BalancedSampleSize
+        $selectedDescriptors = New-Object System.Collections.Generic.List[object]
+        foreach ($candidate in @($balancedSample.candidates)) { $selectedDescriptors.Add($candidate) }
+        $selectedImageCount = 0; $sampleHostCounts = @{}
+        foreach ($candidate in $selectedDescriptors) {
+            foreach ($imageHost in @($candidate.imageHosts)) {
+                $selectedImageCount++
+                if ($sampleHostCounts.ContainsKey($imageHost)) { $sampleHostCounts[$imageHost]++ } else { $sampleHostCounts[$imageHost] = 1 }
+            }
+        }
+        $imageHostCounts = [ordered]@{}
+        foreach ($entry in @($sampleHostCounts.GetEnumerator() | Sort-Object -Property @{ Expression = 'Value'; Descending = $true }, Name)) {
+            $imageHostCounts[[string]$entry.Name] = [int]$entry.Value
+        }
+    }
+
     if ($PlanOnly) {
-        [pscustomobject][ordered]@{
+        $plan = [ordered]@{
             action = 'ImportPlan'
-            selectionMode = 'DRY_RUN_VALID_ONLY'
+            selectionMode = if ($BalancedSampleSize -gt 0) { 'DRY_RUN_VALID_BALANCED_SAMPLE' } else { 'DRY_RUN_VALID_ONLY' }
             dryRunTaskCount = [int]$validatedSelection.dryRunTaskCount
             totalSourceFiles = $totalSourceFiles
-            selectedValidCount = $selectedPaths.Count
+            selectedValidCount = $selectedDescriptors.Count
             selectedImageCount = $selectedImageCount
+            excludedInvalidImageItemCount = $excludedInvalidImageItemCount
+            excludedUnapprovedImageHostItemCount = $excludedUnapprovedImageHostItemCount
             imageHostCounts = [pscustomobject]$imageHostCounts
-        } | ConvertTo-Json -Depth 5 -Compress
+        }
+        if ($null -ne $balancedSample) {
+            $plan.questionTypeCounts = $balancedSample.questionTypeCounts
+            $plan.gradeCounts = $balancedSample.gradeCounts
+            $plan.difficultyCounts = $balancedSample.difficultyCounts
+            $plan.imageQuestionCount = [int]$balancedSample.imageQuestionCount
+            $plan.textQuestionCount = [int]$balancedSample.textQuestionCount
+            $plan.distinctKnowledgePointCount = [int]$balancedSample.distinctKnowledgePointCount
+        }
+        [pscustomobject]$plan | ConvertTo-Json -Depth 5 -Compress
         exit 0
     }
 
@@ -297,17 +474,19 @@ if (-not [string]::IsNullOrWhiteSpace($ValidatedDryRunCheckpointPath)) {
     if ($missingHosts.Count -gt 0) {
         throw 'AllowedImageHost does not cover every image host in the VALID selection; run -PlanOnly and approve exact hosts before Import.'
     }
-    $orderedPaths = @($selectedPaths)
-    $selectionMode = 'DRY_RUN_VALID_ONLY'
+    $orderedPaths = @($selectedDescriptors | ForEach-Object { $_.path })
+    $selectionMode = if ($BalancedSampleSize -gt 0) { 'DRY_RUN_VALID_BALANCED_SAMPLE' } else { 'DRY_RUN_VALID_ONLY' }
 }
 
-$totalItems = if ($AllItems) { $orderedPaths.Count } else { [Math]::Min($MaxItems, $orderedPaths.Count) }
+$totalItems = if ($AllItems -or $BalancedSampleSize -gt 0) { $orderedPaths.Count } else { [Math]::Min($MaxItems, $orderedPaths.Count) }
 if ($totalItems -eq 0) { throw 'No source item is eligible for this migration.' }
 $effectiveTaskSize = if ($AllItems) { $TaskSize } else { $totalItems }
 $validatedRunFingerprint = if ($null -eq $validatedSelection) { '-' } else { [string]$validatedSelection.dryRunRunFingerprint }
 $allowedHostLabel = $normalizedAllowedImageHosts -join ','
+$imageExclusionLabel = "invalid=$([bool]$ExcludeInvalidImageItems)|unapproved=$([bool]$ExcludeUnapprovedImageHostItems)"
+$sampleLabel = "balanced-v1=$BalancedSampleSize"
 $runFingerprint = Get-Sha256Hex ([Text.Encoding]::UTF8.GetBytes(
-    "$Action|$SourceSystem|$rootFingerprint|$manifestFingerprint|$totalItems|$effectiveTaskSize|$BatchSize|$selectionMode|$validatedRunFingerprint|$allowedHostLabel"))
+    "$Action|$SourceSystem|$rootFingerprint|$manifestFingerprint|$totalItems|$effectiveTaskSize|$BatchSize|$selectionMode|$validatedRunFingerprint|$allowedHostLabel|$imageExclusionLabel|$sampleLabel"))
 
 if ($AllItems -and [string]::IsNullOrWhiteSpace($CheckpointPath)) {
     $checkpointDirectory = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'ccnu-edulion\migration-checkpoints'
@@ -341,8 +520,17 @@ if ($null -ne $checkpoint) {
         validatedDryRunFingerprint = $validatedRunFingerprint
         dryRunTaskCount = if ($null -eq $validatedSelection) { 0 } else { [int]$validatedSelection.dryRunTaskCount }
         selectedImageCount = $selectedImageCount
+        excludedInvalidImageItemCount = $excludedInvalidImageItemCount
+        excludedUnapprovedImageHostItemCount = $excludedUnapprovedImageHostItemCount
         imageHostCounts = [pscustomobject]$imageHostCounts
         approvedImageHosts = @($normalizedAllowedImageHosts)
+        balancedSampleSize = $BalancedSampleSize
+        questionTypeCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.questionTypeCounts }
+        gradeCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.gradeCounts }
+        difficultyCounts = if ($null -eq $balancedSample) { $null } else { $balancedSample.difficultyCounts }
+        imageQuestionCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.imageQuestionCount }
+        textQuestionCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.textQuestionCount }
+        distinctKnowledgePointCount = if ($null -eq $balancedSample) { 0 } else { [int]$balancedSample.distinctKnowledgePointCount }
         taskSize = $effectiveTaskSize
         batchSize = $BatchSize
         nextSourceIndex = 0
@@ -369,10 +557,20 @@ if ([bool]$checkpoint.completed) {
         skippedCount = [int]$checkpoint.totals.skipped
         failedCount = [int]$checkpoint.totals.failed
     }
-    if ([string]$checkpoint.selectionMode -eq 'DRY_RUN_VALID_ONLY') {
+    if ([string]$checkpoint.selectionMode -like 'DRY_RUN_VALID*') {
         $completedResult.dryRunTaskCount = [int]$checkpoint.dryRunTaskCount
         $completedResult.selectedImageCount = [int]$checkpoint.selectedImageCount
+        $completedResult.excludedInvalidImageItemCount = [int]$checkpoint.excludedInvalidImageItemCount
+        $completedResult.excludedUnapprovedImageHostItemCount = [int]$checkpoint.excludedUnapprovedImageHostItemCount
         $completedResult.imageHostCounts = $checkpoint.imageHostCounts
+        if ([string]$checkpoint.selectionMode -eq 'DRY_RUN_VALID_BALANCED_SAMPLE') {
+            $completedResult.questionTypeCounts = $checkpoint.questionTypeCounts
+            $completedResult.gradeCounts = $checkpoint.gradeCounts
+            $completedResult.difficultyCounts = $checkpoint.difficultyCounts
+            $completedResult.imageQuestionCount = [int]$checkpoint.imageQuestionCount
+            $completedResult.textQuestionCount = [int]$checkpoint.textQuestionCount
+            $completedResult.distinctKnowledgePointCount = [int]$checkpoint.distinctKnowledgePointCount
+        }
     } else {
         $completedResult.checkpointPath = $CheckpointPath
     }
@@ -591,10 +789,20 @@ $finalResult = [ordered]@{
     skippedCount = [int]$checkpoint.totals.skipped
     failedCount = [int]$checkpoint.totals.failed
 }
-if ($selectionMode -eq 'DRY_RUN_VALID_ONLY') {
+if ($selectionMode -like 'DRY_RUN_VALID*') {
     $finalResult.dryRunTaskCount = [int]$validatedSelection.dryRunTaskCount
     $finalResult.selectedImageCount = $selectedImageCount
+    $finalResult.excludedInvalidImageItemCount = $excludedInvalidImageItemCount
+    $finalResult.excludedUnapprovedImageHostItemCount = $excludedUnapprovedImageHostItemCount
     $finalResult.imageHostCounts = [pscustomobject]$imageHostCounts
+    if ($selectionMode -eq 'DRY_RUN_VALID_BALANCED_SAMPLE') {
+        $finalResult.questionTypeCounts = $balancedSample.questionTypeCounts
+        $finalResult.gradeCounts = $balancedSample.gradeCounts
+        $finalResult.difficultyCounts = $balancedSample.difficultyCounts
+        $finalResult.imageQuestionCount = [int]$balancedSample.imageQuestionCount
+        $finalResult.textQuestionCount = [int]$balancedSample.textQuestionCount
+        $finalResult.distinctKnowledgePointCount = [int]$balancedSample.distinctKnowledgePointCount
+    }
 } else {
     $finalResult.importTaskIds = @($checkpoint.taskSummaries | ForEach-Object { $_.importTaskId })
     $finalResult.checkpointPath = $CheckpointPath
