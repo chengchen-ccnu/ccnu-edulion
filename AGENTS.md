@@ -53,6 +53,10 @@ pnpm.cmd --dir web-apps run mock:api
 5. 统一错误响应必须包含 `code`、`message`、`traceId`、`timestamp`、`path`、`fieldErrors`；日志和响应不得泄露密钥、Token 或隐私。
 6. 事件必须带 `eventId`、`eventType`、`eventVersion`、`aggregateId`、`occurredAt`、`traceId` 和 `payload`，消费者按 `eventId` 幂等。
 
+## 设计克制与安全边界
+
+默认不新增 `hash`、冻结 `contract`、`baseline` 或 `gate`。只有能明确说出一个具体失败场景，并说明 Git、版本号、主键、事务、唯一约束、类型和普通测试为什么不足时，才允许加入。同时保留安全边界：不删除已有安全措施；认证、数据安全、不可逆操作和正式发布等高风险环节，仍然按照项目要求处理。
+
 ## 前端页面与产品边界规则
 
 1. 涉及前端页面、路由、导航、跨应用跳转或权限表现的任务，开始前必须完整阅读 `docs/frontend/page-specs.md`。如需新增、删除或改变页面职责，先由总控任务更新页面规格和 backlog；功能任务发现缺口时停止扩展并报告，不得自行改写全局信息架构。
