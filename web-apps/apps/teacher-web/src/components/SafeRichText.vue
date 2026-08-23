@@ -2,7 +2,7 @@
 /**
  * 安全题目内容展示组件；props 是服务端 Markdown/LaTeX 原文，DOM 只接收统一清洗函数的输出。
  * 媒体不从富文本 URL 加载；只有同一题目版本 media 列表中的 QUESTION_IMAGE
- * 才能通过稳定 mediaId 占位符申请短期授权并内联展示。
+ * 才能通过稳定 mediaId 占位符申请短期授权并内联展示；markFillBlanks 只供填空题题干把历史连续空格转成可见空位。
  */
 import "katex/dist/katex.min.css";
 import type { QuestionMediaPurpose } from "@edu/api-client";
@@ -12,14 +12,20 @@ import { teacherMediaApi } from "../media-api";
 import { renderSafeQuestionHtml } from "../render-rich-text";
 
 type InlineMedia = { mediaId: string; purpose: QuestionMediaPurpose; sequence: number };
-const props = defineProps<{ source: string; emptyText?: string; media?: InlineMedia[]; legacyMedia?: InlineMedia[] }>();
+const props = defineProps<{
+  source: string;
+  emptyText?: string;
+  media?: InlineMedia[];
+  legacyMedia?: InlineMedia[];
+  markFillBlanks?: boolean;
+}>();
 const root = ref<HTMLElement | null>(null);
 const sourceWithLegacyImages = computed(() => props.source.replace(/\[图片(\d+)]/g, (marker, number: string) => {
   const media = props.legacyMedia?.filter(item => item.purpose === "QUESTION_IMAGE")
     .sort((left, right) => left.sequence - right.sequence)[Number(number) - 1];
   return media ? `{{media:${media.mediaId}}}` : marker;
 }));
-const html = computed(() => renderSafeQuestionHtml(sourceWithLegacyImages.value));
+const html = computed(() => renderSafeQuestionHtml(sourceWithLegacyImages.value, { markFillBlanks: props.markFillBlanks }));
 let controller: AbortController | null = null;
 let objectUrls: string[] = [];
 
@@ -79,6 +85,7 @@ function dispose() {
 .safe-rich-text :deep(blockquote) { margin-left: 0; padding-left: 14px; color: #5d6980; border-left: 3px solid #b8c8e2; }
 .safe-rich-text :deep(a) { color: var(--edu-color-primary); text-decoration: underline; }
 .safe-rich-text :deep(.katex-display) { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.safe-rich-text :deep(.question-fill-blank) { display: inline-block; width: 5em; height: 1.05em; margin: 0 .24em; border-bottom: 2px solid currentColor; vertical-align: -.12em; }
 .safe-rich-text :deep(.question-inline-media) { display: inline-flex; min-width: 1.5em; min-height: 1em; align-items: center; justify-content: center; margin: 0 .12em; color: #6c7890; vertical-align: middle; }
 .safe-rich-text :deep(.question-inline-media__image) { display: inline-block; max-width: min(100%, 36rem); max-height: 24rem; object-fit: contain; vertical-align: middle; }
 .safe-rich-text--empty { color: #8a95a9; font-style: italic; }

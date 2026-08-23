@@ -206,7 +206,8 @@ function busy(key: string, value: boolean) {
 
     <section class="question-live-preview">
       <button type="button" @click="preview = !preview">{{ preview ? "收起预览" : "预览题干与解析" }}</button>
-      <div v-if="preview"><strong>题干</strong><SafeRichText :source="version.stem" empty-text="尚未填写题干" />
+      <div v-if="preview"><strong>题干</strong><SafeRichText :source="version.stem" empty-text="尚未填写题干"
+        :mark-fill-blanks="version.type === 'FILL_BLANK'" />
         <strong>解析</strong><SafeRichText :source="version.analysis" empty-text="尚未填写解析" /></div>
     </section>
   </fieldset>

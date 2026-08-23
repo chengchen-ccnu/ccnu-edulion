@@ -68,14 +68,16 @@ const supplementalMedia = (version: ContentVersion) => version.media.filter(item
       <strong>{{ typeLabels[version.type] }}</strong><span>{{ difficultyLabels[version.difficulty] }}</span></div>
       <time :datetime="version.createdAt">{{ new Date(version.createdAt).toLocaleString("zh-CN") }}</time></header>
     <section class="question-unified-stem"><h3>题干</h3>
-      <SafeRichText :source="version.stem" :media="version.media" :legacy-media="legacyStemMedia(version)" />
+      <SafeRichText :source="version.stem" :media="version.media" :legacy-media="legacyStemMedia(version)"
+        :mark-fill-blanks="version.type === 'FILL_BLANK'" />
       <ol v-if="version.options.length" class="question-preview-options">
         <li v-for="option in version.options" :key="option.key"><strong>{{ option.key }}</strong>
           <SafeRichText :source="option.content" :media="version.media" :legacy-media="legacyStemMedia(version)" /></li>
       </ol>
       <div v-for="child in version.children" :key="child.versionId" class="question-unified-part">
         <strong>({{ child.sequence }})</strong>
-        <SafeRichText :source="child.stem" :media="child.media" :legacy-media="legacyStemMedia(child)" />
+        <SafeRichText :source="child.stem" :media="child.media" :legacy-media="legacyStemMedia(child)"
+          :mark-fill-blanks="child.type === 'FILL_BLANK'" />
         <ol v-if="child.options.length" class="question-preview-options"><li v-for="option in child.options" :key="option.key">
           <strong>{{ option.key }}</strong><SafeRichText :source="option.content" :media="child.media"
             :legacy-media="legacyStemMedia(child)" /></li></ol>
