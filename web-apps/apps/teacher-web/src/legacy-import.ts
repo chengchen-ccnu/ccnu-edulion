@@ -21,17 +21,54 @@ export async function readLegacyFiles(files: readonly File[], signal: AbortSigna
     const bytes = new Uint8Array(await file.arrayBuffer());
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`LEGACY_JSON_OBJECT_REQUIRED:${file.name}`);
-    const parts = relativePath.split("/");
+    const json = parsed as Record<string, unknown>;
+    const { pathEdition, pathGrade } = legacyPathMetadata(relativePath);
     items.push({
-      externalId: relativePath.replace(/\.json$/i, "").slice(0, 160),
+      externalId: legacyExternalId(json, file.name),
       relativePath,
-      pathEdition: parts.length >= 3 ? parts[0] : "UNKNOWN",
-      pathGrade: parts.length >= 3 ? parts[1] : "UNKNOWN",
+      pathEdition,
+      pathGrade,
       contentSha256: bytesToHex(sha256(bytes)),
-      json: parsed as Record<string, never>
+      json: json as Record<string, never>
     });
   }
   return items;
+}
+
+/**
+ * 生成后端幂等校验使用的历史题目 ID。
+ * 输入优先读取 JSON 的 exerciseID；缺失时才退回文件名。输出必须原样满足 160 字符契约，禁止截断后与 JSON 内 ID 不一致。
+ */
+function legacyExternalId(json: Record<string, unknown>, fileName: string): string {
+  const embedded = json.exerciseID;
+  const value = typeof embedded === "string" || typeof embedded === "number" || typeof embedded === "boolean"
+    ? String(embedded)
+    : "";
+  const fallback = fileName.replace(/\.json$/i, "");
+  const externalId = value || fallback;
+  if (!externalId || externalId.trim() !== externalId || externalId.length > 160) {
+    throw new Error(`LEGACY_EXTERNAL_ID_INVALID:${fileName}`);
+  }
+  return externalId;
+}
+
+/**
+ * 从浏览器提供的相对路径识别教材版本和年级。
+ * 输入可从“题库”、教材版本、年级目录或单文件任一层级开始；输出只含目录原文，不上传本机绝对路径。
+ */
+function legacyPathMetadata(relativePath: string): Pick<LegacyQuestionImportItem, "pathEdition" | "pathGrade"> {
+  const directories = relativePath.split("/").slice(0, -1);
+  const gradeIndex = directories.findIndex(part => /[七八九]年级/.test(part));
+  if (gradeIndex >= 0) {
+    const pathGrade = directories[gradeIndex];
+    const earlierEdition = directories.slice(0, gradeIndex).reverse()
+      .find(part => part.includes("版") && part !== "题库");
+    const pathEdition = earlierEdition ?? (pathGrade.includes("版") ? pathGrade : "UNKNOWN");
+    return { pathEdition, pathGrade };
+  }
+  // 保留合成 Fixture 和其他“版本/年级/文件”来源的既有通用语义。
+  if (directories.length === 2) return { pathEdition: directories[0], pathGrade: directories[1] };
+  return { pathEdition: "UNKNOWN", pathGrade: "UNKNOWN" };
 }
 
 /** 生成非路径的根标签指纹；输入是教师填写的普通标签，输出只用于任务幂等。 */

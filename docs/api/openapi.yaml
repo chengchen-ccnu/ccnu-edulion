@@ -1073,7 +1073,8 @@ paths:
       description: |
         The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
         to true in migration tooling; the API never scans a server path. Creating a task does not import
-        any item and does not authorize full migration of the historical corpus.
+        any item and does not by itself authorize full migration of the historical corpus. Explicit
+        operator tooling may orchestrate a reviewed corpus as multiple independently bounded tasks.
       requestBody:
         required: true
         content:
@@ -2918,7 +2919,7 @@ components:
           type: integer
           minimum: 1
           maximum: 1000
-          description: Hard task ceiling. Full-corpus migration is deliberately impossible through this contract.
+          description: Hard ceiling for one task. A full corpus must be explicitly orchestrated as multiple tasks without raising this limit.
     LegacyQuestionImportItem:
       type: object
       additionalProperties: false

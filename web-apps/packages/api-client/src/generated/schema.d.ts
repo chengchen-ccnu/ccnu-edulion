@@ -544,7 +544,8 @@ export interface paths {
          * Create an explicitly bounded legacy JSON migration task
          * @description The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
          *     to true in migration tooling; the API never scans a server path. Creating a task does not import
-         *     any item and does not authorize full migration of the historical corpus.
+         *     any item and does not by itself authorize full migration of the historical corpus. Explicit
+         *     operator tooling may orchestrate a reviewed corpus as multiple independently bounded tasks.
          */
         post: operations["createLegacyQuestionImport"];
         delete?: never;
@@ -1339,7 +1340,7 @@ export interface components {
             /** @description SHA-256 of the normalized read-only root label; the directory path is not stored. */
             sourceRootFingerprint: string;
             dryRun: boolean;
-            /** @description Hard task ceiling. Full-corpus migration is deliberately impossible through this contract. */
+            /** @description Hard ceiling for one task. A full corpus must be explicitly orchestrated as multiple tasks without raising this limit. */
             maxItems: number;
         };
         LegacyQuestionImportItem: {

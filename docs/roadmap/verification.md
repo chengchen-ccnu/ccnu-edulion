@@ -306,3 +306,24 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 契约与服务边界：当前 OpenAPI 0.10.1 和事件目录明确尚未暴露 T11 API/事件，这是 T11 需要先完成的契约工作而非阻断。报名校验、课程访问快照与课程播放授权必须通过版本化 API/事件交互；learning-service 不得查询 course Schema，course-service 也不得查询 learning Schema。服务间鉴权、超时、失败降级和幂等语义必须在实现前冻结。
 - 数据演进：learning-service 现有 V1～V3 只包含题库和导入能力，校验和必须保持不变；T11 从 V4 向前增加报名、进度、笔记、测评、试卷快照、作答、成绩和错题数据。试卷必须冻结题目版本而非跟随题库当前指针，学生读接口不得泄露未到发布时点的答案或解析。
 - 范围与环境：本轮只更新总控文档并准备分支，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg，没有创建数据库、迁移、表、Seed、伪数据、媒体对象或消息。T10 遗留的无消费者 v2 审计 Outbox 仍是有限重试的独立已知风险，不阻断 T11，但 T11 不应继续新增无明确消费者的事件。
+
+## 2026-08-13 T10A 历史 JSON 目录上传修复
+
+- 前置与范围：工作区最初位于与 `main@0abc39c` 相同的空 T11 准备分支且保持干净；切回 `main` 后独立创建 `codex/t10a-legacy-json-directory-upload-fix`。完整阅读页面规格，未调整路由、导航或页面职责，也未修改 T11 业务代码。
+- 根因证据：浏览器目录选择把完整 `webkitRelativePath` 去扩展名后作为 `externalId`，而后端在批次入口要求它与 JSON `exerciseID` 精确一致，导致任何多层目录项在解析题型前返回 422；旧路径逻辑还固定取前两个目录段，选择“题库”根目录时会把根名误当教材版本。
+- 修复行为：前端优先使用 `exerciseID`，缺失时回退文件名且不截断；从全部安全相对目录段识别教材版本和七/八/九年级，兼容选择题库根、教材目录、年级目录及既有通用三层来源。无法恢复的单文件元数据继续使用 `UNKNOWN` 并交由人工复核，没有弱化服务端校验。
+- 自动化门禁：Vitest 实际执行 18 个文件、121 项全部通过，历史导入专项由 3 项增加为 8 项；教师端专项类型检查通过；全 workspace OpenAPI 生成与 8 组类型检查通过；三端生产构建在沙箱内因 esbuild `spawn EPERM` 受阻，获批在沙箱外复跑后全部通过，仅有既有大 chunk 警告；`git diff --check` 通过。
+- 数据与外部系统：只读检查用户明确指定的 1 份 JSON 以复现字段和目录形态，没有复制、修改、上传或批量扫描题库。未连接 MySQL、Redis、RabbitMQ、OSS 或外部图片主机，未创建数据库、表、Seed、题目、任务、消息或对象，不需要清理。
+- 真实服务状态：后续全量预检前 Gateway、IAM、learning-service 均为 HTTP 200 / `UP`；IAM 的 DB/Redis 与 learning-service 的 DB/Redis/RabbitMQ 组件均为 `UP`。未启动或验收教师端浏览器页面。
+- 全量脚本扩展：用户明确授权后增加 `AllItems` 多任务编排；正式模式需额外 `ConfirmFullMigration`，每任务 1000、每批 20 的服务端边界保持不变。来源按稳定路径排序并生成清单指纹，任务/批次请求 ID 确定生成；检查点在每个确认批次后原子更新，可在令牌、网络或进程中断后以相同命令恢复，并支持按 Import 检查点逐任务精确清理。
+- PowerShell 合成验收：在 Windows PowerShell 5.1 下用本地 HTTP Fixture 和 5 个临时合成 JSON 验证 3 个任务分片、dry-run 5/5、Import 5/5、完成态幂等重跑及 3 个任务清理；随后在第 2 批注入一次 503，确认检查点保留 1 个批次且源索引未前移，相同命令恢复后完成 5/5。检查点断言不含虚构 Token、临时绝对根或题目正文；临时文件和 Mock 进程均已清理。
+- 安全失败诊断：任务创建和批次 catch 只白名单提取 `httpStatus/code/traceId/fieldErrors(field,reason)`，忽略完整响应、`message/path/timestamp` 和异常全文；字段原因额外遮蔽 Token、Bearer/JWT、绝对来源路径、题干、答案、解析和结构化原始 JSON。
+- 诊断与编码自动化：`pwsh` + Pester 7/7 通过，包含真实本地 TCP HTTP 401 任务创建、422 批次失败、四类安全诊断字段、失败检查点保持和显式 UTF-8 无 BOM 请求字节门禁。另用 Windows PowerShell 5.1 对稳定排序前 3 项构造批次并由本地 TCP 捕获，严格 UTF-8 解码、JSON 解析、3 项数量和第 3 项 17 个属性均通过；未请求真实 API。失败检查点仍保持原 `importTaskId`、`nextBatchIndex=0`、`nextSourceIndex=0`、`completed=false`，没有删除、重建或推进任务。
+- 真实全量 DryRun：经 Gateway 以 `dryRun=true` 完成 44,441 项、45 个唯一任务，最终 `processed=44,441`、`VALID=29,127`、`NEEDS_REVIEW=15,314`、`FAILED=0`、`SKIPPED=0`、`imported=0`。检查点 `completed=true`、无活动任务，文本复核不含 Token、题目字段或绝对路径；现有任务与复核记录按要求保留。
+- DryRun 安全汇总工具：新增 `scripts/Get-LegacyQuestionDryRunSummary.ps1`，只从检查点取得任务 ID，经 Gateway GET 任务详情与分页复核投影；输出仅含任务/记录总数、四类 outcome、issueCode 和组合计数/比例。合成 HTTP Fixture 6/6 通过，覆盖多任务分页、计数/组合、401、422、空任务、中途 503、无部分输出、敏感投影不泄漏，以及不遍历题库、不写检查点、不调用批次或清理端点。与迁移诊断测试合计 Pester 13/13；5 个相关脚本通过 Windows PowerShell 5.1 语法检查，`git diff --check` 通过。
+- 真实 issueCode 分布：17 种组合合计恰为 15,314 条 NEEDS_REVIEW。问题码出现次数依次为 `PATH_JSON_METADATA_CONFLICT=5,793`、`SUBQUESTION_ANSWER_MISSING=4,827`、`IMPLICIT_MULTI_PART=3,375`、`EMBEDDED_OPTIONS_AMBIGUOUS=2,471`、`FIELD_INVALID=173`、`HTML_UNSAFE=37`；单问题码 13,954 条，多问题码 1,360 条。`TYPE_UNSUPPORTED`、`SOURCE_CONTENT_CONFLICT`、`EXTERNAL_IMAGE_TRANSFER_FAILED` 均为 0，但 DryRun 不执行图片转存，不能据此宣称图片迁移通过。
+- 分类结论：仅“规范化后唯一等价的路径/JSON 元数据”和“满足连续有序、数量一致、内容非空、答案落在选项集合的显式选项标记”可作为确定性规则候选；子题答案缺失需先细分真实原因，隐式多问、HTML 不安全、多问题码组合和真实元数据冲突必须人工复核。解析规则变更后必须使用新 `SourceSystem` 与独立检查点重新 DryRun，保留旧 45 个任务作为基线，用户确认前不执行 Import。
+- VALID-only 编排：在既有迁移器中增加 `ValidatedDryRunCheckpointPath` 与 `PlanOnly`。脚本先核对已完成检查点、冻结来源根/清单指纹、SourceSystem、任务终态和持久化计数，再经 Gateway 分页取得 VALID 键，只将快照中一一匹配的来源加入正式任务；15,314 条既有复核项不会提交，也不会创建正式来源幂等记录。计划模式不创建/推进检查点或任务，只输出总来源、选择数、图片数和精确主机聚合。
+- 图片边界：只对所选 VALID 合成项提取与 Java 解析器一致的带引号 HTTPS `<img src>`，正式执行要求 `AllowedImageHost` 完整覆盖且拒绝通配符/URL/端口/路径。URL 随原 JSON 进入既有 API，图片仍由 learning-service 调 media-service 执行精确白名单、逐跳 DNS/重定向、大小、MIME、魔数和 OSS 转存；脚本不下载图片、不连接 OSS，也不修改服务配置。远端正式失败仍按 `EXTERNAL_IMAGE_TRANSFER_FAILED` 复核，不能以 DryRun VALID 或主机门禁替代媒体校验。
+- VALID-only 合成验收：PowerShell Pester 新增 4 项并全部通过；仅使用 3 份临时合成 JSON 和本地 TCP Fixture，覆盖计划无写入、两个 VALID/一个复核项的精确筛选、图片 URL 保留、图片主机未批准时 POST 前停止和 401 安全诊断。与既有迁移/汇总测试合计 17/17；输出断言不含 Token、题目、来源路径、原始 JSON或完整任务 ID。没有读取真实题库正文、调用真实 Gateway、数据库、media-service、OSS 或外部图片主机。
+- 边界说明：本轮没有执行正式 Import，没有创建正式题目、媒体或 OSS 对象，也没有删除、重建或清理检查点、45 个 DryRun 任务及复核记录。全量迁移脚本逐项有界读取来源以提交预检，但本次后续验收与汇总不得再次批量读取 44,441 份 JSON 正文。`AllItems` 只保证全部文件提交处理；`NEEDS_REVIEW`、字段失败和图片失败仍需人工处理，不能把 `processedCount` 当作全部成功导入。
