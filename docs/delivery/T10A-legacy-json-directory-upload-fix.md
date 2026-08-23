@@ -147,4 +147,4 @@ outcome 以 44,441 条为分母：
 - HTTP 安全与 UTF-8 修复提交：`e1dabe6`
 - DryRun 安全汇总提交：`a1c98b5`
 - 真实 issueCode 文档提交：`0dd8994`
-- PR：待创建与验收
+- 发布：实现经 [PR #25](https://github.com/chengchen-ccnu/ccnu-edulion/pull/25) 合并到 `main@ed141aa56b3f14cfc9486250a753f3e28419c78c`；Java、Python、Frontend 和 OpenAPI 两组 CI 全部通过。正式历史题库 Import 仍未执行，不属于代码 PR 合并动作。
