@@ -130,4 +130,4 @@ T10A 的原 45 个 DryRun 任务、复核记录和检查点没有删除、重建
 
 新增 DTO、Repository、Service、Controller、迁移脚本和 Vue 组件均补充中文职责、输入、结果和失败/写入副作用说明；内联媒体校验、外图占位转换、短期授权/对象 URL 清理及组合题展示边界均补充中文注释；OpenAPI 与 Flyway 对来源键、关系方向、学段启用策略和敏感数据边界有说明；生成客户端未手工补注释。
 
-分支：`codex/t10b-knowledge-graph-import`；交付 [PR #26](https://github.com/chengchen-ccnu/ccnu-edulion/pull/26) 已创建并等待最终 CI/合并。初始图谱实现提交为 `a2aba05`，真实 DryRun 传输修复为 `359ce1f`，小学/初中开放为 `fc08bda`，SYSTEM/TEACHER 契约、服务、前端、图片修复和真实导入记录为 `61f87d1`。
+分支：`codex/t10b-knowledge-graph-import`；交付 [PR #26](https://github.com/chengchen-ccnu/ccnu-edulion/pull/26) 经 Java、Python、Frontend 和 OpenAPI 两组 CI 全绿后，合并到 `main@6d3d47ea1effd575a8a9a094c5aff73910f8a05b`。初始图谱实现提交为 `a2aba05`，真实 DryRun 传输修复为 `359ce1f`，小学/初中开放为 `fc08bda`，SYSTEM/TEACHER 契约、服务、前端、图片修复和真实导入记录为 `61f87d1`。
