@@ -1,10 +1,19 @@
 import type {
   KnowledgePoint,
+  QuestionGrade,
   QuestionChildInput,
   QuestionInputType,
   QuestionVersion,
   QuestionVersionInput
 } from "@edu/api-client";
+
+export const PRIMARY_GRADES: QuestionGrade[] = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"];
+export const JUNIOR_GRADES: QuestionGrade[] = ["SEVEN", "EIGHT", "NINE"];
+
+/** 返回所选学段的合法年级，供筛选器和编辑器共享同一前端约束。 */
+export function gradesForStage(stage: QuestionVersionInput["stage"]): QuestionGrade[] {
+  return stage === "PRIMARY" ? PRIMARY_GRADES : JUNIOR_GRADES;
+}
 
 /** 创建满足 T09B 必填字段的空普通题，供新建和人工复核表单使用。 */
 export function emptyQuestionVersion(type: QuestionVersionInput["type"] = "SINGLE_CHOICE"): QuestionVersionInput {
@@ -26,10 +35,12 @@ export function emptyQuestionVersion(type: QuestionVersionInput["type"] = "SINGL
 }
 
 /** 创建一层组合题子题；子题类型受生成的 QuestionInputType 约束，不能继续嵌套 COMPOSITE。 */
-export function emptyQuestionChild(type: QuestionInputType = "SINGLE_CHOICE"): QuestionChildInput {
+export function emptyQuestionChild(type: QuestionInputType = "SINGLE_CHOICE",
+    stage: QuestionVersionInput["stage"] = "JUNIOR",
+    grade: QuestionVersionInput["grade"] = stage === "PRIMARY" ? "ONE" : "SEVEN"): QuestionChildInput {
   const base = emptyQuestionVersion(type);
   const { children: _children, ...child } = base;
-  return child as QuestionChildInput;
+  return { ...child, stage, grade } as QuestionChildInput;
 }
 
 /** 将只读版本投影转换为新的写契约副本；只复制业务字段，不复制 versionId、时间或 revision。 */

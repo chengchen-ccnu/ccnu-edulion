@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import com.eduplatform.learning.persistence.QuestionRepository;
 
-/** 教师本人题库、知识点只读与导入任务 HTTP 边界；owner 始终取 Gateway 可信头。 */
+/** 教师可用题库、知识点只读与私有导入任务 HTTP 边界；owner 始终取 Gateway 可信头。 */
 @RestController
 @Validated
 @ConditionalOnBean(QuestionRepository.class)
@@ -43,10 +43,11 @@ public class TeacherQuestionController {
     public List<QuestionDtos.KnowledgePointResponse> knowledgePoints(@RequestHeader("X-User-Id") String userId,
             @RequestHeader("X-User-Roles") String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @RequestParam(defaultValue = "JUNIOR") QuestionModels.Stage stage,
             @RequestParam(required = false) QuestionModels.Grade grade,
             @RequestParam(required = false) String parentId) {
         LearningIdentity.teacher(userId, roles, permissions);
-        return knowledge.teacherTree(grade, parentId);
+        return knowledge.teacherTree(stage, grade, parentId);
     }
 
     @GetMapping("/api/v1/teacher/questions")
@@ -56,12 +57,17 @@ public class TeacherQuestionController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
-            @RequestParam(required = false) String keyword, @RequestParam(required = false) QuestionModels.Type type,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) QuestionModels.Stage stage,
+            @RequestParam(required = false) QuestionModels.Grade grade,
+            @RequestParam(required = false) QuestionModels.Type type,
             @RequestParam(required = false) QuestionModels.Status status,
             @RequestParam(required = false) QuestionModels.Difficulty difficulty,
-            @RequestParam(required = false) String knowledgePointId) {
+            @RequestParam(required = false) String knowledgePointId,
+            @RequestParam(required = false) QuestionModels.Scope scope) {
         var identity = LearningIdentity.teacher(userId, roles, permissions);
-        return questions.list(identity.userId(), page, size, keyword, type, status, difficulty, knowledgePointId);
+        return questions.list(identity.userId(), page, size, keyword, stage, grade, type, status, difficulty,
+                knowledgePointId, scope);
     }
 
     @PostMapping("/api/v1/teacher/questions")
@@ -77,7 +83,7 @@ public class TeacherQuestionController {
     }
 
     @GetMapping("/api/v1/teacher/questions/{questionId}")
-    /** 返回本人题目的完整当前版本；他人题目按 404 隐藏存在性。 */
+    /** 返回公共 SYSTEM 或本人 TEACHER 题的完整当前版本；其他私有题按 404 隐藏。 */
     public QuestionDtos.QuestionResponse get(@RequestHeader("X-User-Id") String userId,
             @RequestHeader("X-User-Roles") String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
@@ -107,7 +113,7 @@ public class TeacherQuestionController {
     }
 
     @GetMapping("/api/v1/teacher/questions/{questionId}/versions")
-    /** 分页返回本人题目的不可变版本历史；读取不会移动当前指针。 */
+    /** 分页返回可见题目的不可变版本历史；读取不会移动当前指针。 */
     public QuestionDtos.VersionPage versions(@RequestHeader("X-User-Id") String userId,
             @RequestHeader("X-User-Roles") String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
@@ -117,7 +123,7 @@ public class TeacherQuestionController {
     }
 
     @GetMapping("/api/v1/teacher/questions/{questionId}/versions/{versionId}")
-    /** 返回本人题目的指定历史版本完整结构；他人题目或不归属版本统一 404。 */
+    /** 返回可见题目的指定历史版本完整结构；其他私有题或不归属版本统一 404。 */
     public QuestionDtos.VersionResponse version(@RequestHeader("X-User-Id") String userId,
             @RequestHeader("X-User-Roles") String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
@@ -173,47 +179,6 @@ public class TeacherQuestionController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable String importTaskId, @PathVariable String itemId) {
         return legacyImports.item(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId, itemId);
-    }
-
-    @PostMapping("/api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution")
-    /** 以 revision 和 clientRequestId 幂等执行结构化修正后导入或确认跳过。 */
-    public QuestionDtos.LegacyReviewItem resolveImportItem(@RequestHeader("X-User-Id") String userId,
-            @RequestHeader("X-User-Roles") String roles,
-            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String importTaskId, @PathVariable String itemId,
-            @Valid @RequestBody QuestionDtos.ResolveLegacyItemRequest request, HttpServletRequest servlet) {
-        return legacyImports.resolve(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId,
-                itemId, request, trace(servlet));
-    }
-
-    @PostMapping("/api/v1/teacher/legacy-question-imports")
-    /** 创建默认由迁移脚本驱动的受控 JSON 任务；接口自身不遍历目录或自动全量导入。 */
-    public ResponseEntity<QuestionDtos.ImportTaskResponse> createLegacyImport(
-            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
-            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @Valid @RequestBody QuestionDtos.CreateLegacyImportRequest request) {
-        var result = legacyImports.create(LearningIdentity.teacher(userId, roles, permissions).userId(), request);
-        return result.created() ? ResponseEntity.status(201).body(result.response()) : ResponseEntity.ok(result.response());
-    }
-
-    @PostMapping("/api/v1/teacher/legacy-question-imports/{importTaskId}/batches")
-    /** 同步处理最多 20 项并只返回来源键、计数和问题码；不回显原题内容。 */
-    public QuestionDtos.LegacyImportBatchResult submitLegacyBatch(
-            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
-            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String importTaskId, @Valid @RequestBody QuestionDtos.LegacyImportBatchRequest request,
-            HttpServletRequest servlet) {
-        return legacyImports.submit(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId,
-                request, trace(servlet));
-    }
-
-    @org.springframework.web.bind.annotation.DeleteMapping("/api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources")
-    /** 精确清理该任务创建且仍为 DRAFT 的题目，并通过 Outbox 解除媒体引用。 */
-    public QuestionDtos.LegacyImportCleanupResult cleanupLegacyImport(
-            @RequestHeader("X-User-Id") String userId, @RequestHeader("X-User-Roles") String roles,
-            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String importTaskId, HttpServletRequest servlet) {
-        return legacyImports.cleanup(LearningIdentity.teacher(userId, roles, permissions).userId(), importTaskId, trace(servlet));
     }
 
     private static String trace(HttpServletRequest request) { return (String) request.getAttribute(com.eduplatform.learning.config.TraceFilter.ATTRIBUTE); }

@@ -44,7 +44,8 @@ public class QuestionImportService {
         }
         media.requireBindable(request.sourceMediaId().toString(), QuestionModels.MediaPurpose.QUESTION_IMPORT_SOURCE.name(), ownerId, traceId);
         Instant now = Instant.now(); String id = UUID.randomUUID().toString();
-        ImportTask task = new ImportTask(id, ownerId, request.clientRequestId().toString(), fingerprint,
+        ImportTask task = new ImportTask(id, ownerId, QuestionModels.Scope.TEACHER,
+                request.clientRequestId().toString(), fingerprint,
                 request.sourceMediaId().toString(), request.sourceFormat(), QuestionModels.ImportStatus.PENDING,
                 0, 0, 0, 0, 0, 0, 0, null, null, false, null, null, null,
                 now.plus(properties.importSettings().retention()), null, null, now, now);
@@ -87,7 +88,7 @@ public class QuestionImportService {
     private QuestionDtos.ImportTaskResponse response(ImportTask task, boolean includeErrors) {
         List<QuestionDtos.ImportRowError> errors = includeErrors ? repository.importErrors(task.id()).stream()
                 .map(value -> new QuestionDtos.ImportRowError(value.rowNumber(), value.code(), value.message())).toList() : List.of();
-        return new QuestionDtos.ImportTaskResponse(task.id(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(),
+        return new QuestionDtos.ImportTaskResponse(task.id(), task.questionScope(), task.sourceMediaId(), task.sourceFormat(), task.sourceSystem(),
                 task.dryRun(), task.maxItems(), task.status(), task.progress(), task.totalRows(), task.processedRows(), task.successCount(),
                 task.reviewCount(), repository.countResolvedLegacyItems(task.id()), task.skippedCount(), task.failureCount(), errors, task.failureCode(),
                 task.failureMessage(), task.retainUntil(), task.sourceReleasedAt(), task.createdAt(), task.updatedAt());

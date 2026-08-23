@@ -9,6 +9,10 @@ import org.springframework.http.HttpStatus;
 
 /** 从 Gateway 重写的可信身份头解析教师或管理员能力，禁止直接信任请求体中的 owner。 */
 record LearningIdentity(String userId, Set<String> roles, Set<String> permissions) {
+    /** 学习端公共系统题读取只要求 Gateway 已认证，不把某个角色名称当作学习资格。 */
+    static LearningIdentity authenticated(String userId, String roles, String permissions) {
+        return parse(userId, roles, permissions);
+    }
     static LearningIdentity teacher(String userId, String roles, String permissions) {
         LearningIdentity identity = parse(userId, roles, permissions);
         if (!identity.roles.contains("TEACHER")) forbidden();

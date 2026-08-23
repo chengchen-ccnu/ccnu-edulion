@@ -13,13 +13,14 @@ describe("teacher question API", () => {
       const url = new URL(request.url);
       expect(url.pathname).toBe("/api/v1/teacher/questions");
       expect(url.searchParams.get("type")).toBe("COMPOSITE");
+      expect(url.searchParams.get("scope")).toBe("SYSTEM");
       expect(url.searchParams.get("page")).toBe("2");
       expect(request.headers.get("Authorization")).toBe("Bearer teacher-token");
       return json({ items: [], page: 2, size: 20, total: 0 });
     }));
     const api = createTeacherQuestionApi(store(), createGatewayClient("http://gateway.test"));
 
-    await expect(api.list({ page: 2, size: 20, type: "COMPOSITE" })).resolves.toMatchObject({ total: 0 });
+    await expect(api.list({ page: 2, size: 20, type: "COMPOSITE", scope: "SYSTEM" })).resolves.toMatchObject({ total: 0 });
   });
 
   it("sends expectedRevision and a structured child graph when creating a new version", async () => {
@@ -42,21 +43,28 @@ describe("teacher question API", () => {
     } })).resolves.toMatchObject({ revision: 4 });
   });
 
-  it("uses the item resolution endpoint and preserves revision/idempotency fields", async () => {
+  it("searches a bounded junior knowledge page and requests only a one-hop graph", async () => {
+    let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
       const request = input instanceof Request ? input : new Request(input, init);
-      expect(new URL(request.url).pathname).toBe("/api/v1/teacher/question-imports/task-1/items/item-1/resolution");
-      await expect(request.json()).resolves.toMatchObject({ clientRequestId: "request-1", expectedRevision: 2,
-        action: "CONFIRM_SKIP", correctedVersion: null });
-      return json({ id: "item-1", revision: 3, externalId: "fixture", outcome: "SKIPPED", questionId: null,
-        sourceSystem: "LEGACY_BROWSER_V1", originalDifficulty: null, pathEdition: null, jsonEdition: null,
-        pathGrade: null, jsonGrade: null, issues: [], resolution: { action: "CONFIRM_SKIP", resolvedAt: "2026-08-12T00:00:00Z" },
-        createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z" });
+      const url = new URL(request.url);
+      if (calls === 1) {
+        expect(url.pathname).toBe("/api/v1/teacher/knowledge-points/search");
+        expect(url.searchParams.get("normalizedStage")).toBe("JUNIOR");
+        expect(url.searchParams.get("size")).toBe("20");
+        expect(url.searchParams.get("keyword")).toBe("有理数");
+        return json({ items: [], page: 1, size: 20, total: 0 });
+      }
+      expect(url.pathname).toBe("/api/v1/teacher/knowledge-points/point-1/graph");
+      expect(url.searchParams.get("depth")).toBe("1");
+      return json({ center: { id: "point-1", name: "有理数", normalizedStage: "JUNIOR", knowledgeTypeId: "type-a",
+        knowledgeTypeName: "概念", knowledgeTypeColour: null, levelSortIndex: 1, enabled: true },
+      directPrerequisites: [], directDependents: [], nodes: [], edges: [], depth: 1 });
     }));
     const api = createTeacherQuestionApi(store(), createGatewayClient("http://gateway.test"));
-
-    await expect(api.resolveLegacyItem("task-1", "item-1", { clientRequestId: "request-1", expectedRevision: 2,
-      action: "CONFIRM_SKIP", correctedVersion: null })).resolves.toMatchObject({ outcome: "SKIPPED" });
+    await api.searchKnowledgePoints({ normalizedStage: "JUNIOR", keyword: "有理数", page: 1, size: 20 });
+    await expect(api.knowledgePointGraph("point-1", 1)).resolves.toMatchObject({ depth: 1 });
   });
 });
 
@@ -67,7 +75,8 @@ function store(): AuthStore {
 function json(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status,
   headers: { "Content-Type": "application/json" } }); }
 function questionResponse() {
-  return { id: "q-1", status: "DRAFT" as const, revision: 4, createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z",
+  return { id: "q-1", scope: "TEACHER" as const, editable: true, status: "DRAFT" as const, revision: 4,
+    createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z",
     currentVersion: { id: "v-1", versionNumber: 1, type: "COMPOSITE" as const, difficulty: "MEDIUM" as const,
       stage: "JUNIOR" as const, grade: "SEVEN" as const, subject: "MATHEMATICS" as const, stem: "父题", options: [], answers: ["见子题"],
       analysis: "", knowledgePoints: [], media: [], legacySource: null, children: [], createdAt: "2026-08-12T00:00:00Z" } };

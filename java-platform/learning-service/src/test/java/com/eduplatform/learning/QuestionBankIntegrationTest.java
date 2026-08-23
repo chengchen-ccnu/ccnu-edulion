@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 import com.eduplatform.learning.domain.QuestionModels;
+import com.eduplatform.learning.importing.LegacyQuestionJsonParser;
 import com.eduplatform.learning.importing.QuestionImportProcessor;
 import com.eduplatform.learning.importing.QuestionImportParser;
 import com.eduplatform.learning.media.MediaClient;
@@ -53,13 +54,16 @@ import tools.jackson.databind.ObjectMapper;
 class QuestionBankIntegrationTest {
     private static final String TEACHER = "00000000-0000-4000-8000-000000009101";
     private static final String OTHER = "00000000-0000-4000-8000-000000009102";
+    private static final String ADMIN = "00000000-0000-4000-8000-000000009103";
     private static final String KP = "00000000-0000-4000-8000-000000009201";
+    private static final String PRIMARY_KP = "00000000-0000-4000-8000-000000009202";
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
     @Autowired QuestionImportService imports;
     @Autowired LegacyQuestionImportService legacyImports;
     @Autowired QuestionImportProcessor processor;
     @Autowired QuestionImportParser parser;
+    @Autowired LegacyQuestionJsonParser legacyParser;
     @Autowired QuestionRepository repository;
     @Autowired ObjectMapper objectMapper;
     @Value("${local.server.port}") int port;
@@ -68,6 +72,9 @@ class QuestionBankIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM knowledge_point_prerequisite"); jdbc.update("DELETE FROM knowledge_graph_import_issue");
+        jdbc.update("DELETE FROM knowledge_graph_import_relation"); jdbc.update("DELETE FROM knowledge_graph_import_node");
+        jdbc.update("DELETE FROM knowledge_graph_import_batch"); jdbc.update("DELETE FROM knowledge_graph_import_task");
         jdbc.update("DELETE FROM learning_consumed_event"); jdbc.update("DELETE FROM learning_outbox_event");
         jdbc.update("DELETE FROM question_legacy_item_resolution"); jdbc.update("DELETE FROM question_legacy_review_item");
         jdbc.update("DELETE FROM question_legacy_import_issue"); jdbc.update("DELETE FROM question_legacy_source_ref");
@@ -81,6 +88,9 @@ class QuestionBankIntegrationTest {
         jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 KP, "JUNIOR_MATH_NUMBER", "数与式", null, "JUNIOR", "SEVEN", "MATHEMATICS", 1, true, 0,
                 Timestamp.from(now), Timestamp.from(now));
+        jdbc.update("INSERT INTO knowledge_point(id,code,name,parent_id,stage,grade,subject,sort_order,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                PRIMARY_KP, "PRIMARY_MATH_NUMBER", "整数认识", null, "PRIMARY", "ONE", "MATHEMATICS", 1, true, 0,
+                Timestamp.from(now), Timestamp.from(now));
         doNothing().when(media).requireBindable(anyString(), anyString(), anyString(), anyString());
     }
 
@@ -92,10 +102,68 @@ class QuestionBankIntegrationTest {
         assertThat(first.created()).isTrue(); assertThat(replay.created()).isFalse();
         assertThat(replay.response().id()).isEqualTo(first.response().id());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(1);
-        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null).items()).singleElement()
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null).items()).singleElement()
                 .satisfies(item -> assertThat(item.stemPreview()).contains("1+1"));
         assertThatThrownBy(() -> questions.get(OTHER, first.response().id())).isInstanceOfSatisfying(QuestionException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void systemQuestionsArePublicReadOnlyAndTeacherListSupportsSourceFilter() {
+        var system = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                single("A", List.of()), "trace-system-create").response();
+        var own = questions.create(TEACHER, UUID.randomUUID().toString(), single("A", List.of()),
+                "trace-teacher-create").response();
+        questions.create(OTHER, UUID.randomUUID().toString(), single("A", List.of()),
+                "trace-other-create");
+
+        assertThat(system.scope()).isEqualTo(QuestionModels.Scope.SYSTEM);
+        assertThat(system.status()).isEqualTo(QuestionModels.Status.ACTIVE);
+        assertThat(system.editable()).isFalse();
+        assertThat(questions.get(TEACHER, system.id())).extracting(QuestionDtos.QuestionResponse::editable)
+                .isEqualTo(false);
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null, null).items())
+                .extracting(QuestionDtos.QuestionSummary::id).containsExactlyInAnyOrder(system.id(), own.id());
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null,
+                QuestionModels.Scope.SYSTEM).items()).singleElement()
+                .satisfies(item -> assertThat(item.id()).isEqualTo(system.id()));
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null,
+                QuestionModels.Scope.TEACHER).items()).singleElement()
+                .satisfies(item -> assertThat(item.id()).isEqualTo(own.id()));
+
+        assertThatThrownBy(() -> questions.update(TEACHER, system.id(), system.revision(),
+                single("A", List.of()), "trace-system-update"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(error.code()).isEqualTo("QUESTION.SYSTEM_READ_ONLY");
+                });
+        assertThat(questions.listSystem(1, 20, null, null, null, null, null).items()).singleElement()
+                .satisfies(item -> {
+                    assertThat(item.id()).isEqualTo(system.id());
+                    assertThat(item.editable()).isFalse();
+                });
+        assertThat(questions.getSystem(system.id()).stem()).contains("1+1");
+        assertThatThrownBy(() -> questions.getSystem(own.id())).isInstanceOfSatisfying(QuestionException.class,
+                error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void primaryQuestionCanBeCreatedAndStageGradeMismatchIsRejected() {
+        var primary = new QuestionDtos.VersionInput(QuestionModels.Type.FILL_BLANK, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.PRIMARY, QuestionModels.Grade.ONE, QuestionModels.Subject.MATHEMATICS,
+                "填写 $1+1$ 的结果", List.of(), List.of("2"), "整数加法", List.of(UUID.fromString(PRIMARY_KP)), List.of());
+        var created = questions.create(TEACHER, UUID.randomUUID().toString(), primary, "trace-primary").response();
+        assertThat(created.currentVersion().stage()).isEqualTo(QuestionModels.Stage.PRIMARY);
+        assertThat(questions.list(TEACHER, 1, 20, null, QuestionModels.Stage.PRIMARY,
+                QuestionModels.Grade.ONE, null, null, null, null).items()).singleElement()
+                .satisfies(item -> assertThat(item.stage()).isEqualTo(QuestionModels.Stage.PRIMARY));
+
+        var mismatch = new QuestionDtos.VersionInput(QuestionModels.Type.FILL_BLANK, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.PRIMARY, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                "错误组合", List.of(), List.of("2"), "", List.of(), List.of());
+        assertThatThrownBy(() -> questions.create(TEACHER, UUID.randomUUID().toString(), mismatch, "trace-mismatch"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
     }
 
     @Test
@@ -126,6 +194,20 @@ class QuestionBankIntegrationTest {
                 List.of(new QuestionDtos.MediaInput(UUID.randomUUID(), QuestionModels.MediaPurpose.QUESTION_AUDIO, 1))), "trace-media-03"))
                 .isInstanceOf(QuestionException.class);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(1);
+    }
+
+    /** 内联占位符不能借机读取未绑定或非图片媒体。 */
+    @Test
+    void inlineImageMarkerMustReferenceBoundQuestionImage() {
+        var base = single("A", List.of()); String foreignMedia = UUID.randomUUID().toString();
+        var unbound = new QuestionDtos.VersionInput(base.type(), base.difficulty(), base.stage(), base.grade(),
+                base.subject(), "观察 {{media:" + foreignMedia + "}}", base.options(), base.answers(), base.analysis(),
+                base.knowledgePointIds(), List.of());
+
+        assertThatThrownBy(() -> questions.create(TEACHER, UUID.randomUUID().toString(), unbound, "trace-inline-media-01"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
     }
 
     @Test
@@ -268,17 +350,36 @@ class QuestionBankIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_legacy_source_ref", Integer.class)).isEqualTo(2);
     }
 
+    /** 历史填简答的答案也可含图；外部 URL 必须移出答案并进入媒体转存列表。 */
+    @Test
+    void legacyParserExtractsAnswerImagesWithoutPersistingExternalUrls() throws Exception {
+        var source = objectMapper.readTree("""
+                {"exerciseID":"fixture-answer-image-01","exerciseType":"fillin","difficulty":1,"gradeIndex":7,
+                 "gradeName":"七年级","question":"观察并填空","queAns":"<p>2<img src=\\\"https://images.fixture.test/answer.png\\\"></p>",
+                 "solution":"","subQues":[]}
+                """);
+
+        var parsed = legacyParser.parse(source, "虚构版", "七年级上");
+
+        assertThat(parsed.issueCodes()).isEmpty();
+        assertThat(parsed.candidate().input().answers()).hasSize(1);
+        assertThat(parsed.candidate().input().answers().get(0)).contains("{{question-image:1}}")
+                .doesNotContain("https://");
+        assertThat(parsed.candidate().imageUrls()).containsExactly("https://images.fixture.test/answer.png");
+    }
+
     @Test
     void legacyImportCreatesOrderedCompositeTransfersImagesAndCleansExactTask() throws Exception {
         UUID transferred = UUID.randomUUID();
-        org.mockito.Mockito.when(media.transferExternalImage(anyString(), anyString(), anyString(), anyString()))
+        org.mockito.Mockito.when(media.transferExternalImage(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.eq("TEACHER"), anyString()))
                 .thenReturn(transferred.toString());
         var task = legacyImports.create(TEACHER, new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
                 "LEGACY_FIXTURE", "b".repeat(64), false, 1)).response();
         var composite = objectMapper.readTree("""
                 {"exerciseID":"fixture-composite-01","exerciseType":"writeout","difficulty":5,"gradeIndex":7,
                  "gradeName":"七年级","question":"阅读材料<img src=\\\"https://images.fixture.test/a.png\\\">","queAns":"(1)1 (2)过程",
-                 "solution":"<script>bad()</script><p>安全解析</p>","subQues":[
+                 "solution":"<script>bad()</script><p>(1)安全解析；(2)代入计算</p>","subQues":[
                    {"exerciseType":"fillin","question":"第一问","solution":"","sortIndex":1},
                    {"exerciseType":"writeout","question":"第二问","solution":"","sortIndex":2}]}
                 """);
@@ -299,8 +400,12 @@ class QuestionBankIntegrationTest {
         var parent = questions.get(TEACHER, parentId);
         assertThat(parent.currentVersion().type()).isEqualTo(QuestionModels.Type.COMPOSITE);
         assertThat(parent.currentVersion().children()).extracting(QuestionDtos.ChildResponse::sequence).containsExactly(1, 2);
-        assertThat(parent.currentVersion().stem()).contains("[图片1]").doesNotContain("https://");
-        verify(media).transferExternalImage(anyString(), anyString(), anyString(), anyString());
+        assertThat(parent.currentVersion().stem()).contains("{{media:" + transferred + "}}")
+                .doesNotContain("https://");
+        assertThat(parent.currentVersion().answers()).singleElement().asString().contains("(1)1\n\n(2)过程");
+        assertThat(parent.currentVersion().analysis()).contains("(1)安全解析；\n\n(2)代入计算");
+        verify(media).transferExternalImage(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.eq("TEACHER"), anyString());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isEqualTo(3);
         var cleaned = legacyImports.cleanup(TEACHER, importTask.id(), "trace-legacy-cleanup-01");
         assertThat(cleaned.questionsDeleted()).isEqualTo(3); assertThat(cleaned.mediaReferencesReleased()).isEqualTo(1);
@@ -321,7 +426,7 @@ class QuestionBankIntegrationTest {
             assertThat(child.analysis()).isEqualTo("子题解析");
             assertThat(child.knowledgePoints()).extracting(QuestionDtos.KnowledgePointResponse::id).containsExactly(KP);
         });
-        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null).items())
+        assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null).items())
                 .singleElement().satisfies(item -> assertThat(item.type()).isEqualTo(QuestionModels.Type.COMPOSITE));
 
         var updated = questions.update(TEACHER, created.id(), 0, composite("父题二", "子题二", "B"),

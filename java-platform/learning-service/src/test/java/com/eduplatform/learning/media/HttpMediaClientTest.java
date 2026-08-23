@@ -19,6 +19,9 @@ import org.junit.jupiter.api.Test;
 class HttpMediaClientTest {
     private HttpServer server;
     private HttpMediaClient client;
+    private String observedRoles;
+    private String observedPermissions;
+    private String observedTransferBody;
 
     @BeforeEach
     void start() throws Exception {
@@ -47,6 +50,17 @@ class HttpMediaClientTest {
         }
     }
 
+    @Test
+    void systemImageTransferForwardsAdministratorCapabilityAndScope() {
+        String mediaId = client.transferExternalImage("00000000-0000-4000-8000-000000000405",
+                "https://images.fixture.test/system.png", "00000000-0000-4000-8000-000000009103",
+                "SYSTEM", "trace-system-image");
+        assertThat(mediaId).isEqualTo("00000000-0000-4000-8000-000000000405");
+        assertThat(observedRoles).isEqualTo("ADMIN");
+        assertThat(observedPermissions).isEqualTo("administration:access");
+        assertThat(observedTransferBody).contains("\"scope\":\"SYSTEM\"");
+    }
+
     private void assertNotBindable(String id, String reason) {
         assertThatThrownBy(() -> client.requireBindable(id, "QUESTION_IMAGE",
                 "00000000-0000-4000-8000-000000009101", "trace-bind"))
@@ -57,8 +71,15 @@ class HttpMediaClientTest {
     }
 
     private void handle(HttpExchange exchange) throws IOException {
-        exchange.getRequestBody().readAllBytes(); String path = exchange.getRequestURI().getPath();
+        byte[] requestBody = exchange.getRequestBody().readAllBytes(); String path = exchange.getRequestURI().getPath();
         if (path.equals("/download")) { respond(exchange, 200, "type,difficulty"); return; }
+        if (path.equals("/api/v1/media/external-image-transfers")) {
+            observedRoles = exchange.getRequestHeaders().getFirst("X-User-Roles");
+            observedPermissions = exchange.getRequestHeaders().getFirst("X-User-Permissions");
+            observedTransferBody = new String(requestBody, StandardCharsets.UTF_8);
+            respond(exchange, 201, "{\"mediaId\":\"00000000-0000-4000-8000-000000000405\","
+                    + "\"purpose\":\"QUESTION_IMAGE\",\"status\":\"READY\"}"); return;
+        }
         if (path.endsWith("/access-grants")) {
             respond(exchange, 201, "{\"method\":\"GET\",\"url\":\"http://127.0.0.1:" + server.getAddress().getPort()
                     + "/download\",\"headers\":{},\"expiresAt\":\"2026-08-09T22:00:00Z\"}"); return;

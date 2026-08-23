@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 教师题目新建/编辑页；父题和子题都提交 T09B QuestionVersionInput，编辑只通过 expectedRevision 创建新版本。
+ * 教师私有题新建/编辑页；父题和子题都提交 QuestionVersionInput，编辑只通过 expectedRevision 创建新版本。
  * 409 时保留当前内存表单并显式要求重新加载；422 按服务端 fieldErrors 映射到结构化字段。
  */
 import { GatewayRequestError } from "@edu/api-client";
@@ -36,12 +36,14 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const pointsPromise = teacherQuestionApi.knowledgePoints(controller.signal).then(flattenKnowledgePoints);
+    const pointsPromise = teacherQuestionApi.knowledgePoints({}, controller.signal).then(flattenKnowledgePoints);
     if (props.mode === "edit") {
       const [question, points] = await Promise.all([teacherQuestionApi.detail(questionId(), controller.signal), pointsPromise]);
       current.value = question;
       knowledgePoints.value = points;
-      if (question.status === "ARCHIVED") {
+      if (!question.editable) {
+        errorMessage.value = "平台系统题为公共只读资源，教师不能创建新版本。";
+      } else if (question.status === "ARCHIVED") {
         errorMessage.value = "归档题保持只读，不能创建新版本。";
       } else version.value = editableQuestionVersion(question.currentVersion);
     } else knowledgePoints.value = await pointsPromise;
@@ -52,7 +54,7 @@ async function load() {
 }
 
 async function submit() {
-  if (mediaBusy.value || current.value?.status === "ARCHIVED") return;
+  if (mediaBusy.value || current.value?.editable === false || current.value?.status === "ARCHIVED") return;
   saving.value = true;
   errorMessage.value = "";
   fieldErrors.value = {};
@@ -111,12 +113,17 @@ function messageFor(error: unknown, fallback: string): string {
     <div v-if="conflict" class="conflict-panel"><strong>检测到并发冲突</strong><p>本地输入仍在本页。重新加载前可先复制需要保留的内容。</p>
       <button class="button button--danger" type="button" @click="reloadAfterConflict">确认丢弃本地输入并加载最新版本</button></div>
     <div v-if="loading" class="teacher-loading" aria-busy="true">正在加载题目与知识点…</div>
-    <form v-else @submit.prevent="submit">
+    <div v-if="mode === 'edit' && current && !current.editable" class="teacher-empty">
+      <span>平台系统题</span><h3>此题只能查看和选用</h3>
+      <p>公共题由管理员统一维护，教师不能直接改写。</p>
+      <RouterLink class="button button--primary" :to="{ name: 'teacher-question-detail', params: { questionId: current.id } }">查看只读详情</RouterLink>
+    </div>
+    <form v-else-if="!loading" @submit.prevent="submit">
       <QuestionFields v-model="version" :knowledge-points="knowledgePoints" :field-errors="fieldErrors" field-prefix="version"
         :checkpoint-prefix="mode === 'create' ? `teacher-question:new:${createRequestId()}` : `teacher-question:${questionId()}:r${current?.revision ?? 0}`"
         allow-composite @busy-change="mediaBusy = $event" />
       <footer class="editor-actions"><RouterLink class="button button--quiet" :to="{ name: 'teacher-questions' }">取消</RouterLink>
-        <button class="button button--primary" type="submit" :disabled="saving || mediaBusy || current?.status === 'ARCHIVED'">
+        <button class="button button--primary" type="submit" :disabled="saving || mediaBusy || current?.editable === false || current?.status === 'ARCHIVED'">
           {{ saving ? "正在保存…" : mode === "create" ? "创建题目" : "创建不可变新版本" }}
         </button></footer>
     </form>

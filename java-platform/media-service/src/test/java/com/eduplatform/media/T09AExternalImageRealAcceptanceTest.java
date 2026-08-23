@@ -432,7 +432,8 @@ class T09AExternalImageRealAcceptanceTest {
         UUID clientRequestId = UUID.nameUUIDFromBytes((ids.importTaskId + "\0" + source.externalId()
                 + ":parent:image:1").getBytes(StandardCharsets.UTF_8));
         JsonNode replay = request(port, token, "POST", "/api/v1/media/external-image-transfers",
-                mapper.writeValueAsString(Map.of("clientRequestId", clientRequestId, "sourceUrl", sourceUrl)),
+                mapper.writeValueAsString(Map.of("clientRequestId", clientRequestId, "sourceUrl", sourceUrl,
+                        "scope", "TEACHER")),
                 200, mapper);
         assertThat(replay.path("mediaId").asString()).isEqualTo(ids.mediaId);
         assertThat(mediaJdbc.queryForObject("SELECT COUNT(*) FROM media_asset WHERE media_id=?",
@@ -447,7 +448,7 @@ class T09AExternalImageRealAcceptanceTest {
         UUID requestId = UUID.randomUUID();
         JsonNode rejected = request(port, token, "POST", "/api/v1/media/external-image-transfers",
                 mapper.writeValueAsString(Map.of("clientRequestId", requestId,
-                        "sourceUrl", "https://example.com/t09a-rejected.png")), 422, mapper);
+                        "sourceUrl", "https://example.com/t09a-rejected.png", "scope", "TEACHER")), 422, mapper);
         assertThat(rejected.path("code").asString()).isEqualTo("MEDIA.EXTERNAL_IMAGE_INVALID");
         assertThat(mediaJdbc.queryForObject(
                 "SELECT COUNT(*) FROM upload_session WHERE owner_id=? AND client_request_id=?",

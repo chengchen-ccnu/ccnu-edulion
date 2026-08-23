@@ -207,9 +207,9 @@ learning-service 只通过 `MEDIA_SERVICE_BASE_URL` 调用 media-service 的绑�
 
 RabbitMQ 资源为 `edu.learning.events.v1`、队列 `edu.learning.question-import.v1`、死信交换机 `edu.learning.dlx.v1` 和 DLQ `edu.learning.question-import.dlq.v1`。生产者使用事务 Outbox、持久消息、mandatory、publisher confirm/return 和有限退避；消费者总计最多尝试 3 次，超限拒绝进入 DLQ，并以数据库 `eventId` 幂等。重复消费的每一行还使用任务 ID 与行号生成确定性 `clientRequestId`，不会重复创建题目。
 
-T09A/T09B 的历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。T09B 只允许教师对单个 `NEEDS_REVIEW` 项携带 revision，显式提交完整结构化修正后导入或确认跳过；不会启发式放行，也不会提高批次/任务上限。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
+历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。0.13.0 起创建、批次和清理端点只对具备 `administration:access` 的管理员开放，任务冻结为 `SYSTEM`，正式题目直接为 `ACTIVE`，图片也创建为管理员持有的 `SYSTEM` 资产；教师端既有旧任务只读，不再复核、继续提交或清理历史 JSON。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
-脚本只经 Gateway 调用，必须先把当前教师的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
+脚本只经 Gateway 调用，必须先把当前管理员的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
@@ -225,7 +225,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
   -AllItems -TaskSize 1000 -BatchSize 20
 ```
 
-核对 dry-run 的 `validCount/reviewCount/failedCount` 和全部任务详情后，正式全量导入还必须额外提供确认开关：
+核对 dry-run 的 `validCount/reviewCount/failedCount` 和全部任务详情后，正式全量导入还必须额外提供确认开关；除非已经明确批准全量 SYSTEM 题库，否则优先使用后文的平衡小样本模式：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
@@ -233,7 +233,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuest
   -AllItems -ConfirmFullMigration -TaskSize 1000 -BatchSize 20
 ```
 
-`AllItems` 表示每份 JSON 都会被提交处理，不表示所有数据都会绕过校验直接创建题目。`NEEDS_REVIEW`、图片转存失败或字段错误仍须在教师端逐项解决；只有 `importedCount` 计入已创建草稿。全量运行期间不得增删或改写源目录文件，否则清单指纹变化会拒绝复用旧检查点。检查点不能放在 `SourceRoot` 内，不保存 Token、绝对源路径、题干、答案或原始 JSON。
+`AllItems` 表示每份 JSON 都会被提交处理，不表示所有数据都会绕过校验直接创建题目。`NEEDS_REVIEW` 不会进入 VALID-only 正式样本；应修正只读来源的上游副本后重新 DryRun，或在后续管理员复核契约落地后处理，教师端不能启发式放行。只有 `importedCount` 计入已创建并启用的 SYSTEM 题。全量运行期间不得增删或改写源目录文件，否则清单指纹变化会拒绝复用旧检查点。检查点不能放在 `SourceRoot` 内，不保存 Token、绝对源路径、题干、答案或原始 JSON。
 
 已有全量 DryRun 时，优先使用 T10A 的 VALID-only 模式，不要再次把已知 `NEEDS_REVIEW` 项提交到正式任务。先只读规划；脚本从 DryRun 检查点自动取得任务，无需复制任务 ID，且只输出安全聚合：
 
@@ -257,18 +257,39 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
   -CheckpointPath '<outside-source-root\import-valid-checkpoint.json>'
 ```
 
+需要“各现有年级/题型/难度 100 多道、稀缺分类全量、至少一半含图”的受控样本时，先使用相同参数执行 `-PlanOnly`，核对可用量、目标量和确定性选择结果；确认后移除 `-PlanOnly` 并增加 `-ConfirmSampleImport`。当前硬配额为每个现有分类 101 道，`BalancedSampleSize` 是总样本上限而非每类相加：
+
+```powershell
+& .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Import -PlanOnly -BalancedSampleSize 650 `
+  -SourceRoot '<只读历史题库根目录>' `
+  -SourceSystem 'KG_MATH_T10B_V3' `
+  -ValidatedDryRunCheckpointPath '<管理员 SYSTEM dry-run-checkpoint.json>' `
+  -AllowedImageHost @('v3.rawstonedu.net') `
+  -ExcludeInvalidImageItems -ExcludeUnapprovedImageHostItems
+
+& .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
+  -Action Import -ConfirmSampleImport -BalancedSampleSize 650 `
+  -SourceRoot '<只读历史题库根目录>' `
+  -SourceSystem 'KG_MATH_T10B_V3' `
+  -ValidatedDryRunCheckpointPath '<管理员 SYSTEM dry-run-checkpoint.json>' `
+  -AllowedImageHost @('v3.rawstonedu.net') `
+  -ExcludeInvalidImageItems -ExcludeUnapprovedImageHostItems `
+  -CheckpointPath '<来源目录之外\system-sample-import.json>'
+```
+
 该模式再次校验来源根/清单指纹、SourceSystem、DryRun 终态和持久化 VALID 计数，只把匹配的 VALID 来源提交；已知复核项不进入正式任务。图片 URL 由 learning-service 交给 media-service 转存为 OSS 对象，题目版本只保存稳定 `mediaId`。`AllowedImageHost` 只是一道本地审批门禁，不会修改 media-service 配置，也不替代其逐跳 DNS、MIME、大小和图片魔数校验。401 或网络中断后更新当前进程 Token，以完全相同参数重跑即可从已确认批次恢复；脚本不会自动保存或刷新账号、密码和 Token。
 
-如需撤销尚未发布/修改的全量 Import 草稿，使用正式导入结果中的 `checkpointPath`：
+如需撤销本次仍未被后续修改的 SYSTEM Import，使用正式导入结果中的 `checkpointPath`：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LegacyQuestionJsonMigration.ps1 `
   -Action Cleanup -CheckpointPath '<import-checkpoint.json>'
 ```
 
-清理逐任务调用既有精确端点；已发布、已人工修改或不属于该任务的题目不会被静默删除。操作结束后必须从当前进程移除 `EDU_MIGRATION_ACCESS_TOKEN`。
+清理逐任务调用管理员精确端点；不属于该任务、作用域不符或 revision 已变化的题目不会被静默删除。操作结束后必须从当前进程移除 `EDU_MIGRATION_ACCESS_TOKEN`。
 
-外部图片仅由 media-service 转存。默认 `MEDIA_EXTERNAL_IMAGE_IMPORT_ENABLED=false`；人工实际导入图片前必须显式启用，并把 `MEDIA_EXTERNAL_IMAGE_ALLOWED_HOSTS` 设置为逗号分隔的精确 HTTPS 主机白名单。`MEDIA_EXTERNAL_IMAGE_MAX_BYTES` 默认 10 MiB、`MEDIA_EXTERNAL_IMAGE_TIMEOUT` 默认 10 秒、`MEDIA_EXTERNAL_IMAGE_MAX_REDIRECTS` 默认 2。每次请求和重定向都复核白名单、DNS 私网/回环地址、MIME、大小和图片魔数；URL 明文不写数据库、事件或日志。learning-service 仍只配置 `MEDIA_SERVICE_BASE_URL`，不配置 OSS SDK 或凭据。
+外部图片仅由 media-service 转存。默认 `MEDIA_EXTERNAL_IMAGE_IMPORT_ENABLED=false`；人工实际导入图片前必须显式启用，并把 `MEDIA_EXTERNAL_IMAGE_ALLOWED_HOSTS` 设置为逗号分隔的精确 HTTPS 主机白名单。`MEDIA_EXTERNAL_IMAGE_MAX_BYTES` 默认 10 MiB、`MEDIA_EXTERNAL_IMAGE_TIMEOUT` 默认 10 秒、`MEDIA_EXTERNAL_IMAGE_MAX_REDIRECTS` 默认 2。每次请求和重定向都复核白名单、DNS 私网/回环地址、MIME、大小和图片魔数；URL 明文不写数据库、事件或日志。learning-service 仍只配置 `MEDIA_SERVICE_BASE_URL`，不配置 OSS SDK 或凭据。SYSTEM 转存同时传递管理员角色与 `administration:access`；media-service 不接受仅凭 `ADMIN` 角色名创建公共资产。
 
 真实 MySQL 迁移验收默认跳过，并且不会创建数据库。先由环境管理员创建用途明确的 `edu_platform_learning_dev`，再通过安全包装脚本显式执行；测试在建立 Spring 上下文前复核 Schema 名。默认用例以最小虚构组合题和复核项验证 V3，并按随机 owner、任务和题目精确清理。设置 `LEGACY_QUESTION_ROOT` 后还会程序化选择一份无图片、无需复核的真实文件，分别执行一项 dry-run、一项实际导入和精确清理；终端不输出路径、题干、答案或 JSON。测试最终只保留 V1/V2/V3 Schema，不保留 Fixture：
 
@@ -277,6 +298,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\Invoke-
 ```
 
 若目标数据库不存在，Flyway 应以 `Unknown database 'edu_platform_learning_dev'` 停止；不得为通过验收而由应用或 Codex 自动创建 Schema。
+
+## T10B 知识图谱迁移
+
+T10B 的图谱脚本只经 Gateway 调用管理员接口，不读取本地凭据文件，也不连接 MySQL。短期管理员令牌只能放在当前 PowerShell 进程的 `EDU_MIGRATION_ACCESS_TOKEN`；脚本不会打印或写入令牌。检查点必须位于两个只读来源文件所在目录之外，只保存文件指纹、任务 ID、批次位置和聚合计数。
+
+默认执行 DryRun：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-KnowledgeGraphMigration.ps1 `
+  -NodeFile '<只读节点 JSON>' -RelationFile '<只读关系 JSON>' `
+  -SourceSystem 'KG_MATH_T10B_DRYRUN_V1' -ApiBaseUrl 'http://127.0.0.1:8080' `
+  -BatchSize 200 -CheckpointPath '<来源目录之外\kg-dryrun-checkpoint.json>'
+```
+
+正式 Import 除 `-Action Import -ConfirmImport` 外，还必须同时给出 `-ConfirmStageMapping`、`-ConfirmStatusMapping`、`-ConfirmTypeNames` 与 `-ConfirmParentKeySemantics`。这些开关表示负责人已经确认：`02/03/04` 分别为 `PRIMARY/JUNIOR/SENIOR`，无年级适用于整个学段，来源 `status=0` 原样保存但不直接决定平台状态，`parentId` 只写 `source_parent_key`，六组来源类型按已确认的“学段 + 数量”签名规范为“知识点”或“题型”。脚本与服务端都会拒绝偏离这些约束的输入；正式导入按平台策略启用小学/初中节点、高中保持禁用，两个 parent 外键均为空。每次正式导入应使用新的、可审计的 `SourceSystem` 和独立检查点；完成后使用 `Remove-Item Env:EDU_MIGRATION_ACCESS_TOKEN` 清除当前进程令牌。
+
+V7 是导入完成后的平台启用策略迁移：只把所有来源图谱的 `PRIMARY/JUNIOR` 节点设为启用，并确保 `SENIOR` 禁用；不写 `parent_id`/`taxonomy_parent_id`，也不新增、删除或重排先修关系。教师题目接口由 OpenAPI 0.13.0 支持小学一至六年级和初中七至九年级，高中仍不进入题目写契约；同版本增加 SYSTEM/TEACHER 来源和公共题只读访问。专用开发库可通过上文 MySQL 验收命令幂等应用并验证该策略。
 
 ## 全量验证
 

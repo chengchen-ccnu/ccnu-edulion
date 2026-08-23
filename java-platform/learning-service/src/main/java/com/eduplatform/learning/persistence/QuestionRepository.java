@@ -11,6 +11,7 @@ import com.eduplatform.learning.domain.QuestionModels.Media;
 import com.eduplatform.learning.domain.QuestionModels.Option;
 import com.eduplatform.learning.domain.QuestionModels.RowError;
 import com.eduplatform.learning.domain.QuestionModels.Version;
+import com.eduplatform.learning.importing.LegacyQuestionJsonParser.LegacyTag;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -45,13 +46,20 @@ public class QuestionRepository {
         this.mapper = mapper;
     }
 
-    /** 按启用状态和可选年级读取知识点，结果供服务层组树。 */
-    public List<KnowledgePoint> listKnowledgePoints(boolean enabledOnly, QuestionModels.Grade grade) {
-        String sql = "SELECT * FROM knowledge_point WHERE 1=1"
+    /** 按启用状态、学段和可选年级读取人工维护知识点，结果供服务层组树。 */
+    public List<KnowledgePoint> listKnowledgePoints(boolean enabledOnly, QuestionModels.Stage stage,
+            QuestionModels.Grade grade) {
+        // 旧树接口只服务管理员手工知识树；图谱来源必须走分页搜索，避免一次返回数千个根节点。
+        String sql = "SELECT * FROM knowledge_point WHERE source_system IS NULL"
                 + (enabledOnly ? " AND enabled=TRUE" : "")
+                + (stage == null ? "" : " AND stage=:stage")
                 + (grade == null ? "" : " AND grade=?")
                 + " ORDER BY parent_id, sort_order, code";
-        return grade == null ? jdbc.query(sql, this::knowledge) : jdbc.query(sql, this::knowledge, grade.name());
+        Map<String, Object> args = new HashMap<>();
+        if (stage != null) args.put("stage", stage.name());
+        if (grade != null) args.put("grade", grade.name());
+        sql = sql.replace("grade=?", "grade=:grade");
+        return named.query(sql, args, this::knowledge);
     }
 
     /** 按稳定 ID 查询单个知识点，不跨 Schema 读取其他领域。 */
@@ -99,6 +107,18 @@ public class QuestionRepository {
                 this::aggregate, id, ownerId).stream().findFirst();
     }
 
+    /** 教师可读取公共 SYSTEM 根题或本人 TEACHER 根题；其他教师私有题仍按不存在处理。 */
+    public Optional<Aggregate> findVisibleRootAggregate(String id, String teacherId) {
+        return jdbc.query("SELECT * FROM question_aggregate WHERE id=? AND parent_question_id IS NULL AND (scope='SYSTEM' OR (scope='TEACHER' AND owner_id=?))",
+                this::aggregate, id, teacherId).stream().findFirst();
+    }
+
+    /** 学习端只读取已启用的 SYSTEM 根题，不把草稿、归档或教师私有题投影给学生。 */
+    public Optional<Aggregate> findActiveSystemRootAggregate(String id) {
+        return jdbc.query("SELECT * FROM question_aggregate WHERE id=? AND parent_question_id IS NULL AND scope='SYSTEM' AND status='ACTIVE'",
+                this::aggregate, id).stream().findFirst();
+    }
+
     /** 插入稳定题目聚合；初始当前版本指针稍后在同一事务设置。 */
     public void insertAggregate(Aggregate value) {
         insertAggregate(value, null);
@@ -106,8 +126,8 @@ public class QuestionRepository {
 
     /** 插入根题目或指定组合父题下的隐藏子聚合；子聚合不会进入教师题库根列表。 */
     public void insertAggregate(Aggregate value, String parentQuestionId) {
-        jdbc.update("INSERT INTO question_aggregate(id,owner_id,status,current_version_id,revision,created_at,updated_at,parent_question_id) VALUES(?,?,?,?,?,?,?,?)",
-                value.id(), value.ownerId(), value.status().name(), value.currentVersionId(), value.revision(),
+        jdbc.update("INSERT INTO question_aggregate(id,owner_id,scope,status,current_version_id,revision,created_at,updated_at,parent_question_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                value.id(), value.ownerId(), value.scope().name(), value.status().name(), value.currentVersionId(), value.revision(),
                 ts(value.createdAt()), ts(value.updatedAt()), parentQuestionId);
     }
 
@@ -149,6 +169,17 @@ public class QuestionRepository {
         for (Media media : value.media()) {
             jdbc.update("INSERT INTO question_version_media(id,question_version_id,media_id,purpose,sequence_no,created_at) VALUES(?,?,?,?,?,?)",
                     media.id(), value.id(), media.mediaId(), media.purpose().name(), media.sequence(), ts(value.createdAt()));
+        }
+    }
+
+    /** 历史导入创建版本后补写 tags 的来源语义；知识点 UUID 与顺序行本身保持不可变。 */
+    public void applyLegacyKnowledgeMetadata(String questionId, List<LegacyTag> tags) {
+        if (tags.isEmpty()) return;
+        String versionId = jdbc.queryForObject("SELECT current_version_id FROM question_aggregate WHERE id=?", String.class, questionId);
+        for (LegacyTag tag : tags) {
+            jdbc.update("UPDATE question_version_knowledge_point SET priority=?,core_flag=?,exam_point_flag=?,last_exam_point_flag=?,source_tag_sort_index=? WHERE question_version_id=? AND knowledge_point_id=?",
+                    tag.priority(), tag.coreFlag(), tag.examPointFlag(), tag.lastExamPointFlag(), tag.sortIndex(),
+                    versionId, tag.knowledgePointId());
         }
     }
 
@@ -196,11 +227,21 @@ public class QuestionRepository {
     }
 
     /** 查询教师当前版本列表；返回行绝不读取 answers_json 或 analysis_md。 */
-    public PagedRows listQuestions(String ownerId, int page, int size, String keyword, QuestionModels.Type type,
-            QuestionModels.Status status, QuestionModels.Difficulty difficulty, String knowledgePointId) {
-        StringBuilder where = new StringBuilder(" FROM question_aggregate q JOIN question_version v ON v.id=q.current_version_id WHERE q.owner_id=:ownerId AND q.parent_question_id IS NULL");
-        Map<String, Object> args = new HashMap<>(); args.put("ownerId", ownerId);
+    public PagedRows listQuestions(String ownerId, QuestionModels.Scope scope, int page, int size, String keyword, QuestionModels.Stage stage,
+            QuestionModels.Grade grade, QuestionModels.Type type, QuestionModels.Status status,
+            QuestionModels.Difficulty difficulty, String knowledgePointId) {
+        StringBuilder where = new StringBuilder(" FROM question_aggregate q JOIN question_version v ON v.id=q.current_version_id WHERE q.parent_question_id IS NULL");
+        Map<String, Object> args = new HashMap<>();
+        if (scope == QuestionModels.Scope.SYSTEM) {
+            where.append(" AND q.scope='SYSTEM'");
+        } else if (scope == QuestionModels.Scope.TEACHER) {
+            where.append(" AND q.scope='TEACHER' AND q.owner_id=:ownerId"); args.put("ownerId", ownerId);
+        } else {
+            where.append(" AND (q.scope='SYSTEM' OR (q.scope='TEACHER' AND q.owner_id=:ownerId))"); args.put("ownerId", ownerId);
+        }
         if (keyword != null && !keyword.isBlank()) { where.append(" AND v.stem_md LIKE :keyword"); args.put("keyword", "%" + keyword.trim() + "%"); }
+        if (stage != null) { where.append(" AND v.stage=:stage"); args.put("stage", stage.name()); }
+        if (grade != null) { where.append(" AND v.grade=:grade"); args.put("grade", grade.name()); }
         if (type != null) { where.append(" AND v.question_type=:type"); args.put("type", type.name()); }
         if (status != null) { where.append(" AND q.status=:status"); args.put("status", status.name()); }
         if (difficulty != null) { where.append(" AND v.difficulty=:difficulty"); args.put("difficulty", difficulty.name()); }
@@ -210,20 +251,20 @@ public class QuestionRepository {
         }
         long total = named.queryForObject("SELECT COUNT(*)" + where, args, Long.class);
         args.put("limit", size); args.put("offset", (page - 1) * size);
-        List<SummaryRow> rows = named.query("SELECT q.id,q.status,q.revision,q.current_version_id,q.created_at,q.updated_at,v.version_number,v.question_type,v.difficulty,v.grade,v.stem_md" + where
+        List<SummaryRow> rows = named.query("SELECT q.id,q.scope,q.status,q.revision,q.current_version_id,q.created_at,q.updated_at,v.version_number,v.question_type,v.difficulty,v.stage,v.grade,v.stem_md" + where
                         + " ORDER BY q.updated_at DESC,q.id DESC LIMIT :limit OFFSET :offset", args,
-                (rs, row) -> new SummaryRow(rs.getString("id"), QuestionModels.Status.valueOf(rs.getString("status")),
+                (rs, row) -> new SummaryRow(rs.getString("id"), QuestionModels.Scope.valueOf(rs.getString("scope")), QuestionModels.Status.valueOf(rs.getString("status")),
                         rs.getLong("revision"), rs.getString("current_version_id"), rs.getInt("version_number"),
                         QuestionModels.Type.valueOf(rs.getString("question_type")), QuestionModels.Difficulty.valueOf(rs.getString("difficulty")),
-                        QuestionModels.Grade.valueOf(rs.getString("grade")), rs.getString("stem_md"),
+                        QuestionModels.Stage.valueOf(rs.getString("stage")), QuestionModels.Grade.valueOf(rs.getString("grade")), rs.getString("stem_md"),
                         instant(rs, "created_at"), instant(rs, "updated_at"), knowledgeIds(rs.getString("current_version_id"))));
         return new PagedRows(rows, total);
     }
 
     /** 插入等待异步消费的教师导入任务，不保存源文件地址。 */
     public void insertImportTask(ImportTask value) {
-        jdbc.update("INSERT INTO question_import_task(id,owner_id,client_request_id,request_fingerprint,source_media_id,source_format,status,progress,total_rows,processed_rows,success_count,review_count,skipped_count,failure_count,source_system,source_root_fingerprint,dry_run,max_items,failure_code,failure_message,retain_until,source_released_at,cleaned_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                value.id(), value.ownerId(), value.clientRequestId(), value.requestFingerprint(), value.sourceMediaId(),
+        jdbc.update("INSERT INTO question_import_task(id,owner_id,question_scope,client_request_id,request_fingerprint,source_media_id,source_format,status,progress,total_rows,processed_rows,success_count,review_count,skipped_count,failure_count,source_system,source_root_fingerprint,dry_run,max_items,failure_code,failure_message,retain_until,source_released_at,cleaned_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                value.id(), value.ownerId(), value.questionScope().name(), value.clientRequestId(), value.requestFingerprint(), value.sourceMediaId(),
                 value.sourceFormat().name(), value.status().name(), value.progress(), value.totalRows(), value.processedRows(),
                 value.successCount(), value.reviewCount(), value.skippedCount(), value.failureCount(), value.sourceSystem(),
                 value.sourceRootFingerprint(), value.dryRun(), value.maxItems(), value.failureCode(), value.failureMessage(),
@@ -527,7 +568,8 @@ public class QuestionRepository {
      * 精确删除一个验收任务创建且仍为 DRAFT 的题目图；调用方必须已写媒体解除事件。
      * @return 实际删除的聚合数；其他任务、非 DRAFT 题目和历史源目录均不受影响
      */
-    public CleanupCounts deleteLegacyTaskQuestions(String taskId, String ownerId, Instant now) {
+    public CleanupCounts deleteLegacyTaskQuestions(String taskId, String ownerId,
+            QuestionModels.Scope scope, Instant now) {
         List<String> roots = legacyCreatedQuestionIds(taskId, ownerId);
         if (roots.isEmpty()) {
             jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
@@ -542,9 +584,10 @@ public class QuestionRepository {
                 (rs, row) -> rs.getString(1), roots.toArray()));
         all = all.stream().distinct().toList();
         String marks = String.join(",", java.util.Collections.nCopies(all.size(), "?"));
-        Integer unsafe = jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE id IN (" + marks + ") AND (owner_id<>? OR status<>'DRAFT')",
-                Integer.class, concat(all, ownerId));
-        if (unsafe != null && unsafe > 0) throw new IllegalStateException("Legacy cleanup includes non-DRAFT or foreign questions");
+        String safeStatus = scope == QuestionModels.Scope.SYSTEM ? "ACTIVE" : "DRAFT";
+        Integer unsafe = jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE id IN (" + marks + ") AND (owner_id<>? OR scope<>? OR status<>? OR revision<>0)",
+                Integer.class, concat(all, List.of(ownerId, scope.name(), safeStatus)));
+        if (unsafe != null && unsafe > 0) throw new IllegalStateException("Legacy cleanup includes modified, foreign or scope-mismatched questions");
         jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         jdbc.update("DELETE FROM question_legacy_review_item WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
@@ -626,19 +669,20 @@ public class QuestionRepository {
     }
 
     private KnowledgePoint knowledge(ResultSet rs, int row) throws SQLException {
+        String stage = rs.getString("stage"), grade = rs.getString("grade"), subject = rs.getString("subject");
         return new KnowledgePoint(rs.getString("id"), rs.getString("code"), rs.getString("name"), rs.getString("parent_id"),
-                QuestionModels.Stage.valueOf(rs.getString("stage")), QuestionModels.Grade.valueOf(rs.getString("grade")),
-                QuestionModels.Subject.valueOf(rs.getString("subject")), rs.getInt("sort_order"), rs.getBoolean("enabled"),
+                stage == null ? null : QuestionModels.Stage.valueOf(stage), grade == null ? null : QuestionModels.Grade.valueOf(grade),
+                subject == null ? null : QuestionModels.Subject.valueOf(subject), rs.getInt("sort_order"), rs.getBoolean("enabled"),
                 rs.getLong("revision"), instant(rs, "created_at"), instant(rs, "updated_at"));
     }
 
     private Aggregate aggregate(ResultSet rs, int row) throws SQLException {
-        return new Aggregate(rs.getString("id"), rs.getString("owner_id"), QuestionModels.Status.valueOf(rs.getString("status")),
+        return new Aggregate(rs.getString("id"), rs.getString("owner_id"), QuestionModels.Scope.valueOf(rs.getString("scope")), QuestionModels.Status.valueOf(rs.getString("status")),
                 rs.getString("current_version_id"), rs.getLong("revision"), instant(rs, "created_at"), instant(rs, "updated_at"));
     }
 
     private ImportTask importTask(ResultSet rs, int row) throws SQLException {
-        return new ImportTask(rs.getString("id"), rs.getString("owner_id"), rs.getString("client_request_id"),
+        return new ImportTask(rs.getString("id"), rs.getString("owner_id"), QuestionModels.Scope.valueOf(rs.getString("question_scope")), rs.getString("client_request_id"),
                 rs.getString("request_fingerprint"), rs.getString("source_media_id"),
                 QuestionModels.ImportFormat.valueOf(rs.getString("source_format")), QuestionModels.ImportStatus.valueOf(rs.getString("status")),
                 rs.getInt("progress"), rs.getInt("total_rows"), rs.getInt("processed_rows"), rs.getInt("success_count"),
@@ -702,8 +746,9 @@ public class QuestionRepository {
     }
 
     public record Idempotency(String fingerprint, String resourceType, String resourceId) {}
-    public record SummaryRow(String id, QuestionModels.Status status, long revision, String currentVersionId,
-            int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Grade grade,
+    public record SummaryRow(String id, QuestionModels.Scope scope, QuestionModels.Status status, long revision, String currentVersionId,
+            int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Stage stage,
+            QuestionModels.Grade grade,
             String stem, Instant createdAt, Instant updatedAt, List<String> knowledgePointIds) {}
     public record PagedRows(List<SummaryRow> rows, long total) {}
     public record VersionSummaryRow(String id, int versionNumber, QuestionModels.Type type,

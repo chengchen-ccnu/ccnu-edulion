@@ -28,6 +28,7 @@ public class LegacyQuestionJsonParser {
     private static final Pattern OPTION = Pattern.compile("(?<![A-Za-z])([A-H])[.．、]");
     private static final Pattern MULTI_PART = Pattern.compile("[（(][1-9][)）]");
     private static final Pattern NUMBERED_ANSWER = Pattern.compile("[（(]([1-9][0-9]*)[)）]");
+    private static final String PENDING_IMAGE_PREFIX = "{{question-image:";
     private static final Set<String> SAFE_TAGS = Set.of("p", "br", "sup", "sub", "b", "strong", "i", "em",
             "u", "ul", "ol", "li", "table", "thead", "tbody", "tr", "td", "th");
 
@@ -56,8 +57,9 @@ public class LegacyQuestionJsonParser {
         QuestionModels.Difficulty difficulty = difficulty(originalDifficulty);
         if (difficulty == null) issues.add("FIELD_INVALID");
 
-        Cleaned stem = clean(text(json, "question"));
-        Cleaned solution = clean(text(json, "solution"));
+        ImageCollector images = new ImageCollector();
+        Cleaned stem = clean(text(json, "question"), images);
+        Cleaned solution = clean(text(json, "solution"), images);
         if (stem.unsafe() || solution.unsafe()) issues.add("HTML_UNSAFE");
         if (stem.text().isBlank()) issues.add("FIELD_INVALID");
 
@@ -65,10 +67,13 @@ public class LegacyQuestionJsonParser {
         List<String> answers = type == QuestionModels.Type.COMPOSITE
                 ? (text(json, "queAns") == null ? List.of("") : List.of(text(json, "queAns")))
                 : answers(text(json, "queAns"), type);
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers, images);
+        answers = cleanedAnswers.answers();
+        if (cleanedAnswers.unsafe()) issues.add("HTML_UNSAFE");
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
             if (split == null) issues.add("EMBEDDED_OPTIONS_AMBIGUOUS");
-            else { stem = new Cleaned(split.stem(), stem.images(), stem.unsafe()); options = split.options(); }
+            else { stem = new Cleaned(split.stem(), stem.unsafe()); options = split.options(); }
         }
         if (answers.isEmpty() && type != QuestionModels.Type.COMPOSITE) issues.add("FIELD_INVALID");
 
@@ -77,62 +82,100 @@ public class LegacyQuestionJsonParser {
         if (subQues != null && subQues.isArray() && subQues.size() > 0) {
             type = QuestionModels.Type.COMPOSITE;
             if (answers.isEmpty()) answers = List.of("");
+            answers = answers.stream().map(LegacyQuestionJsonParser::numberedLines).toList();
+            solution = new Cleaned(numberedLines(solution.text()), solution.unsafe());
             List<String> explicitAnswers = splitNumbered(text(json, "queAns"), subQues.size());
             int index = 0;
             for (JsonNode child : subQues) {
                 index++;
                 String fallbackAnswer = explicitAnswers == null ? null : explicitAnswers.get(index - 1);
-                Candidate parsedChild = child(child, grade, difficulty, index, fallbackAnswer);
-                if (parsedChild == null) issues.add("SUBQUESTION_ANSWER_MISSING");
-                else children.add(parsedChild);
+                ChildParsed parsedChild = child(child, grade, difficulty, index, fallbackAnswer);
+                if (parsedChild.candidate() == null) issues.addAll(parsedChild.issues());
+                else children.add(parsedChild.candidate());
             }
             if (children.size() != subQues.size()) children.clear();
         } else if (type == QuestionModels.Type.SHORT_ANSWER && multiPartCount(stem.text()) >= 2) {
             issues.add("IMPLICIT_MULTI_PART");
         }
 
+        TagResult tags = tags(json);
+        issues.addAll(tags.issues());
         issues = issues.stream().distinct().toList();
         if (!issues.isEmpty() || type == null || grade == null || difficulty == null) {
             return Parsed.review(issues, originalDifficulty, jsonEdition, jsonGrade, grade);
         }
-        QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR,
+        QuestionDtos.VersionInput input = new QuestionDtos.VersionInput(type, difficulty, grade.stage(),
                 grade, QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(),
                 List.of(), List.of());
-        List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        return new Parsed(new Candidate(input, List.copyOf(images), List.copyOf(children)), List.of(),
+        return new Parsed(new Candidate(input, images.urls(), List.copyOf(children), tags.tags()), List.of(),
                 originalDifficulty, jsonEdition, jsonGrade, grade);
     }
 
-    private Candidate child(JsonNode json, QuestionModels.Grade grade, QuestionModels.Difficulty difficulty,
+    private ChildParsed child(JsonNode json, QuestionModels.Grade grade, QuestionModels.Difficulty difficulty,
             int sequence, String fallbackAnswer) {
         QuestionModels.Type type = type(text(json, "exerciseType"));
-        if (type == null || type == QuestionModels.Type.COMPOSITE) return null;
-        Cleaned stem = clean(text(json, "question")); Cleaned solution = clean(text(json, "solution"));
+        if (type == null || type == QuestionModels.Type.COMPOSITE) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
+        ImageCollector images = new ImageCollector();
+        Cleaned stem = clean(text(json, "question"), images); Cleaned solution = clean(text(json, "solution"), images);
         List<String> answers = answers(text(json, "queAns"), type);
         if (answers.isEmpty() && fallbackAnswer != null && !fallbackAnswer.isBlank()) answers = answers(fallbackAnswer, type);
-        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe()) return null;
+        CleanedAnswers cleanedAnswers = cleanAnswers(answers, images);
+        answers = cleanedAnswers.answers();
+        if (stem.text().isBlank() || answers.isEmpty() || stem.unsafe() || solution.unsafe() || cleanedAnswers.unsafe()) {
+            return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
+        }
         List<QuestionDtos.OptionInput> options = List.of();
         if (type == QuestionModels.Type.SINGLE_CHOICE || type == QuestionModels.Type.MULTIPLE_CHOICE) {
             OptionSplit split = splitOptions(stem.text(), integer(json, "optCount"));
-            if (split == null) return null;
-            stem = new Cleaned(split.stem(), stem.images(), stem.unsafe()); options = split.options();
+            if (split == null) return ChildParsed.invalid("SUBQUESTION_ANSWER_MISSING");
+            stem = new Cleaned(split.stem(), stem.unsafe()); options = split.options();
         }
-        List<String> images = new ArrayList<>(stem.images()); images.addAll(solution.images());
-        return new Candidate(new QuestionDtos.VersionInput(type, difficulty, QuestionModels.Stage.JUNIOR, grade,
+        TagResult tags = tags(json);
+        if (!tags.issues().isEmpty()) return new ChildParsed(null, tags.issues());
+        return new ChildParsed(new Candidate(new QuestionDtos.VersionInput(type, difficulty, grade.stage(), grade,
                 QuestionModels.Subject.MATHEMATICS, stem.text(), options, answers, solution.text(), List.of(), List.of()),
-                List.copyOf(images), List.of());
+                images.urls(), List.of(), tags.tags()), List.of());
     }
 
-    /** 清洗危险 HTML 属性/标签并提取 HTTPS 图片；安全展示标签与 LaTeX 字符保持原序。 */
-    private static Cleaned clean(String source) {
+    /** 读取各题自己的 tags；只按 knowId 去重，名称绝不用于建立外键。 */
+    private static TagResult tags(JsonNode json) {
+        JsonNode values = json.get("tags");
+        if (values == null || values.isNull()) return new TagResult(List.of(), List.of());
+        if (!values.isArray()) return new TagResult(List.of(), List.of("KNOWLEDGE_POINT_BINDING_INVALID"));
+        List<LegacyTag> tags = new ArrayList<>(); List<String> issues = new ArrayList<>(); Set<String> ids = new HashSet<>();
+        int sourceOrder = 0;
+        for (JsonNode value : values) {
+            sourceOrder++;
+            String knowId = text(value, "knowId"), name = text(value, "knowName"), typeId = text(value, "knowTypeId");
+            if (knowId == null || knowId.isBlank() || name == null || name.isBlank() || typeId == null || typeId.isBlank()) {
+                issues.add("KNOWLEDGE_POINT_BINDING_INVALID"); continue;
+            }
+            if (!ids.add(knowId)) { issues.add("KNOWLEDGE_POINT_DUPLICATE"); continue; }
+            tags.add(new LegacyTag(knowId, name.trim(), typeId, nullableInteger(value, "priority"),
+                    nullableInteger(value, "sortIndex"), nullableBoolean(value, "coreFlag"),
+                    nullableBoolean(value, "examPointFlag"), nullableBoolean(value, "lastExamPointFlag"),
+                    sourceOrder, null));
+        }
+        tags.sort(java.util.Comparator.comparing((LegacyTag tag) -> tag.sortIndex() == null ? Integer.MAX_VALUE : tag.sortIndex())
+                .thenComparingInt(LegacyTag::sourceOrder).thenComparing(LegacyTag::knowId));
+        return new TagResult(List.copyOf(tags), issues.stream().distinct().toList());
+    }
+
+    /**
+     * 清洗危险 HTML 属性/标签并提取 HTTPS 图片；安全展示标签与 LaTeX 字符保持原序。
+     * @param source 一个题干、解析或答案字段的历史 HTML/文本
+     * @param images 当前父题或子题共享的顺序收集器，新图片会追加并返回内存占位
+     * @return 不含外部图片 URL 的文本与不安全标记
+     */
+    private static Cleaned clean(String source, ImageCollector images) {
         String value = source == null ? "" : source;
         boolean unsafe = BLOCKED.matcher(value).find();
         value = BLOCKED.matcher(value).replaceAll("");
-        List<String> images = new ArrayList<>(); Matcher image = IMAGE.matcher(value); StringBuffer buffer = new StringBuffer();
+        Matcher image = IMAGE.matcher(value); StringBuffer buffer = new StringBuffer();
         while (image.find()) {
             String url = image.group(2).trim();
             if (url.toLowerCase(Locale.ROOT).startsWith("https://")) {
-                images.add(url); image.appendReplacement(buffer, Matcher.quoteReplacement("[图片" + images.size() + "]"));
+                image.appendReplacement(buffer, Matcher.quoteReplacement(images.add(url)));
             } else { unsafe = true; image.appendReplacement(buffer, "[图片待复核]"); }
         }
         image.appendTail(buffer); value = buffer.toString();
@@ -144,7 +187,7 @@ public class LegacyQuestionJsonParser {
             tag.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
         }
         tag.appendTail(buffer);
-        return new Cleaned(buffer.toString().trim(), List.copyOf(images), unsafe);
+        return new Cleaned(buffer.toString().trim(), unsafe);
     }
 
     private static OptionSplit splitOptions(String value, int declaredCount) {
@@ -178,6 +221,23 @@ public class LegacyQuestionJsonParser {
         return List.of(normalized);
     }
 
+    /**
+     * 清理结构化答案中的历史 HTML，并把答案图片与题干/解析图片一样交给 media-service 转存。
+     * @param values 题型规则已拆分的答案；选择题通常是 A～H，填简答可含展示 HTML
+     * @param images 当前题目共享的图片收集器；答案图在题干/解析图之后继续编号
+     * @return 不含外部 URL 的答案与不安全 HTML 标记；待转存 URL 已追加到 images
+     */
+    private static CleanedAnswers cleanAnswers(List<String> values, ImageCollector images) {
+        List<String> answers = new ArrayList<>();
+        boolean unsafe = false;
+        for (String value : values) {
+            Cleaned cleaned = clean(value, images);
+            answers.add(cleaned.text());
+            unsafe |= cleaned.unsafe();
+        }
+        return new CleanedAnswers(List.copyOf(answers), unsafe);
+    }
+
     private static QuestionModels.Type type(String value) {
         if (value == null) return null;
         return switch (value) {
@@ -194,14 +254,47 @@ public class LegacyQuestionJsonParser {
             case "5" -> QuestionModels.Difficulty.MEDIUM; case "9" -> QuestionModels.Difficulty.HARD; default -> null; };
     }
     private static QuestionModels.Grade grade(JsonNode json) {
-        return switch (integer(json, "gradeIndex")) { case 7 -> QuestionModels.Grade.SEVEN;
-            case 8 -> QuestionModels.Grade.EIGHT; case 9 -> QuestionModels.Grade.NINE; default -> null; };
+        return switch (integer(json, "gradeIndex")) {
+            case 1 -> QuestionModels.Grade.ONE; case 2 -> QuestionModels.Grade.TWO;
+            case 3 -> QuestionModels.Grade.THREE; case 4 -> QuestionModels.Grade.FOUR;
+            case 5 -> QuestionModels.Grade.FIVE; case 6 -> QuestionModels.Grade.SIX;
+            case 7 -> QuestionModels.Grade.SEVEN; case 8 -> QuestionModels.Grade.EIGHT;
+            case 9 -> QuestionModels.Grade.NINE; default -> null;
+        };
     }
     private static boolean pathMatches(String value, QuestionModels.Grade grade) {
         if (value == null) return false;
-        return switch (grade) { case SEVEN -> value.contains("七"); case EIGHT -> value.contains("八"); case NINE -> value.contains("九"); };
+        return switch (grade) {
+            case ONE -> value.contains("一"); case TWO -> value.contains("二");
+            case THREE -> value.contains("三"); case FOUR -> value.contains("四");
+            case FIVE -> value.contains("五"); case SIX -> value.contains("六");
+            case SEVEN -> value.contains("七"); case EIGHT -> value.contains("八");
+            case NINE -> value.contains("九");
+        };
     }
     private static int multiPartCount(String value) { int count = 0; Matcher matcher = MULTI_PART.matcher(value); while (matcher.find()) count++; return count; }
+    /** 组合题统一答案和解析保留在父版本，仅在连续小问编号前补换行，不改写公式或正文。 */
+    private static String numberedLines(String value) {
+        if (value == null || value.isBlank()) return value == null ? "" : value;
+        Matcher matcher = NUMBERED_ANSWER.matcher(value); StringBuilder result = new StringBuilder();
+        int previous = 0; boolean first = true;
+        while (matcher.find()) {
+            if (first) {
+                result.append(value, previous, matcher.end()); first = false;
+            } else {
+                result.append(value, previous, matcher.start());
+                while (result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
+                    result.setLength(result.length() - 1);
+                }
+                result.append("\n\n").append(matcher.group());
+            }
+            previous = matcher.end();
+        }
+        if (first) return value;
+        result.append(value, previous, value.length());
+        return result.toString();
+    }
+
     /** 只有编号从 1 连续到 N 且每段非空时才拆父级答案，避免按空格或标点猜测子题答案。 */
     private static List<String> splitNumbered(String value, int count) {
         if (value == null || count < 1) return null;
@@ -223,7 +316,37 @@ public class LegacyQuestionJsonParser {
     private static int integer(JsonNode json, String field) { JsonNode value = json.get(field); return value == null || !value.isNumber() ? 0 : value.asInt(); }
     private static String numberText(JsonNode json, String field) { JsonNode value = json.get(field); return value == null || value.isNull() ? null : value.asString(); }
 
-    public record Candidate(QuestionDtos.VersionInput input, List<String> imageUrls, List<Candidate> children) {}
+    private static Integer nullableInteger(JsonNode json, String field) {
+        JsonNode value = json.get(field); if (value == null || value.isNull()) return null;
+        if (value.isNumber()) return value.asInt();
+        try { return Integer.valueOf(value.asString()); } catch (RuntimeException ignored) { return null; }
+    }
+    private static Boolean nullableBoolean(JsonNode json, String field) {
+        JsonNode value = json.get(field); if (value == null || value.isNull()) return null;
+        if (value.isBoolean()) return value.asBoolean();
+        String text = value.asString();
+        if ("1".equals(text) || "true".equalsIgnoreCase(text)) return true;
+        if ("0".equals(text) || "false".equalsIgnoreCase(text)) return false;
+        return null;
+    }
+
+    public record Candidate(QuestionDtos.VersionInput input, List<String> imageUrls, List<Candidate> children,
+            List<LegacyTag> tags) {
+        /** 用平台 UUID 替换来源 tag 键；来源标记仍保留在 tags 供版本关联落库。 */
+        public Candidate withResolvedTags(List<LegacyTag> resolved) {
+            var value = input;
+            var mapped = new QuestionDtos.VersionInput(value.type(), value.difficulty(), value.stage(), value.grade(),
+                    value.subject(), value.stem(), value.options(), value.answers(), value.analysis(),
+                    resolved.stream().map(tag -> UUID.fromString(tag.knowledgePointId())).toList(), value.media());
+            return new Candidate(mapped, imageUrls, children, List.copyOf(resolved));
+        }
+    }
+    public record LegacyTag(String knowId, String knowName, String knowTypeId, Integer priority,
+            Integer sortIndex, Boolean coreFlag, Boolean examPointFlag, Boolean lastExamPointFlag,
+            int sourceOrder, String knowledgePointId) {
+        public LegacyTag resolved(String id) { return new LegacyTag(knowId, knowName, knowTypeId, priority, sortIndex,
+                coreFlag, examPointFlag, lastExamPointFlag, sourceOrder, id); }
+    }
     public record Parsed(Candidate candidate, List<String> issueCodes, String originalDifficulty,
             String jsonEdition, String jsonGrade, QuestionModels.Grade grade) {
         static Parsed review(List<String> issues, String difficulty, String jsonEdition, String jsonGrade, QuestionModels.Grade grade) {
@@ -231,6 +354,26 @@ public class LegacyQuestionJsonParser {
         }
         public boolean review() { return candidate == null || !issueCodes.isEmpty(); }
     }
-    private record Cleaned(String text, List<String> images, boolean unsafe) {}
+    private record Cleaned(String text, boolean unsafe) {}
+    private record CleanedAnswers(List<String> answers, boolean unsafe) {}
     private record OptionSplit(String stem, List<QuestionDtos.OptionInput> options) {}
+    private record TagResult(List<LegacyTag> tags, List<String> issues) {}
+    private record ChildParsed(Candidate candidate, List<String> issues) {
+        static ChildParsed invalid(String issue) { return new ChildParsed(null, List.of(issue)); }
+    }
+
+    /**
+     * 为单个父题或子题在题干、解析和答案之间分配连续图片序号。
+     * 返回的是导入事务内占位符；媒体转存成功后必须替换为稳定 mediaId，不得持久化外部 URL。
+     */
+    private static final class ImageCollector {
+        private final List<String> urls = new ArrayList<>();
+
+        String add(String url) {
+            urls.add(url);
+            return PENDING_IMAGE_PREFIX + urls.size() + "}}";
+        }
+
+        List<String> urls() { return List.copyOf(urls); }
+    }
 }

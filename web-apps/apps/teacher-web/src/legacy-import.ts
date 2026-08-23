@@ -58,7 +58,7 @@ function legacyExternalId(json: Record<string, unknown>, fileName: string): stri
  */
 function legacyPathMetadata(relativePath: string): Pick<LegacyQuestionImportItem, "pathEdition" | "pathGrade"> {
   const directories = relativePath.split("/").slice(0, -1);
-  const gradeIndex = directories.findIndex(part => /[七八九]年级/.test(part));
+  const gradeIndex = directories.findIndex(part => /[一二三四五六七八九]年级/.test(part));
   if (gradeIndex >= 0) {
     const pathGrade = directories[gradeIndex];
     const earlierEdition = directories.slice(0, gradeIndex).reverse()

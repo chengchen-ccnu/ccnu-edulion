@@ -27,15 +27,25 @@ public class KnowledgePointService {
 
     public KnowledgePointService(QuestionRepository repository) { this.repository = repository; }
 
-    /** 按可选年级和父节点返回启用树；父节点被禁用时其子节点也不会越过父节点成为新根。 */
-    public List<QuestionDtos.KnowledgePointResponse> teacherTree(QuestionModels.Grade grade, String parentId) {
-        List<KnowledgePoint> all = repository.listKnowledgePoints(true, grade);
+    /** 按学段、可选年级和父节点返回启用树；年级必须属于所选学段。 */
+    public List<QuestionDtos.KnowledgePointResponse> teacherTree(QuestionModels.Stage stage,
+            QuestionModels.Grade grade, String parentId) {
+        if (grade != null && grade.stage() != stage) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.STAGE_GRADE_MISMATCH",
+                    "年级与学段不匹配");
+        }
+        List<KnowledgePoint> all = repository.listKnowledgePoints(true, stage, grade);
         return tree(all, parentId);
     }
 
-    /** 创建稳定编码的初中数学节点，父节点必须属于相同学段/年级/学科。 */
+    /** 创建稳定编码的小学或初中数学节点，编码和父节点必须匹配学段/年级/学科。 */
     @Transactional
     public QuestionDtos.KnowledgePointResponse create(QuestionDtos.CreateKnowledgePointRequest request) {
+        validateStageGrade(request.stage(), request.grade());
+        if (!request.code().startsWith(request.stage().name() + "_MATH_")) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.KNOWLEDGE_CODE_STAGE_MISMATCH",
+                    "知识点编码前缀必须与学段一致");
+        }
         validateParent(request.parentId() == null ? null : request.parentId().toString(), request.stage(), request.grade(), request.subject(), null);
         Instant now = Instant.now();
         KnowledgePoint value = new KnowledgePoint(UUID.randomUUID().toString(), request.code(), request.name().trim(),
@@ -53,6 +63,7 @@ public class KnowledgePointService {
     public QuestionDtos.KnowledgePointResponse update(String id, QuestionDtos.UpdateKnowledgePointRequest request) {
         KnowledgePoint current = repository.findKnowledgePoint(id).orElseThrow(KnowledgePointService::notFound);
         String parent = request.parentId() == null ? null : request.parentId().toString();
+        validateStageGrade(current.stage(), request.grade());
         validateParent(parent, current.stage(), request.grade(), current.subject(), id);
         if (parent != null && descendants(id).contains(parent)) {
             throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.KNOWLEDGE_CYCLE", "知识点父级不能形成环");
@@ -76,9 +87,17 @@ public class KnowledgePointService {
         }
     }
 
+    /** 管理员手工节点也必须使用合法学段年级组合，不能依赖父节点存在才间接校验。 */
+    private static void validateStageGrade(QuestionModels.Stage stage, QuestionModels.Grade grade) {
+        if (grade.stage() != stage) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.STAGE_GRADE_MISMATCH",
+                    "年级与学段不匹配");
+        }
+    }
+
     private Set<String> descendants(String id) {
         Map<String, List<String>> children = new HashMap<>();
-        for (KnowledgePoint point : repository.listKnowledgePoints(false, null)) {
+        for (KnowledgePoint point : repository.listKnowledgePoints(false, null, null)) {
             if (point.parentId() != null) children.computeIfAbsent(point.parentId(), ignored -> new ArrayList<>()).add(point.id());
         }
         Set<String> values = new HashSet<>();

@@ -206,7 +206,7 @@ function singleSession(purpose: MediaPurpose = "COURSE_COVER"): MediaUploadSessi
 
 function asset(status: MediaAsset["status"], purpose: MediaPurpose = "COURSE_COVER"): MediaAsset {
   const video = purpose === "LESSON_VIDEO";
-  return { mediaId: "00000000-0000-4000-8000-000000000901", purpose, status,
+  return { mediaId: "00000000-0000-4000-8000-000000000901", scope: "TEACHER", purpose, status,
     processingStatus: status === "READY" ? "SUCCEEDED" : "RUNNING",
     originalFileName: video ? "lesson.mp4" : "cover.png",
     mimeType: video ? "video/mp4" : "image/png", size: 5,

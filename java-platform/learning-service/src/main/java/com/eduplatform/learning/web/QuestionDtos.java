@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 
-/** OpenAPI 0.10.1 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
+/** OpenAPI 0.13.0 的题库请求/响应模型；所有写请求显式拒绝未声明字段。 */
 public final class QuestionDtos {
     private QuestionDtos() {}
 
@@ -127,7 +127,7 @@ public final class QuestionDtos {
     public record UpdateStatusRequest(@Min(0) long expectedRevision, @NotNull QuestionModels.Status status) {}
 
     public record CreateKnowledgePointRequest(
-            @NotBlank @Pattern(regexp = "^JUNIOR_MATH_[A-Z0-9_]{2,50}$") String code,
+            @NotBlank @Pattern(regexp = "^(PRIMARY|JUNIOR)_MATH_[A-Z0-9_]{2,50}$") String code,
             @NotBlank @Size(max = 100) String name, UUID parentId, @NotNull QuestionModels.Stage stage,
             @NotNull QuestionModels.Grade grade, @NotNull QuestionModels.Subject subject,
             @Min(0) @Max(100000) int sortOrder, boolean enabled) {}
@@ -153,13 +153,27 @@ public final class QuestionDtos {
             QuestionModels.Subject subject, String stem, List<OptionInput> options, List<String> answers,
             String analysis, List<KnowledgePointResponse> knowledgePoints, List<MediaResponse> media,
             LegacySourceResponse legacySource, List<ChildResponse> children, Instant createdAt) {}
-    public record QuestionResponse(String id, QuestionModels.Status status, long revision,
+    public record QuestionResponse(String id, QuestionModels.Scope scope, boolean editable,
+            QuestionModels.Status status, long revision,
             VersionResponse currentVersion, Instant createdAt, Instant updatedAt) {}
-    public record QuestionSummary(String id, QuestionModels.Status status, long revision, String currentVersionId,
+    public record QuestionSummary(String id, QuestionModels.Scope scope, boolean editable,
+            QuestionModels.Status status, long revision, String currentVersionId,
             int versionNumber, QuestionModels.Type type, QuestionModels.Difficulty difficulty,
-            QuestionModels.Grade grade, String stemPreview, List<String> knowledgePointIds,
+            QuestionModels.Stage stage, QuestionModels.Grade grade, String stemPreview, List<String> knowledgePointIds,
             Instant createdAt, Instant updatedAt) {}
     public record QuestionPage(List<QuestionSummary> items, int page, int size, long total) {}
+    /** 学习端子题投影主动移除答案与解析，避免绕过后续测评交卷边界。 */
+    public record SystemQuestionChild(String questionId, String versionId, int sequence,
+            QuestionModels.Type type, QuestionModels.Difficulty difficulty, QuestionModels.Stage stage,
+            QuestionModels.Grade grade, QuestionModels.Subject subject, String stem, List<OptionInput> options,
+            List<KnowledgePointResponse> knowledgePoints, List<MediaResponse> media, Instant createdAt) {}
+    /** 已启用公共题的学习端只读投影；不包含 answers、analysis 或历史版本。 */
+    public record SystemQuestion(String id, QuestionModels.Scope scope, QuestionModels.Type type,
+            QuestionModels.Difficulty difficulty, QuestionModels.Stage stage, QuestionModels.Grade grade,
+            QuestionModels.Subject subject, String stem, List<OptionInput> options,
+            List<KnowledgePointResponse> knowledgePoints, List<MediaResponse> media,
+            List<SystemQuestionChild> children, Instant createdAt, Instant updatedAt) {}
+    public record SystemQuestionPage(List<QuestionSummary> items, int page, int size, long total) {}
     public record VersionSummary(String id, int versionNumber, QuestionModels.Type type,
             QuestionModels.Difficulty difficulty, String stemPreview, int childCount, Instant createdAt,
             boolean current) {}
@@ -168,7 +182,8 @@ public final class QuestionDtos {
     public record CreateImportRequest(@NotNull UUID clientRequestId, @NotNull UUID sourceMediaId,
             @NotNull QuestionModels.ImportFormat sourceFormat) {}
     public record ImportRowError(int rowNumber, String code, String message) {}
-    public record ImportTaskResponse(String id, String sourceMediaId, QuestionModels.ImportFormat sourceFormat,
+    public record ImportTaskResponse(String id, QuestionModels.Scope questionScope,
+            String sourceMediaId, QuestionModels.ImportFormat sourceFormat,
             String sourceSystem, boolean dryRun, Integer maxItems, QuestionModels.ImportStatus status, int progress, int totalRows,
             int processedRows, int successCount, int reviewCount, int resolvedCount, int skippedCount, int failureCount,
             List<ImportRowError> errors, String failureCode, String failureMessage,

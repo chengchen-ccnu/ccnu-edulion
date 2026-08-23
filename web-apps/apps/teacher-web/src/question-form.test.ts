@@ -1,7 +1,7 @@
 import type { QuestionVersion } from "@edu/api-client";
 import { describe, expect, it } from "vitest";
 
-import { editableQuestionVersion, emptyQuestionVersion, normalizeQuestionVersion } from "./question-form";
+import { editableQuestionVersion, emptyQuestionChild, emptyQuestionVersion, gradesForStage, normalizeQuestionVersion } from "./question-form";
 
 describe("question structured form", () => {
   it("creates a one-level structured composite without free-text child packing", () => {
@@ -31,6 +31,14 @@ describe("question structured form", () => {
 
     expect(normalizeQuestionVersion(version)).toMatchObject({ stem: "证明题", answers: ["答案"],
       media: [{ mediaId: "m-1", sequence: 1 }] });
+  });
+
+  it("maps primary and junior stages to their legal grades", () => {
+    expect(gradesForStage("PRIMARY")).toEqual(["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"]);
+    expect(gradesForStage("JUNIOR")).toEqual(["SEVEN", "EIGHT", "NINE"]);
+    expect(emptyQuestionChild("FILL_BLANK", "PRIMARY", "FOUR")).toMatchObject({
+      type: "FILL_BLANK", stage: "PRIMARY", grade: "FOUR"
+    });
   });
 });
 

@@ -121,7 +121,7 @@ class MediaHttpIntegrationTest {
     void externalQuestionImageTransferIsIdempotentAndPersistsNoSourceUrl() throws Exception {
         String request = """
                 {"clientRequestId":"00000000-0000-4000-8000-000000007301",
-                 "sourceUrl":"https://images.fixture.test/question.png"}
+                 "sourceUrl":"https://images.fixture.test/question.png","scope":"TEACHER"}
                 """;
         HttpResponse<String> first = send("POST", "/api/v1/media/external-image-transfers", request, "TEACHER");
         HttpResponse<String> replay = send("POST", "/api/v1/media/external-image-transfers", request, "TEACHER");
@@ -135,10 +135,39 @@ class MediaHttpIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_event WHERE payload_json LIKE '%images.fixture.test%'", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_audit_record WHERE details LIKE '%images.fixture.test%'", Integer.class)).isZero();
         String malformed = """
-                {"clientRequestId":"00000000-0000-4000-8000-000000007302","sourceUrl":"https://["}
+                {"clientRequestId":"00000000-0000-4000-8000-000000007302","sourceUrl":"https://[","scope":"TEACHER"}
                 """;
         assertThat(send("POST", "/api/v1/media/external-image-transfers", malformed, "TEACHER").statusCode()).isEqualTo(422);
         assertThat(externalImages.calls()).isEqualTo(1);
+    }
+
+    @Test
+    /** 管理员创建的 SYSTEM 图片可被学生和教师读取授权，教师不能伪造 SYSTEM 资产。 */
+    void systemQuestionImageRequiresAdminAndIsReadableByAuthenticatedUsers() throws Exception {
+        String request = """
+                {"clientRequestId":"00000000-0000-4000-8000-000000007303",
+                 "sourceUrl":"https://images.fixture.test/system-question.png","scope":"SYSTEM"}
+                """;
+        assertThat(send("POST", "/api/v1/media/external-image-transfers", request, "TEACHER").statusCode())
+                .isEqualTo(403);
+        assertThat(sendAs("POST", "/api/v1/media/external-image-transfers", request, "ADMIN", TEACHER).statusCode())
+                .isEqualTo(403);
+        HttpResponse<String> created = sendAsWithPermissions("POST", "/api/v1/media/external-image-transfers",
+                request, "ADMIN", "administration:access", TEACHER);
+        assertThat(created.statusCode()).isEqualTo(201);
+        JsonNode asset = mapper.readTree(created.body());
+        assertThat(asset.get("scope").asString()).isEqualTo("SYSTEM");
+        String mediaId = asset.get("mediaId").asString();
+
+        assertThat(sendAs("GET", "/api/v1/media/" + mediaId, null, "STUDENT", STUDENT).statusCode())
+                .isEqualTo(200);
+        assertThat(sendAs("GET", "/api/v1/media/" + mediaId, null, "TEACHER",
+                "00000000-0000-4000-8000-000000007199").statusCode()).isEqualTo(200);
+        assertThat(sendAs("POST", "/api/v1/media/" + mediaId + "/access-grants",
+                "{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}", "STUDENT", STUDENT).statusCode())
+                .isEqualTo(201);
+        assertThat(jdbc.queryForObject("SELECT scope FROM media_asset WHERE media_id=?", String.class, mediaId))
+                .isEqualTo("SYSTEM");
     }
 
     @Test
@@ -486,8 +515,14 @@ class MediaHttpIntegrationTest {
 
     private HttpResponse<String> sendAs(String method, String path, String body, String role, String userId)
             throws Exception {
+        return sendAsWithPermissions(method, path, body, role, null, userId);
+    }
+
+    private HttpResponse<String> sendAsWithPermissions(String method, String path, String body, String role,
+            String permissions, String userId) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .header("X-User-Id", userId).header("X-User-Roles", role).header("X-Trace-Id", "trace-t08a-test");
+        if (permissions != null) request.header("X-User-Permissions", permissions);
         if (body != null) request.header("Content-Type", "application/json");
         request.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());

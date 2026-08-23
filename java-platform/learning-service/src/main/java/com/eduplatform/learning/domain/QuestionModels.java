@@ -3,16 +3,29 @@ package com.eduplatform.learning.domain;
 import java.time.Instant;
 import java.util.List;
 
-/** T09～T09B 题库内部模型；答案只会进入教师 DTO 或导入处理，不提供学生投影。 */
+/** 题库内部模型；教师可读取答案，学生公共 SYSTEM 投影会在服务层主动移除答案和解析。 */
 public final class QuestionModels {
     private QuestionModels() {}
 
-    public enum Stage { JUNIOR }
-    public enum Grade { SEVEN, EIGHT, NINE }
+    public enum Stage { PRIMARY, JUNIOR }
+
+    /** 平台支持的一至九年级；每个年级唯一映射到小学或初中学段。 */
+    public enum Grade {
+        ONE(Stage.PRIMARY), TWO(Stage.PRIMARY), THREE(Stage.PRIMARY), FOUR(Stage.PRIMARY),
+        FIVE(Stage.PRIMARY), SIX(Stage.PRIMARY), SEVEN(Stage.JUNIOR), EIGHT(Stage.JUNIOR), NINE(Stage.JUNIOR);
+
+        private final Stage stage;
+        Grade(Stage stage) { this.stage = stage; }
+
+        /** 返回该年级所属学段，用于导入和写接口统一校验，避免前后端组合出跨学段数据。 */
+        public Stage stage() { return stage; }
+    }
     public enum Subject { MATHEMATICS }
     public enum Type { SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE }
     public enum Difficulty { EASY, MEDIUM, HARD }
     public enum Status { DRAFT, ACTIVE, ARCHIVED }
+    /** SYSTEM 为管理员持有的公共题库，TEACHER 为创建教师本人可写的私有题库。 */
+    public enum Scope { SYSTEM, TEACHER }
     public enum MediaPurpose { QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE }
     public enum ImportFormat { CSV, XLSX, LEGACY_JSON }
     public enum ImportStatus { PENDING, PROCESSING, COMPLETED, PARTIAL_SUCCESS, FAILED, CLEANED }
@@ -26,9 +39,9 @@ public final class QuestionModels {
     public record Version(String id, String questionId, int versionNumber, Type type, Difficulty difficulty,
             Stage stage, Grade grade, Subject subject, String stem, List<Option> options, List<String> answers,
             String analysis, List<KnowledgePoint> knowledgePoints, List<Media> media, Instant createdAt) {}
-    public record Aggregate(String id, String ownerId, Status status, String currentVersionId, long revision,
+    public record Aggregate(String id, String ownerId, Scope scope, Status status, String currentVersionId, long revision,
             Instant createdAt, Instant updatedAt) {}
-    public record ImportTask(String id, String ownerId, String clientRequestId, String requestFingerprint,
+    public record ImportTask(String id, String ownerId, Scope questionScope, String clientRequestId, String requestFingerprint,
             String sourceMediaId, ImportFormat sourceFormat, ImportStatus status, int progress, int totalRows,
             int processedRows, int successCount, int reviewCount, int skippedCount, int failureCount,
             String sourceSystem, String sourceRootFingerprint, boolean dryRun, Integer maxItems,

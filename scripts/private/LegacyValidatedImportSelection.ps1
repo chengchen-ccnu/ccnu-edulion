@@ -54,13 +54,13 @@ function Get-ValidatedDryRunSelection {
     foreach ($taskId in $taskIds) {
         $safeTaskId = [Uri]::EscapeDataString($taskId)
         try {
-            $task = Invoke-RestMethod -Method Get -Uri "$apiRoot/api/v1/teacher/question-imports/$safeTaskId" -Headers $Headers
+            $task = Invoke-RestMethod -Method Get -Uri "$apiRoot/api/v1/admin/question-imports/$safeTaskId" -Headers $Headers
         } catch {
             $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ -SensitiveValues $sensitiveValues
             throw ($diagnostic | ConvertTo-Json -Depth 4 -Compress)
         }
         if ([string]$task.id -ne $taskId -or [string]$task.sourceFormat -ne 'LEGACY_JSON' -or
-                [string]$task.sourceSystem -ne $ExpectedSourceSystem -or $task.dryRun -ne $true -or
+                [string]$task.sourceSystem -ne $ExpectedSourceSystem -or [string]$task.questionScope -ne 'SYSTEM' -or $task.dryRun -ne $true -or
                 @('COMPLETED', 'PARTIAL_SUCCESS') -notcontains [string]$task.status) {
             throw 'DryRun checkpoint references a task that is not an owned terminal LEGACY_JSON DryRun.'
         }
@@ -72,7 +72,7 @@ function Get-ValidatedDryRunSelection {
         while ($true) {
             try {
                 $pageResult = Invoke-RestMethod -Method Get `
-                    -Uri "$apiRoot/api/v1/teacher/question-imports/$safeTaskId/items?page=$page&size=100&outcome=VALID" `
+                    -Uri "$apiRoot/api/v1/admin/question-imports/$safeTaskId/items?page=$page&size=100&outcome=VALID" `
                     -Headers $Headers
             } catch {
                 $diagnostic = ConvertTo-SafeMigrationHttpDiagnostic -ErrorRecord $_ -SensitiveValues $sensitiveValues

@@ -2,6 +2,7 @@ package com.eduplatform.media.service;
 
 import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.domain.MediaAsset;
+import com.eduplatform.media.domain.MediaAssetScope;
 import com.eduplatform.media.domain.MediaPurpose;
 import com.eduplatform.media.domain.MediaStatus;
 import com.eduplatform.media.domain.ProcessingStatus;
@@ -52,13 +53,17 @@ public class ExternalImageTransferService {
 
     /**
      * 幂等转存一张图片。
-     * @param roles Gateway 传入角色，必须包含 TEACHER
+     * @param roles Gateway 传入角色；TEACHER 资产要求教师角色
+     * @param permissions Gateway 传入权限；SYSTEM 资产必须具备 administration:access
      * @return READY 资产与是否首次创建；重放不再次联网或写 OSS
      */
-    public Result transfer(String ownerId, Set<String> roles, MediaDtos.ExternalImageTransferRequest request, String traceId) {
-        if (!roles.contains("TEACHER")) throw new MediaException(HttpStatus.FORBIDDEN,
+    public Result transfer(String ownerId, Set<String> roles, Set<String> permissions,
+            MediaDtos.ExternalImageTransferRequest request, String traceId) {
+        if (request.scope() == MediaAssetScope.SYSTEM && !permissions.contains("administration:access")) throw new MediaException(HttpStatus.FORBIDDEN,
+                "MEDIA.PURPOSE_FORBIDDEN", "只有管理员可以创建系统题目图片");
+        if (request.scope() == MediaAssetScope.TEACHER && !roles.contains("TEACHER")) throw new MediaException(HttpStatus.FORBIDDEN,
                 "MEDIA.PURPOSE_FORBIDDEN", "当前角色不能转存题目图片");
-        String fingerprint = sha256("QUESTION_IMAGE\0" + request.sourceUrl());
+        String fingerprint = sha256("QUESTION_IMAGE\0" + request.scope() + "\0" + request.sourceUrl());
         var replay = repository.findUploadByOwnerAndClient(ownerId, request.clientRequestId().toString());
         if (replay.isPresent()) return replay(replay.get(), fingerprint);
         URI source;
@@ -81,7 +86,7 @@ public class ExternalImageTransferService {
                     MediaPurpose.QUESTION_IMAGE, UploadMode.SINGLE_PUT, UploadStatus.READY,
                     "legacy-question-image." + extension, extension, downloaded.mimeType(), downloaded.bytes().length,
                     digest, objectKey, null, null, digest, mediaId, now.plus(properties.upload().sessionTtl()), now, now);
-            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, MediaPurpose.QUESTION_IMAGE,
+            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, request.scope(), MediaPurpose.QUESTION_IMAGE,
                     MediaStatus.READY, ProcessingStatus.SUCCEEDED, objectKey, session.originalFilename(),
                     downloaded.mimeType(), downloaded.bytes().length, digest, metadata.etag(), null, null,
                     now.plus(properties.maintenance().unboundRetention()), null, now, now);
@@ -122,7 +127,7 @@ public class ExternalImageTransferService {
     }
 
     private MediaDtos.Asset response(MediaAsset asset) {
-        return new MediaDtos.Asset(asset.mediaId(), asset.purpose(), asset.status(), asset.processingStatus(),
+        return new MediaDtos.Asset(asset.mediaId(), asset.scope(), asset.purpose(), asset.status(), asset.processingStatus(),
                 asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), List.of(),
                 asset.failureCode(), asset.failureMessage(), asset.createdAt(), asset.updatedAt());
     }

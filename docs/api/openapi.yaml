@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.10.1
-  description: T09B Gateway contract. Adds structured ordinary/composite question writes, immutable version history, unified import-task projections and refresh-safe legacy JSON item review/resolution. No T10 Vue page, full-corpus migration or T11 attempt/grading API is exposed.
+  version: 0.13.1
+  description: T10B Gateway contract. Adds SYSTEM/TEACHER question scope, administrator-owned bounded legacy migration, public system-question reads, SYSTEM media assets and stable inline question-image markers. No T11 attempt/grading API is exposed.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -15,6 +15,7 @@ tags:
   - name: Teacher Courses
   - name: Media
   - name: Teacher Questions
+  - name: System Questions
   - name: Question Imports
   - name: Knowledge Points
 paths:
@@ -598,9 +599,16 @@ paths:
     get:
       tags: [Knowledge Points]
       operationId: listTeacherKnowledgePoints
-      summary: List the enabled junior-mathematics knowledge-point tree
-      description: Teachers can query and bind enabled knowledge points but cannot maintain them. Results are ordered by parent, sortOrder and code.
+      summary: List the enabled primary-or-junior mathematics knowledge-point tree
+      description: Teachers can query and bind enabled knowledge points but cannot maintain them. PRIMARY and JUNIOR are supported; SENIOR remains disabled. Results are ordered by parent, sortOrder and code.
       parameters:
+        - name: stage
+          in: query
+          description: Defaults to JUNIOR for compatibility with existing teacher links.
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/QuestionStage'
+            default: JUNIOR
         - name: grade
           in: query
           schema:
@@ -628,6 +636,162 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/v1/teacher/knowledge-points/search:
+    get:
+      tags: [Knowledge Points]
+      operationId: searchTeacherKnowledgePoints
+      summary: Search enabled knowledge points without loading the complete graph
+      description: Returns only platform-enabled points. Source identifiers and source grouping keys are not exposed as user labels.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: normalizedStage
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/QuestionStage'}
+        - name: knowledgeTypeId
+          in: query
+          schema: {type: string, maxLength: 80}
+        - name: keyword
+          in: query
+          schema: {type: string, maxLength: 100}
+      responses:
+        '200':
+          description: One bounded page ordered deterministically.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgePointSearchPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/teacher/knowledge-points/{knowledgePointId}/graph:
+    get:
+      tags: [Knowledge Points]
+      operationId: getTeacherKnowledgePointGraph
+      summary: Get direct and bounded prerequisite neighbourhood
+      parameters:
+        - $ref: '#/components/parameters/KnowledgePointId'
+        - name: depth
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 5, default: 1}
+      responses:
+        '200':
+          description: The selected point and a bounded graph projection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgePointGraph'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/knowledge-graph-imports:
+    post:
+      tags: [Knowledge Points]
+      operationId: createKnowledgeGraphImport
+      summary: Create an administrator-only knowledge graph import task
+      description: Defaults are enforced by the migration client. Formal imports enable confirmed PRIMARY/JUNIOR nodes and retain SENIOR nodes disabled; relationship and parent-key validation remain independent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateKnowledgeGraphImportRequest'}
+      responses:
+        '201':
+          description: Task created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphImportTask'}
+        '200':
+          description: Idempotent replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphImportTask'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/QuestionConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/knowledge-graph-imports/{importTaskId}:
+    get:
+      tags: [Knowledge Points]
+      operationId: getKnowledgeGraphImport
+      summary: Get aggregate-only import status and dry-run result
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      responses:
+        '200':
+          description: Safe aggregate result without full source identifiers.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphImportTask'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+  /api/v1/admin/knowledge-graph-imports/{importTaskId}/node-batches:
+    post:
+      tags: [Knowledge Points]
+      operationId: submitKnowledgeGraphNodeBatch
+      summary: Submit one deterministic node batch
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/KnowledgeGraphNodeBatchRequest'}
+      responses:
+        '200':
+          description: Batch accepted or idempotently replayed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphBatchResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+        '409': {$ref: '#/components/responses/QuestionConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/knowledge-graph-imports/{importTaskId}/relation-batches:
+    post:
+      tags: [Knowledge Points]
+      operationId: submitKnowledgeGraphRelationBatch
+      summary: Submit prerequisite-to-dependent relations after all nodes
+      description: Each item is explicitly `prerequisite -> dependent`; Neo4j start/end metadata is not accepted.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/KnowledgeGraphRelationBatchRequest'}
+      responses:
+        '200':
+          description: Batch accepted; a final batch performs whole-graph validation before import.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphBatchResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+        '409': {$ref: '#/components/responses/QuestionConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/knowledge-graph-imports/{importTaskId}/issues:
+    get:
+      tags: [Knowledge Points]
+      operationId: listKnowledgeGraphImportIssues
+      summary: List bounded, content-free import issues
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Safe issue page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeGraphImportIssuePage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
   /api/v1/admin/knowledge-points:
     post:
       tags: [Knowledge Points]
@@ -686,12 +850,61 @@ paths:
           $ref: '#/components/responses/QuestionConflict'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+  /api/v1/learning/system-questions:
+    get:
+      tags: [System Questions]
+      operationId: listSystemQuestions
+      summary: List ACTIVE public system questions for an authenticated learner
+      description: Returns only SYSTEM and ACTIVE questions. Answers and analyses are never present in this learner projection.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: stage
+          in: query
+          schema: {$ref: '#/components/schemas/QuestionStage'}
+        - name: grade
+          in: query
+          schema: {$ref: '#/components/schemas/QuestionGrade'}
+        - name: type
+          in: query
+          schema: {$ref: '#/components/schemas/QuestionType'}
+        - name: difficulty
+          in: query
+          schema: {$ref: '#/components/schemas/QuestionDifficulty'}
+        - name: knowledgePointId
+          in: query
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Safe public-question page without answers or analyses.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SystemQuestionPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/learning/system-questions/{questionId}:
+    get:
+      tags: [System Questions]
+      operationId: getSystemQuestion
+      summary: Get one ACTIVE system question without answers or analysis
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Safe learner question content and stable SYSTEM media IDs.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SystemQuestion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
   /api/v1/teacher/questions:
     get:
       tags: [Teacher Questions]
       operationId: listTeacherQuestions
-      summary: List questions owned by the current teacher
-      description: Answers and full analyses are intentionally absent from list projections. Filters apply to the current immutable version only.
+      summary: List public system questions and questions owned by the current teacher
+      description: Answers and full analyses are intentionally absent from list projections. SYSTEM rows are read-only; TEACHER rows belong to the current teacher. Filters apply to the current immutable version only.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
@@ -700,6 +913,14 @@ paths:
           schema:
             type: string
             maxLength: 100
+        - name: stage
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionStage'
+        - name: grade
+          in: query
+          schema:
+            $ref: '#/components/schemas/QuestionGrade'
         - name: type
           in: query
           schema:
@@ -717,9 +938,14 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: scope
+          in: query
+          description: Source filter. Omit to return SYSTEM plus the current teacher's TEACHER questions.
+          schema:
+            $ref: '#/components/schemas/QuestionScope'
       responses:
         '200':
-          description: Paged owner-only question summaries.
+          description: Paged visible question summaries with scope and editability.
           content:
             application/json:
               schema:
@@ -770,12 +996,12 @@ paths:
     get:
       tags: [Teacher Questions]
       operationId: getTeacherQuestion
-      summary: Get the current immutable version of an owned question
+      summary: Get a visible system question or an owned teacher question
       parameters:
         - $ref: '#/components/parameters/QuestionId'
       responses:
         '200':
-          description: Owner editor projection including the answer and analysis.
+          description: Teacher projection including answers and analysis; scope/editable prevent writes to SYSTEM questions.
           content:
             application/json:
               schema:
@@ -789,8 +1015,8 @@ paths:
     put:
       tags: [Teacher Questions]
       operationId: updateTeacherQuestion
-      summary: Create a new immutable version of an owned question
-      description: Never overwrites a historical version. `expectedRevision` guards the aggregate pointer; historical media references remain retained so old snapshots cannot lose assets.
+      summary: Create a new immutable version of an owned TEACHER question
+      description: SYSTEM questions always return 403. TEACHER questions never overwrite a historical version; `expectedRevision` guards the aggregate pointer.
       parameters:
         - $ref: '#/components/parameters/QuestionId'
       requestBody:
@@ -822,8 +1048,8 @@ paths:
     put:
       tags: [Teacher Questions]
       operationId: updateTeacherQuestionStatus
-      summary: Activate or archive an owned question
-      description: DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED. Archived questions are retained for historical consumers and cannot be edited or reactivated in T09.
+      summary: Activate or archive an owned TEACHER question
+      description: SYSTEM questions always return 403. A TEACHER DRAFT may become ACTIVE; ACTIVE or DRAFT may become ARCHIVED.
       parameters:
         - $ref: '#/components/parameters/QuestionId'
       requestBody:
@@ -853,8 +1079,8 @@ paths:
     get:
       tags: [Teacher Questions]
       operationId: listTeacherQuestionVersions
-      summary: Page immutable versions of an owned question
-      description: History is ordered newest first. Reading history never moves the aggregate current-version pointer.
+      summary: Page immutable versions of a visible question
+      description: SYSTEM questions and the current teacher's TEACHER questions are readable. History is ordered newest first and never moves the current pointer.
       parameters:
         - $ref: '#/components/parameters/QuestionId'
         - $ref: '#/components/parameters/Page'
@@ -876,8 +1102,8 @@ paths:
     get:
       tags: [Teacher Questions]
       operationId: getTeacherQuestionVersion
-      summary: Get one immutable historical version of an owned question
-      description: The version must belong to the owned aggregate. This read-only endpoint never changes revision or the current-version pointer.
+      summary: Get one immutable historical version of a visible question
+      description: The version must belong to a visible SYSTEM question or the current teacher's TEACHER question. This endpoint is read-only.
       parameters:
         - $ref: '#/components/parameters/QuestionId'
         - name: versionId
@@ -950,6 +1176,110 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '503':
           $ref: '#/components/responses/QuestionDependencyUnavailable'
+  /api/v1/admin/question-imports/{importTaskId}:
+    get:
+      tags: [Question Imports]
+      operationId: getAdminSystemQuestionImport
+      summary: Get one administrator-owned SYSTEM legacy import task
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      responses:
+        '200':
+          description: Administrator-owned task projection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionImportTask'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+  /api/v1/admin/question-imports/{importTaskId}/items:
+    get:
+      tags: [Question Imports]
+      operationId: listAdminSystemQuestionImportItems
+      summary: Page safe item projections for an administrator-owned SYSTEM legacy task
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: outcome
+          in: query
+          schema: {$ref: '#/components/schemas/QuestionImportItemOutcome'}
+      responses:
+        '200':
+          description: Safe item page without raw source or question content.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyQuestionImportItemPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+  /api/v1/admin/legacy-question-imports:
+    post:
+      tags: [Question Imports]
+      operationId: createAdminSystemLegacyQuestionImport
+      summary: Create an administrator-owned bounded SYSTEM legacy migration task
+      description: Only administration:access may create this task. Dry-run creates no question or media; formal batches create SYSTEM questions and SYSTEM image assets owned by the administrator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateLegacyQuestionImportRequest'}
+      responses:
+        '201':
+          description: Empty SYSTEM legacy task created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionImportTask'}
+        '200':
+          description: Identical task replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionImportTask'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/QuestionConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/legacy-question-imports/{importTaskId}/batches:
+    post:
+      tags: [Question Imports]
+      operationId: submitAdminSystemLegacyQuestionImportBatch
+      summary: Submit one bounded SYSTEM legacy batch
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LegacyQuestionImportBatchRequest'}
+      responses:
+        '200':
+          description: Batch processed or safely replayed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyQuestionImportBatchResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
+        '409': {$ref: '#/components/responses/QuestionConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/QuestionDependencyUnavailable'}
+  /api/v1/admin/legacy-question-imports/{importTaskId}/created-resources:
+    delete:
+      tags: [Question Imports]
+      operationId: cleanupAdminSystemLegacyQuestionImport
+      summary: Precisely clean resources created by one SYSTEM acceptance task
+      description: Only resources linked to this task and still safe to remove are affected. Unrelated questions, media and source files are untouched.
+      parameters:
+        - $ref: '#/components/parameters/ImportTaskId'
+      responses:
+        '200':
+          description: Exact cleanup counts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyQuestionImportCleanupResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/QuestionNotFound'}
   /api/v1/teacher/question-imports/{importTaskId}:
     get:
       tags: [Question Imports]
@@ -1022,150 +1352,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/QuestionNotFound'
-  /api/v1/teacher/question-imports/{importTaskId}/items/{itemId}/resolution:
-    post:
-      tags: [Question Imports]
-      operationId: resolveLegacyQuestionImportItem
-      summary: Idempotently import an explicit structured correction or confirm skip
-      description: |
-        `expectedRevision` prevents concurrent overwrite. IMPORT_CORRECTED requires a complete structured
-        ordinary/composite question; CONFIRM_SKIP requires `correctedVersion=null`. A successful resolution
-        is terminal for the item. Resolution is allowed only after the final batch has completed and the task
-        is in `COMPLETED` or `PARTIAL_SUCCESS`; `PENDING`, `PROCESSING`, `FAILED` and `CLEANED` tasks return
-        `QUESTION_IMPORT.TASK_NOT_REVIEWABLE` with HTTP 409. Replaying the same clientRequestId and body,
-        including two concurrent identical requests, returns the first committed result.
-      parameters:
-        - $ref: '#/components/parameters/ImportTaskId'
-        - name: itemId
-          in: path
-          required: true
-          schema: {type: string, format: uuid}
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResolveLegacyQuestionImportItemRequest'
-      responses:
-        '200':
-          description: Item resolved or identical request safely replayed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LegacyQuestionImportReviewItem'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/QuestionNotFound'
-        '409':
-          $ref: '#/components/responses/LegacyQuestionReviewConflict'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
-        '503':
-          $ref: '#/components/responses/QuestionDependencyUnavailable'
-  /api/v1/teacher/legacy-question-imports:
-    post:
-      tags: [Question Imports]
-      operationId: createLegacyQuestionImport
-      summary: Create an explicitly bounded legacy JSON migration task
-      description: |
-        The caller must stream a read-only directory through bounded batch requests. `dryRun` defaults
-        to true in migration tooling; the API never scans a server path. Creating a task does not import
-        any item and does not by itself authorize full migration of the historical corpus. Explicit
-        operator tooling may orchestrate a reviewed corpus as multiple independently bounded tasks.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateLegacyQuestionImportRequest'
-      responses:
-        '201':
-          description: Empty legacy migration task created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/QuestionImportTask'
-        '200':
-          description: Identical task replay.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/QuestionImportTask'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/QuestionConflict'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
-  /api/v1/teacher/legacy-question-imports/{importTaskId}/batches:
-    post:
-      tags: [Question Imports]
-      operationId: submitLegacyQuestionImportBatch
-      summary: Submit one idempotent legacy JSON batch of at most 20 items
-      description: |
-        Each item is parsed independently. The response contains only stable source keys, outcomes and
-        issue codes; it never echoes question text, answers or raw JSON. Dry-run performs no media transfer
-        and creates no question. A duplicate batchId returns its original aggregate result.
-      parameters:
-        - $ref: '#/components/parameters/ImportTaskId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LegacyQuestionImportBatchRequest'
-      responses:
-        '200':
-          description: Bounded batch processed or safely replayed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LegacyQuestionImportBatchResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/QuestionNotFound'
-        '409':
-          $ref: '#/components/responses/QuestionConflict'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
-        '503':
-          $ref: '#/components/responses/QuestionDependencyUnavailable'
-  /api/v1/teacher/legacy-question-imports/{importTaskId}/created-resources:
-    delete:
-      tags: [Question Imports]
-      operationId: cleanupLegacyQuestionImport
-      summary: Precisely clean resources created by one non-dry-run acceptance task
-      description: Only DRAFT questions still owned by the caller and linked to this exact task are removed; media references are released through Outbox. The historical source directory and unrelated questions are never touched.
-      parameters:
-        - $ref: '#/components/parameters/ImportTaskId'
-      responses:
-        '200':
-          description: Exact cleanup counts.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LegacyQuestionImportCleanupResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/QuestionNotFound'
   /api/v1/media/external-image-transfers:
     post:
       tags: [Media]
       operationId: transferExternalQuestionImage
       summary: Idempotently transfer one allow-listed HTTPS question image into media-service
       description: |
-        Teacher-only T09A compatibility endpoint. media-service validates the HTTPS host before and after
+        TEACHER transfers create owner-only assets; SYSTEM transfers require administration:access and create
+        administrator-owned assets readable by authenticated students and teachers. media-service validates the HTTPS host before and after
         redirects, blocks private/link-local destinations, enforces image MIME and size limits, stores the
         object through its own storage port and returns only a stable mediaId. The source URL is neither
         persisted nor logged. Dry-run callers must not invoke this endpoint.
@@ -2298,10 +2492,10 @@ components:
           format: date-time
     QuestionStage:
       type: string
-      enum: [JUNIOR]
+      enum: [PRIMARY, JUNIOR]
     QuestionGrade:
       type: string
-      enum: [SEVEN, EIGHT, NINE]
+      enum: [ONE, TWO, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT, NINE]
     QuestionSubject:
       type: string
       enum: [MATHEMATICS]
@@ -2318,6 +2512,10 @@ components:
     QuestionStatus:
       type: string
       enum: [DRAFT, ACTIVE, ARCHIVED]
+    QuestionScope:
+      type: string
+      description: SYSTEM is the administrator-owned public bank; TEACHER is private to its creating teacher.
+      enum: [SYSTEM, TEACHER]
     QuestionMediaPurpose:
       type: string
       enum: [QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT]
@@ -2331,7 +2529,7 @@ components:
           format: uuid
         code:
           type: string
-          pattern: '^JUNIOR_MATH_[A-Z0-9_]{2,50}$'
+          pattern: '^((PRIMARY|JUNIOR)_MATH_[A-Z0-9_]{2,50}|KG_[a-f0-9]{32})$'
         name:
           type: string
           minLength: 1
@@ -2342,7 +2540,10 @@ components:
         stage:
           $ref: '#/components/schemas/QuestionStage'
         grade:
-          $ref: '#/components/schemas/QuestionGrade'
+          description: Null means the knowledge point applies to the confirmed whole stage because the source has no grade field.
+          oneOf:
+            - {$ref: '#/components/schemas/QuestionGrade'}
+            - {type: 'null'}
         subject:
           $ref: '#/components/schemas/QuestionSubject'
         sortOrder:
@@ -2359,6 +2560,62 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/KnowledgePoint'
+    KnowledgePointSearchItem:
+      type: object
+      additionalProperties: false
+      required: [id, name, normalizedStage, knowledgeTypeId, knowledgeTypeName, knowledgeTypeColour, levelSortIndex, enabled]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 100}
+        normalizedStage: {$ref: '#/components/schemas/QuestionStage'}
+        knowledgeTypeId: {type: string, maxLength: 80}
+        knowledgeTypeName: {type: [string, 'null'], maxLength: 100}
+        knowledgeTypeColour:
+          type: [string, 'null']
+          maxLength: 40
+          description: Presentation hint only; it never defines type identity.
+        levelSortIndex: {type: integer}
+        enabled: {type: boolean}
+    KnowledgePointSearchPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePointSearchItem'}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+    KnowledgePointGraphEdge:
+      type: object
+      additionalProperties: false
+      required: [prerequisiteId, dependentId, relationType]
+      properties:
+        prerequisiteId: {type: string, format: uuid}
+        dependentId: {type: string, format: uuid}
+        relationType: {type: string, enum: [PREREQUISITE]}
+    KnowledgePointGraph:
+      type: object
+      additionalProperties: false
+      required: [center, directPrerequisites, directDependents, nodes, edges, depth]
+      properties:
+        center: {$ref: '#/components/schemas/KnowledgePointSearchItem'}
+        directPrerequisites:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePointSearchItem'}
+        directDependents:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePointSearchItem'}
+        nodes:
+          type: array
+          maxItems: 1000
+          items: {$ref: '#/components/schemas/KnowledgePointSearchItem'}
+        edges:
+          type: array
+          maxItems: 5000
+          items: {$ref: '#/components/schemas/KnowledgePointGraphEdge'}
+        depth: {type: integer, minimum: 1, maximum: 5}
     CreateKnowledgePointRequest:
       type: object
       additionalProperties: false
@@ -2410,6 +2667,171 @@ components:
           maximum: 100000
         enabled:
           type: boolean
+    CreateKnowledgeGraphImportRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, sourceSystem, dryRun, nodeFileSha256, relationFileSha256, expectedNodeCount, expectedRelationCount]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        sourceSystem: {type: string, pattern: '^[A-Z0-9][A-Z0-9_-]{2,79}$'}
+        dryRun: {type: boolean}
+        nodeFileSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        relationFileSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        expectedNodeCount: {type: integer, minimum: 1, maximum: 100000}
+        expectedRelationCount: {type: integer, minimum: 0, maximum: 500000}
+    KnowledgeGraphNodeInput:
+      type: object
+      additionalProperties: false
+      required: [sourceKnowId, name, disciplineCode, educationStageCode, normalizedStage, knowledgeTypeId, knowledgeTypeName, knowledgeTypeColour, levelSortIndex, nodeKind, sourceParentKey, sourceStatus, contentSha256]
+      properties:
+        sourceKnowId: {type: string, minLength: 1, maxLength: 80}
+        name: {type: string, minLength: 1, maxLength: 100}
+        disciplineCode: {type: string, minLength: 1, maxLength: 30}
+        educationStageCode: {type: string, minLength: 1, maxLength: 20}
+        normalizedStage:
+          $ref: '#/components/schemas/KnowledgeGraphEducationStage'
+          description: Confirmed platform stage mapping; formal imports reject values inconsistent with educationStageCode.
+        knowledgeTypeId: {type: string, minLength: 1, maxLength: 80}
+        knowledgeTypeName:
+          type: string
+          enum: [知识点, 题型]
+          description: Confirmed textual type name; colour remains presentation metadata only.
+        knowledgeTypeColour: {type: [string, 'null'], maxLength: 40}
+        levelSortIndex: {type: integer}
+        nodeKind: {type: string, minLength: 1, maxLength: 40}
+        sourceParentKey:
+          type: [string, 'null']
+          maxLength: 80
+          description: Opaque source grouping key; never used as a knowledge-point foreign key.
+        sourceStatus:
+          type: string
+          maxLength: 40
+          description: Preserved source value. Platform enabled state is derived only from the confirmed stage policy, never from this source value.
+        contentSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    KnowledgeGraphEducationStage:
+      type: string
+      enum: [PRIMARY, JUNIOR, SENIOR]
+      description: Confirmed whole-stage scope for imported graph nodes. PRIMARY and JUNIOR may be enabled for question binding; SENIOR is retained but remains disabled.
+    KnowledgeGraphRelationInput:
+      type: object
+      additionalProperties: false
+      required: [prerequisiteSourceKnowId, dependentSourceKnowId, sourceRelationType, contentSha256]
+      properties:
+        prerequisiteSourceKnowId: {type: string, minLength: 1, maxLength: 80}
+        dependentSourceKnowId: {type: string, minLength: 1, maxLength: 80}
+        sourceRelationType: {type: string, minLength: 1, maxLength: 80}
+        contentSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    KnowledgeGraphNodeBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchId, finalBatch, nodes]
+      properties:
+        batchId: {type: string, format: uuid}
+        finalBatch: {type: boolean}
+        nodes:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: {$ref: '#/components/schemas/KnowledgeGraphNodeInput'}
+    KnowledgeGraphRelationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchId, finalBatch, relations]
+      properties:
+        batchId: {type: string, format: uuid}
+        finalBatch: {type: boolean}
+        relations:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: {$ref: '#/components/schemas/KnowledgeGraphRelationInput'}
+    KnowledgeGraphImportStatus:
+      type: string
+      enum: [AWAITING_NODES, AWAITING_RELATIONS, VALIDATING, COMPLETED, COMPLETED_WITH_ISSUES, FAILED]
+    KnowledgeGraphImportSummary:
+      type: object
+      additionalProperties: false
+      required: [nodeCount, relationCount, stageDistribution, typeDistribution, invalidNodeCount, duplicateNameCount, isolatedNodeCount, unresolvedParentKeyCount, addedNodeCount, reusedNodeCount, conflictNodeCount, addedRelationCount, reusedRelationCount, skippedRelationCount, missingEndpointCount, duplicateEdgeCount, selfLoopCount, crossDisciplineEdgeCount, crossStageEdgeCount, cycleDetected, maxInDegree, maxOutDegree, longestPrerequisiteChain]
+      properties:
+        nodeCount: {type: integer, minimum: 0}
+        relationCount: {type: integer, minimum: 0}
+        stageDistribution:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+        typeDistribution:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+        invalidNodeCount: {type: integer, minimum: 0}
+        duplicateNameCount: {type: integer, minimum: 0}
+        isolatedNodeCount: {type: integer, minimum: 0}
+        unresolvedParentKeyCount: {type: integer, minimum: 0}
+        addedNodeCount: {type: integer, minimum: 0}
+        reusedNodeCount: {type: integer, minimum: 0}
+        conflictNodeCount: {type: integer, minimum: 0}
+        addedRelationCount: {type: integer, minimum: 0}
+        reusedRelationCount: {type: integer, minimum: 0}
+        skippedRelationCount: {type: integer, minimum: 0}
+        missingEndpointCount: {type: integer, minimum: 0}
+        duplicateEdgeCount: {type: integer, minimum: 0}
+        selfLoopCount: {type: integer, minimum: 0}
+        crossDisciplineEdgeCount: {type: integer, minimum: 0}
+        crossStageEdgeCount: {type: integer, minimum: 0}
+        cycleDetected: {type: boolean}
+        maxInDegree: {type: integer, minimum: 0}
+        maxOutDegree: {type: integer, minimum: 0}
+        longestPrerequisiteChain: {type: integer, minimum: 0}
+    KnowledgeGraphImportTask:
+      type: object
+      additionalProperties: false
+      required: [id, sourceSystem, dryRun, status, expectedNodeCount, expectedRelationCount, processedNodeCount, processedRelationCount, summary, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        sourceSystem: {type: string, maxLength: 80}
+        dryRun: {type: boolean}
+        status: {$ref: '#/components/schemas/KnowledgeGraphImportStatus'}
+        expectedNodeCount: {type: integer, minimum: 0}
+        expectedRelationCount: {type: integer, minimum: 0}
+        processedNodeCount: {type: integer, minimum: 0}
+        processedRelationCount: {type: integer, minimum: 0}
+        summary:
+          oneOf:
+            - {$ref: '#/components/schemas/KnowledgeGraphImportSummary'}
+            - {type: 'null'}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    KnowledgeGraphBatchResult:
+      type: object
+      additionalProperties: false
+      required: [importTaskId, batchId, replayed, acceptedCount, status]
+      properties:
+        importTaskId: {type: string, format: uuid}
+        batchId: {type: string, format: uuid}
+        replayed: {type: boolean}
+        acceptedCount: {type: integer, minimum: 0, maximum: 500}
+        status: {$ref: '#/components/schemas/KnowledgeGraphImportStatus'}
+    KnowledgeGraphImportIssue:
+      type: object
+      additionalProperties: false
+      required: [id, issueCode, subjectKind, occurrenceCount, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        issueCode:
+          type: string
+          enum: [FIELD_INVALID, NODE_DUPLICATE, NODE_CONTENT_CONFLICT, RELATION_DUPLICATE, ENDPOINT_MISSING, SELF_LOOP, CROSS_DISCIPLINE, CROSS_STAGE, CYCLE_DETECTED, SOURCE_PARENT_UNRESOLVED]
+        subjectKind: {type: string, enum: [TASK, NODE, RELATION]}
+        occurrenceCount: {type: integer, minimum: 1}
+        createdAt: {type: string, format: date-time}
+    KnowledgeGraphImportIssuePage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgeGraphImportIssue'}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
     QuestionOptionInput:
       type: object
       additionalProperties: false
@@ -2456,7 +2878,7 @@ components:
           type: string
           minLength: 1
           maxLength: 50000
-          description: Markdown/LaTeX source; rendering is a frontend responsibility.
+          description: Markdown/LaTeX source; `{{media:<uuid>}}` is a stable inline image marker whose UUID must also occur in this version's QUESTION_IMAGE media list. Rendering and short-lived media authorization are frontend responsibilities.
         options:
           type: array
           maxItems: 8
@@ -2475,7 +2897,7 @@ components:
         analysis:
           type: string
           maxLength: 50000
-          description: Full teacher-only analysis; an empty string means no analysis supplied.
+          description: Full teacher-only analysis; an empty string means no analysis supplied. It may use the same stable `{{media:<uuid>}}` inline image marker as stem.
         knowledgePointIds:
           type: array
           uniqueItems: true
@@ -2509,7 +2931,7 @@ components:
           $ref: '#/components/schemas/QuestionGrade'
         subject:
           $ref: '#/components/schemas/QuestionSubject'
-        stem: {type: string, minLength: 1, maxLength: 50000}
+        stem: {type: string, minLength: 1, maxLength: 50000, description: "Markdown/LaTeX source; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list."}
         options:
           type: array
           maxItems: 8
@@ -2519,7 +2941,7 @@ components:
           minItems: 1
           maxItems: 20
           items: {type: string, minLength: 1, maxLength: 20000}
-        analysis: {type: string, maxLength: 50000}
+        analysis: {type: string, maxLength: 50000, description: "Teacher-only analysis; may contain a stable `{{media:<uuid>}}` marker bound to this child version's QUESTION_IMAGE media list."}
         knowledgePointIds:
           type: array
           uniqueItems: true
@@ -2608,7 +3030,7 @@ components:
         stage: {$ref: '#/components/schemas/QuestionStage'}
         grade: {$ref: '#/components/schemas/QuestionGrade'}
         subject: {$ref: '#/components/schemas/QuestionSubject'}
-        stem: {type: string}
+        stem: {type: string, description: "Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version."}
         options:
           type: array
           items: {$ref: '#/components/schemas/QuestionOptionInput'}
@@ -2616,7 +3038,7 @@ components:
           type: array
           description: Teacher-only correct answers for this immutable child version.
           items: {type: string}
-        analysis: {type: string}
+        analysis: {type: string, description: "Teacher-only analysis; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable child version."}
         knowledgePoints:
           type: array
           items: {$ref: '#/components/schemas/KnowledgePoint'}
@@ -2647,6 +3069,7 @@ components:
           $ref: '#/components/schemas/QuestionSubject'
         stem:
           type: string
+          description: Markdown/LaTeX source; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version.
         options:
           type: array
           items:
@@ -2658,7 +3081,7 @@ components:
             type: string
         analysis:
           type: string
-          description: Teacher-only full analysis projection.
+          description: Teacher-only full analysis projection; stable `{{media:<uuid>}}` markers reference QUESTION_IMAGE entries in this immutable version.
         knowledgePoints:
           type: array
           items:
@@ -2683,11 +3106,16 @@ components:
     QuestionSummary:
       type: object
       additionalProperties: false
-      required: [id, status, revision, currentVersionId, versionNumber, type, difficulty, grade, stemPreview, knowledgePointIds, createdAt, updatedAt]
+      required: [id, scope, editable, status, revision, currentVersionId, versionNumber, type, difficulty, stage, grade, stemPreview, knowledgePointIds, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
+        scope:
+          $ref: '#/components/schemas/QuestionScope'
+        editable:
+          type: boolean
+          description: True only for the current teacher's TEACHER question.
         status:
           $ref: '#/components/schemas/QuestionStatus'
         revision:
@@ -2704,6 +3132,8 @@ components:
           $ref: '#/components/schemas/QuestionType'
         difficulty:
           $ref: '#/components/schemas/QuestionDifficulty'
+        stage:
+          $ref: '#/components/schemas/QuestionStage'
         grade:
           $ref: '#/components/schemas/QuestionGrade'
         stemPreview:
@@ -2723,11 +3153,15 @@ components:
     TeacherQuestion:
       type: object
       additionalProperties: false
-      required: [id, status, revision, currentVersion, createdAt, updatedAt]
+      required: [id, scope, editable, status, revision, currentVersion, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
+        scope:
+          $ref: '#/components/schemas/QuestionScope'
+        editable:
+          type: boolean
         status:
           $ref: '#/components/schemas/QuestionStatus'
         revision:
@@ -2761,6 +3195,72 @@ components:
           type: integer
           format: int64
           minimum: 0
+    SystemQuestion:
+      type: object
+      additionalProperties: false
+      description: Learner-safe ACTIVE SYSTEM question; correct answers and analysis are intentionally absent.
+      required: [id, scope, type, difficulty, stage, grade, subject, stem, options, knowledgePoints, media, children, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        scope: {$ref: '#/components/schemas/QuestionScope'}
+        type: {$ref: '#/components/schemas/QuestionType'}
+        difficulty: {$ref: '#/components/schemas/QuestionDifficulty'}
+        stage: {$ref: '#/components/schemas/QuestionStage'}
+        grade: {$ref: '#/components/schemas/QuestionGrade'}
+        subject: {$ref: '#/components/schemas/QuestionSubject'}
+        stem: {type: string, maxLength: 50000}
+        options:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/QuestionOptionInput'}
+        knowledgePoints:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePoint'}
+        media:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionMedia'}
+        children:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/SystemQuestionChild'}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    SystemQuestionChild:
+      type: object
+      additionalProperties: false
+      required: [questionId, versionId, sequence, type, difficulty, stage, grade, subject, stem, options, knowledgePoints, media, createdAt]
+      properties:
+        questionId: {type: string, format: uuid}
+        versionId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1}
+        type: {$ref: '#/components/schemas/QuestionInputType'}
+        difficulty: {$ref: '#/components/schemas/QuestionDifficulty'}
+        stage: {$ref: '#/components/schemas/QuestionStage'}
+        grade: {$ref: '#/components/schemas/QuestionGrade'}
+        subject: {$ref: '#/components/schemas/QuestionSubject'}
+        stem: {type: string, maxLength: 50000}
+        options:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/QuestionOptionInput'}
+        knowledgePoints:
+          type: array
+          items: {$ref: '#/components/schemas/KnowledgePoint'}
+        media:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionMedia'}
+        createdAt: {type: string, format: date-time}
+    SystemQuestionPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionSummary'}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1}
+        total: {type: integer, format: int64, minimum: 0}
     QuestionVersionSummary:
       type: object
       additionalProperties: false
@@ -2825,11 +3325,13 @@ components:
     QuestionImportTask:
       type: object
       additionalProperties: false
-      required: [id, sourceMediaId, sourceFormat, sourceSystem, dryRun, maxItems, status, progress, totalRows, processedRows, successCount, reviewCount, resolvedCount, skippedCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
+      required: [id, questionScope, sourceMediaId, sourceFormat, sourceSystem, dryRun, maxItems, status, progress, totalRows, processedRows, successCount, reviewCount, resolvedCount, skippedCount, failureCount, errors, retainUntil, sourceReleasedAt, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
+        questionScope:
+          $ref: '#/components/schemas/QuestionScope'
         sourceMediaId:
           type: [string, 'null']
           format: uuid
@@ -2966,7 +3468,7 @@ components:
       properties:
         code:
           type: string
-          enum: [EMBEDDED_OPTIONS_AMBIGUOUS, IMPLICIT_MULTI_PART, SUBQUESTION_ANSWER_MISSING, PATH_JSON_METADATA_CONFLICT, SOURCE_CONTENT_CONFLICT, TYPE_UNSUPPORTED, FIELD_INVALID, HTML_UNSAFE, EXTERNAL_IMAGE_TRANSFER_FAILED]
+          enum: [EMBEDDED_OPTIONS_AMBIGUOUS, IMPLICIT_MULTI_PART, SUBQUESTION_ANSWER_MISSING, PATH_JSON_METADATA_CONFLICT, SOURCE_CONTENT_CONFLICT, TYPE_UNSUPPORTED, FIELD_INVALID, HTML_UNSAFE, EXTERNAL_IMAGE_TRANSFER_FAILED, KNOWLEDGE_POINT_UNKNOWN, KNOWLEDGE_POINT_NAME_CONFLICT, KNOWLEDGE_POINT_TYPE_CONFLICT, KNOWLEDGE_POINT_STAGE_MISMATCH, KNOWLEDGE_POINT_DUPLICATE, KNOWLEDGE_POINT_BINDING_INVALID]
         message: {type: string, maxLength: 300}
     LegacyQuestionImportItemResult:
       type: object
@@ -3089,7 +3591,7 @@ components:
     ExternalImageTransferRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, sourceUrl]
+      required: [clientRequestId, sourceUrl, scope]
       properties:
         clientRequestId:
           type: string
@@ -3101,6 +3603,8 @@ components:
           pattern: '^https://'
           maxLength: 2000
           description: Used only during this call; media-service must not persist or log it.
+        scope:
+          $ref: '#/components/schemas/MediaAssetScope'
     MediaPurpose:
       type: string
       description: Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
@@ -3117,6 +3621,10 @@ components:
     MediaProcessingStatus:
       type: string
       enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED]
+    MediaAssetScope:
+      type: string
+      description: SYSTEM assets are administrator-owned and readable by authenticated users; TEACHER assets remain owner-only.
+      enum: [SYSTEM, TEACHER]
     CreateMediaUploadRequest:
       type: object
       additionalProperties: false
@@ -3300,11 +3808,13 @@ components:
     MediaAsset:
       type: object
       additionalProperties: false
-      required: [mediaId, purpose, status, processingStatus, originalFileName, mimeType, size, sha256, variants, createdAt, updatedAt]
+      required: [mediaId, scope, purpose, status, processingStatus, originalFileName, mimeType, size, sha256, variants, createdAt, updatedAt]
       properties:
         mediaId:
           type: string
           format: uuid
+        scope:
+          $ref: '#/components/schemas/MediaAssetScope'
         purpose:
           $ref: '#/components/schemas/MediaPurpose'
         status:

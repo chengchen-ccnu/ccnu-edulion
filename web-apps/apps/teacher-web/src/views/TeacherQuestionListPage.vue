@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * 教师本人题库列表；筛选和分页以 URL query 为唯一页面状态，刷新与深链接会重新调用 owner-only 列表契约。
+ * 教师可用题库列表；筛选和分页以 URL query 为唯一页面状态，展示公共 SYSTEM 题与本人 TEACHER 题。
  * 列表只消费 QuestionSummary，不请求或展示完整答案/解析；失败时保留上次成功内容并允许定向重试。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { KnowledgePoint, QuestionDifficulty, QuestionPage, QuestionStatus, QuestionType } from "@edu/api-client";
+import type { KnowledgePoint, QuestionDifficulty, QuestionGrade, QuestionPage, QuestionScope, QuestionStage, QuestionStatus, QuestionType } from "@edu/api-client";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { flattenKnowledgePoints } from "../question-form";
+import { flattenKnowledgePoints, gradesForStage, JUNIOR_GRADES, PRIMARY_GRADES } from "../question-form";
 import { teacherQuestionApi } from "../question-api";
 
 const route = useRoute();
@@ -21,6 +21,8 @@ const errorMessage = ref("");
 let controller: AbortController | null = null;
 const form = ref(readFilters());
 const pageCount = computed(() => Math.max(1, Math.ceil((result.value?.total ?? 0) / pageSize)));
+const availableGrades = computed(() => form.value.stage ? gradesForStage(form.value.stage)
+  : [...PRIMARY_GRADES, ...JUNIOR_GRADES]);
 
 watch(() => route.fullPath, load, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
@@ -34,11 +36,13 @@ async function load() {
   try {
     const [questions, points] = await Promise.all([
       teacherQuestionApi.list({ page: currentPage(), size: pageSize,
-        keyword: form.value.keyword || undefined, type: form.value.type || undefined,
+        keyword: form.value.keyword || undefined, stage: form.value.stage || undefined,
+        grade: form.value.grade || undefined, type: form.value.type || undefined,
         difficulty: form.value.difficulty || undefined, status: form.value.status || undefined,
-        knowledgePointId: form.value.knowledgePointId || undefined }, controller.signal),
-      knowledgePoints.value.length ? Promise.resolve(knowledgePoints.value)
-        : teacherQuestionApi.knowledgePoints(controller.signal).then(flattenKnowledgePoints)
+        knowledgePointId: form.value.knowledgePointId || undefined,
+        scope: form.value.scope || undefined }, controller.signal),
+      teacherQuestionApi.knowledgePoints({ stage: form.value.stage || "JUNIOR",
+        grade: form.value.grade || undefined }, controller.signal).then(flattenKnowledgePoints)
     ]);
     result.value = questions;
     knowledgePoints.value = points;
@@ -50,7 +54,9 @@ async function applyFilters() {
   await router.push({ name: "teacher-questions", query: compactQuery({ ...form.value, page: undefined }) });
 }
 async function resetFilters() {
-  form.value = { keyword: "", type: "", difficulty: "", status: "", knowledgePointId: "" };
+  form.value = { keyword: "", scope: "" as QuestionScope | "", stage: "" as QuestionStage | "", grade: "" as QuestionGrade | "",
+    type: "" as QuestionType | "", difficulty: "" as QuestionDifficulty | "",
+    status: "" as QuestionStatus | "", knowledgePointId: "" };
   await router.push({ name: "teacher-questions" });
 }
 async function changePage(page: number) {
@@ -63,10 +69,17 @@ function currentPage(): number {
 }
 function readFilters() {
   return {
-    keyword: stringQuery("keyword"), type: stringQuery("type") as QuestionType | "",
+    keyword: stringQuery("keyword"), scope: stringQuery("scope") as QuestionScope | "", type: stringQuery("type") as QuestionType | "",
+    stage: stringQuery("stage") as QuestionStage | "", grade: stringQuery("grade") as QuestionGrade | "",
     difficulty: stringQuery("difficulty") as QuestionDifficulty | "",
     status: stringQuery("status") as QuestionStatus | "", knowledgePointId: stringQuery("knowledgePointId")
   };
+}
+function stageChanged() {
+  if (form.value.grade && form.value.stage && !gradesForStage(form.value.stage).includes(form.value.grade)) {
+    form.value.grade = "";
+  }
+  form.value.knowledgePointId = "";
 }
 function stringQuery(key: string): string { return typeof route.query[key] === "string" ? route.query[key] as string : ""; }
 function compactQuery(query: Record<string, unknown>): Record<string, string> {
@@ -83,16 +96,25 @@ const typeLabel = (type: QuestionType) => ({ SINGLE_CHOICE: "单选", MULTIPLE_C
   FILL_BLANK: "填空", SHORT_ANSWER: "简答", COMPOSITE: "组合" })[type];
 const difficultyLabel = (value: QuestionDifficulty) => ({ EASY: "简单", MEDIUM: "中等", HARD: "困难" })[value];
 const statusLabel = (value: QuestionStatus) => ({ DRAFT: "草稿", ACTIVE: "已启用", ARCHIVED: "已归档" })[value];
+const stageLabel = (value: QuestionStage) => value === "PRIMARY" ? "小学" : "初中";
+const gradeLabel = (value: QuestionGrade) => ({ ONE: "一年级", TWO: "二年级", THREE: "三年级", FOUR: "四年级",
+  FIVE: "五年级", SIX: "六年级", SEVEN: "七年级", EIGHT: "八年级", NINE: "九年级" })[value];
 </script>
 
 <template>
   <section class="teacher-page-heading">
-    <div><span class="section-kicker">QUESTION BANK</span><h2>题库</h2><p>管理本人题目、不可变版本和受控导入任务。</p></div>
+    <div><span class="section-kicker">QUESTION BANK</span><h2>题库</h2><p>选用平台系统题，管理本人私有题与不可变版本。</p></div>
     <div class="heading-actions"><RouterLink class="button button--quiet" :to="{ name: 'teacher-question-imports' }">导入任务</RouterLink>
       <RouterLink class="button button--primary" :to="{ name: 'teacher-question-new' }">＋ 新建题目</RouterLink></div>
   </section>
   <form class="question-filter-panel" @submit.prevent="applyFilters">
     <label><span>关键词</span><input v-model="form.keyword" placeholder="搜索题干摘要"></label>
+    <label><span>来源</span><select v-model="form.scope"><option value="">全部来源</option>
+      <option value="SYSTEM">平台系统题</option><option value="TEACHER">我的私有题</option></select></label>
+    <label><span>学段</span><select v-model="form.stage" @change="stageChanged"><option value="">全部</option>
+      <option value="PRIMARY">小学</option><option value="JUNIOR">初中</option></select></label>
+    <label><span>年级</span><select v-model="form.grade" @change="form.knowledgePointId = ''"><option value="">全部</option>
+      <option v-for="grade in availableGrades" :key="grade" :value="grade">{{ gradeLabel(grade) }}</option></select></label>
     <label><span>知识点</span><select v-model="form.knowledgePointId"><option value="">全部</option>
       <option v-for="point in knowledgePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label>
     <label><span>题型</span><select v-model="form.type"><option value="">全部</option><option value="SINGLE_CHOICE">单选</option>
@@ -106,16 +128,17 @@ const statusLabel = (value: QuestionStatus) => ({ DRAFT: "草稿", ACTIVE: "已�
   </form>
 
   <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }} <button type="button" @click="load">重试</button></p>
-  <div v-if="loading && !result" class="teacher-loading" aria-busy="true">正在加载本人题目…</div>
+  <div v-if="loading && !result" class="teacher-loading" aria-busy="true">正在加载可用题目…</div>
   <div v-else-if="result?.items.length" class="question-list" :aria-busy="loading">
     <article v-for="question in result.items" :key="question.id" class="question-list-card">
       <header><div><span :class="`status-pill status-pill--${question.status.toLowerCase()}`">{{ statusLabel(question.status) }}</span>
-        <span>{{ typeLabel(question.type) }} · {{ difficultyLabel(question.difficulty) }} · {{ question.grade }}</span></div>
+        <span class="status-pill">{{ question.scope === "SYSTEM" ? "平台系统题" : "我的私有题" }}</span>
+        <span>{{ typeLabel(question.type) }} · {{ difficultyLabel(question.difficulty) }} · {{ stageLabel(question.stage) }} · {{ gradeLabel(question.grade) }}</span></div>
         <span>v{{ question.versionNumber }} · r{{ question.revision }}</span></header>
       <h3>{{ question.stemPreview }}</h3>
       <p>{{ question.knowledgePointIds.length }} 个知识点 · 更新于 {{ new Date(question.updatedAt).toLocaleString("zh-CN") }}</p>
       <footer><RouterLink class="button button--quiet" :to="{ name: 'teacher-question-detail', params: { questionId: question.id } }">查看详情</RouterLink>
-        <RouterLink v-if="question.status !== 'ARCHIVED'" class="button button--primary" :to="{ name: 'teacher-question-edit', params: { questionId: question.id } }">编辑新版本</RouterLink></footer>
+        <RouterLink v-if="question.editable && question.status !== 'ARCHIVED'" class="button button--primary" :to="{ name: 'teacher-question-edit', params: { questionId: question.id } }">编辑新版本</RouterLink></footer>
     </article>
   </div>
   <div v-else-if="result" class="teacher-empty"><span>没有匹配题目</span><h3>调整筛选或创建第一道题</h3>

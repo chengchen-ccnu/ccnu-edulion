@@ -62,6 +62,42 @@ function New-ValidatedImportFixture([string]$SourceRoot, [string]$DryRunCheckpoi
     return [pscustomobject]@{ taskId = $taskId }
 }
 
+# 创建包含一个非法图片 URL 和一个未批准主机的 VALID 合成快照，验证整题排除只由显式开关触发。
+function New-ImageExclusionFixture([string]$SourceRoot, [string]$DryRunCheckpointPath) {
+    [IO.Directory]::CreateDirectory($SourceRoot) | Out-Null
+    $encoding = New-Object Text.UTF8Encoding($false)
+    $sources = @(
+        [ordered]@{ name='01-approved.json'; json=[ordered]@{ exerciseID='approved-image'; question='safe <img src="https://images.example.test/a.png">' } },
+        [ordered]@{ name='02-invalid.json'; json=[ordered]@{ exerciseID='invalid-image'; question='safe <img src="https://">' } },
+        [ordered]@{ name='03-unapproved.json'; json=[ordered]@{ exerciseID='unapproved-image'; question='safe <img src="https://other.example.test/a.png">' } },
+        [ordered]@{ name='04-text.json'; json=[ordered]@{ exerciseID='valid-text'; question='safe text' } }
+    )
+    foreach ($source in $sources) {
+        [IO.File]::WriteAllText((Join-Path $SourceRoot $source.name),
+            ($source.json | ConvertTo-Json -Compress), $encoding)
+    }
+    $paths = @(Get-ChildItem -LiteralPath $SourceRoot -Recurse -File -Filter '*.json' |
+        Select-Object -ExpandProperty FullName | Sort-Object)
+    $resolvedRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
+    $rootLabel = $resolvedRoot.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+    $manifestLines = foreach ($path in $paths) {
+        $file = Get-Item -LiteralPath $path
+        $relative = $path.Substring($resolvedRoot.TrimEnd('\').Length).TrimStart('\').Replace('\', '/')
+        "$relative|$($file.Length)|$($file.LastWriteTimeUtc.Ticks)"
+    }
+    $taskId = '33333333-3333-3333-3333-333333333333'
+    $checkpoint = [ordered]@{
+        version=1;runFingerprint='synthetic-image-exclusion';action='DryRun';sourceSystem='LEGACY_RAWSTON_V3'
+        sourceRootFingerprint=Get-TestSha256 $rootLabel
+        sourceManifestFingerprint=Get-TestSha256 ($manifestLines -join "`n")
+        totalSourceFiles=4;totalItems=4;activeTask=$null
+        taskSummaries=@([ordered]@{importTaskId=$taskId})
+        totals=[ordered]@{processed=4;imported=0;valid=4;review=0;skipped=0;failed=0};completed=$true
+    }
+    [IO.File]::WriteAllText($DryRunCheckpointPath, ($checkpoint | ConvertTo-Json -Depth 10), $encoding)
+    return [pscustomobject]@{ taskId=$taskId }
+}
+
 # 依次模拟任务详情、VALID 分页和可选的正式任务/批次响应，并把合成请求体写入 TestDrive 供断言。
 function Start-ValidatedImportServer([string]$Mode, [string]$TaskId, [string]$CapturePath, [string]$Token) {
     $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0)
@@ -121,18 +157,26 @@ function Start-ValidatedImportServer([string]$Mode, [string]$TaskId, [string]$Ca
                 continue
             }
             if ($index -eq 0) {
+                $itemCount = if ($Mode -eq 'ExclusionPlan') { 4 } else { 3 }
                 $body = [ordered]@{
-                    id = $TaskId; sourceFormat = 'LEGACY_JSON'; sourceSystem = 'LEGACY_RAWSTON_V3'
-                    dryRun = $true; status = 'COMPLETED'; processedRows = 3
+                    id = $TaskId; sourceFormat = 'LEGACY_JSON'; sourceSystem = 'LEGACY_RAWSTON_V3'; questionScope = 'SYSTEM'
+                    dryRun = $true; status = 'COMPLETED'; processedRows = $itemCount
                 } | ConvertTo-Json -Compress
                 Send-TestResponse $client $request '200 OK' $body
             } elseif ($index -eq 1) {
-                $body = [ordered]@{
-                    page = 1; size = 100; total = 2
-                    items = @(
+                $validItems = if ($Mode -eq 'ExclusionPlan') {
+                    @('approved-image','invalid-image','unapproved-image','valid-text') | ForEach-Object {
+                        [ordered]@{ externalId=$_;sourceSystem='LEGACY_RAWSTON_V3';outcome='VALID';issues=@() }
+                    }
+                } else {
+                    @(
                         [ordered]@{ externalId = 'valid-image'; sourceSystem = 'LEGACY_RAWSTON_V3'; outcome = 'VALID'; issues = @() },
                         [ordered]@{ externalId = 'valid-text'; sourceSystem = 'LEGACY_RAWSTON_V3'; outcome = 'VALID'; issues = @() }
                     )
+                }
+                $body = [ordered]@{
+                    page = 1; size = 100; total = @($validItems).Count
+                    items = @($validItems)
                 } | ConvertTo-Json -Depth 6 -Compress
                 Send-TestResponse $client $request '200 OK' $body
             } elseif ($index -eq 2) {
@@ -151,6 +195,123 @@ function Start-ValidatedImportServer([string]$Mode, [string]$TaskId, [string]$Ca
 }
 
 Describe 'Invoke-LegacyQuestionJsonMigration VALID-only Import' {
+    It '均衡样本选择确定覆盖现有分类并优先增加知识点' {
+        $tokens = $null; $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $scriptsRoot 'Invoke-LegacyQuestionJsonMigration.ps1'), [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors).Count | Should Be 0
+        $definition = $ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Select-BalancedLegacySample'
+        }, $true) | Select-Object -First 1
+        . ([scriptblock]::Create($definition.Extent.Text))
+
+        $candidates = for ($index = 0; $index -lt 650; $index++) {
+            [pscustomobject]@{
+                sourceIndex = $index
+                questionType = if ($index -lt 7) { 'MULTIPLE_CHOICE' } else {
+                    @('SINGLE_CHOICE','FILL_BLANK','SHORT_ANSWER','COMPOSITE')[$index % 4]
+                }
+                grade = @('7','8','9')[$index % 3]
+                difficulty = @('1','5','9')[$index % 3]
+                imageHosts = if ($index % 2 -eq 0) { @('images.example.test') } else { @() }
+                knowledgePointIds = @("knowledge-$index")
+            }
+        }
+        $first = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 520
+        $second = Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 520
+
+        @($first.candidates).Count | Should Be 520
+        $first.categoryQuota | Should Be 101
+        $first.questionTypeCounts.MULTIPLE_CHOICE | Should Be 7
+        $first.questionTypeTargets.MULTIPLE_CHOICE | Should Be 7
+        $first.questionTypeCounts.SINGLE_CHOICE | Should BeGreaterThan 100
+        $first.questionTypeCounts.FILL_BLANK | Should BeGreaterThan 100
+        $first.questionTypeCounts.SHORT_ANSWER | Should BeGreaterThan 100
+        $first.questionTypeCounts.COMPOSITE | Should BeGreaterThan 100
+        $first.questionTypeAvailableCounts.TRUE_FALSE | Should Be 0
+        $first.gradeCounts.'7' | Should BeGreaterThan 100
+        $first.gradeCounts.'8' | Should BeGreaterThan 100
+        $first.gradeCounts.'9' | Should BeGreaterThan 100
+        $first.gradeAvailableCounts.'1' | Should Be 0
+        $first.difficultyCounts.'1' | Should BeGreaterThan 100
+        $first.difficultyCounts.'5' | Should BeGreaterThan 100
+        $first.difficultyCounts.'9' | Should BeGreaterThan 100
+        $first.imageQuestionTarget | Should Be 260
+        $first.imageQuestionCount | Should BeGreaterThan 259
+        $first.distinctKnowledgePointCount | Should Be 520
+        (@($first.candidates.sourceIndex) -join ',') | Should Be (@($second.candidates.sourceIndex) -join ',')
+    }
+
+    It '含图候选不足一半时拒绝生成样本' {
+        $tokens = $null; $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $scriptsRoot 'Invoke-LegacyQuestionJsonMigration.ps1'), [ref]$tokens, [ref]$parseErrors)
+        $definition = $ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Select-BalancedLegacySample'
+        }, $true) | Select-Object -First 1
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $candidates = for ($index = 0; $index -lt 150; $index++) {
+            [pscustomobject]@{
+                sourceIndex = $index; questionType = 'SINGLE_CHOICE'; grade = '7'; difficulty = '1'
+                imageHosts = if ($index -lt 59) { @('images.example.test') } else { @() }
+                knowledgePointIds = @("knowledge-$index")
+            }
+        }
+
+        $caught = $null
+        try { Select-BalancedLegacySample -Candidates ([object[]]$candidates) -SampleSize 120 } catch { $caught = $_.Exception.Message }
+        $caught | Should Match '50 percent image ratio'
+    }
+
+    It '正式均衡样本缺少显式确认时在读取来源前停止' {
+        $previousToken = [Environment]::GetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', 'Process')
+        [Environment]::SetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', 'sample-confirm-token', 'Process')
+        try {
+            $caught = $null
+            try {
+                & (Join-Path $scriptsRoot 'Invoke-LegacyQuestionJsonMigration.ps1') -Action Import `
+                    -BalancedSampleSize 120 -SourceRoot (Join-Path $TestDrive 'missing-source') `
+                    -ValidatedDryRunCheckpointPath (Join-Path $TestDrive 'missing-dryrun.json')
+            } catch { $caught = $_.Exception.Message }
+            $caught | Should Match 'ConfirmSampleImport'
+            $caught | Should Not Match 'sample-confirm-token|missing-source|missing-dryrun'
+        } finally {
+            [Environment]::SetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', $previousToken, 'Process')
+        }
+    }
+
+    It '显式策略整题排除非法 URL 与未批准图片主机并保留精确计数' {
+        $sourceRoot = Join-Path $TestDrive 'exclusion-source'
+        $dryRunCheckpoint = Join-Path $TestDrive 'exclusion-dryrun.json'
+        $capturePath = Join-Path $TestDrive 'exclusion-capture.json'
+        $fixtureData = New-ImageExclusionFixture $sourceRoot $dryRunCheckpoint
+        $token = 'exclusion-secret-token'
+        $fixture = Start-ValidatedImportServer 'ExclusionPlan' $fixtureData.taskId $capturePath $token
+        $previousToken = [Environment]::GetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', 'Process')
+        [Environment]::SetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', $token, 'Process')
+        try {
+            $output = & (Join-Path $scriptsRoot 'Invoke-LegacyQuestionJsonMigration.ps1') -Action Import -AllItems -PlanOnly `
+                -SourceRoot $sourceRoot -ApiBaseUrl "http://127.0.0.1:$($fixture.port)" `
+                -ValidatedDryRunCheckpointPath $dryRunCheckpoint -AllowedImageHost 'images.example.test' `
+                -ExcludeInvalidImageItems -ExcludeUnapprovedImageHostItems
+            $result = $output | ConvertFrom-Json
+
+            $result.selectedValidCount | Should Be 2
+            $result.selectedImageCount | Should Be 1
+            $result.excludedInvalidImageItemCount | Should Be 1
+            $result.excludedUnapprovedImageHostItemCount | Should Be 1
+            $result.imageHostCounts.'images.example.test' | Should Be 1
+            $output | Should Not Match 'exclusion-secret-token|approved-image|invalid-image|unapproved-image|valid-text|33333333|exclusion-source'
+        } finally {
+            [Environment]::SetEnvironmentVariable('EDU_MIGRATION_ACCESS_TOKEN', $previousToken, 'Process')
+            $fixture.listener.Stop()
+            Wait-Job -Job $fixture.job -Timeout 5 | Out-Null
+            Remove-Job -Job $fixture.job -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It '计划模式只输出安全聚合且不创建正式检查点' {
         $sourceRoot = Join-Path $TestDrive 'plan-source'
         $dryRunCheckpoint = Join-Path $TestDrive 'plan-dryrun.json'

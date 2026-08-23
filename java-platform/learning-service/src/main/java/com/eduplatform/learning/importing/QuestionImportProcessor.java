@@ -85,7 +85,8 @@ public class QuestionImportProcessor {
                                 source.grade(), source.subject(), source.stem(), source.options(), source.answers(), source.analysis(),
                                 codes.stream().map(code -> UUID.fromString(byCode.get(code).id())).toList(), source.media());
                         String requestId = UUID.nameUUIDFromBytes((task.id() + ":" + row.rowNumber()).getBytes(StandardCharsets.UTF_8)).toString();
-                        questions.createImported(task.ownerId(), requestId, resolved, event.traceId()); success++;
+                        questions.createImported(task.ownerId(), QuestionModels.Scope.TEACHER,
+                                requestId, resolved, event.traceId()); success++;
                     }
                 } catch (QuestionException invalid) {
                     boolean externalImage = invalid.fieldErrors().stream().anyMatch(field -> field.reason().contains("图片必须"));

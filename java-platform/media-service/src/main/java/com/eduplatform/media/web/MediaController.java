@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * OpenAPI v0.6 媒体 HTTP 适配器。只接收 Gateway 或受信领域服务传递的身份头与 JSON 元数据，
+ * OpenAPI v0.13 媒体 HTTP 适配器。只接收 Gateway 或受信领域服务传递的身份头与 JSON 元数据，
  * 不接收或转发文件字节；文件 I/O 由浏览器使用短期 OSS 授权完成。
  */
 @RestController
@@ -43,11 +43,12 @@ public class MediaController {
     ResponseEntity<MediaDtos.Asset> transferExternalImage(
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @Valid @RequestBody MediaDtos.ExternalImageTransferRequest request,
             HttpServletRequest servletRequest) {
-        MediaIdentity identity = MediaIdentity.require(userId, roles);
+        MediaIdentity identity = MediaIdentity.require(userId, roles, permissions);
         ExternalImageTransferService.Result result = externalImages.transfer(identity.userId(), identity.roles(),
-                request, trace(servletRequest));
+                identity.permissions(), request, trace(servletRequest));
         return result.created() ? ResponseEntity.status(201).body(result.asset()) : ResponseEntity.ok(result.asset());
     }
 

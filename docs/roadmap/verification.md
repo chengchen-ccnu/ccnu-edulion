@@ -327,3 +327,54 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 图片边界：只对所选 VALID 合成项提取与 Java 解析器一致的带引号 HTTPS `<img src>`，正式执行要求 `AllowedImageHost` 完整覆盖且拒绝通配符/URL/端口/路径。URL 随原 JSON 进入既有 API，图片仍由 learning-service 调 media-service 执行精确白名单、逐跳 DNS/重定向、大小、MIME、魔数和 OSS 转存；脚本不下载图片、不连接 OSS，也不修改服务配置。远端正式失败仍按 `EXTERNAL_IMAGE_TRANSFER_FAILED` 复核，不能以 DryRun VALID 或主机门禁替代媒体校验。
 - VALID-only 合成验收：PowerShell Pester 新增 4 项并全部通过；仅使用 3 份临时合成 JSON 和本地 TCP Fixture，覆盖计划无写入、两个 VALID/一个复核项的精确筛选、图片 URL 保留、图片主机未批准时 POST 前停止和 401 安全诊断。与既有迁移/汇总测试合计 17/17；输出断言不含 Token、题目、来源路径、原始 JSON或完整任务 ID。没有读取真实题库正文、调用真实 Gateway、数据库、media-service、OSS 或外部图片主机。
 - 边界说明：本轮没有执行正式 Import，没有创建正式题目、媒体或 OSS 对象，也没有删除、重建或清理检查点、45 个 DryRun 任务及复核记录。全量迁移脚本逐项有界读取来源以提交预检，但本次后续验收与汇总不得再次批量读取 44,441 份 JSON 正文。`AllItems` 只保证全部文件提交处理；`NEEDS_REVIEW`、字段失败和图片失败仍需人工处理，不能把 `processedCount` 当作全部成功导入。
+- 发布：T10A 的 6 个实现与文档提交经 [PR #25](https://github.com/chengchen-ccnu/ccnu-edulion/pull/25) 合并到 `main@ed141aa56b3f14cfc9486250a753f3e28419c78c`；分支推送与 PR 事件的 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部通过。PR 合并只发布迁移能力，没有触发正式题库 Import、数据库清理或 OSS 写入。
+
+## 2026-08-19 T10B 数学知识图谱导入与题目知识点绑定
+
+- 门禁与范围：从 T10A `df73fb0` 的干净工作区创建 `codex/t10b-knowledge-graph-import`；完整阅读页面规格和现有 OpenAPI 后实施。没有新增路由、改动 Python 智能体、修改两个只读来源文件，或删除/重建 T10A 的 45 个 DryRun 任务、复核记录及检查点。T11 预留 V4，图谱基础迁移使用 V5，确认映射使用向前 V6，未改写已有迁移。
+- 契约与权限：OpenAPI 0.11.1 新增管理员图谱任务/节点批次/关系批次/安全问题分页接口，以及教师端分页搜索和 1～5 层有限邻域接口；生成客户端同步更新。节点输入显式携带已确认学段和“知识点/题型”名称。Gateway 只路由请求，管理员写接口要求 `administration:access`，教师查询要求 `teaching:access`，浏览器不直连 learning-service。
+- 数据模型与导入：`knowledge_point` 保留内部 UUID，并以 `(source_system, source_know_id)` 唯一识别来源节点；来源 parent key 仅作不透明元数据，不写树自外键。新增同 Schema 双外键的显式 `prerequisite -> dependent` 边、任务/批次/staging/安全问题表及题目 tag 元数据；V6 使规范学段和类型名称参与 staging、摘要及正式写入。节点后关系两阶段幂等；正式写入前校验确认映射以及缺失端点、自环、跨学科、跨学段和环，且新节点默认禁用、不删除旧数据。
+- 只读图谱复核：3,671 节点、2,107 关系；学段来源分布 `02=817`、`03=1,386`、`04=1,468`，六种类型合计一致；必要字段空值、重复 ID、缺失端点、重复边、自环、跨学科、跨学段和环均为 0，重复名称组 110。关系语义确认为文件 `b` 是 `a` 的先修，平台写作 `b -> a`；孤立节点 2,267，最大入度 11、最大出度 19、最长链按边数 21。479 个不同来源 parent key 全部不可解析，未据此造父节点。
+- 历史 tags 与题库复核：44,441 份 JSON 全部可解析；早期只读 tag 扫描确认 1,260 个唯一知识点 ID 均存在且类型冲突为 0。正式图谱导入后，V3 命名空间下的 45 个真实 Gateway DryRun 任务处理 44,441 项：VALID 27,687、NEEDS_REVIEW 16,754、FAILED/SKIPPED 0；未知知识点、类型冲突、学段不匹配均为 0。主要问题为路径/JSON 元数据冲突 5,793、子题答案缺失 4,827、知识点重复 3,567、隐式多小题 3,375、内嵌选项歧义 2,468、名称冲突 406、字段无效 173、HTML 不安全 37。
+- 脚本：`Invoke-KnowledgeGraphMigration.ps1` 默认 DryRun，确定性排序和批次 ID，先节点后关系；检查点不保存 Token、绝对路径、节点列表或原始 JSON。请求通过 `MemoryStream` 原样发送 UTF-8，测试要求服务端直接解析中文 JSON，并复用白名单安全诊断器。正式 Import 在任何 HTTP 前要求导入确认和 stage/status/type/parent 四项语义确认；脚本通过已确认的学段与类型数量签名生成规范字段，服务端再次校验来源状态、学段和类型名称。T10B 专项 5/5、全部 Pester 22/22、Windows PowerShell 5.1 解析通过。
+- 自动化：learning-service 34 项执行、32 通过、2 个显式真实 MySQL 用例按开关跳过，图谱专项 7/7；H2 MySQL 模式成功应用 V1/V2/V3/V5/V6。OpenAPI 重新生成、全 workspace `typecheck` 和 Vitest 18 文件 122 项通过。完整 Java Reactor、三端生产构建、`git diff --check` 与提交后 `check:api` 在最终提交前后复核。
+- 真实环境与数据：通过本地环境包装脚本临时启动 IAM/Gateway/Learning，使用独立 18081/18080/18084 端口并在结束后全部停止；既有 `edu_platform_learning_dev` 由 Flyway 向前迁移到 V6。管理员登录产生正常本地 IAM 审计/刷新会话，Token 未保存。保留 V1/V2 图谱 DryRun 审计任务和新 V3 正式任务；V3 正式表为 3,671 个禁用、整学段节点和 2,107 条关系，parent 外键均为空。另保留 V3 的 45 个题库 DryRun 任务；44,441 条来源记录的 `question_id` 均为空，正式题目与绑定为 0。未创建伪数据，H2 Fixture 随进程销毁。
+- 真实 DryRun：V1 修复传输后完成，但发现服务端重复名称按超额节点计 117，而本地按重复组计 110；保留 V1 审计任务，统一为组数后使用新 `KG_MATH_T10B_V2` 与独立检查点重跑。V2 为 `COMPLETED`，本地/远端均为节点 3,671、关系 2,107、六类类型、学段 `02=817/03=1,386/04=1,468`、重复名称组 110、孤立 2,267、未解析 parent key 479、最大入度 11、最大出度 19、最长链 21；缺失端点、重复边、自环、跨学科、跨学段、环、节点冲突及跳过关系均为 0，唯一安全问题为 `SOURCE_PARENT_UNRESOLVED=479`。
+- 正式导入与发布边界：负责人确认 `02/03/04=PRIMARY/JUNIOR/SENIOR`、无年级适用整个学段、`status=0` 只保存不启用、parentId 只作外部分组键、六组类型规范为“知识点/题型”，并确认高中关系暂不完整。`KG_MATH_T10B_V3` 正式图谱 Import 完成，节点 3,671、关系 2,107、冲突/结构错误 0；类型分布为小学 277/540、初中 451/935、高中 775/693（知识点/题型），全部节点禁用。题目 Import 未执行；必须先评审 16,754 个复核来源，再单独确认正式题目导入和节点启用策略。
+
+### 2026-08-21 小学/初中学段开放补充
+
+- 契约与实现：OpenAPI 向前升级到 0.12.0，`QuestionStage` 开放 `PRIMARY/JUNIOR`，`QuestionGrade` 开放一至九年级；教师知识点树和题目列表增加学段/年级筛选，题目摘要增加学段。服务端统一校验学段年级组合、组合题父子上下文和知识点学段；历史 JSON/CSV 导入按年级推导学段。高中未进入题目契约，搜索接口对高中仍返回 422。
+- 前端：六条既有教师题库路由不变。列表新增 URL 可恢复的学段/年级筛选；编辑器提供小学/初中选择和动态年级，切换学段或年级时清除不匹配知识点，组合题子题继承父题上下文；分页知识点选择器按当前学段查询，详情使用中文学段/年级。
+- 数据：只新增并应用 `V7__enable_primary_and_junior_knowledge_points.sql`，没有新表。既有 `edu_platform_learning_dev` 从 V6 前进到 V7；聚合复核为小学启用 817、初中启用 1,386、高中禁用 1,468，先修关系仍为 2,107，来源节点 `parent_id/taxonomy_parent_id` 非空数仍为 0。没有创建题目、媒体、Seed 或伪数据。
+- 自动化：本地 MySQL 条件验收通过并精确清理其随机 Fixture；H2 learning-service 测试、OpenAPI 客户端生成、前端类型检查和 Vitest 均通过。正式题目导入仍未执行，题目公共/教师所有权与媒体授权边界不在本次学段适配中扩张。
+
+### 2026-08-21 SYSTEM/TEACHER 题库作用域与平衡样本正式导入
+
+- 契约与权限：OpenAPI 升级到 0.13.0，题目和媒体增加 `SYSTEM/TEACHER`。教师列表只返回 SYSTEM＋本人 TEACHER 并支持来源筛选；SYSTEM 可读但教师写入固定 403。历史 JSON 创建/批次/清理收口到 `administration:access`，教师端仅保留旧任务只读审计与 CSV/XLSX 私有导入。学习端 SYSTEM 投影不读取/返回答案、解析或历史来源。
+- 数据模型：Learning V8 为 `question_aggregate.scope` 和 `question_import_task.question_scope` 回填 `TEACHER`，Media V4 为 `media_asset.scope` 回填 `TEACHER`；新 SYSTEM 题目/子题直接 `ACTIVE`，新 SYSTEM 图片保留管理员 owner 且已认证学生/教师可申请短期授权。本任务未创建新数据库、未跨 Schema 建外键或 Join 业务实现，未改写既有迁移。
+- 管理员预检：通过 Gateway 新建 45 个 SYSTEM DryRun 任务，44,441 条全部处理，`VALID=27,687`、`NEEDS_REVIEW=16,754`、`FAILED/SKIPPED=0`。它们与旧教师归属 DryRun 分离，检查点不含 Token、题干、答案或源目录绝对路径。
+- 均衡计划：硬配额为每个可用年级/题型/难度 101，不足则全选，总上限 650，含图下限 325。计划为七/八/九年级 202/242/206，易/中/难 378/165/107，填空/组合/单选/简答/多选 149/111/273/110/7，含图题 483/650，不同知识点 1,208。源数据没有小学题或判断题；多选题仅 7 道，全部选入。
+- 正式结果：650 条处理为 648 道 `ACTIVE SYSTEM` 根题、2 条 `EXTERNAL_IMAGE_TRANSFER_FAILED` 安全复核、普通失败 0。成功集合为七/八/九年级 202/240/206，易/中/难 378/164/106，填空/组合/单选/简答/多选 149/110/272/110/7；481/648（74.23%）含图，另创建 362 道 SYSTEM 组合子题和 1,910 个媒体引用。知识点禁用/跨学段绑定、owner 不匹配和题目字段外部主机残留均为 0。
+- 图片缺口与重导：首轮验收发现 2 道答案 HTML 中的图片 URL 未被提取。解析器修复为答案与题干/解析使用同一安全清理/媒体转存逻辑，并新增专项测试。首轮任务精确清理 1,010 个题目聚合、650 个来源引用和 1,905 个媒体引用，释放事件由 Media 绑定台账消费；最终重导后题目字段外部 URL 为 0。1,910 个最终引用媒体全部存在、管理员 owner、`SYSTEM/READY/BOUND`，对象键外部主机残留为 0。
+- 真实权限验收：教师 SYSTEM 筛选总数 648，详情 `editable=false`，状态改写为 403 `QUESTION.SYSTEM_READ_ONLY`；学生 SYSTEM 列表/详情成功且 JSON 不含 `answers/analysis`；教师/学生读 SYSTEM 媒体均为 200，学生短期访问授权为 201。凭据均经本地环境包装与 DPAPI 注入，未输出或落盘 Token/密码。
+- 自动化门禁：Java 8 模块 `clean verify` 全部成功（Learning 38 项，2 跳过；Media 20 项，2 跳过；Gateway 11/11）；Pester 均衡样本 8/8；OpenAPI 客户端生成、全 workspace 类型检查、Vitest 18 文件 122 项和三端生产构建全部通过；`git diff --check` 无错误。
+- 数据与清理：未创建伪数据；正式样本是用户批准的只读历史来源，用于来源/年级/题型/难度/知识点/含图筛选与学生/教师公共读验收。最终检查点位于未跟踪 `.m2/migration-checkpoints/system-import-kg-math-t10b-v3-sample650-answer-images.json`；`-Action Cleanup -CheckpointPath <该文件>` 可精确撤销未被后续修改的题目/引用，重建时重跑文档中的 Plan/Import 命令。任务与检查点保留作为审计证据，不清表。
+
+### 2026-08-21 组合题原题版式与内联图片补充
+
+- 问题根因：历史解析器把 `<img>` 替换为 `[图片N]` 文本，再把图片只按顺序挂到版本 media 列表；教师端又分开渲染父题、媒体和子题，因此原文位置和完整试题版式丢失。
+- 契约与导入：OpenAPI 升级到 0.13.1，`stem/options/answers/analysis` 允许 `{{media:<uuid>}}` 稳定占位，但 UUID 必须是同一不可变版本已绑定的 `QUESTION_IMAGE`。历史 JSON 在题干、选项、解析和答案之间统一分配顺序，外部图安全转存成功后才替换为稳定 mediaId；未绑定、非图片或格式错误的占位在写入前返回 422。
+- 前端：组合题详情保留子题聚合与顺序，但按“完整父题题干＋连续小问”在同一区域展示；父级答案和解析分别统一展示，小问编号之间换行。内联图片只对当前版本媒体申请短期授权，以 Blob URL 写入清洗占位元素，离页中止请求并撤销 URL。存量 `[图片N]` 按 media 顺序兼容恢复，无需删除或重导 648 道 SYSTEM 根题。
+- 验证：learning-service `verify` 执行 39 项，37 项通过、2 个真实环境用例按开关跳过；OpenAPI 客户端重新生成，teacher-web 类型检查和生产构建通过，Vitest 18 文件 123 项全部通过。Vitest/Vite 在沙箱内因 `esbuild spawn EPERM` 未启动，经批准在沙箱外复跑通过。
+- 数据边界：本补充没有新建或修改数据库、表、迁移、题目、媒体、OSS 对象或伪数据。当前 SYSTEM 样本、知识点绑定、导入任务和精确清理检查点全部保留。
+
+### 2026-08-21 KaTeX 分式定位修复
+
+- 根因与修复：旧管线先恢复 KaTeX HTML、再用 DOMPurify 全局删除 `style`，误删了分式 `vlist` 的公式特有高度和纵向定位参数，导致分子/分母跌出基线并被容器裁切。现改为先清洗用户 Markdown/HTML，再恢复 `trust=false` 的本地 KaTeX 输出和代码生成的稳定媒体占位；题目原文中的样式、事件、脚本和外链媒体仍不可信。
+- 验证与数据：Vitest 18 文件 124 项全部通过；新增回归测试同时覆盖分式定位样式保留、用户 `position/color` 样式拒绝和 KaTeX 危险链接拒绝，并保留原有危险链接、iframe、脚本、图片和媒体占位测试。全 workspace 类型检查与教师端生产构建通过，仅有既有 hls.js 大 chunk 提示。当前桌面会话的浏览器连接组件初始化失败，未执行人工截图复核。本修复只修改教师端渲染与文档，没有改变 OpenAPI、Java、数据库、题目、媒体、OSS 对象、导入任务或伪数据，无需清理或重新导入。
+
+### 2026-08-21 填空题空位显示补充
+
+- 根因与实现：只读抽样 500 道历史填空题，仅输出标记聚合、不输出题干；其中 465 道在去除 HTML 标签后仍以连续 3 个以上普通空格表示空位，浏览器会折叠这些空格。教师端现仅对 `FILL_BLANK` 根题/组合子题题干，把标签外连续空格或下划线转换为固定 5em 底边线空位，并提供“填空处”辅助文本；答案、解析、普通题、HTML 属性和 KaTeX 内部不转换。
+- 验证与数据：Vitest 18 文件 125 项、全 workspace 类型检查和教师端生产构建全部通过；自动化覆盖两个空位生成、标签属性不误转换和普通题不转换，构建仅保留既有 hls.js 大 chunk 提示。本补充没有修改 OpenAPI、Java、数据库、题目、媒体、OSS 对象、导入任务或伪数据，现有 648 道 SYSTEM 根题无需清理或重导。
