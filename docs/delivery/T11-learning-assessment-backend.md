@@ -71,7 +71,7 @@ Course V3 创建 `course_enrollment_access` 和 `consumed_learning_event`。投�
 - `git diff --check`：通过；提交后 `pnpm.cmd --dir web-apps run check:api` 通过，生成文件已跟踪且无漂移。
 - 人工可读性检查：完成。新增业务类、HTTP 边界、权限、课程依赖、进度合并、试卷快照、提交/判分事务、错题幂等、Outbox 和 RabbitMQ 消费/重试均有与真实实现一致的中文 Javadoc/行内边界注释；自解释的单行 JDBC 映射未重复翻译代码。
 
-CI 结果将在 Ready PR 创建后补录；未执行项不会标记为通过。
+Ready PR #28 的实现 head `7d39d6f` 已完成 GitHub Actions [CI run 32717288978](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/32717288978)：Java/JDK 17、Frontend/Node 20.19、Python/3.9 和 OpenAPI generated source 四项全部通过。PR 创建瞬间触发的较早重复 run 32717284108 同样四项通过，无失败/取消。
 
 ## 人工/真实验收与测试数据
 
