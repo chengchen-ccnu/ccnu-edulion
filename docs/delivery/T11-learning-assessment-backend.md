@@ -96,5 +96,5 @@ CI 结果将在 Ready PR 创建后补录；未执行项不会标记为通过。
 - 契约/迁移提交：`57b1f1f`
 - 实现/测试提交：`e8ecbbd`
 - 文档/验收提交：`7e048d1`
-- Ready PR：待创建
+- Ready PR：[#28 T11 学习与测评后端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28)
 - 合并：禁止由本任务自行执行，等待总控验收。
