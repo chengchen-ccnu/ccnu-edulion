@@ -207,6 +207,49 @@ learning-service 只通过 `MEDIA_SERVICE_BASE_URL` 调用 media-service 的绑�
 
 RabbitMQ 资源为 `edu.learning.events.v1`、队列 `edu.learning.question-import.v1`、死信交换机 `edu.learning.dlx.v1` 和 DLQ `edu.learning.question-import.dlq.v1`。生产者使用事务 Outbox、持久消息、mandatory、publisher confirm/return 和有限退避；消费者总计最多尝试 3 次，超限拒绝进入 DLQ，并以数据库 `eventId` 幂等。重复消费的每一行还使用任务 ID 与行号生成确定性 `clientRequestId`，不会重复创建题目。
 
+## T11 学习、测评与报名访问投影
+
+T11 不创建数据库。`LEARNING_MYSQL_DATABASE` 必须是明确的 `edu_platform_learning_dev`，在既有 V8 上正常向前应用 Learning V9；`COURSE_MYSQL_DATABASE` 必须是 `edu_platform_course_dev`，正常向前应用 Course V3。禁止补写 Learning V4、启用 Flyway out-of-order/baseline 或清空既有 Schema：真实 learning 开发库已经达到 V8，低版本 V4 无法按正常迁移顺序应用。V9 只创建 learning 域的报名、进度事件/汇总、笔记、测评/不可变题目快照、作答/答案、人工评分、错题及幂等记录；Course V3 只创建本地报名访问投影和消费幂等表，双方没有跨 Schema 外键或 Join。
+
+learning-service 通过 `COURSE_SERVICE_BASE_URL` 调用 course-service 的既有版本化 JSON API，读取当前发布版本、目录课时和 owner 事实；连接或读取超过 `LEARNING_COURSE_REQUEST_TIMEOUT`、依赖 5xx 等统一返回可重试 503，404/非 owner 不会退化为本地猜测。报名事务同时写既有 `learning_outbox_event`，Course 消费 `edu.learning.enrollment.events.v1` 的 `learning.enrollment.access-changed.v1`，按 `eventId` 幂等且按 `changedAt` 防乱序，投影实际用于 `ENROLLMENT_REQUIRED` 非试看课时的播放决策。主队列 `edu.course.enrollment-access.v1` 总计最多尝试 3 次，耗尽后经 `edu.course.enrollment.dlx.v1` 进入 `edu.course.enrollment-access.dlq.v1`。
+
+| 变量 | 默认值 | 含义 |
+|---|---:|---|
+| `COURSE_SERVICE_BASE_URL` | `http://127.0.0.1:8082` | learning-service 读取发布课程、课时和 owner 事实的 JSON API |
+| `LEARNING_COURSE_REQUEST_TIMEOUT` | `3s` | learning-service 调用 course-service 的连接/读取上限；超时返回 503 |
+| `RABBITMQ_ENABLED` | `false` | local profile 下同时启用既有 Outbox 发布与 Course 报名事件消费；关闭时不会伪造报名投影 |
+
+真实迁移、消息和服务间调用验收必须通过凭据包装脚本运行，并先确认两个 Schema 名称；命令不得读取或打印 DPAPI 文件内容：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    if ($env:LEARNING_MYSQL_DATABASE -ne 'edu_platform_learning_dev') { throw 'Unexpected learning Schema' }
+    if ($env:COURSE_MYSQL_DATABASE -ne 'edu_platform_course_dev') { throw 'Unexpected course Schema' }
+    $env:SPRING_PROFILES_ACTIVE = 'local'
+    $env:RABBITMQ_ENABLED = 'true'
+    # 分别启动 course-service 与 learning-service，再经 Gateway/API 创建本轮固定测试 ID。
+}
+```
+
+不启动长驻服务也可以显式运行两个可重复的真实环境用例；它们启动前会再次拒绝错误 Schema/未开启 RabbitMQ，Fixture 始终按本轮随机 ID 精确清理：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:LEARNING_MYSQL_ACCEPTANCE = 'true'
+    $env:RABBITMQ_ENABLED = 'false'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service -am `
+        '-Dtest=LearningMysqlMigrationAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:T11_REAL_ACCEPTANCE = 'true'
+    $env:RABBITMQ_ENABLED = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl course-service -am `
+        '-Dtest=CourseEnrollmentRealEnvironmentAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+```
+
+T11 没有默认 Seed，也不运行历史题库 Import。人工验收只能使用明确的 `student_test_01`/`teacher_test_01` 对应固定 UUID、专用测试课程/课时/测评；清理时按本轮记录的 enrollment/assessment/attempt 等精确 ID 逆外键顺序删除，Course 投影按对应 learner/course 精确删除，不得删除现有 648 道 SYSTEM 题、图谱、T10 任务、媒体或检查点。自动化使用独立 H2 内存库，进程结束即销毁。
+
 历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。0.13.0 起创建、批次和清理端点只对具备 `administration:access` 的管理员开放，任务冻结为 `SYSTEM`，正式题目直接为 `ACTIVE`，图片也创建为管理员持有的 `SYSTEM` 资产；教师端既有旧任务只读，不再复核、继续提交或清理历史 JSON。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前管理员的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
