@@ -29,6 +29,7 @@ class HttpMediaClientTest {
         server.createContext("/", this::handle); server.start();
         LearningProperties properties = new LearningProperties(new LearningProperties.Media(
                 "http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(2)),
+                new LearningProperties.Course("http://127.0.0.1:8082", Duration.ofSeconds(2)),
                 new LearningProperties.ImportSettings(1024, Duration.ofHours(1), false, Duration.ofSeconds(1), Duration.ofSeconds(1), 3));
         client = new HttpMediaClient(properties);
     }

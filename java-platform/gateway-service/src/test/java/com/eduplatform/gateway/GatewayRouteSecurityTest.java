@@ -249,6 +249,27 @@ class GatewayRouteSecurityTest {
                 .jsonPath("$.route").isEqualTo("learning").jsonPath("$.permissions").isEqualTo("administration:access");
     }
 
+    @Test
+    /** T11 学习/教学路由按能力分离；角色名既不能替代能力，也不会阻止教师账号作为学习者。 */
+    void learningAssessmentRoutesUseCapabilitiesInsteadOfFixedRoles() {
+        Instant now = Instant.now();
+        client.get().uri("/api/v1/teacher/assessments")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "learning:access")))
+                .exchange().expectStatus().isForbidden();
+        client.get().uri("/api/v1/teacher/assessments")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STAFF", "teaching:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("STAFF");
+
+        client.get().uri("/api/v1/learning/enrollments")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "learning:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("TEACHER");
+        client.get().uri("/api/v1/learning/enrollments")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STUDENT", "teaching:access")))
+                .exchange().expectStatus().isForbidden();
+    }
+
     private String token(Instant issuedAt, Instant expiresAt) {
         return token(issuedAt, expiresAt, "STUDENT", "learning:access");
     }
