@@ -1,0 +1,58 @@
+contract: edu.learning.enrollment.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.learning.enrollment.events.v1
+compatibility: backward
+producer: learning-service enrollment transactions
+consumers:
+  - course-service enrollment access projection
+deliverySemantics: at-least-once; producer uses a local transactional Outbox and course-service persists eventId before ACK
+description: |
+  T11 enrollment access contract. An ACTIVE or CANCELED enrollment fact is committed with this
+  Outbox event in learning-service. course-service consumes it into a local access projection used
+  only for ENROLLMENT_REQUIRED non-preview playback decisions, avoiding a synchronous dependency
+  cycle. The payload does not copy course metadata, contain credentials or grant media access by itself.
+
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId:
+      type: string
+      format: uuid
+      description: Global idempotency key persisted by course-service before RabbitMQ ACK.
+    eventType:
+      type: string
+      const: EnrollmentAccessChanged
+    eventVersion:
+      type: integer
+      const: 1
+    aggregateId:
+      type: string
+      format: uuid
+      description: learning-service enrollment ID.
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, minLength: 8, maxLength: 64}
+    payload:
+      $ref: '#/events/EnrollmentAccessChanged/payload'
+
+events:
+  EnrollmentAccessChanged:
+    routingKey: learning.enrollment.access-changed.v1
+    aggregate: enrollment
+    payload:
+      type: object
+      additionalProperties: false
+      required: [enrollmentId, learnerId, courseId, status, changedAt]
+      properties:
+        enrollmentId: {type: string, format: uuid}
+        learnerId: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        status:
+          type: string
+          enum: [ACTIVE, CANCELED]
+        changedAt: {type: string, format: date-time}
+        courseVersionId:
+          type: string
+          description: Published course version label observed at enrollment/reactivation time; consumers do not treat it as a copied course entity.
