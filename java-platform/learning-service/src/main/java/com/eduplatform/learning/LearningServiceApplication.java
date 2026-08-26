@@ -6,7 +6,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableScheduling
-/** 启动学习域服务；T09 仅启用题库、知识点与异步导入，不创建作答或成绩能力。 */
+/** 启动学习域服务，承载题库/知识图谱以及 T11 报名、进度、测评、作答与成绩能力。 */
 public class LearningServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(LearningServiceApplication.class, args);

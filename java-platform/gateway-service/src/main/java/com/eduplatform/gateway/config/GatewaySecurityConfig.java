@@ -90,6 +90,10 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/v1/teacher/questions", "/api/v1/teacher/questions/**",
                                 "/api/v1/teacher/knowledge-points", "/api/v1/teacher/knowledge-points/**",
                                 "/api/v1/teacher/question-imports", "/api/v1/teacher/question-imports/**").hasRole("TEACHER")
+                        .pathMatchers("/api/v1/teacher/assessments", "/api/v1/teacher/assessments/**",
+                                "/api/v1/teacher/attempts/**", "/api/v1/teacher/learning/**")
+                        .hasAuthority("teaching:access")
+                        .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))

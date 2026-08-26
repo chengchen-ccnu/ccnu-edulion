@@ -51,6 +51,8 @@ management:
 
 platform:
   course:
+    enrollment-messaging:
+      enabled: ${RABBITMQ_ENABLED:false}
     seed:
       enabled: ${COURSE_SEED_ENABLED:false}
     media:

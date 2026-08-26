@@ -17,6 +17,9 @@ platform:
     media:
       base-url: http://127.0.0.1:8083
       request-timeout: 1s
+    course:
+      base-url: http://127.0.0.1:8082
+      request-timeout: 1s
     import:
       max-source-bytes: 1048576
       retention: 1h

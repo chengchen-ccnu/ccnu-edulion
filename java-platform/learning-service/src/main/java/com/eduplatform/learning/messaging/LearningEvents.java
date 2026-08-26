@@ -14,6 +14,7 @@ public class LearningEvents {
     public static final String LEARNING_EXCHANGE = "edu.learning.events.v1";
     public static final String LEARNING_EXCHANGE_V2 = "edu.learning.events.v2";
     public static final String MEDIA_EXCHANGE = "edu.media.events.v1";
+    public static final String ENROLLMENT_EXCHANGE = "edu.learning.enrollment.events.v1";
     private final ObjectMapper mapper;
 
     public LearningEvents(ObjectMapper mapper) { this.mapper = mapper; }
@@ -44,6 +45,15 @@ public class LearningEvents {
         return event(type, 1, mediaId, MEDIA_EXCHANGE, routing, traceId,
                 Map.of("mediaId", mediaId, "ownerService", "learning-service", "referenceType", referenceType,
                         "referenceId", referenceId), now);
+    }
+
+    /** 创建课程访问投影事件；ACTIVE/CANCELED 都由同一业务键按 changedAt 向前演进。 */
+    public Outbox enrollmentChanged(String enrollmentId, String learnerId, String courseId, String status,
+            String courseVersionId, String traceId, Instant now) {
+        return event("EnrollmentAccessChanged", 1, enrollmentId, ENROLLMENT_EXCHANGE,
+                "learning.enrollment.access-changed.v1", traceId,
+                Map.of("enrollmentId", enrollmentId, "learnerId", learnerId, "courseId", courseId,
+                        "status", status, "changedAt", now, "courseVersionId", courseVersionId), now);
     }
 
     private Outbox event(String type, int version, String aggregateId, String exchange, String routing, String traceId,

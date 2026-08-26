@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.eduplatform.course.service.CourseCatalogService;
 import com.eduplatform.course.service.CourseException;
+import com.eduplatform.course.persistence.EnrollmentAccessRepository;
 import com.eduplatform.course.web.CourseDtos;
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,7 @@ class CourseCatalogIntegrationTest {
     private static final UUID CATEGORY_ID = UUID.fromString("00000000-0000-4000-8000-000000009501");
 
     @Autowired CourseCatalogService service;
+    @Autowired EnrollmentAccessRepository enrollmentAccess;
     @Autowired JdbcTemplate jdbc;
     @Autowired Flyway flyway;
     @Autowired CourseMediaTestConfiguration.FakeMediaBindingClient mediaClient;
@@ -37,6 +40,8 @@ class CourseCatalogIntegrationTest {
         mediaClient.clear();
         coverClient.clear();
         playbackClient.clear();
+        jdbc.update("DELETE FROM consumed_learning_event");
+        jdbc.update("DELETE FROM course_enrollment_access");
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
         jdbc.update("DELETE FROM outbox_event");
         jdbc.update("DELETE FROM lesson_media_resource");
@@ -116,8 +121,8 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
-    /** Given 报名制课程；Then T11 前试看课时可播，非试看课时明确返回 403 且不伪造报名。 */
-    void enrollmentRequiredCourseAllowsOnlyPreviewLessonBeforeT11() {
+    /** Given 报名制课程；Then 非试看课时只允许 ACTIVE 本地报名投影，取消与乱序事件不能误授权。 */
+    void enrollmentRequiredCourseUsesIdempotentLocalEnrollmentProjection() {
         String studentId = "00000000-0000-4000-8000-000000009201";
         UUID video = UUID.randomUUID();
         mediaClient.register(video.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
@@ -137,6 +142,27 @@ class CourseCatalogIntegrationTest {
                     assertThat(exception.status().value()).isEqualTo(403);
                     assertThat(exception.code()).isEqualTo("COURSE.ENROLLMENT_REQUIRED");
                 });
+
+        Instant activeAt = Instant.now();
+        enrollmentAccess.apply("00000000-0000-4000-8000-000000001001",
+                "00000000-0000-4000-8000-000000001101", studentId, draft.id(), "ACTIVE", activeAt, activeAt);
+        // 重放相同 eventId 以及更旧的取消事件都不能覆盖 ACTIVE 投影。
+        enrollmentAccess.apply("00000000-0000-4000-8000-000000001001",
+                "00000000-0000-4000-8000-000000001101", studentId, draft.id(), "CANCELED",
+                activeAt.plusSeconds(30), activeAt.plusSeconds(30));
+        enrollmentAccess.apply("00000000-0000-4000-8000-000000001002",
+                "00000000-0000-4000-8000-000000001101", studentId, draft.id(), "CANCELED",
+                activeAt.minusSeconds(1), activeAt.plusSeconds(30));
+        assertThat(service.createPublishedPlaybackGrant(
+                draft.id(), lesson.id(), resource.id(), studentId, "trace-active-enrollment").method()).isEqualTo("GET");
+
+        enrollmentAccess.apply("00000000-0000-4000-8000-000000001003",
+                "00000000-0000-4000-8000-000000001101", studentId, draft.id(), "CANCELED",
+                activeAt.plusSeconds(1), activeAt.plusSeconds(31));
+        assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
+                draft.id(), lesson.id(), resource.id(), studentId, "trace-canceled-enrollment"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("COURSE.ENROLLMENT_REQUIRED"));
 
         CourseDtos.TeacherCourse editable = service.getTeacherCourse(draft.id(), TEACHER_ID);
         CourseDtos.TeacherCourse previewDraft = service.replaceCurriculum(

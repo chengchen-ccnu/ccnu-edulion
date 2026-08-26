@@ -1,0 +1,144 @@
+package com.eduplatform.learning.web;
+
+import com.eduplatform.learning.persistence.LearningAssessmentRepository;
+import com.eduplatform.learning.service.LearningAssessmentService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import java.net.URI;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/** 教学端测评、批改和学情查询边界；访问能力与课程 owner 均由服务端校验。 */
+@RestController
+@Validated
+@ConditionalOnBean(LearningAssessmentRepository.class)
+public class TeacherAssessmentController {
+    private final LearningAssessmentService learning;
+
+    public TeacherAssessmentController(LearningAssessmentService learning) { this.learning = learning; }
+
+    @GetMapping("/api/v1/teacher/assessments")
+    /** 使用 Gateway 可信教学能力头分页返回当前教师的测评。 */
+    public LearningDtos.AssessmentPage list(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @RequestParam(required = false) String courseId,
+            @RequestParam(required = false) LearningDtos.AssessmentStatus status,
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
+        return learning.teacherAssessments(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
+                status, page, size, trace(servlet));
+    }
+
+    @PostMapping("/api/v1/teacher/assessments")
+    /** 创建教师测评草稿；首次返回 201，相同幂等请求返回 200 与原资源。 */
+    public ResponseEntity<LearningDtos.TeacherAssessment> create(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @Valid @RequestBody LearningDtos.CreateAssessmentRequest request, HttpServletRequest servlet) {
+        var value = learning.createAssessment(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                request, trace(servlet));
+        return value.created()
+                ? ResponseEntity.created(URI.create("/api/v1/teacher/assessments/" + value.assessment().id())).body(value.assessment())
+                : ResponseEntity.ok(value.assessment());
+    }
+
+    @GetMapping("/api/v1/teacher/assessments/{assessmentId}")
+    /** 返回当前教师拥有的测评与完整冻结题目快照。 */
+    public LearningDtos.TeacherAssessment get(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId) {
+        return learning.teacherAssessment(assessmentId,
+                LearningIdentity.teaching(userId, roles, permissions).userId());
+    }
+
+    @PutMapping("/api/v1/teacher/assessments/{assessmentId}")
+    /** 按 expectedRevision 更新未发布草稿元数据，并发冲突返回 409。 */
+    public LearningDtos.TeacherAssessment update(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @Valid @RequestBody LearningDtos.UpdateAssessmentRequest request) {
+        return learning.updateAssessment(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request);
+    }
+
+    @DeleteMapping("/api/v1/teacher/assessments/{assessmentId}")
+    /** 删除本人未发布草稿；已发布历史不可删除。 */
+    public ResponseEntity<Void> delete(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId) {
+        learning.deleteAssessment(LearningIdentity.teaching(userId, roles, permissions).userId(), assessmentId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/api/v1/teacher/assessments/{assessmentId}/questions")
+    /** 按连续顺序替换草稿题目版本和分值，服务层校验可用范围。 */
+    public LearningDtos.TeacherAssessment questions(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @Valid @RequestBody LearningDtos.ReplaceQuestionsRequest request) {
+        return learning.replaceQuestions(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request);
+    }
+
+    @PutMapping("/api/v1/teacher/assessments/{assessmentId}/publication")
+    /** 发布或归档本人测评，发布交易冻结并分配当前课程范围。 */
+    public LearningDtos.TeacherAssessment publication(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @Valid @RequestBody LearningDtos.UpdatePublicationRequest request,
+            HttpServletRequest servlet) {
+        return learning.publication(LearningIdentity.teaching(userId, roles, permissions).userId(), assessmentId,
+                request, trace(servlet));
+    }
+
+    @GetMapping("/api/v1/teacher/assessments/{assessmentId}/results")
+    /** 分页返回本人测评的学生提交和评分结果。 */
+    public LearningDtos.AttemptResultPage results(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        return learning.teacherResults(LearningIdentity.teaching(userId, roles, permissions).userId(), assessmentId,
+                page, size);
+    }
+
+    @PostMapping("/api/v1/teacher/attempts/{attemptId}/grades")
+    /** 按 attempt revision 人工批改待评分答案，并事务汇总最终成绩。 */
+    public LearningDtos.AttemptResult grade(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String attemptId, @Valid @RequestBody LearningDtos.ManualGradeRequest request) {
+        return learning.manualGrade(LearningIdentity.teaching(userId, roles, permissions).userId(), attemptId, request);
+    }
+
+    @GetMapping("/api/v1/teacher/learning/courses/{courseId}/students")
+    /** 验证课程 owner 后分页返回报名学生进度与成绩投影。 */
+    public LearningDtos.StudentLearningPage students(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
+        return learning.studentLearning(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
+                page, size, trace(servlet));
+    }
+
+    private static String trace(HttpServletRequest request) {
+        Object value = request.getAttribute("traceId");
+        return value == null ? "00000000-0000-0000-0000-000000000000" : value.toString();
+    }
+}

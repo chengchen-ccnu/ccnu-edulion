@@ -12,6 +12,7 @@ import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
 import com.eduplatform.course.persistence.CourseMapper;
+import com.eduplatform.course.persistence.EnrollmentAccessRepository;
 import com.eduplatform.course.web.CourseDtos;
 import com.eduplatform.shared.api.FieldError;
 import java.security.MessageDigest;
@@ -44,17 +45,19 @@ public class CourseCatalogService {
     private final MediaCoverClient mediaCoverClient;
     private final MediaPlaybackClient mediaPlaybackClient;
     private final CourseMediaEventFactory mediaEvents;
+    private final EnrollmentAccessRepository enrollmentAccess;
 
     public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
             MediaBindingClient mediaBindingClient, MediaCoverClient mediaCoverClient,
             MediaPlaybackClient mediaPlaybackClient,
-            CourseMediaEventFactory mediaEvents) {
+            CourseMediaEventFactory mediaEvents, EnrollmentAccessRepository enrollmentAccess) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.mediaBindingClient = mediaBindingClient;
         this.mediaCoverClient = mediaCoverClient;
         this.mediaPlaybackClient = mediaPlaybackClient;
         this.mediaEvents = mediaEvents;
+        this.enrollmentAccess = enrollmentAccess;
     }
 
     @Transactional(readOnly = true)
@@ -98,7 +101,7 @@ public class CourseCatalogService {
     /**
      * 为当前发布版本中的视频资源申请播放授权。
      *
-     * <p>PUBLIC 课程允许已登录用户播放；ENROLLMENT_REQUIRED 课程在 T11 前只允许试看课时。
+     * <p>PUBLIC 课程允许已登录用户播放；ENROLLMENT_REQUIRED 课程允许试看课时或本地报名投影为 ACTIVE 的学习者。
      * 课程、课时、资源和版本不匹配统一按不可见处理。通过后才调用 media-service，且不会
      * 把短期 URL 写入课程数据库、Outbox 或日志。</p>
      *
@@ -115,7 +118,8 @@ public class CourseCatalogService {
             String courseId, String lessonId, String resourceId, String visitorId, String traceId) {
         CourseMediaAccessRow access = mapper.findPublishedMediaAccess(courseId, lessonId, resourceId);
         requireVideoResource(access);
-        if (!"PUBLIC".equals(access.getAccessType()) && !access.isPreviewable()) {
+        if (!"PUBLIC".equals(access.getAccessType()) && !access.isPreviewable()
+                && !enrollmentAccess.hasActive(visitorId, courseId)) {
             throw new CourseException(HttpStatus.FORBIDDEN, "COURSE.ENROLLMENT_REQUIRED",
                     "该课时需要报名后观看");
         }

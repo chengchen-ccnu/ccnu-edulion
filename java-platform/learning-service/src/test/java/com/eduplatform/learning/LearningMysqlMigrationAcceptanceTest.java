@@ -45,7 +45,11 @@ class LearningMysqlMigrationAcceptanceTest {
             "question_version_knowledge_point", "question_version_media", "question_idempotency_request",
             "question_import_task", "question_import_row_error", "learning_outbox_event", "learning_consumed_event",
             "question_legacy_import_batch", "question_legacy_source_ref", "question_legacy_import_issue",
-            "question_version_child", "question_legacy_review_item", "question_legacy_item_resolution");
+            "question_version_child", "question_legacy_review_item", "question_legacy_item_resolution",
+            "enrollment", "lesson_progress", "lesson_progress_event", "learning_note", "assessment",
+            "assessment_question", "assessment_assignment", "assessment_attempt", "assessment_answer",
+            "manual_grading_record", "wrong_question", "wrong_question_occurrence",
+            "learning_idempotency_request");
 
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
@@ -59,6 +63,21 @@ class LearningMysqlMigrationAcceptanceTest {
         if (!"edu_platform_learning_dev".equals(System.getenv("LEARNING_MYSQL_DATABASE"))) {
             throw new IllegalStateException("MySQL acceptance requires edu_platform_learning_dev");
         }
+    }
+
+    /**
+     * 验证真实开发库按 V8 -> V9 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
+     * 该断言只读 Flyway 历史与表元数据，不创建任何 Fixture。
+     */
+    @Test
+    void flywayV9NormallyAdvancesTheExistingV8Schema() {
+        List<String> versions = jdbc.queryForList(
+                "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
+                String.class);
+        assertThat(versions).contains("8", "9").doesNotContain("4");
+        List<String> actual = jdbc.queryForList(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
+        assertThat(actual).containsAll(TABLES);
     }
 
     /** 在既有专用 MySQL 上验证 V3 组合历史与人工复核，并按本轮随机 ID 精确清理全部 Fixture。 */

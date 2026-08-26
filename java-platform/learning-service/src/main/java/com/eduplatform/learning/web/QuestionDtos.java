@@ -1,6 +1,7 @@
 package com.eduplatform.learning.web;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
@@ -148,6 +149,7 @@ public final class QuestionDtos {
             QuestionModels.Grade grade, QuestionModels.Subject subject, String stem, List<OptionInput> options,
             List<String> answers, String analysis, List<KnowledgePointResponse> knowledgePoints,
             List<MediaResponse> media, Instant createdAt) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record VersionResponse(String id, int versionNumber, QuestionModels.Type type,
             QuestionModels.Difficulty difficulty, QuestionModels.Stage stage, QuestionModels.Grade grade,
             QuestionModels.Subject subject, String stem, List<OptionInput> options, List<String> answers,

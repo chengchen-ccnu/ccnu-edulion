@@ -304,7 +304,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 依赖结论：T05 已冻结公开课程、不可变发布版本、章节/课时和访问方式；T08A.1 已建立 T11 前报名制非试看拒绝边界及课程媒体授权链路；T09B 已冻结普通题/组合题不可变版本和教师答案投影。三项均已合并，满足 T11 的领域输入前置。
 - 身份与授权：IAM 已提供 `learning:access`，Gateway 可转发可信用户、角色和权限头。T11 必须按能力与报名/测评所有权等业务事实授权，允许同时拥有教学与学习能力的账号进入学习域，不得硬编码只有 `STUDENT` 才可报名、学习或作答。
 - 契约与服务边界：当前 OpenAPI 0.10.1 和事件目录明确尚未暴露 T11 API/事件，这是 T11 需要先完成的契约工作而非阻断。报名校验、课程访问快照与课程播放授权必须通过版本化 API/事件交互；learning-service 不得查询 course Schema，course-service 也不得查询 learning Schema。服务间鉴权、超时、失败降级和幂等语义必须在实现前冻结。
-- 数据演进：learning-service 现有 V1～V3 只包含题库和导入能力，校验和必须保持不变；T11 从 V4 向前增加报名、进度、笔记、测评、试卷快照、作答、成绩和错题数据。试卷必须冻结题目版本而非跟随题库当前指针，学生读接口不得泄露未到发布时点的答案或解析。
+- 数据演进（后续按真实库状态修正）：learning-service 已有 V1～V3、V5～V8，且真实开发库已经应用到 V8；T11 必须从 V9 向前增加报名、进度、笔记、测评、试卷快照、作答、成绩和错题数据。补写 V4 会成为低版本迁移，无法在已到 V8 的数据库中按正常顺序应用，因此不得补 V4、启用 out-of-order、baseline 或额外迁移 gate。试卷必须冻结题目版本而非跟随题库当前指针，学生读接口不得泄露未到发布时点的答案或解析。
 - 范围与环境：本轮只更新总控文档并准备分支，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg，没有创建数据库、迁移、表、Seed、伪数据、媒体对象或消息。T10 遗留的无消费者 v2 审计 Outbox 仍是有限重试的独立已知风险，不阻断 T11，但 T11 不应继续新增无明确消费者的事件。
 
 ## 2026-08-13 T10A 历史 JSON 目录上传修复
@@ -331,7 +331,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-08-19 T10B 数学知识图谱导入与题目知识点绑定
 
-- 门禁与范围：从 T10A `df73fb0` 的干净工作区创建 `codex/t10b-knowledge-graph-import`；完整阅读页面规格和现有 OpenAPI 后实施。没有新增路由、改动 Python 智能体、修改两个只读来源文件，或删除/重建 T10A 的 45 个 DryRun 任务、复核记录及检查点。T11 预留 V4，图谱基础迁移使用 V5，确认映射使用向前 V6，未改写已有迁移。
+- 门禁与范围：从 T10A `df73fb0` 的干净工作区创建 `codex/t10b-knowledge-graph-import`；完整阅读页面规格和现有 OpenAPI 后实施。没有新增路由、改动 Python 智能体、修改两个只读来源文件，或删除/重建 T10A 的 45 个 DryRun 任务、复核记录及检查点。该任务当时曾写“T11 预留 V4”，但 V5～V8 随后已进入真实开发库；T11 因此从 V9 开始，补写 V4 会成为无法正常顺序应用的低版本迁移，且不使用 out-of-order/baseline 绕过。图谱迁移 V5/V6 及后续 V7/V8 均保持不改写。
 - 契约与权限：OpenAPI 0.11.1 新增管理员图谱任务/节点批次/关系批次/安全问题分页接口，以及教师端分页搜索和 1～5 层有限邻域接口；生成客户端同步更新。节点输入显式携带已确认学段和“知识点/题型”名称。Gateway 只路由请求，管理员写接口要求 `administration:access`，教师查询要求 `teaching:access`，浏览器不直连 learning-service。
 - 数据模型与导入：`knowledge_point` 保留内部 UUID，并以 `(source_system, source_know_id)` 唯一识别来源节点；来源 parent key 仅作不透明元数据，不写树自外键。新增同 Schema 双外键的显式 `prerequisite -> dependent` 边、任务/批次/staging/安全问题表及题目 tag 元数据；V6 使规范学段和类型名称参与 staging、摘要及正式写入。节点后关系两阶段幂等；正式写入前校验确认映射以及缺失端点、自环、跨学科、跨学段和环，且新节点默认禁用、不删除旧数据。
 - 只读图谱复核：3,671 节点、2,107 关系；学段来源分布 `02=817`、`03=1,386`、`04=1,468`，六种类型合计一致；必要字段空值、重复 ID、缺失端点、重复边、自环、跨学科、跨学段和环均为 0，重复名称组 110。关系语义确认为文件 `b` 是 `a` 的先修，平台写作 `b -> a`；孤立节点 2,267，最大入度 11、最大出度 19、最长链按边数 21。479 个不同来源 parent key 全部不可解析，未据此造父节点。
@@ -379,3 +379,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 根因与实现：只读抽样 500 道历史填空题，仅输出标记聚合、不输出题干；其中 465 道在去除 HTML 标签后仍以连续 3 个以上普通空格表示空位，浏览器会折叠这些空格。教师端现仅对 `FILL_BLANK` 根题/组合子题题干，把标签外连续空格或下划线转换为固定 5em 底边线空位，并提供“填空处”辅助文本；答案、解析、普通题、HTML 属性和 KaTeX 内部不转换。
 - 验证与数据：Vitest 18 文件 125 项、全 workspace 类型检查和教师端生产构建全部通过；自动化覆盖两个空位生成、标签属性不误转换和普通题不转换，构建仅保留既有 hls.js 大 chunk 提示。本补充没有修改 OpenAPI、Java、数据库、题目、媒体、OSS 对象、导入任务或伪数据，现有 648 道 SYSTEM 根题无需清理或重导。
 - 发布：T10B 经 [PR #26](https://github.com/chengchen-ccnu/ccnu-edulion/pull/26) 合并到 `main@6d3d47ea1effd575a8a9a094c5aff73910f8a05b`；分支推送与 PR 事件的 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部通过。合并动作没有再次运行知识图谱/题库 Import，没有新增或清理数据库记录、媒体、OSS 对象、RabbitMQ 消息或本地检查点。
+
+## 2026-08-24 T11 学习与测评后端实施验证
+
+- 基线与分支：开始时 `main`/`origin/main`/`HEAD` 均为 `e64255b1d5368460762a29accc49e4089a645fbd`，工作区干净且无开放 PR。旧 `codex/t11-learning-assessment-backend` 对 main 的 left/right 为 `23 0`，确认无独有提交后才 `merge --ff-only main`，未 reset/删除/覆盖。按要求完整阅读 API、事件、页面规格、T05/T08/T09B/T10B 交付和本地环境文档；页面路由职责未变，没有修改 page specs。
+- 契约与边界：OpenAPI 0.14.0 定义报名/取消、我的报名、课程/课时进度、笔记 CRUD、教师测评/题目顺序/发布/归档、学生安全试卷、草稿/提交/结果/错题、人工批改和教师学情。学生试卷类型不含答案/解析/评分规则，结果再按 AFTER_SUBMISSION/AFTER_GRADED/NEVER 公布。学习/教学分别校验 `learning:access`/`teaching:access`，教师型账号可同时作为学习者；越权 owner 资源隐藏为 404，状态/revision 冲突为 409，字段/可用性校验为 422，Course 依赖故障为 503。
+- 数据与消息：Learning 从真实 V8 正常应用 V9，新增报名、单调进度/事件、笔记、测评/课程分配/不可变题目快照、作答/答案、人工评分、错题及幂等表；不存在 V4，不启用 out-of-order/baseline/gate。Course V3 新增报名访问投影和消费幂等表。Learning 事务 Outbox 发布 `EnrollmentAccessChanged` v1，Course 主队列总计最多 3 次尝试、超限进 DLQ，按 eventId 幂等和 changedAt 防乱序，且 ACTIVE 投影实际用于报名制非试看播放判断。生产代码无跨 Schema 查询/Join/外键/共享 Mapper。
+- 业务验证：H2 集成测试覆盖报名幂等/无效课程/能力化教师学习、进度重复/乱序/越界/并发、笔记 owner、教师课程 owner、SYSTEM/本人 TEACHER/他人私题、发布前归档拒绝和发布后快照不漂移、草稿恢复、并发/重复提交一次、单选/多选/判断/标准填空自动判分、解答题人工批改、批改 revision 冲突、成绩/错题幂等和答案防泄漏。Gateway 新路由与能力测试通过。
+- 自动化结果：Java 8 模块 `clean verify` 全部成功，合计 105 项中 99 通过、6 个真实环境用例默认跳过、0 失败/错误；Learning 47 项中 44 通过/3 跳过，Course 16 项中 15 通过/1 跳过，Gateway 12/12。OpenAPI 客户端生成和前端 3 应用+5 共享包 typecheck 通过，`git diff --check` 通过。
+- 真实验收与清理：通过凭据包装器在 MySQL 8 上正常应用 Learning V9/Course V3，RabbitMQ 持久主队列与 DLQ 存在，随机事件的 ACTIVE/CANCELED/重放/乱序验收通过并清理。双服务真实启动后，课程事实 HTTP -> 教师型账号报名 -> Learning Outbox `PUBLISHED` -> Course `ACTIVE` -> 取消后 `CANCELED` 链路通过。本轮课程 `08629e70-60f8-4ff1-9250-0297f3bd8a95`、课时 `a305ab82-acb1-4a76-b945-9213b4cff82a`、报名 `eb2de3da-99ed-447c-a5c0-7f0fe50af08e` 及相关 Outbox/消费/投影均按精确 ID 逆外键清理，`learningFixtureRows=0`、`courseFixtureRows=0`。未清表、未运行历史题库 Import，未删除/改写 648 道 SYSTEM 题、图谱、T10 任务、媒体或检查点。
+- 剩余风险与发布：报名投影是最终一致，Outbox 未投递时播放短暂 403；FAILED Outbox/DLQ 需运维告警与人工重放。首期不含支付、监考/复杂防作弊、多选部分分、LLM 判分或弱知识点推断。T12A/B/C 分别依赖报名进度笔记、测评闭环和教师学情投影，不得发明平行路由或手写 DTO。契约/迁移、实现/测试、交付证据关键提交分别为 `57b1f1f`、`e8ecbbd`、`7e048d1`；Ready [PR #28](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28) 已创建，实现 head `7d39d6f` 对应 [CI run 32717288978](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/32717288978) 的 Java、Frontend、Python、OpenAPI 四项全部通过。本任务不自行合并，等待总控验收。

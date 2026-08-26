@@ -21,6 +21,9 @@ platform:
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${LEARNING_MEDIA_REQUEST_TIMEOUT:5s}
+    course:
+      base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
+      request-timeout: ${LEARNING_COURSE_REQUEST_TIMEOUT:3s}
     import:
       max-source-bytes: ${QUESTION_IMPORT_MAX_SOURCE_BYTES:104857600}
       retention: ${QUESTION_IMPORT_RETENTION:7d}

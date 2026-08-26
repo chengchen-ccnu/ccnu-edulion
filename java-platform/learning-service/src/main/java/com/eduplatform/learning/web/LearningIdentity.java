@@ -19,6 +19,20 @@ record LearningIdentity(String userId, Set<String> roles, Set<String> permission
         return identity;
     }
 
+    /** 学习能力与角色解耦，允许同时拥有教学能力的教师作为学习者。 */
+    static LearningIdentity learner(String userId, String roles, String permissions) {
+        LearningIdentity identity = parse(userId, roles, permissions);
+        if (!identity.permissions.contains("learning:access")) forbidden();
+        return identity;
+    }
+
+    /** T11 教学管理只依赖 Gateway 下发的 teaching:access，不硬编码 TEACHER 角色。 */
+    static LearningIdentity teaching(String userId, String roles, String permissions) {
+        LearningIdentity identity = parse(userId, roles, permissions);
+        if (!identity.permissions.contains("teaching:access")) forbidden();
+        return identity;
+    }
+
     static LearningIdentity administrator(String userId, String roles, String permissions) {
         LearningIdentity identity = parse(userId, roles, permissions);
         if (!identity.permissions.contains("administration:access")) forbidden();

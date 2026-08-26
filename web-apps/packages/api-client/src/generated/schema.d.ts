@@ -152,7 +152,7 @@ export interface paths {
         put?: never;
         /**
          * Authorize playback of one published lesson video resource
-         * @description Course-service resolves the resource from the current immutable published version and derives its media ID and purpose server-side. An authenticated visitor may play a PUBLIC course or a previewable lesson. Until T11 supplies enrollment facts, a non-preview lesson in an ENROLLMENT_REQUIRED course returns `COURSE.ENROLLMENT_REQUIRED`. Missing, draft, archived, historical-version and mismatched resources share the same not-found response. The returned OSS/HLS URL is short-lived and must not be persisted or logged.
+         * @description Course-service resolves the resource from the current immutable published version and derives its media ID and purpose server-side. An authenticated visitor may play a PUBLIC course, a previewable lesson, or a non-preview ENROLLMENT_REQUIRED lesson when the local reliable enrollment projection is ACTIVE. Canceled or absent enrollment returns `COURSE.ENROLLMENT_REQUIRED`. Missing, draft, archived, historical-version and mismatched resources share the same not-found response. The returned OSS/HLS URL is short-lived and must not be persisted or logged.
          */
         post: operations["createCourseLessonPlaybackGrant"];
         delete?: never;
@@ -754,6 +754,367 @@ export interface paths {
         };
         /** Get one refresh-safe historical JSON review item */
         get: operations["getLegacyQuestionImportItem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/enrollments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page the authenticated learner's active and canceled enrollments */
+        get: operations["listMyEnrollments"];
+        put?: never;
+        /**
+         * Idempotently enroll the current learning-capable user in a published course
+         * @description Requires learning:access, never a fixed STUDENT role. The same learner/course returns the original enrollment; a canceled enrollment is reactivated. Paid checkout is not implemented.
+         */
+        post: operations["enrollCourse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/enrollments/{enrollmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Idempotently cancel one owned enrollment without deleting attempts or grades */
+        delete: operations["cancelEnrollment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get owned course and ordered lesson progress */
+        get: operations["getCourseProgress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Idempotently merge one bounded playback progress event
+         * @description clientEventId is unique per learner. Duplicate or out-of-order events cannot reduce position/completion or add watched time twice; one event may add at most 300 watched seconds and position is bounded to 8 hours.
+         */
+        post: operations["reportLessonProgress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List notes owned by the current learner for one lesson */
+        get: operations["listLessonNotes"];
+        put?: never;
+        /** Create an owned lesson note */
+        post: operations["createLessonNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/notes/{noteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update one owned note using optimistic revision */
+        put: operations["updateLearningNote"];
+        post?: never;
+        /** Delete one owned note */
+        delete: operations["deleteLearningNote"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page published assessments available to the current learner */
+        get: operations["listLearnerAssessments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/assessments/{assessmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one published immutable paper without answers, analyses or scoring rules */
+        get: operations["getLearnerAssessment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/assessments/{assessmentId}/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Idempotently start or return the current learner's draft attempt */
+        post: operations["startAssessmentAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/attempts/{attemptId}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Idempotently replace the current learner's answer draft */
+        put: operations["saveAttemptDraft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/attempts/{attemptId}/submission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit once and transactionally auto-grade reliable objective answers
+         * @description An identical clientRequestId and final answer set returns the original result. A different retry or concurrent conflicting submission returns 409. Short-answer and non-standard fill answers wait for manual grading.
+         */
+        post: operations["submitAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/attempts/{attemptId}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current learner's result with policy-controlled answer disclosure */
+        get: operations["getAttemptResult"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/wrong-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page the current learner's idempotently accumulated wrong-question records */
+        get: operations["listWrongQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page assessments in the current teacher's course scope */
+        get: operations["listTeacherAssessments"];
+        put?: never;
+        /** Idempotently create a draft assessment for an owned published course */
+        post: operations["createTeacherAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one assessment in the current teacher's course scope */
+        get: operations["getTeacherAssessment"];
+        /** Update draft metadata with optimistic revision */
+        put: operations["updateTeacherAssessment"];
+        post?: never;
+        /**
+         * Delete one owned draft assessment
+         * @description Only DRAFT assessments can be deleted. Published assessment history must be archived instead.
+         */
+        delete: operations["deleteTeacherAssessment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace ordered draft questions using exact immutable questionVersionId values
+         * @description SYSTEM question versions and current teacher TEACHER question versions are allowed. Other teachers' private versions are hidden as 404. Published papers cannot be changed.
+         */
+        put: operations["replaceAssessmentQuestions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Publish an immutable paper snapshot or archive it */
+        put: operations["updateAssessmentPublication"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page attempts for an assessment in the current teacher's scope */
+        get: operations["listAssessmentResults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/attempts/{attemptId}/grades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transactionally grade manual answers with optimistic attempt revision */
+        post: operations["gradeAttemptAnswers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/students": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page enrollment, progress and grading projections within the current teacher's owned course */
+        get: operations["listCourseStudentLearning"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1843,6 +2204,333 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        /** @enum {string} */
+        EnrollmentStatus: "ACTIVE" | "CANCELED";
+        CreateEnrollmentRequest: {
+            /** Format: uuid */
+            courseId: string;
+        };
+        Enrollment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            learnerId: string;
+            /** Format: uuid */
+            courseId: string;
+            /** @description Published course version label observed when enrollment was created/reactivated; it is not a copied course table. */
+            courseVersionId: string;
+            status: components["schemas"]["EnrollmentStatus"];
+            /** Format: date-time */
+            enrolledAt: string;
+            /** Format: date-time */
+            canceledAt: string | null;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        EnrollmentPage: {
+            items: components["schemas"]["Enrollment"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        ReportLessonProgressRequest: {
+            /** Format: uuid */
+            clientEventId: string;
+            /** Format: date-time */
+            occurredAt: string;
+            /** Format: int64 */
+            positionSeconds: number;
+            watchedSeconds: number;
+            completed: boolean;
+        };
+        LessonProgress: {
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string;
+            /** Format: int64 */
+            positionSeconds: number;
+            /** Format: int64 */
+            watchedSeconds: number;
+            completed: boolean;
+            /** Format: date-time */
+            lastEventAt: string;
+            /** Format: int64 */
+            revision: number;
+            replayed: boolean;
+        };
+        CourseProgress: {
+            /** Format: uuid */
+            courseId: string;
+            completedLessonCount: number;
+            lessonCount: number;
+            /** Format: double */
+            completionPercent: number;
+            lessons: components["schemas"]["LessonProgress"][];
+        };
+        CreateLearningNoteRequest: {
+            content: string;
+            /** Format: int64 */
+            positionSeconds: number | null;
+        };
+        UpdateLearningNoteRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            content: string;
+            /** Format: int64 */
+            positionSeconds: number | null;
+        };
+        LearningNote: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string;
+            content: string;
+            /** Format: int64 */
+            positionSeconds: number | null;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @enum {string} */
+        AssessmentType: "PRACTICE" | "HOMEWORK" | "EXAM";
+        /** @enum {string} */
+        AssessmentStatus: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+        /** @enum {string} */
+        AnswerPublicationPolicy: "AFTER_SUBMISSION" | "AFTER_GRADED" | "NEVER";
+        /** @enum {string} */
+        AttemptStatus: "DRAFT" | "SUBMITTED" | "PARTIALLY_GRADED" | "GRADED";
+        CreateAssessmentRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            description: string;
+            type: components["schemas"]["AssessmentType"];
+            answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+        };
+        UpdateAssessmentRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            title: string;
+            description: string;
+            type: components["schemas"]["AssessmentType"];
+            answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+        };
+        AssessmentQuestionInput: {
+            /** Format: uuid */
+            questionVersionId: string;
+            sequence: number;
+            points: number;
+        };
+        ReplaceAssessmentQuestionsRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            questions: components["schemas"]["AssessmentQuestionInput"][];
+        };
+        UpdateAssessmentPublicationRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            /** @enum {string} */
+            status: "PUBLISHED" | "ARCHIVED";
+        };
+        AssessmentSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            type: components["schemas"]["AssessmentType"];
+            status: components["schemas"]["AssessmentStatus"];
+            answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            questionCount: number;
+            totalPoints: number;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            publishedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AssessmentPage: {
+            items: components["schemas"]["AssessmentSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description Immutable learner-safe snapshot. It intentionally has no answers, analysis or scoring-rule field. */
+        LearnerAssessmentQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            sequence: number;
+            points: number;
+            type: components["schemas"]["QuestionType"];
+            stem: string;
+            options: components["schemas"]["QuestionOptionInput"][];
+            media: components["schemas"]["QuestionMedia"][];
+            children: components["schemas"]["SystemQuestionChild"][];
+        };
+        LearnerAssessment: components["schemas"]["AssessmentSummary"] & {
+            description: string;
+            questions: components["schemas"]["LearnerAssessmentQuestion"][];
+        };
+        TeacherAssessmentQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            sequence: number;
+            points: number;
+            snapshot: components["schemas"]["QuestionVersion"];
+        };
+        TeacherAssessment: components["schemas"]["AssessmentSummary"] & {
+            description: string;
+            questions: components["schemas"]["TeacherAssessmentQuestion"][];
+        };
+        AttemptAnswerInput: {
+            /** Format: uuid */
+            assessmentQuestionId: string;
+            answer: string[];
+        };
+        StartAttemptRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+        };
+        SaveAttemptDraftRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            answers: components["schemas"]["AttemptAnswerInput"][];
+        };
+        SubmitAttemptRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            answers: components["schemas"]["AttemptAnswerInput"][];
+        };
+        AttemptDraft: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            assessmentId: string;
+            status: components["schemas"]["AttemptStatus"];
+            /** Format: int64 */
+            revision: number;
+            answers: components["schemas"]["AttemptAnswerInput"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AttemptAnswerResult: {
+            /** Format: uuid */
+            assessmentQuestionId: string;
+            submittedAnswer: string[];
+            score: number | null;
+            correct: boolean | null;
+            /** @enum {string} */
+            gradingStatus: "PENDING_MANUAL" | "AUTO_GRADED" | "MANUALLY_GRADED";
+            /** @description Null until the assessment answer-publication policy permits disclosure. */
+            correctAnswer: string[] | null;
+            /** @description Null until the assessment answer-publication policy permits disclosure. */
+            analysis: string | null;
+        };
+        AttemptResult: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            assessmentId: string;
+            /** Format: uuid */
+            learnerId: string;
+            status: components["schemas"]["AttemptStatus"];
+            /** Format: int64 */
+            revision: number;
+            score: number | null;
+            totalPoints: number;
+            /** Format: date-time */
+            submittedAt: string | null;
+            /** Format: date-time */
+            gradedAt: string | null;
+            answers: components["schemas"]["AttemptAnswerResult"][];
+        };
+        ManualGradeItem: {
+            /** Format: uuid */
+            assessmentQuestionId: string;
+            score: number;
+            comment: string;
+        };
+        ManualGradeRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            grades: components["schemas"]["ManualGradeItem"][];
+        };
+        TeacherAttemptResultPage: {
+            items: components["schemas"]["AttemptResult"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        WrongQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            assessmentId: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            wrongCount: number;
+            /** Format: date-time */
+            firstWrongAt: string;
+            /** Format: date-time */
+            lastWrongAt: string;
+        };
+        WrongQuestionPage: {
+            items: components["schemas"]["WrongQuestion"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        StudentLearningSummary: {
+            /** Format: uuid */
+            learnerId: string;
+            enrollmentStatus: components["schemas"]["EnrollmentStatus"];
+            completedLessonCount: number;
+            /** Format: int64 */
+            watchedSeconds: number;
+            submittedAttemptCount: number;
+            gradedAttemptCount: number;
+            averageScore: number | null;
+        };
+        StudentLearningPage: {
+            items: components["schemas"]["StudentLearningSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
         ExternalImageTransferRequest: {
             /**
              * Format: uuid
@@ -2091,7 +2779,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description The published course exists, but T11 enrollment/learning permission is required for this non-preview lesson. */
+        /** @description The published course exists, but the current visitor has no ACTIVE enrollment for this non-preview lesson. */
         CoursePlaybackForbidden: {
             headers: {
                 [name: string]: unknown;
@@ -2353,6 +3041,63 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The learning, assessment or attempt resource does not exist or is not visible to the caller. */
+        LearningNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "LEARNING.NOT_FOUND",
+                 *       "message": "学习资源不存在或不可见",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-24T10:00:00Z",
+                 *       "path": "/api/v1/learning/attempts/0198f434-215d-7abc-9123-123456789abc/result",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Idempotency, lifecycle, submission or optimistic revision conflicts with the requested operation. */
+        LearningConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "ASSESSMENT.REVISION_CONFLICT",
+                 *       "message": "状态已变化，请刷新后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-24T10:00:00Z",
+                 *       "path": "/api/v1/teacher/assessments/0198f434-215d-7abc-9123-123456789abc",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description course-service is unavailable or timed out before current publication, lesson membership or teacher ownership could be established. No local fact is committed. */
+        LearningDependencyUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "LEARNING.COURSE_DEPENDENCY_UNAVAILABLE",
+                 *       "message": "课程服务暂时不可用，请稍后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-24T10:00:00Z",
+                 *       "path": "/api/v1/learning/enrollments",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description One-based page number. */
@@ -2368,6 +3113,8 @@ export interface components {
         QuestionId: string;
         KnowledgePointId: string;
         ImportTaskId: string;
+        AssessmentId: string;
+        AttemptId: string;
     };
     requestBodies: never;
     headers: {
@@ -3702,6 +4449,775 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["QuestionNotFound"];
+        };
+    };
+    listMyEnrollments: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                status?: components["schemas"]["EnrollmentStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enrollments ordered by most recently updated, then ID. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    enrollCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEnrollmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing enrollment returned or reactivated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Enrollment"];
+                };
+            };
+            /** @description Enrollment created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Enrollment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    cancelEnrollment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                enrollmentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enrollment is canceled or was already canceled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    getCourseProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Course progress. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseProgress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    reportLessonProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportLessonProgressRequest"];
+            };
+        };
+        responses: {
+            /** @description Current monotonic progress; replayed marks duplicate clientEventId. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonProgress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    listLessonNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notes ordered by updatedAt descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningNote"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    createLessonNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLearningNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Note created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningNote"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateLearningNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                noteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLearningNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Note updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningNote"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteLearningNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                noteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Note deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    listLearnerAssessments: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                courseId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available assessments ordered by publish time descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getLearnerAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Learner-safe paper snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    startAssessmentAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing draft or idempotent result returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            /** @description Draft attempt created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+        };
+    };
+    saveAttemptDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveAttemptDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Refresh-safe saved draft. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    submitAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Submission result; status is PARTIALLY_GRADED or GRADED. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAttemptResult: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Result. correctAnswer and analysis are null until the publication policy permits disclosure. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    listWrongQuestions: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                courseId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wrong questions ordered by lastWrongAt descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrongQuestionPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listTeacherAssessments: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                courseId?: string;
+                status?: components["schemas"]["AssessmentStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owned assessment page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createTeacherAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAssessmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            /** @description Draft assessment created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full teacher projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    updateTeacherAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAssessmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated draft. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteTeacherAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft assessment deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+        };
+    };
+    replaceAssessmentQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceAssessmentQuestionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated draft. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAssessmentPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAssessmentPublicationRequest"];
+            };
+        };
+        responses: {
+            /** @description Current assessment state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAssessmentResults: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attempt results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAttemptResultPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+        };
+    };
+    gradeAttemptAnswers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualGradeRequest"];
+            };
+        };
+        responses: {
+            /** @description Recalculated result and state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listCourseStudentLearning: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Teacher-scoped learning projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudentLearningPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     transferExternalQuestionImage: {

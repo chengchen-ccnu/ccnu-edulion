@@ -41,6 +41,7 @@ class LearningMessagingTest {
     void outboxStopsAutomaticRetryAtConfiguredAttemptLimit() {
         QuestionRepository repository = mock(QuestionRepository.class); RabbitTemplate rabbit = mock(RabbitTemplate.class);
         LearningProperties properties = new LearningProperties(new LearningProperties.Media("http://media", Duration.ofSeconds(1)),
+                new LearningProperties.Course("http://course", Duration.ofSeconds(1)),
                 new LearningProperties.ImportSettings(1024, Duration.ofHours(1), true, Duration.ofSeconds(1), Duration.ofSeconds(1), 3));
         org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable")).when(rabbit)
                 .send(anyString(), anyString(), any(Message.class), any());

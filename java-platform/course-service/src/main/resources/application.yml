@@ -18,6 +18,8 @@ management:
         include: health,info
 platform:
   course:
+    enrollment-messaging:
+      enabled: false
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${COURSE_MEDIA_REQUEST_TIMEOUT:3s}
