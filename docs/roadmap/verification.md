@@ -389,3 +389,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化结果：Java 8 模块 `clean verify` 全部成功，合计 105 项中 99 通过、6 个真实环境用例默认跳过、0 失败/错误；Learning 47 项中 44 通过/3 跳过，Course 16 项中 15 通过/1 跳过，Gateway 12/12。OpenAPI 客户端生成和前端 3 应用+5 共享包 typecheck 通过，`git diff --check` 通过。
 - 真实验收与清理：通过凭据包装器在 MySQL 8 上正常应用 Learning V9/Course V3，RabbitMQ 持久主队列与 DLQ 存在，随机事件的 ACTIVE/CANCELED/重放/乱序验收通过并清理。双服务真实启动后，课程事实 HTTP -> 教师型账号报名 -> Learning Outbox `PUBLISHED` -> Course `ACTIVE` -> 取消后 `CANCELED` 链路通过。本轮课程 `08629e70-60f8-4ff1-9250-0297f3bd8a95`、课时 `a305ab82-acb1-4a76-b945-9213b4cff82a`、报名 `eb2de3da-99ed-447c-a5c0-7f0fe50af08e` 及相关 Outbox/消费/投影均按精确 ID 逆外键清理，`learningFixtureRows=0`、`courseFixtureRows=0`。未清表、未运行历史题库 Import，未删除/改写 648 道 SYSTEM 题、图谱、T10 任务、媒体或检查点。
 - 剩余风险与发布：报名投影是最终一致，Outbox 未投递时播放短暂 403；FAILED Outbox/DLQ 需运维告警与人工重放。首期不含支付、监考/复杂防作弊、多选部分分、LLM 判分或弱知识点推断。T12A/B/C 分别依赖报名进度笔记、测评闭环和教师学情投影，不得发明平行路由或手写 DTO。契约/迁移、实现/测试、交付证据关键提交分别为 `57b1f1f`、`e8ecbbd`、`7e048d1`；Ready [PR #28](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28) 已创建，实现 head `7d39d6f` 对应 [CI run 32717288978](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/32717288978) 的 Java、Frontend、Python、OpenAPI 四项全部通过。本任务不自行合并，等待总控验收。
+
+## 2026-08-26 T11 合并与 T12A 前置审计
+
+- 合并与清理：[PR #28](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28) 在 Ready、可合并且 Java、Frontend、Python、OpenAPI 检查全部成功后合并为 `main@73fc35f0581e534e7a31718fce7fd01a9faf7a78`；本地 `main` 已快进同步，`codex/t11-learning-assessment-backend` 本地和远端分支已清理。
+- 前置结论：T08B 已合并并提供既有 `/learn/:courseId/:lessonId` 播放器、目录和稳定导航壳；T11 已合并并冻结 OpenAPI 0.14.0 的报名、我的报名、单调进度和笔记契约。因此 T12A 的代码、契约、路由和数据前置均满足，可以从最新 `main` 准备 `codex/t12a-learning-progress-web`。
+- 实施边界：T12A 只启用既有 `/my-learning`，在课程详情接通报名/继续学习，并在既有学习页增加进度和笔记；不得搬迁播放器、创建第二套学习页、手写 DTO，或提前实现 T12B 测评、T12C 学情、T15 AI 与 T17 门户内容。必须复用 `learning:access`，同时具备教学能力的账号仍可作为学习者。
+- 验收边界：后续 T12A 必须覆盖深链接/刷新、匿名回跳、能力不足、loading/empty/partial-error、401/403/404/409/422/429/offline、重复/乱序进度、笔记所有权、报名最终一致窗口、响应式、键盘操作，以及离页后的播放器、请求、定时器和临时 URL 清理；不得用 Mock 成功替代真实 Gateway、Course、Learning 和媒体播放链路。
+- 数据：本次总控只执行 Git/文档状态更新和只读前置审计，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。

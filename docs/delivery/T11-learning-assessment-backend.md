@@ -96,5 +96,5 @@ Ready PR #28 的实现 head `7d39d6f` 已完成 GitHub Actions [CI run 327172889
 - 契约/迁移提交：`57b1f1f`
 - 实现/测试提交：`e8ecbbd`
 - 文档/验收提交：`7e048d1`
-- Ready PR：[#28 T11 学习与测评后端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28)
-- 合并：禁止由本任务自行执行，等待总控验收。
+- PR：[#28 T11 学习与测评后端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/28)
+- 合并：2026-08-26 由总控在全部检查通过后合并，`main@73fc35f0581e534e7a31718fce7fd01a9faf7a78`。
