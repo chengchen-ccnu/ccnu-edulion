@@ -109,8 +109,8 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     label: "学生学习中心",
     role: "STUDENT",
     permission: "learning:access",
-    path: "/courses",
-    accepts: path => path === "/" || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
+    path: "/my-learning",
+    accepts: path => path === "/my-learning" || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
   },
   {
     id: "teacher",

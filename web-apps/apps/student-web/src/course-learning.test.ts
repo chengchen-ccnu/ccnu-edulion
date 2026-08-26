@@ -11,11 +11,12 @@ describe("course learning model", () => {
       .toEqual([["lesson-1", "resource-1", true], ["lesson-2", "resource-2", true]]);
   });
 
-  it("offers only previewable lessons before enrollment is implemented", () => {
+  it("offers only previewable lessons before enrollment and unlocks the same stable entries afterwards", () => {
     const course = fixture("ENROLLMENT_REQUIRED");
 
     expect(firstAccessibleLearningEntry(course)?.lesson.id).toBe("lesson-2");
     expect(courseLearningEntries(course)[0]?.accessible).toBe(false);
+    expect(courseLearningEntries(course, true).every(item => item.accessible)).toBe(true);
   });
 
   it("treats an unknown or non-video lesson deep link as missing", () => {

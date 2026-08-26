@@ -124,7 +124,7 @@ describe("shared authentication store", () => {
 
 describe("post-login routing", () => {
   it.each([
-    ["STUDENT", "learning:access", "http://student.test/courses"],
+    ["STUDENT", "learning:access", "http://student.test/my-learning"],
     ["TEACHER", "teaching:access", "http://teacher.test/teacher/courses"],
     ["ADMIN", "administration:access", "http://admin.test/admin/dashboard"]
   ] as const)("sends a single %s role directly to its workspace", (role, permission, href) => {
@@ -164,7 +164,7 @@ describe("post-login routing", () => {
     const currentUser = user(["STUDENT"], ["learning:access"]);
     const destination = selectPostLoginDestination(currentUser, "/teacher/dashboard", urls);
     expect(destination.kind).toBe("forbidden");
-    expect(availableWorkspaces(currentUser, urls).map(item => item.href)).toEqual(["http://student.test/courses"]);
+    expect(availableWorkspaces(currentUser, urls).map(item => item.href)).toEqual(["http://student.test/my-learning"]);
   });
 
   it("rejects external and non-whitelisted redirects", () => {
@@ -176,7 +176,7 @@ describe("post-login routing", () => {
     expect(buildUnifiedLoginUrl("//evil.example/steal", urls)).toBe("http://student.test/login");
     const destination = selectPostLoginDestination(user(["STUDENT"], ["learning:access"]),
       "//evil.example/steal", urls);
-    expect(destination).toMatchObject({ kind: "target", target: { href: "http://student.test/courses" } });
+    expect(destination).toMatchObject({ kind: "target", target: { href: "http://student.test/my-learning" } });
   });
 
   it("builds the public course URL from shared platform configuration", () => {
@@ -192,6 +192,17 @@ describe("post-login routing", () => {
 
     expect(resolveInternalRedirect(target, urls)).toMatchObject({ access: "workspace", requestedPath: target });
     expect(destination).toMatchObject({ kind: "target", target: { href: `http://student.test${target}` } });
+  });
+
+  it("offers learning and teaching workspaces to a teacher-shaped account with both capabilities", () => {
+    const workspaces = availableWorkspaces(user(["TEACHER"], ["learning:access", "teaching:access"]), urls);
+
+    expect(workspaces.map(item => [item.id, item.href])).toEqual([
+      ["student", "http://student.test/my-learning"],
+      ["teacher", "http://teacher.test/teacher/courses"]
+    ]);
+    expect(selectPostLoginDestination(user(["TEACHER"], ["learning:access"]), undefined, urls))
+      .toMatchObject({ kind: "target", target: { href: "http://student.test/my-learning" } });
   });
 });
 

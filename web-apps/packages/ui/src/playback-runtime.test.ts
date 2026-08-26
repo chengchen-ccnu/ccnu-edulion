@@ -38,5 +38,8 @@ describe("playback grant runtime", () => {
     expect(source).toContain("clearTimeout(refreshTimer)");
     expect(source).toContain("hls?.destroy()");
     expect(source).toContain('removeAttribute("src")');
+    expect(source).toContain("progressTracker.flush()");
+    expect(source).toContain('@timeupdate="handleTimeUpdate"');
+    expect(source).toContain('@ended="handleEnded"');
   });
 });
