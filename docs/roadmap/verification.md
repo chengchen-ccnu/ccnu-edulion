@@ -396,6 +396,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 前置结论：T08B 已合并并提供既有 `/learn/:courseId/:lessonId` 播放器、目录和稳定导航壳；T11 已合并并冻结 OpenAPI 0.14.0 的报名、我的报名、单调进度和笔记契约。因此 T12A 的代码、契约、路由和数据前置均满足，可以从最新 `main` 准备 `codex/t12a-learning-progress-web`。
 - 实施边界：T12A 只启用既有 `/my-learning`，在课程详情接通报名/继续学习，并在既有学习页增加进度和笔记；不得搬迁播放器、创建第二套学习页、手写 DTO，或提前实现 T12B 测评、T12C 学情、T15 AI 与 T17 门户内容。必须复用 `learning:access`，同时具备教学能力的账号仍可作为学习者。
 - 验收边界：后续 T12A 必须覆盖深链接/刷新、匿名回跳、能力不足、loading/empty/partial-error、401/403/404/409/422/429/offline、重复/乱序进度、笔记所有权、报名最终一致窗口、响应式、键盘操作，以及离页后的播放器、请求、定时器和临时 URL 清理；不得用 Mock 成功替代真实 Gateway、Course、Learning 和媒体播放链路。
+- 数据：本次总控只执行 Git/文档状态更新和只读前置审计，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。
 
 ## 2026-08-26 T12A 学习与进度前端实施验证
 
@@ -405,5 +406,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：实际启动 Gateway/IAM/Course/Learning/Media（8080～8084，全部 `UP`）与学生 Vue，浏览器只经 Gateway 和后端短期媒体授权。匿名开始学习保留完整深链接；登录后 PUBLIC 课程幂等报名，HLS 只有一个 video，`readyState=4`、92.04 秒、未静音。实际播放约 29 秒得到位置 28/累计 29 秒；笔记创建后 revision 0、编辑后 revision 1。刷新同一深链接后登录、28 秒位置与笔记恢复；`/my-learning` 展示真实报名/最近 0:28/继续学习，课程详情无 video 且显示继续学习。
 - 响应式/键盘/资源：390×844 下 `/my-learning` 和学习页的 `scrollWidth` 均等于 `clientWidth=375`，无横向溢出；固定导航、高亮、原生键盘控件与 `:focus-visible` 轮廓有效。浏览器 warning/error 为 0。路由切换/离页会中止 Course/Learning/Media 请求、429 等待和进度队列，并清理 HLS、刷新定时器和 video 源；测试与源码边界断言覆盖这些清理路径。
 - 数据与清理：仅复用四个用途明确的 dev Schema、既有 `student_test_01`、课程/课时/媒体。创建 1 报名、1 聚合进度、2 进度事件、1 T12A 笔记；播放另产生 5 Media 授权/nonce/临时清单，认证产生 7 刷新会话和 4 登录审计。结束时按精确 actor/course/enrollment/time/Object Key 删除临时 OSS 清单和四个 Schema 本轮记录，残留审计逐表为 0；没有新建数据库/表/迁移/Seed/账号/课程/媒体资产，没有清空表或列举 Bucket。验收服务端口 5173、8080～8084 均已停止。
-- 可读性与风险：新增 Vue 页面、API 适配器、进度队列和共享播放器跟踪器具有中文职责/输入/输出/权限/失败/副作用注释，生成代码未手工修改。报名投影仍有短暂最终一致窗口；`hls.js` 体积提示和缺少收藏契约记录在交付文档。分支 `codex/t12a-learning-progress-web`，Ready PR 创建后补记；本任务不自行合并。
-- 数据：本次总控只执行 Git/文档状态更新和只读前置审计，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。
+- 可读性与风险：新增 Vue 页面、API 适配器、进度队列和共享播放器跟踪器具有中文职责/输入/输出/权限/失败/副作用注释，生成代码未手工修改。报名投影仍有短暂最终一致窗口；`hls.js` 体积提示和缺少收藏契约记录在交付文档。实现/测试/验收提交 `dd491c4` 已推送到 `codex/t12a-learning-progress-web`，Ready [PR #30](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30) 已创建；本任务不自行合并。

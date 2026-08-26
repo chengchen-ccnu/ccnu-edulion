@@ -89,5 +89,5 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 ## Git 交付
 
 - 分支：`codex/t12a-learning-progress-web`
-- 关键提交：提交后补记
-- PR：创建后补记（Ready，禁止本任务自行合并）
+- 实现/测试/验收提交：`dd491c4`
+- PR：[#30 T12A 学习与进度前端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30)，Ready/Open；本任务不自行合并。
