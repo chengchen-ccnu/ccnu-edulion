@@ -194,6 +194,16 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           <strong>{{ course.teacher.displayName }}</strong>
           <small>线上版本 {{ course.publishedVersion }}</small>
         </div>
+        <section v-if="enrollment && progress" class="detail-course-progress" aria-label="课程完成度">
+          <div>
+            <span>课程完成度</span>
+            <strong>{{ progress.completionPercent }}%</strong>
+          </div>
+          <div class="learning-progress-bar" :aria-label="`课程完成度 ${progress.completionPercent}%`">
+            <span :style="{ width: `${progress.completionPercent}%` }" />
+          </div>
+          <small>已完成 {{ progress.completedLessonCount }} / {{ progress.lessonCount }} 个课时</small>
+        </section>
         <RouterLink v-if="enrollment && resumeId" class="detail-learning-action"
           :to="`/learn/${course.id}/${resumeId}`">
           {{ progress?.lessons.length ? "继续学习" : "开始学习" }}

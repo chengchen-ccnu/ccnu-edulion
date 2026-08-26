@@ -1,7 +1,7 @@
 import type { CourseDetail, CourseProgress, LessonProgress } from "@edu/api-client";
 import { describe, expect, it } from "vitest";
 
-import { latestLessonProgress, mergeCourseProgress, resumeLessonId } from "./learning-model";
+import { latestLessonProgress, mergeCourseProgress, resumeLessonId, videoProgressPercent } from "./learning-model";
 
 describe("learning aggregation model", () => {
   it("resumes the most recently touched current-version lesson and falls back after a version change", () => {
@@ -24,6 +24,13 @@ describe("learning aggregation model", () => {
     expect(merged.lessons[0]).toMatchObject({ positionSeconds: 80, watchedSeconds: 120,
       completed: true, revision: 3 });
     expect(merged.completionPercent).toBe(50);
+  });
+
+  it("shows current-video percentage independently from course lesson completion", () => {
+    expect(videoProgressPercent(28, 92.04, false)).toBe(30.4);
+    expect(videoProgressPercent(999, 92.04, false)).toBe(100);
+    expect(videoProgressPercent(0, 0, false)).toBe(0);
+    expect(videoProgressPercent(0, 0, true)).toBe(100);
   });
 });
 

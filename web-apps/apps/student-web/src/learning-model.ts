@@ -57,3 +57,10 @@ export function mergeCourseProgress(current: CourseProgress, incoming: LessonPro
 export function isCompleted(item: MyLearningItem): boolean {
   return (item.progress?.completionPercent ?? 0) >= 100;
 }
+
+/** 将当前视频位置换算为课时内播放百分比；媒体时长未知时返回 0，已完成课时稳定显示 100。 */
+export function videoProgressPercent(positionSeconds: number, durationSeconds: number, completed: boolean): number {
+  if (completed) return 100;
+  if (!Number.isFinite(positionSeconds) || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round(positionSeconds * 1_000 / durationSeconds) / 10));
+}

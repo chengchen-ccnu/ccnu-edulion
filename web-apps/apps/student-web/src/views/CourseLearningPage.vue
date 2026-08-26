@@ -13,7 +13,7 @@ import { useRoute } from "vue-router";
 
 import { studentCourseApi } from "../course-api";
 import { courseLearningEntries, findLearningEntry } from "../course-learning";
-import { mergeCourseProgress } from "../learning-model";
+import { mergeCourseProgress, videoProgressPercent as calculateVideoProgressPercent } from "../learning-model";
 import { isAuthenticationRequired, studentLearningApi } from "../learning-api";
 import { createProgressSyncController } from "../progress-sync";
 import type { ProgressSyncController } from "../progress-sync";
@@ -37,6 +37,7 @@ const deletingNoteId = ref<string | null>(null);
 const editingNoteId = ref<string | null>(null);
 const editingContent = ref("");
 const currentPositionSeconds = ref(0);
+const videoDurationSeconds = ref(0);
 const player = ref<{ seekTo(positionSeconds: number): void } | null>(null);
 let pageAbort: AbortController | null = null;
 let progressSync: ProgressSyncController | null = null;
@@ -54,6 +55,10 @@ const next = computed(() => currentIndex.value >= 0 && currentIndex.value < entr
 const currentProgress = computed(() => progress.value?.lessons.find(item => item.lessonId === current.value?.lesson.id)
   ?? (reportedProgress.value?.lessonId === current.value?.lesson.id ? reportedProgress.value : null));
 const learningFactsAllowed = computed(() => course.value?.accessType === "PUBLIC" || enrolled.value);
+const videoProgressPercent = computed(() => {
+  return calculateVideoProgressPercent(currentPositionSeconds.value, videoDurationSeconds.value,
+    Boolean(currentProgress.value?.completed));
+});
 
 watch(() => [route.params.courseId, route.params.lessonId], loadPage, { immediate: true });
 onBeforeUnmount(cancelPage);
@@ -250,6 +255,7 @@ function resetPageState() {
   deletingNoteId.value = null;
   editingNoteId.value = null;
   currentPositionSeconds.value = 0;
+  videoDurationSeconds.value = 0;
 }
 
 function stale(controller: AbortController, generation: number): boolean {
@@ -333,17 +339,15 @@ function cancelPage() {
         :title="`${current.lesson.title}视频`" :grant-provider="getStudentGrant"
         :initial-position-seconds="currentProgress?.positionSeconds ?? 0"
         :error-message-provider="studentPlaybackErrorMessage"
-        @position-change="currentPositionSeconds = $event" @playback-progress="handlePlaybackProgress" />
+        @position-change="currentPositionSeconds = $event" @duration-change="videoDurationSeconds = $event"
+        @playback-progress="handlePlaybackProgress" />
 
       <section class="lesson-progress-panel" aria-labelledby="lesson-progress-heading">
-        <div><span class="section-kicker">PROGRESS</span><h3 id="lesson-progress-heading">学习进度</h3></div>
-        <strong>{{ progress?.completionPercent ?? 0 }}%</strong>
-        <div class="learning-progress-bar" :aria-label="`课程完成度 ${progress?.completionPercent ?? 0}%`">
-          <span :style="{ width: `${progress?.completionPercent ?? 0}%` }" />
+        <div><span class="section-kicker">VIDEO PROGRESS</span><h3 id="lesson-progress-heading">本视频进度</h3></div>
+        <strong>{{ videoProgressPercent }}%</strong>
+        <div class="learning-progress-bar" :aria-label="`本视频进度 ${videoProgressPercent}%`">
+          <span :style="{ width: `${videoProgressPercent}%` }" />
         </div>
-        <p v-if="currentProgress">当前课时已记录到 {{ formatSeconds(currentProgress.positionSeconds) }}，累计观看
-          {{ formatSeconds(currentProgress.watchedSeconds) }}{{ currentProgress.completed ? "，已完成" : "" }}。</p>
-        <p v-else>播放后每隔一段时间、暂停或完成时同步单调进度。</p>
         <p v-if="progressError" class="panel-error" role="alert">{{ progressError }}</p>
       </section>
 

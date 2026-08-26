@@ -174,15 +174,18 @@ function cancelLoad() {
         <p v-if="item.course">{{ item.course.summary || "课程暂未填写摘要。" }}</p>
         <p v-else class="learning-record-card__error">{{ item.courseError || "正在读取课程信息…" }}</p>
 
+        <div class="learning-record-card__meta">
+          <span>课程完成度</span>
+          <strong>{{ item.progress?.completionPercent ?? 0 }}%</strong>
+        </div>
         <div class="learning-progress-bar" :aria-label="`课程完成度 ${item.progress?.completionPercent ?? 0}%`">
           <span :style="{ width: `${item.progress?.completionPercent ?? 0}%` }" />
         </div>
-        <div class="learning-record-card__meta">
-          <strong>{{ item.progress?.completionPercent ?? 0 }}%</strong>
+        <div class="learning-record-card__detail">
           <span v-if="item.progress">{{ item.progress.completedLessonCount }} / {{ item.progress.lessonCount }} 课时</span>
           <span v-else>{{ item.progressError || "正在读取进度…" }}</span>
+          <small>{{ latestPosition(item) }}</small>
         </div>
-        <small>{{ latestPosition(item) }}</small>
 
         <div class="learning-record-card__actions">
           <RouterLink v-if="continueHref(item)" class="button button--primary" :to="continueHref(item)!">

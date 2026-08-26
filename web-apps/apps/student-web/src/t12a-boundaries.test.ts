@@ -11,6 +11,9 @@ describe("T12A page boundaries", () => {
     expect(detail).not.toContain("playbackGrant");
     expect(learning).toContain("HlsVideoPlayer");
     expect(learning).toContain("studentCourseApi.playbackGrant");
+    expect(learning).toContain("本视频进度");
+    expect(learning).not.toContain("累计观看");
+    expect(detail).toContain("课程完成度");
   });
 
   it("shows loading, empty, partial failure, HTTP boundaries and offline recovery without fake success", () => {
