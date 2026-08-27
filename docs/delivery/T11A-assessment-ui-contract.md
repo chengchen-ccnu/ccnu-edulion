@@ -92,7 +92,7 @@ OpenAPI 0.15.0 新增或扩展：
 
 - 429 仍由平台现有 Gateway/基础设施策略产生；本任务冻结响应契约和 `Retry-After` 暴露语义，不新增没有容量证据的第二套限流器。T12B 必须有限退避，禁止无限重试。
 - 服务 JWT 与课程媒体链路复用同一 DPAPI 秘密，但 issuer 与 accessType 强绑定；后续若轮换为独立密钥，应采用统一密钥管理和兼容轮换，不把秘密写入仓库。
-- T12B 只能消费生成客户端，在 `/practice`、`/practice/:assessmentId`、`/practice/:assessmentId/result` 与 `/wrong-questions` 内实现页面；不得把作答塞回课程详情。
+- T12B 只能消费生成客户端，在 `/practice`、`/practice/:assessmentId`、`/attempt/:attemptId/result` 与 `/wrong-questions` 内实现页面；不得把作答塞回课程详情。
 - 不包含监考、复杂防作弊、无限重考、LLM 主观判分或批量历史媒体迁移。
 
 ## 注释与 Git 交付
