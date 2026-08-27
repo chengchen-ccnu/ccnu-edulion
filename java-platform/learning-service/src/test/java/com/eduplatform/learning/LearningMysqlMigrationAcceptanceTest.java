@@ -1,6 +1,7 @@
 package com.eduplatform.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.service.QuestionService;
@@ -48,7 +49,7 @@ class LearningMysqlMigrationAcceptanceTest {
             "question_version_child", "question_legacy_review_item", "question_legacy_item_resolution",
             "enrollment", "lesson_progress", "lesson_progress_event", "learning_note", "assessment",
             "assessment_question", "assessment_assignment", "assessment_attempt", "assessment_answer",
-            "manual_grading_record", "wrong_question", "wrong_question_occurrence",
+            "manual_grading_record", "wrong_question", "wrong_question_occurrence", "wrong_question_redo",
             "learning_idempotency_request");
 
     @Autowired JdbcTemplate jdbc;
@@ -66,18 +67,67 @@ class LearningMysqlMigrationAcceptanceTest {
     }
 
     /**
-     * 验证真实开发库按 V8 -> V9 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
+     * 验证真实开发库按 V8 -> V9 -> V10 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
      * 该断言只读 Flyway 历史与表元数据，不创建任何 Fixture。
      */
     @Test
-    void flywayV9NormallyAdvancesTheExistingV8Schema() {
+    void flywayV10NormallyAdvancesTheExistingV9Schema() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
                 String.class);
-        assertThat(versions).contains("8", "9").doesNotContain("4");
+        assertThat(versions).contains("8", "9", "10").doesNotContain("4");
         List<String> actual = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
         assertThat(actual).containsAll(TABLES);
+    }
+
+    /**
+     * 在真实 MySQL 上写入一组最小 T11A 时间/错题重做事实，验证约束后按精确随机 ID 逆序清理。
+     * 不创建课程、用户或跨 Schema 记录，也不读取任何存量业务行。
+     */
+    @Test
+    void t11aTimingAndFiniteRedoSchemaWorksOnMysqlAndFixtureIsPreciselyRemoved() {
+        assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_learning_dev");
+        String assessmentId = UUID.randomUUID().toString();
+        String attemptId = UUID.randomUUID().toString();
+        String wrongId = UUID.randomUUID().toString();
+        String redoId = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        try {
+            jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,assessment_type,status,answer_publication_policy,opens_at,closes_at,time_limit_seconds,revision,published_at,archived_at,created_at,updated_at) VALUES(?,?,?,?,?,?,'EXAM','PUBLISHED','NEVER',?,?,120,1,?,NULL,?,?)",
+                    assessmentId, UUID.randomUUID().toString(), UUID.randomUUID().toString(), null,
+                    "T11A MySQL 验收考试", "仅验证真实迁移", Timestamp.from(now.minusSeconds(30)),
+                    Timestamp.from(now.plusSeconds(300)), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now));
+            jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,total_points,started_at,deadline_at,created_at,updated_at) VALUES(?,? ,?,'GRADED',1,1.00,?,?,?,?)",
+                    attemptId, assessmentId, UUID.randomUUID().toString(), Timestamp.from(now),
+                    Timestamp.from(now.plusSeconds(120)), Timestamp.from(now), Timestamp.from(now));
+            String learnerId = jdbc.queryForObject("SELECT learner_id FROM assessment_attempt WHERE id=?", String.class,
+                    attemptId);
+            jdbc.update("INSERT INTO wrong_question(id,learner_id,course_id,assessment_id,question_version_id,wrong_count,mastery_status,revision,redo_attempts_used,first_wrong_at,last_wrong_at,last_attempt_id,updated_at) VALUES(?,?,?,?,?,1,'LEARNING',0,0,?,?,?,?)",
+                    wrongId, learnerId, UUID.randomUUID().toString(), assessmentId, UUID.randomUUID().toString(),
+                    Timestamp.from(now), Timestamp.from(now), attemptId, Timestamp.from(now));
+            jdbc.update("INSERT INTO wrong_question_redo(id,wrong_question_id,learner_id,client_request_id,request_fingerprint,sequence_no,answer_json,score,correct,submitted_at) VALUES(?,?,?,?,?,1,'[\"A\"]',1.00,TRUE,?)",
+                    redoId, wrongId, learnerId, UUID.randomUUID().toString(), "a".repeat(64), Timestamp.from(now));
+            assertThat(jdbc.queryForObject("SELECT time_limit_seconds FROM assessment WHERE id=?", Integer.class,
+                    assessmentId)).isEqualTo(120);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question_redo WHERE wrong_question_id=?",
+                    Integer.class, wrongId)).isEqualTo(1);
+            assertThatThrownBy(() -> jdbc.update("UPDATE assessment SET assessment_type='PRACTICE' WHERE id=?",
+                    assessmentId)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        } finally {
+            jdbc.update("DELETE FROM wrong_question_redo WHERE id=?", redoId);
+            jdbc.update("DELETE FROM wrong_question WHERE id=?", wrongId);
+            jdbc.update("DELETE FROM assessment_attempt WHERE id=?", attemptId);
+            jdbc.update("DELETE FROM assessment WHERE id=?", assessmentId);
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id=?", Integer.class, assessmentId))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_attempt WHERE id=?", Integer.class, attemptId))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question WHERE id=?", Integer.class, wrongId))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question_redo WHERE id=?", Integer.class, redoId))
+                .isZero();
     }
 
     /** 在既有专用 MySQL 上验证 V3 组合历史与人工复核，并按本轮随机 ID 精确清理全部 Fixture。 */

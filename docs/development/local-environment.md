@@ -250,6 +250,37 @@ learning-service 通过 `COURSE_SERVICE_BASE_URL` 调用 course-service 的既�
 
 T11 没有默认 Seed，也不运行历史题库 Import。人工验收只能使用明确的 `student_test_01`/`teacher_test_01` 对应固定 UUID、专用测试课程/课时/测评；清理时按本轮记录的 enrollment/assessment/attempt 等精确 ID 逆外键顺序删除，Course 投影按对应 learner/course 精确删除，不得删除现有 648 道 SYSTEM 题、图谱、T10 任务、媒体或检查点。自动化使用独立 H2 内存库，进程结束即销毁。
 
+### T11A 测评时间、错题重做与题目媒体授权
+
+T11A 不创建数据库，只在 `edu_platform_learning_dev` 上正常向前应用 Learning V10。V10 增加测评时间、attempt 开始/服务端截止、错题掌握/revision/有限重做字段和 `wrong_question_redo`；不得修改 V9、启用 baseline/out-of-order 或建立跨 Schema 外键。Media 复用 V3 的 `consumed_service_authorization` 一次性 jti 表，不新增媒体迁移。
+
+| 变量 | 默认值 | 含义 |
+|---|---:|---|
+| `MEDIA_SERVICE_BASE_URL` | `http://127.0.0.1:8083` | Learning 复用既有媒体 HTTP 客户端调用内部单资产授权 |
+| `LEARNING_MEDIA_REQUEST_TIMEOUT` | `5s` | Learning 调用 Media 的连接/读取上限；失败映射为 503 |
+| `LEARNING_MEDIA_AUTH_ISSUER` | `edu-platform-learning-service` | Learning 专属服务 issuer；Media 必须配置相同值 |
+| `COURSE_MEDIA_AUTH_AUDIENCE` | `edu-platform-media-service` | 复用既有 Media audience |
+| `LEARNING_MEDIA_AUTH_TOKEN_TTL` | `30s` | 测评题目媒体一次性 JWT 寿命，必须小于等于 Media 最大 TTL |
+| `COURSE_MEDIA_AUTH_SECRET` | 无 | 复用 DPAPI 管理的 course/media HMAC 秘密，不进入 `local.env`、日志或参数 |
+
+专用环境验收仍只能通过凭据包装脚本；两个用例都会再次确认 Schema 名称，只创建本轮随机/固定测试标识的最小数据并在 finally 精确清理：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:LEARNING_MYSQL_ACCEPTANCE = 'true'
+    $env:RABBITMQ_ENABLED = 'false'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service -am `
+        '-Dtest=LearningMysqlMigrationAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:MEDIA_REAL_ACCEPTANCE = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl media-service -am `
+        '-Dtest=MediaRealEnvironmentAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+```
+
+Learning 用例创建一份随机 EXAM、一个 GRADED attempt、一条错题和一次重做，按 redo → wrong → attempt → assessment 删除并断言为 0。Media 用例在本轮 UUID OSS 前缀内新增固定合成 `QUESTION_IMAGE`，验证 learning issuer 授权、真实下载和 jti 重放 403，再按数据库记录的精确 Object Key 与 owner/visitor 清理；禁止列举 Bucket、清空表或触碰既有媒体。
+
 历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。0.13.0 起创建、批次和清理端点只对具备 `administration:access` 的管理员开放，任务冻结为 `SYSTEM`，正式题目直接为 `ACTIVE`，图片也创建为管理员持有的 `SYSTEM` 资产；教师端既有旧任务只读，不再复核、继续提交或清理历史 JSON。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前管理员的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。

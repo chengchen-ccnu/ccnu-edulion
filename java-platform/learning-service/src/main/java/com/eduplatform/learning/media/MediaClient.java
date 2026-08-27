@@ -1,6 +1,7 @@
 package com.eduplatform.learning.media;
 
 import java.io.InputStream;
+import com.eduplatform.learning.web.LearningDtos;
 
 /**
  * learning-service 使用 media-service 稳定契约的端口。
@@ -29,4 +30,8 @@ public interface MediaClient {
             String traceId) {
         return transferExternalImage(clientRequestId, sourceUrl, teacherId, "TEACHER", traceId);
     }
+
+    /** 使用一次性服务令牌换取测评题目媒体的短期读授权，不暴露令牌或存储实现。 */
+    LearningDtos.MediaAccessGrant issueAssessmentAccess(String mediaId, String learnerId, String purpose,
+            LearningDtos.MediaDisposition disposition, String traceId);
 }

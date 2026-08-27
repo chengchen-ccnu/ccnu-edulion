@@ -34,7 +34,7 @@ public record MediaProperties(
             String accessKeyId, String accessKeySecret, String securityToken, Duration accessGrantTtl) {}
 
     /** 可信领域服务令牌的验证参数；secret 不得通过 HTTP、日志或数据库传播。 */
-    public record ServiceAuthorization(String issuer, String audience, Duration maxTokenTtl,
+    public record ServiceAuthorization(String issuer, String assessmentIssuer, String audience, Duration maxTokenTtl,
             Duration clockSkew, String secret) {}
 
     /** 历史图片转存的网络边界；主机白名单为空或 enabled=false 时端点拒绝所有转存。 */

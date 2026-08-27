@@ -6,10 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.messaging.MediaEventFactory;
+import com.eduplatform.media.messaging.MediaEventParser;
 import com.eduplatform.media.messaging.MediaRabbitTopology;
 import com.eduplatform.media.messaging.OutboxPublisher;
 import com.eduplatform.media.persistence.MediaRepository;
 import com.eduplatform.media.processing.FfmpegCommandRunner;
+import com.eduplatform.media.processing.MediaProcessingCoordinator;
 import com.eduplatform.media.storage.ObjectStorage;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
@@ -86,6 +88,7 @@ class MediaRealEnvironmentAcceptanceTest {
                         "--platform.media.worker.ffmpeg-path=ffmpeg",
                         "--platform.media.maintenance.enabled=false",
                         "--platform.media.service-authorization.issuer=edu-platform-course-service",
+                        "--platform.media.service-authorization.assessment-issuer=edu-platform-learning-service",
                         "--platform.media.service-authorization.audience=edu-platform-media-service",
                         "--platform.media.service-authorization.secret=" + SERVICE_SECRET,
                         "--platform.media.upload.multipart-threshold=1024",
@@ -100,6 +103,7 @@ class MediaRealEnvironmentAcceptanceTest {
             OutboxPublisher outbox = context.getBean(OutboxPublisher.class);
             MediaProperties runtimeProperties = context.getBean(MediaProperties.class);
             assertThat(runtimeProperties.serviceAuthorization().issuer()).isEqualTo("edu-platform-course-service");
+            assertThat(runtimeProperties.serviceAuthorization().assessmentIssuer()).isEqualTo("edu-platform-learning-service");
             assertThat(runtimeProperties.serviceAuthorization().audience()).isEqualTo("edu-platform-media-service");
             RabbitAdmin admin = new RabbitAdmin(rabbit);
             drainStaleAcceptanceDeadLetters(mapper, rabbit);
@@ -172,6 +176,29 @@ class MediaRealEnvironmentAcceptanceTest {
                 assertThat(servicePlaylist.statusCode()).isEqualTo(200);
                 assertThat(servicePlaylist.body()).contains("#EXTM3U");
 
+                JsonNode questionImage = uploadQuestionImage(port, mapper, runId);
+                String questionImageId = questionImage.get("mediaId").asString();
+                MediaRepository.OutboxEvent imageUploaded = pendingFor(repository, questionImageId, "MediaUploaded");
+                eventIds.add(imageUploaded.eventId());
+                outbox.publish(imageUploaded);
+                awaitStatus(port, mapper, questionImageId, "READY", 30);
+                String assessmentToken = assessmentServiceToken(VISITOR, questionImageId);
+                String assessmentBody = """
+                        {"visitorId":"%s","purpose":"QUESTION_IMAGE","accessType":"ASSESSMENT_QUESTION",
+                         "variant":"ORIGINAL","disposition":"INLINE"}
+                        """.formatted(VISITOR);
+                HttpResponse<String> imageGrant = sendInternal(port, assessmentToken, questionImageId, assessmentBody);
+                assertThat(imageGrant.statusCode()).withFailMessage("assessment media grant returned %s: %s",
+                        imageGrant.statusCode(), imageGrant.body()).isEqualTo(201);
+                JsonNode imageGrantBody = mapper.readTree(imageGrant.body());
+                HttpResponse<byte[]> imageDownload = http.send(HttpRequest.newBuilder(
+                                URI.create(imageGrantBody.get("url").asString())).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(imageDownload.statusCode()).isEqualTo(200);
+                assertThat(imageDownload.body()).isEqualTo("t11a-question-image".getBytes(StandardCharsets.UTF_8));
+                assertThat(sendInternal(port, assessmentToken, questionImageId, assessmentBody).statusCode())
+                        .as("assessment media service token replay").isEqualTo(403);
+
                 verifySilentVideoStillTranscodes(mapper, context.getBean(FfmpegCommandRunner.class),
                         context.getBean(MediaProperties.class).worker());
 
@@ -188,13 +215,72 @@ class MediaRealEnvironmentAcceptanceTest {
                 outbox.publishPending();
                 awaitPublishedEventsConsumed(jdbc);
                 assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_asset WHERE owner_id = ?", Integer.class, OWNER))
-                        .isEqualTo(2);
+                        .isEqualTo(3);
                 assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant WHERE media_id = ?", Integer.class, videoId))
                         .isGreaterThanOrEqualTo(1);
             } finally {
                 context.getBean(RabbitListenerEndpointRegistry.class).stop();
                 cleanupExact(storage, repository, jdbc, eventIds);
                 assertAcceptanceQueuesEmpty(admin);
+            }
+        }
+    }
+
+    @Test
+    /**
+     * 独立验证 T11A 题图的真实 OSS 读取与 learning-service 一次性授权，避免被综合验收中的 Rabbit 时序影响。
+     * 输入是本轮固定伪题图；结果必须是首次授权成功、下载字节一致、同一 jti 重放返回 403，并精确清理数据与对象。
+     */
+    void validatesAssessmentQuestionMediaAuthorizationAndReplayProtection() throws Exception {
+        assertThat(System.getenv("MEDIA_MYSQL_DATABASE")).isEqualTo("edu_platform_media_dev");
+        String runId = UUID.randomUUID().toString();
+        String prefix = "t11a-media-acceptance/" + runId;
+        try (ConfigurableApplicationContext raw = new SpringApplicationBuilder(MediaServiceApplication.class)
+                .profiles("test", "local")
+                .run("--server.port=0",
+                        "--spring.flyway.locations=filesystem:src/main/resources/db/migration",
+                        "--platform.media.messaging.enabled=false",
+                        "--platform.media.oss.enabled=true",
+                        "--platform.media.oss.key-prefix=" + prefix,
+                        "--platform.media.worker.enabled=true",
+                        "--platform.media.maintenance.enabled=false",
+                        "--platform.media.service-authorization.issuer=edu-platform-course-service",
+                        "--platform.media.service-authorization.assessment-issuer=edu-platform-learning-service",
+                        "--platform.media.service-authorization.audience=edu-platform-media-service",
+                        "--platform.media.service-authorization.secret=" + SERVICE_SECRET)) {
+            ServletWebServerApplicationContext context = (ServletWebServerApplicationContext) raw;
+            int port = context.getWebServer().getPort();
+            ObjectMapper mapper = context.getBean(ObjectMapper.class);
+            JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
+            MediaRepository repository = context.getBean(MediaRepository.class);
+            ObjectStorage storage = context.getBean(ObjectStorage.class);
+            List<String> eventIds = new ArrayList<>();
+            try {
+                JsonNode questionImage = uploadQuestionImage(port, mapper, runId);
+                String mediaId = questionImage.get("mediaId").asString();
+                MediaRepository.OutboxEvent uploaded = pendingFor(repository, mediaId, "MediaUploaded");
+                eventIds.add(uploaded.eventId());
+                context.getBean(MediaProcessingCoordinator.class).process(
+                        context.getBean(MediaEventParser.class).parse(uploaded.payloadJson()));
+                awaitStatus(port, mapper, mediaId, "READY", 10);
+
+                String token = assessmentServiceToken(VISITOR, mediaId);
+                String body = """
+                        {"visitorId":"%s","purpose":"QUESTION_IMAGE","accessType":"ASSESSMENT_QUESTION",
+                         "variant":"ORIGINAL","disposition":"INLINE"}
+                        """.formatted(VISITOR);
+                HttpResponse<String> grant = sendInternal(port, token, mediaId, body);
+                assertThat(grant.statusCode()).withFailMessage("assessment media grant returned %s: %s",
+                        grant.statusCode(), grant.body()).isEqualTo(201);
+                HttpResponse<byte[]> download = http.send(HttpRequest.newBuilder(
+                                URI.create(mapper.readTree(grant.body()).get("url").asString())).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(download.statusCode()).isEqualTo(200);
+                assertThat(download.body()).isEqualTo("t11a-question-image".getBytes(StandardCharsets.UTF_8));
+                assertThat(sendInternal(port, token, mediaId, body).statusCode()).as("service token replay")
+                        .isEqualTo(403);
+            } finally {
+                cleanupExact(storage, repository, jdbc, eventIds);
             }
         }
     }
@@ -206,6 +292,23 @@ class MediaRealEnvironmentAcceptanceTest {
                 {"clientRequestId":"%s","purpose":"COURSE_COVER","fileName":"acceptance.png",
                  "size":%d,"mimeType":"image/png","sha256":"%s"}
                 """.formatted(UUID.nameUUIDFromBytes((runId + "-cover").getBytes()), bytes.length, sha)).body());
+        JsonNode grant = session.get("uploadGrant");
+        HttpResponse<String> put = http.send(HttpRequest.newBuilder(URI.create(grant.get("url").asString()))
+                .header("Content-Type", "image/png").header("x-oss-meta-sha256", sha)
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(put.statusCode()).isBetween(200, 299);
+        return mapper.readTree(send(port, "POST", "/api/v1/media/uploads/" + session.get("uploadId").asString()
+                + "/complete", "{\"sha256\":\"" + sha + "\",\"parts\":[]}").body());
+    }
+
+    /** 上传一张固定合成题图；只用于本轮真实 OSS/服务授权验收，并由统一精确清理回收。 */
+    private JsonNode uploadQuestionImage(int port, ObjectMapper mapper, String runId) throws Exception {
+        byte[] bytes = "t11a-question-image".getBytes(StandardCharsets.UTF_8);
+        String sha = sha256(bytes);
+        JsonNode session = mapper.readTree(send(port, "POST", "/api/v1/media/uploads", """
+                {"clientRequestId":"%s","purpose":"QUESTION_IMAGE","fileName":"t11a-question.png",
+                 "size":%d,"mimeType":"image/png","sha256":"%s"}
+                """.formatted(UUID.nameUUIDFromBytes((runId + "-question-image").getBytes()), bytes.length, sha)).body());
         JsonNode grant = session.get("uploadGrant");
         HttpResponse<String> put = http.send(HttpRequest.newBuilder(URI.create(grant.get("url").asString()))
                 .header("Content-Type", "image/png").header("x-oss-meta-sha256", sha)
@@ -644,6 +747,29 @@ class MediaRealEnvironmentAcceptanceTest {
                 .claim("variant", "hls-fmp4-v2")
                 .claim("disposition", "INLINE")
                 .claim("traceId", "real-service-authorization")
+                .build();
+        return encoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).build(), claims)).getTokenValue();
+    }
+
+    /** learning-service 专用 issuer 的一次性题图授权；不向浏览器返回这枚 JWT。 */
+    private static String assessmentServiceToken(String visitorId, String mediaId) {
+        Instant now = Instant.now();
+        SecretKey key = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer("edu-platform-learning-service")
+                .audience(List.of("edu-platform-media-service"))
+                .subject(visitorId)
+                .id(UUID.randomUUID().toString())
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(30))
+                .claim("mediaId", mediaId)
+                .claim("purpose", "QUESTION_IMAGE")
+                .claim("accessType", "ASSESSMENT_QUESTION")
+                .claim("variant", "ORIGINAL")
+                .claim("disposition", "INLINE")
+                .claim("traceId", "t11a-real-service-authorization")
                 .build();
         return encoder.encode(JwtEncoderParameters.from(
                 JwsHeader.with(MacAlgorithm.HS256).build(), claims)).getTokenValue();

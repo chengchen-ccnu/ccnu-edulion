@@ -916,7 +916,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Idempotently start or return the current learner's draft attempt */
+        /**
+         * Idempotently start or return the current learner's draft attempt
+         * @description The service checks assessment access, opensAt/closesAt and its own clock before creating a draft. For EXAM, deadlineAt is frozen as the earlier of closesAt and startedAt plus timeLimitSeconds. A submitted or graded immutable attempt is never reopened.
+         */
         post: operations["startAssessmentAttempt"];
         delete?: never;
         options?: never;
@@ -931,8 +934,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        /** Idempotently replace the current learner's answer draft */
+        /**
+         * Restore the current learner's mutable draft and server-authoritative deadline
+         * @description Returns only an owned, unexpired DRAFT attempt. Once submitted or graded, clients use the immutable result endpoint; once timed out, clients must call the submission endpoint so the service can finalize the last saved answers and cannot restore a writable draft.
+         */
+        get: operations["getAttemptDraft"];
+        /** Idempotently replace the current learner's answer draft before the service deadline */
         put: operations["saveAttemptDraft"];
         post?: never;
         delete?: never;
@@ -952,7 +959,7 @@ export interface paths {
         put?: never;
         /**
          * Submit once and transactionally auto-grade reliable objective answers
-         * @description An identical clientRequestId and final answer set returns the original result. A different retry or concurrent conflicting submission returns 409. Short-answer and non-standard fill answers wait for manual grading.
+         * @description An identical clientRequestId and final answer set returns the original result. A different retry or concurrent conflicting submission returns 409. The service rejects a client-clock-based extension and atomically finalizes a timed-out draft from its last saved answers. Short-answer and non-standard fill answers wait for manual grading.
          */
         post: operations["submitAttempt"];
         delete?: never;
@@ -989,6 +996,80 @@ export interface paths {
         get: operations["listWrongQuestions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/wrong-questions/{wrongQuestionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one owned wrong question with immutable safe content and redo history */
+        get: operations["getWrongQuestion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/wrong-questions/{wrongQuestionId}/mastery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Idempotently update the learner-owned mastery state using optimistic revision */
+        put: operations["updateWrongQuestionMastery"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/wrong-questions/{wrongQuestionId}/redos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit one independent bounded redo without reopening the original assessment attempt
+         * @description Each wrong-question record permits at most three immutable redo submissions. The same clientRequestId and answer is replay-safe; a conflicting reuse, stale revision or exhausted allowance returns 409. The response reveals correctness and score but never bypasses the assessment answer-publication policy for correctAnswer or analysis.
+         */
+        post: operations["redoWrongQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/assessments/{assessmentId}/media/{mediaId}/access-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize short-lived assessment question media after learning-domain access checks
+         * @description learning-service proves current published assessment access or ownership of an existing attempt/result, verifies the mediaId is frozen in that assessment snapshot, and exchanges a short-lived one-time service token with media-service. The browser cannot assert media ownership, purpose, storage key or visibility and never receives the service token.
+         */
+        post: operations["createAssessmentMediaAccessGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2306,6 +2387,11 @@ export interface components {
         AnswerPublicationPolicy: "AFTER_SUBMISSION" | "AFTER_GRADED" | "NEVER";
         /** @enum {string} */
         AttemptStatus: "DRAFT" | "SUBMITTED" | "PARTIALLY_GRADED" | "GRADED";
+        /**
+         * @description Safe participation state derived from the service clock, assessment window and the current learner's single immutable attempt.
+         * @enum {string}
+         */
+        LearnerAssessmentState: "NOT_OPEN" | "AVAILABLE" | "IN_PROGRESS" | "SUBMITTED" | "PARTIALLY_GRADED" | "GRADED" | "CLOSED";
         CreateAssessmentRequest: {
             /** Format: uuid */
             clientRequestId: string;
@@ -2317,6 +2403,18 @@ export interface components {
             description: string;
             type: components["schemas"]["AssessmentType"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            /**
+             * Format: date-time
+             * @description Optional server-enforced EXAM open time. Must be null for other assessment types.
+             */
+            opensAt: string | null;
+            /**
+             * Format: date-time
+             * @description Optional server-enforced EXAM close time and must be later than opensAt when both are present. Must be null for other types.
+             */
+            closesAt: string | null;
+            /** @description Optional EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt. Must be null for other types. */
+            timeLimitSeconds: number | null;
         };
         UpdateAssessmentRequest: {
             /** Format: int64 */
@@ -2325,6 +2423,11 @@ export interface components {
             description: string;
             type: components["schemas"]["AssessmentType"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            /** Format: date-time */
+            opensAt: string | null;
+            /** Format: date-time */
+            closesAt: string | null;
+            timeLimitSeconds: number | null;
         };
         AssessmentQuestionInput: {
             /** Format: uuid */
@@ -2354,6 +2457,11 @@ export interface components {
             type: components["schemas"]["AssessmentType"];
             status: components["schemas"]["AssessmentStatus"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            /** Format: date-time */
+            opensAt: string | null;
+            /** Format: date-time */
+            closesAt: string | null;
+            timeLimitSeconds: number | null;
             questionCount: number;
             totalPoints: number;
             /** Format: int64 */
@@ -2372,6 +2480,41 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        AttemptSummary: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["AttemptStatus"];
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            deadlineAt: string | null;
+            /** Format: date-time */
+            submittedAt: string | null;
+            /** Format: date-time */
+            gradedAt: string | null;
+        };
+        LearnerAssessmentSummary: components["schemas"]["AssessmentSummary"] & {
+            learnerState: components["schemas"]["LearnerAssessmentState"];
+            currentAttempt: components["schemas"]["AttemptSummary"] | null;
+            /** @description True only while the owned attempt is DRAFT and the server deadline has not passed. */
+            resumeAllowed: boolean;
+            /** @description True for submitted, partially graded or graded attempts, including after assessment archival. */
+            resultAvailable: boolean;
+        };
+        LearnerAssessmentPage: {
+            items: components["schemas"]["LearnerAssessmentSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: date-time
+             * @description Authoritative response-generation time for display calibration only; all availability decisions remain server-side.
+             */
+            serverTime: string;
+        };
         /** @description Immutable learner-safe snapshot. It intentionally has no answers, analysis or scoring-rule field. */
         LearnerAssessmentQuestion: {
             /** Format: uuid */
@@ -2389,6 +2532,9 @@ export interface components {
         LearnerAssessment: components["schemas"]["AssessmentSummary"] & {
             description: string;
             questions: components["schemas"]["LearnerAssessmentQuestion"][];
+            /** Format: date-time */
+            serverTime: string;
+            currentAttempt: components["schemas"]["AttemptSummary"] | null;
         };
         TeacherAssessmentQuestion: {
             /** Format: uuid */
@@ -2436,6 +2582,15 @@ export interface components {
             revision: number;
             answers: components["schemas"]["AttemptAnswerInput"][];
             /** Format: date-time */
+            startedAt: string;
+            /**
+             * Format: date-time
+             * @description Frozen effective deadline decided by the service; null means no time limit or close time.
+             */
+            deadlineAt: string | null;
+            /** Format: date-time */
+            serverTime: string;
+            /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
@@ -2469,7 +2624,27 @@ export interface components {
             submittedAt: string | null;
             /** Format: date-time */
             gradedAt: string | null;
+            assessment: components["schemas"]["AttemptResultAssessment"];
             answers: components["schemas"]["AttemptAnswerResult"][];
+        };
+        /** @description Immutable self-contained assessment projection read from the frozen paper snapshot, never from the question bank current pointer or published-only list. */
+        AttemptResultAssessment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            description: string;
+            type: components["schemas"]["AssessmentType"];
+            answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            /** Format: date-time */
+            opensAt: string | null;
+            /** Format: date-time */
+            closesAt: string | null;
+            timeLimitSeconds: number | null;
+            questions: components["schemas"]["LearnerAssessmentQuestion"][];
         };
         ManualGradeItem: {
             /** Format: uuid */
@@ -2501,10 +2676,52 @@ export interface components {
             /** Format: uuid */
             questionVersionId: string;
             wrongCount: number;
+            masteryStatus: components["schemas"]["WrongQuestionMasteryStatus"];
+            /** Format: int64 */
+            revision: number;
+            redoAttemptsUsed: number;
+            /** @constant */
+            redoAttemptsLimit: 3;
+            redoAvailable: boolean;
+            /** @description Immutable learner-safe question snapshot from the original assessment; it contains no correct answer or analysis. */
+            question: components["schemas"]["LearnerAssessmentQuestion"];
+            redoHistory: components["schemas"]["WrongQuestionRedoResult"][];
             /** Format: date-time */
             firstWrongAt: string;
             /** Format: date-time */
             lastWrongAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @enum {string} */
+        WrongQuestionMasteryStatus: "LEARNING" | "MASTERED";
+        UpdateWrongQuestionMasteryRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            masteryStatus: components["schemas"]["WrongQuestionMasteryStatus"];
+        };
+        RedoWrongQuestionRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            answer: string[];
+        };
+        WrongQuestionRedoResult: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            wrongQuestionId: string;
+            sequence: number;
+            submittedAnswer: string[];
+            score: number | null;
+            /** @description Null for a subjective question that cannot be reliably auto-graded; such a redo still consumes one of the three bounded attempts. */
+            correct: boolean | null;
+            /** Format: date-time */
+            submittedAt: string;
+            replayed: boolean;
         };
         WrongQuestionPage: {
             items: components["schemas"]["WrongQuestion"][];
@@ -2543,6 +2760,18 @@ export interface components {
              */
             sourceUrl: string;
             scope: components["schemas"]["MediaAssetScope"];
+        };
+        CreateAssessmentMediaAccessGrantRequest: {
+            /**
+             * @description T11A assessment question media uses the frozen original READY asset; the browser cannot select an arbitrary derived variant.
+             * @constant
+             */
+            variant: "ORIGINAL";
+            /**
+             * @description QUESTION_IMAGE and QUESTION_AUDIO require INLINE; QUESTION_ATTACHMENT requires ATTACHMENT. The service derives and validates the exact purpose from the assessment snapshot.
+             * @enum {string}
+             */
+            disposition: "INLINE" | "ATTACHMENT";
         };
         /**
          * @description Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
@@ -3115,6 +3344,7 @@ export interface components {
         ImportTaskId: string;
         AssessmentId: string;
         AttemptId: string;
+        WrongQuestionId: string;
     };
     requestBodies: never;
     headers: {
@@ -4728,18 +4958,20 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Available assessments ordered by publish time descending. */
+            /** @description Available assessments with refresh-safe participation and current-attempt state */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AssessmentPage"];
+                    "application/json": components["schemas"]["LearnerAssessmentPage"];
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     getLearnerAssessment: {
@@ -4753,7 +4985,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Learner-safe paper snapshot. */
+            /** @description Learner-safe paper snapshot with server time and effective attempt deadline. Before the open time or without assessment access */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4765,6 +4997,9 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     startAssessmentAttempt: {
@@ -4804,6 +5039,36 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getAttemptDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refresh-safe draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saveAttemptDraft: {
@@ -4835,6 +5100,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     submitAttempt: {
@@ -4866,6 +5132,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     getAttemptResult: {
@@ -4879,7 +5146,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Result. correctAnswer and analysis are null until the publication policy permits disclosure. */
+            /** @description Self-contained immutable result that remains readable after assessment archival. Question content is always safe; correctAnswer and analysis are null until the publication policy permits disclosure. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4891,6 +5158,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     listWrongQuestions: {
@@ -4907,7 +5175,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Wrong questions ordered by lastWrongAt descending. */
+            /** @description Wrong questions with immutable safe content */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4918,6 +5186,141 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getWrongQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wrongQuestionId: components["parameters"]["WrongQuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owned wrong-question detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrongQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateWrongQuestionMastery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wrongQuestionId: components["parameters"]["WrongQuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWrongQuestionMasteryRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated wrong-question projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrongQuestion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    redoWrongQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wrongQuestionId: components["parameters"]["WrongQuestionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedoWrongQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical redo replay returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrongQuestionRedoResult"];
+                };
+            };
+            /** @description Independent redo recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrongQuestionRedoResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createAssessmentMediaAccessGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAssessmentMediaAccessGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived media read grant. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAccessGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["MediaConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
     listTeacherAssessments: {

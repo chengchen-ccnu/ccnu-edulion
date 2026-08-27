@@ -57,6 +57,7 @@ platform:
       unbound-retention: 24h
     service-authorization:
       issuer: edu-platform-course-service-test
+      assessment-issuer: edu-platform-learning-service-test
       audience: edu-platform-media-service-test
       max-token-ttl: 1m
       clock-skew: 5s

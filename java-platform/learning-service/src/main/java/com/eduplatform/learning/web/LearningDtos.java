@@ -15,7 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/** OpenAPI 0.14.0 学习/测评请求与响应；学生试卷模型从类型上排除答案、解析和评分规则。 */
+/** OpenAPI 0.15.0 学习/测评请求与响应；学生试卷模型从类型上排除未公布答案、解析和评分规则。 */
 public final class LearningDtos {
     private LearningDtos() {}
 
@@ -25,6 +25,9 @@ public final class LearningDtos {
     public enum AnswerPublicationPolicy { AFTER_SUBMISSION, AFTER_GRADED, NEVER }
     public enum AttemptStatus { DRAFT, SUBMITTED, PARTIALLY_GRADED, GRADED }
     public enum GradingStatus { PENDING_MANUAL, AUTO_GRADED, MANUALLY_GRADED }
+    public enum LearnerAssessmentState { NOT_OPEN, AVAILABLE, IN_PROGRESS, SUBMITTED, PARTIALLY_GRADED, GRADED, CLOSED }
+    public enum WrongQuestionMasteryStatus { LEARNING, MASTERED }
+    public enum MediaDisposition { INLINE, ATTACHMENT }
 
     public record CreateEnrollmentRequest(@NotNull UUID courseId) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -51,10 +54,12 @@ public final class LearningDtos {
     public record CreateAssessmentRequest(@NotNull UUID clientRequestId, @NotNull UUID courseId,
             UUID lessonId, @NotBlank @Size(max = 160) String title,
             @NotNull @Size(max = 5000) String description, @NotNull AssessmentType type,
-            @NotNull AnswerPublicationPolicy answerPublicationPolicy) {}
+            @NotNull AnswerPublicationPolicy answerPublicationPolicy, Instant opensAt, Instant closesAt,
+            @Min(60) @Max(28800) Integer timeLimitSeconds) {}
     public record UpdateAssessmentRequest(@Min(0) long expectedRevision,
             @NotBlank @Size(max = 160) String title, @NotNull @Size(max = 5000) String description,
-            @NotNull AssessmentType type, @NotNull AnswerPublicationPolicy answerPublicationPolicy) {}
+            @NotNull AssessmentType type, @NotNull AnswerPublicationPolicy answerPublicationPolicy,
+            Instant opensAt, Instant closesAt, @Min(60) @Max(28800) Integer timeLimitSeconds) {}
     public record AssessmentQuestionInput(@NotNull UUID questionVersionId, @Min(1) @Max(500) int sequence,
             @NotNull @DecimalMin("0.01") @DecimalMax("1000.00") BigDecimal points) {}
     public record ReplaceQuestionsRequest(@Min(0) long expectedRevision,
@@ -63,22 +68,38 @@ public final class LearningDtos {
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AssessmentSummary(String id, String courseId, String lessonId, String title,
             AssessmentType type, AssessmentStatus status, AnswerPublicationPolicy answerPublicationPolicy,
+            Instant opensAt, Instant closesAt, Integer timeLimitSeconds,
             int questionCount, BigDecimal totalPoints, long revision, Instant publishedAt,
             Instant createdAt, Instant updatedAt) {}
     public record AssessmentPage(List<AssessmentSummary> items, int page, int size, long total) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record AttemptSummary(String id, AttemptStatus status, long revision, Instant startedAt,
+            Instant deadlineAt, Instant submittedAt, Instant gradedAt) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record LearnerAssessmentSummary(String id, String courseId, String lessonId, String title,
+            AssessmentType type, AssessmentStatus status, AnswerPublicationPolicy answerPublicationPolicy,
+            Instant opensAt, Instant closesAt, Integer timeLimitSeconds, int questionCount,
+            BigDecimal totalPoints, long revision, Instant publishedAt, Instant createdAt, Instant updatedAt,
+            LearnerAssessmentState learnerState, AttemptSummary currentAttempt,
+            boolean resumeAllowed, boolean resultAvailable) {}
+    public record LearnerAssessmentPage(List<LearnerAssessmentSummary> items, int page, int size,
+            long total, Instant serverTime) {}
     public record LearnerQuestion(String id, String questionVersionId, int sequence, BigDecimal points,
             QuestionModels.Type type, String stem, List<QuestionDtos.OptionInput> options,
             List<QuestionDtos.MediaResponse> media, List<QuestionDtos.SystemQuestionChild> children) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record LearnerAssessment(String id, String courseId, String lessonId, String title,
             AssessmentType type, AssessmentStatus status, AnswerPublicationPolicy answerPublicationPolicy,
-            int questionCount, BigDecimal totalPoints, long revision, Instant publishedAt,
-            Instant createdAt, Instant updatedAt, String description, List<LearnerQuestion> questions) {}
+            Instant opensAt, Instant closesAt, Integer timeLimitSeconds, int questionCount,
+            BigDecimal totalPoints, long revision, Instant publishedAt,
+            Instant createdAt, Instant updatedAt, String description, List<LearnerQuestion> questions,
+            Instant serverTime, AttemptSummary currentAttempt) {}
     public record TeacherQuestion(String id, String questionVersionId, int sequence, BigDecimal points,
             QuestionDtos.VersionResponse snapshot) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record TeacherAssessment(String id, String courseId, String lessonId, String title,
             AssessmentType type, AssessmentStatus status, AnswerPublicationPolicy answerPublicationPolicy,
+            Instant opensAt, Instant closesAt, Integer timeLimitSeconds,
             int questionCount, BigDecimal totalPoints, long revision, Instant publishedAt,
             Instant createdAt, Instant updatedAt, String description, List<TeacherQuestion> questions) {}
 
@@ -90,14 +111,19 @@ public final class LearningDtos {
     public record SubmitAttemptRequest(@NotNull UUID clientRequestId, @Min(0) long expectedRevision,
             @NotNull @Size(max = 500) List<@Valid AnswerInput> answers) {}
     public record AttemptDraft(String id, String assessmentId, AttemptStatus status, long revision,
-            List<AnswerInput> answers, Instant createdAt, Instant updatedAt) {}
+            List<AnswerInput> answers, Instant startedAt, Instant deadlineAt, Instant serverTime,
+            Instant createdAt, Instant updatedAt) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AnswerResult(String assessmentQuestionId, List<String> submittedAnswer, BigDecimal score,
             Boolean correct, GradingStatus gradingStatus, List<String> correctAnswer, String analysis) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AttemptResult(String attemptId, String assessmentId, String learnerId, AttemptStatus status,
             long revision, BigDecimal score, BigDecimal totalPoints, Instant submittedAt, Instant gradedAt,
-            List<AnswerResult> answers) {}
+            AttemptResultAssessment assessment, List<AnswerResult> answers) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record AttemptResultAssessment(String id, String courseId, String lessonId, String title,
+            String description, AssessmentType type, AnswerPublicationPolicy answerPublicationPolicy,
+            Instant opensAt, Instant closesAt, Integer timeLimitSeconds, List<LearnerQuestion> questions) {}
     public record ManualGradeItem(@NotNull UUID assessmentQuestionId,
             @NotNull @DecimalMin("0.00") @DecimalMax("1000.00") BigDecimal score,
             @NotNull @Size(max = 2000) String comment) {}
@@ -105,9 +131,25 @@ public final class LearningDtos {
             @NotNull @Size(min = 1, max = 500) List<@Valid ManualGradeItem> grades) {}
     public record AttemptResultPage(List<AttemptResult> items, int page, int size, long total) {}
 
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record WrongQuestion(String id, String courseId, String assessmentId, String questionVersionId,
-            int wrongCount, Instant firstWrongAt, Instant lastWrongAt) {}
+            int wrongCount, WrongQuestionMasteryStatus masteryStatus, long revision, int redoAttemptsUsed,
+            int redoAttemptsLimit, boolean redoAvailable, LearnerQuestion question,
+            List<WrongQuestionRedoResult> redoHistory, Instant firstWrongAt, Instant lastWrongAt,
+            Instant updatedAt) {}
     public record WrongQuestionPage(List<WrongQuestion> items, int page, int size, long total) {}
+    public record UpdateWrongQuestionMasteryRequest(@NotNull UUID clientRequestId,
+            @Min(0) long expectedRevision, @NotNull WrongQuestionMasteryStatus masteryStatus) {}
+    public record RedoWrongQuestionRequest(@NotNull UUID clientRequestId, @Min(0) long expectedRevision,
+            @NotNull @Size(max = 50) List<@Size(max = 20000) String> answer) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record WrongQuestionRedoResult(String id, String wrongQuestionId, int sequence,
+            List<String> submittedAnswer, BigDecimal score, Boolean correct, Instant submittedAt,
+            boolean replayed) {}
+    public record CreateAssessmentMediaAccessGrantRequest(@NotBlank String variant,
+            @NotNull MediaDisposition disposition) {}
+    public record MediaAccessGrant(String method, String url, java.util.Map<String, String> headers,
+            Instant expiresAt) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record StudentLearningSummary(String learnerId, EnrollmentStatus enrollmentStatus,
             int completedLessonCount, long watchedSeconds, int submittedAttemptCount,
