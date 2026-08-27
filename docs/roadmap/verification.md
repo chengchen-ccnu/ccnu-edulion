@@ -422,3 +422,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：受影响 Java Reactor 测试通过；新增 fMP4 命令、清单解析/授权、HTTP v2 与旧 v1 权限、Course 404 单次回退覆盖。4 秒真实 FFmpeg 冒烟产出 init+2 个 m4s，`ffprobe` 识别 H.264/AAC。完整真实 Media 验收中的 v2 处理、OSS 上传和内部授权已通过，但套件最后仍停在既有 RabbitMQ unacked-redelivery 共享队列时序断言，因此如实记为部分通过而非全绿。
 - 真实资产与浏览器：仅对既有 dev media `1131a27a-7299-4ef1-8e59-77ba5fcd06df` 运行显式门控、幂等的 `T12AFmp4BackfillAcceptanceTest`，真实 MySQL/OSS/FFmpeg 1 项通过。登录后的既有 `/learn/5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057/18d2d6cc-f374-46b1-ad81-743f169d0ce9` 请求 `hls-fmp4-v2.m3u8`，从 0 连续播放到 92.12 秒结束；始终一个 video、`readyState=4`、无 pause/seek/URL 更换或控制台错误。刷新后仍恢复 100%、duration 92.178667 秒。自动检查无法度量单帧主观亮度，保留同一资产供用户目视确认。
 - 数据与边界：没有新建 Schema、表、迁移、Seed、账号、课程、课时或源媒体。仅保留上述 mediaId 的一个 v2 处理任务、一个变体、init/m4s 组件及对应精确 OSS 派生对象、消费/Outbox/审计记录；旧 v1 和源文件未动。清理须按 mediaId+variant 精确 Object Key 与外键顺序执行，重新生成使用同一显式门控测试。历史 v1 资产的批量迁移、T12B/T12C/T15/T17 均不在本轮范围。
+
+## 2026-08-27 T12A 合并与 T11A/T12B 前置审计
+
+- 合并与清理：[PR #30](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30) 在 Ready、可合并且最新两组 Java、Frontend、Python、OpenAPI 检查全部成功后合并为 `main@a2a9c95dc2639c63f337e2881bc7c930f370e4af`；本地 `main` 已同步，`codex/t12a-learning-progress-web` 本地和远端分支已清理。完整 Media 真实套件中既有 RabbitMQ 共享队列时序断言仍被如实保留，但 fMP4 处理/OSS/授权由独立真实用例、集成测试和整段浏览器播放覆盖，不阻断本次合并。
+- T12B 阻断证据：OpenAPI 0.14.0 的学习者测评列表只返回 `AssessmentSummary`，没有当前 `attemptId/status`，刷新后无法区分或恢复可参与、进行中、已完成；错题投影只有 ID/次数，没有安全题目内容、掌握状态或重做命令；`EXAM` 没有可选开放时间、时限及服务端时间语义；结果依赖仍处于 PUBLISHED 的试卷读取，归档后缺少自包含不可变题目展示；教师私有题媒体又只允许资产 owner 读取，学生无法凭测评访问事实取得题图。现有 Git、版本号、主键、事务、唯一约束、TypeScript 类型与普通前端测试都不能生成这些缺失的领域事实或授权，因此不得让 T12B 猜字段。
+- 调整结论：新增最小 T11A“测评前端契约闭环”，先以 OpenAPI 为事实源补齐上述读写与短期媒体授权，再向前演进 Learning/Media/Gateway 和生成客户端；不拆 learning-service，不引入第二套 OSS 客户端，不实现 Vue、监考、复杂防作弊或无限重考。T09B 与 T11 均已合并，T11A 前置满足；T12B 改为依赖 T11A 和已合并的 T12A。
+- 后续验收重点：T11A 必须验证列表状态与刷新恢复、一次性提交/有限重做边界、考试时间由服务端裁决、归档后本人结果可读且答案发布策略不泄漏、错题 owner/掌握幂等，以及教师私有题媒体仅对获授权测评学习者短期可读；401/403/404/409/422/429/503 与媒体令牌防重放保持现有安全语义。
+- 数据：本次总控只执行 Git 合并、只读代码/契约审计和文档规划，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。

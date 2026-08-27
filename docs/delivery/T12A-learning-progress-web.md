@@ -114,4 +114,4 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 
 - 分支：`codex/t12a-learning-progress-web`
 - 实现/测试/验收提交：`dd491c4`、`38e7db2`，以及 PR 最新的 fMP4 v2 收口提交
-- PR：[#30 T12A 学习与进度前端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30)，Ready/Open；本任务不自行合并。
+- PR：[#30 T12A 学习与进度前端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30)，于 2026-08-27 由总控在全部检查成功后合并到 `main@a2a9c95dc2639c63f337e2881bc7c930f370e4af`。
