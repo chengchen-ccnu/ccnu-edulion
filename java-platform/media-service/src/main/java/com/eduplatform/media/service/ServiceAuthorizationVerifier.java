@@ -82,7 +82,8 @@ public class ServiceAuthorizationVerifier {
             requireEqual(request.disposition().name(), jwt.getClaimAsString("disposition"));
             boolean playback = "COURSE_PLAYBACK".equals(request.accessType())
                     && request.purpose() == com.eduplatform.media.domain.MediaPurpose.LESSON_VIDEO
-                    && MediaAssetService.PRESET_VERSION.equals(request.variant())
+                    && (MediaAssetService.PRESET_VERSION.equals(request.variant())
+                            || MediaAssetService.LEGACY_PLAYBACK_VARIANT.equals(request.variant()))
                     && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
             boolean coverDisplay = "COURSE_COVER_DISPLAY".equals(request.accessType())
                     && request.purpose() == com.eduplatform.media.domain.MediaPurpose.COURSE_COVER

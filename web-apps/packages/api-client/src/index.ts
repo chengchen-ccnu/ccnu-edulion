@@ -86,6 +86,16 @@ export type LegacyQuestionImportItemPage = components["schemas"]["LegacyQuestion
 export type ResolveLegacyQuestionImportItemRequest = components["schemas"]["ResolveLegacyQuestionImportItemRequest"];
 export type LegacyQuestionImportCleanupResult = components["schemas"]["LegacyQuestionImportCleanupResult"];
 export type MediaAccessGrant = components["schemas"]["MediaAccessGrant"];
+export type EnrollmentStatus = components["schemas"]["EnrollmentStatus"];
+export type CreateEnrollmentRequest = components["schemas"]["CreateEnrollmentRequest"];
+export type Enrollment = components["schemas"]["Enrollment"];
+export type EnrollmentPage = components["schemas"]["EnrollmentPage"];
+export type ReportLessonProgressRequest = components["schemas"]["ReportLessonProgressRequest"];
+export type LessonProgress = components["schemas"]["LessonProgress"];
+export type CourseProgress = components["schemas"]["CourseProgress"];
+export type CreateLearningNoteRequest = components["schemas"]["CreateLearningNoteRequest"];
+export type UpdateLearningNoteRequest = components["schemas"]["UpdateLearningNoteRequest"];
+export type LearningNote = components["schemas"]["LearningNote"];
 export type ListCoursesQuery = NonNullable<paths["/api/v1/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherCoursesQuery = NonNullable<paths["/api/v1/teacher/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherQuestionsQuery = NonNullable<paths["/api/v1/teacher/questions"]["get"]["parameters"]["query"]>;
@@ -94,6 +104,7 @@ export type SearchTeacherKnowledgePointsQuery = NonNullable<paths["/api/v1/teach
 export type ListTeacherQuestionVersionsQuery = NonNullable<paths["/api/v1/teacher/questions/{questionId}/versions"]["get"]["parameters"]["query"]>;
 export type ListQuestionImportsQuery = NonNullable<paths["/api/v1/teacher/question-imports"]["get"]["parameters"]["query"]>;
 export type ListLegacyQuestionImportItemsQuery = NonNullable<paths["/api/v1/teacher/question-imports/{importTaskId}/items"]["get"]["parameters"]["query"]>;
+export type ListMyEnrollmentsQuery = NonNullable<paths["/api/v1/learning/enrollments"]["get"]["parameters"]["query"]>;
 
 /** Gateway HTTP 状态、稳定错误码和按字段错误的人工维护异常投影。 */
 export class GatewayRequestError extends Error {

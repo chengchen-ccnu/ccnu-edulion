@@ -26,6 +26,14 @@ describe("student application routes", () => {
     expect(learning?.meta?.requiredRole).toBeUndefined();
   });
 
+  it("enables my learning on the same capability boundary for teacher-shaped learner accounts", () => {
+    const myLearning = studentRoutes.find(item => item.path === "/my-learning");
+
+    expect(myLearning?.name).toBe("my-learning");
+    expect(myLearning?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
+    expect(myLearning?.meta?.requiredRole).toBeUndefined();
+  });
+
   it("keeps playback implementation out of the public course detail component", () => {
     const detailSource = readFileSync(new URL("./views/CourseDetailPage.vue", import.meta.url), "utf8");
     const learningSource = readFileSync(new URL("./views/CourseLearningPage.vue", import.meta.url), "utf8");

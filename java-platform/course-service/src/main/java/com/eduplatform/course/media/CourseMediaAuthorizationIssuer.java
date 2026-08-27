@@ -46,7 +46,7 @@ public class CourseMediaAuthorizationIssuer {
     }
 
     /**
-     * 签发仅允许一次 COURSE_PLAYBACK/hls-v1/INLINE 调用的令牌。
+     * 签发仅允许一次 COURSE_PLAYBACK/精确 HLS 变体/INLINE 调用的令牌。
      *
      * @param visitorId Gateway 验证后的当前访问者 ID
      * @param mediaId course-service 从课时资源绑定中解析出的稳定媒体 ID

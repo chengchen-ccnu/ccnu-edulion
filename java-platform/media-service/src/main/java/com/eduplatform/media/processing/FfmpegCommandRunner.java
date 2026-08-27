@@ -27,10 +27,12 @@ public class FfmpegCommandRunner {
         Path error = playlist.getParent().resolve("ffmpeg-error.log");
         List<String> command = buildCommand(input, playlist, segmentPattern, properties);
         try {
-            Process process = new ProcessBuilder(command)
+            ProcessBuilder processBuilder = new ProcessBuilder(command)
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .redirectError(error.toFile())
-                    .start();
+                    .redirectError(error.toFile());
+            // FFmpeg 会相对工作目录写 init.mp4；固定为 Worker 随机目录，避免泄漏到服务启动目录。
+            if (playlist.getParent() != null) processBuilder.directory(playlist.getParent().toFile());
+            Process process = processBuilder.start();
             boolean completed = process.waitFor(properties.timeout().toMillis(), TimeUnit.MILLISECONDS);
             if (!completed) {
                 process.destroyForcibly();
@@ -51,19 +53,21 @@ public class FfmpegCommandRunner {
     }
 
     /**
-     * 构造单清晰度 MPEG-TS HLS 命令；视频流必选，第一条音轨可选并在存在时编码为 AAC。
+     * 构造单清晰度 fMP4 HLS 命令；视频流必选，第一条音轨可选并在存在时编码为 AAC。
      *
      * <p>{@code 0:a:0?} 的问号是 FFmpeg optional map 语义，保证没有音轨的源视频仍可转码。
      * 返回参数不包含凭据或存储地址，仅包含 Worker 临时文件路径。</p>
      */
     List<String> buildCommand(Path input, Path playlist, Path segmentPattern,
             MediaProperties.Worker properties) {
+        long segmentSeconds = Math.max(1, properties.hlsSegmentDuration().toSeconds());
         return List.of(properties.ffmpegPath(), "-hide_banner", "-loglevel", "error", "-y",
                 "-i", input.toString(), "-map", "0:v:0", "-map", "0:a:0?",
-                "-c:v", "libx264", "-preset", "veryfast",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-force_key_frames", "expr:gte(t,n_forced*" + segmentSeconds + ")",
                 "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-                "-f", "hls", "-hls_segment_type", "mpegts",
-                "-hls_time", Long.toString(Math.max(1, properties.hlsSegmentDuration().toSeconds())),
+                "-f", "hls", "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
+                "-hls_flags", "independent_segments", "-hls_time", Long.toString(segmentSeconds),
                 "-hls_playlist_type", "vod", "-hls_segment_filename", segmentPattern.toString(), playlist.toString());
     }
 }

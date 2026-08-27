@@ -110,7 +110,7 @@ public class CourseCatalogService {
      * @param resourceId 浏览器请求的课程域资源行 ID，而非 mediaId
      * @param visitorId Gateway 验证后的访问者 ID
      * @param traceId 当前请求追踪 ID
-     * @return 短期 hls-v1 播放授权
+     * @return 优先使用 fMP4 v2、旧资产有限回退 v1 的短期 HLS 播放授权
      * @throws CourseException 资源不可见、尚需报名或媒体未就绪时抛出
      */
     @Transactional(readOnly = true)
@@ -135,7 +135,7 @@ public class CourseCatalogService {
      * @param resourceId 当前可编辑版本中的课程域资源行 ID
      * @param teacherId Gateway 验证且具备 TEACHER 角色的用户 ID
      * @param traceId 当前请求追踪 ID
-     * @return 短期 hls-v1 owner 预览授权
+     * @return 优先使用 fMP4 v2、旧资产有限回退 v1 的短期 HLS owner 预览授权
      * @throws CourseException 非所有者、历史资源或非视频用途统一按不可见处理
      */
     @Transactional(readOnly = true)

@@ -3,6 +3,7 @@ package com.eduplatform.media.processing;
 import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.domain.MediaPurpose;
+import com.eduplatform.media.hls.HlsPlaylistComponent;
 import com.eduplatform.media.storage.ObjectKeyFactory;
 import com.eduplatform.media.storage.ObjectStorage;
 import com.eduplatform.media.storage.StorageObjectMetadata;
@@ -26,7 +27,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
-    public static final String HLS_VARIANT = "hls-v1";
+    public static final String HLS_VARIANT = "hls-fmp4-v2";
     private final ObjectStorage storage;
     private final ObjectKeyFactory keys;
     private final MediaProperties properties;
@@ -59,24 +60,29 @@ public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
             scratch = Files.createTempDirectory("edu-media-worker-");
             Path input = scratch.resolve("source.bin");
             Path playlist = scratch.resolve("index.m3u8");
-            Path segmentPattern = scratch.resolve("segment-%05d.ts");
+            Path segmentPattern = scratch.resolve("segment-%05d.m4s");
             storage.download(asset.objectKey(), input);
             runner.run(input, playlist, segmentPattern, properties.worker());
-            List<Path> segments;
+            List<Path> componentFiles;
             try (var files = Files.list(scratch)) {
-                segments = files.filter(path -> path.getFileName().toString().matches("segment-\\d{5}\\.ts"))
+                componentFiles = files.filter(path -> path.getFileName().toString().equals("init.mp4")
+                                || path.getFileName().toString().matches("segment-\\d{5}\\.m4s"))
                         .sorted().toList();
             }
-            if (segments.isEmpty()) throw new IllegalStateException("FFmpeg produced no HLS segments");
-            normalizePlaylist(playlist, segments);
+            if (componentFiles.size() < 2
+                    || componentFiles.stream().noneMatch(path -> path.getFileName().toString().equals("init.mp4"))) {
+                throw new IllegalStateException("FFmpeg produced incomplete fMP4 HLS components");
+            }
+            normalizePlaylist(playlist, componentFiles);
             List<ProcessingResult.ComponentResult> components = new ArrayList<>();
-            for (Path segment : segments) {
-                String name = segment.getFileName().toString();
+            for (Path componentFile : componentFiles) {
+                String name = componentFile.getFileName().toString();
                 String componentKey = keys.derivedComponent(asset.mediaId(), HLS_VARIANT, name);
-                StorageObjectMetadata stored = storage.put(componentKey, segment, "video/mp2t");
+                String mimeType = name.endsWith(".mp4") ? "video/mp4" : "video/iso.segment";
+                StorageObjectMetadata stored = storage.put(componentKey, componentFile, mimeType);
                 uploadedKeys.add(componentKey);
                 components.add(new ProcessingResult.ComponentResult(name, componentKey,
-                        "video/mp2t", stored.size(), stored.etag()));
+                        mimeType, stored.size(), stored.etag()));
             }
             String playlistKey = keys.derived(asset.mediaId(), HLS_VARIANT, "m3u8");
             StorageObjectMetadata storedPlaylist = storage.put(
@@ -97,24 +103,23 @@ public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
     }
 
     /**
-     * 将 FFmpeg 可能写入的本机绝对切片路径收口为已生成文件名，并拒绝清单引用未登记文件。
+     * 将 FFmpeg 可能写入的本机绝对组件路径收口为已生成文件名，并拒绝清单引用未登记文件。
      * @param playlist 待上传的媒体播放清单
-     * @param segments 当前随机临时目录内实际生成的切片
+     * @param componentFiles 当前随机临时目录内实际生成的 init 与 m4s 切片
      * @throws IOException 清单无法读取或重写时交由处理失败重试
      */
-    private static void normalizePlaylist(Path playlist, List<Path> segments) throws IOException {
+    private static void normalizePlaylist(Path playlist, List<Path> componentFiles) throws IOException {
         Set<String> names = new HashSet<>();
-        segments.forEach(segment -> names.add(segment.getFileName().toString()));
+        componentFiles.forEach(component -> names.add(component.getFileName().toString()));
         List<String> normalized = new ArrayList<>();
         for (String line : Files.readAllLines(playlist, StandardCharsets.UTF_8)) {
-            String value = line.trim();
-            if (value.isEmpty() || value.startsWith("#")) {
+            String name = HlsPlaylistComponent.name(line);
+            if (name == null) {
                 normalized.add(line);
                 continue;
             }
-            String name = Path.of(value).getFileName().toString();
-            if (!names.contains(name)) throw new IllegalStateException("HLS playlist references an unknown segment");
-            normalized.add(name);
+            if (!names.contains(name)) throw new IllegalStateException("HLS playlist references an unknown component");
+            normalized.add(HlsPlaylistComponent.replace(line, name));
         }
         Files.write(playlist, normalized, StandardCharsets.UTF_8);
     }

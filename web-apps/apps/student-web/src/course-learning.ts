@@ -16,7 +16,7 @@ export interface CourseLearningEntry {
 }
 
 /** 将发布目录按章节、课时和资源顺序展开为首期支持的 LESSON_VIDEO 学习项。 */
-export function courseLearningEntries(course: CourseDetail): CourseLearningEntry[] {
+export function courseLearningEntries(course: CourseDetail, enrolled = false): CourseLearningEntry[] {
   return [...course.chapters]
     .sort((left, right) => left.sequence - right.sequence)
     .flatMap(chapter => [...chapter.lessons]
@@ -32,14 +32,14 @@ export function courseLearningEntries(course: CourseDetail): CourseLearningEntry
           chapterSequence: chapter.sequence,
           lesson,
           resourceId: resource.id,
-          accessible: course.accessType === "PUBLIC" || lesson.previewable
+          accessible: course.accessType === "PUBLIC" || lesson.previewable || enrolled
         }];
       }));
 }
 
-/** 选择详情页“开始学习/试看”的首个真实入口；报名制课程在 T11 前只返回试看课时。 */
-export function firstAccessibleLearningEntry(course: CourseDetail): CourseLearningEntry | null {
-  return courseLearningEntries(course).find(item => item.accessible) ?? null;
+/** 选择详情页“开始学习/试看”的首个真实入口；未传入已报名事实时，报名制课程只返回试看课时。 */
+export function firstAccessibleLearningEntry(course: CourseDetail, enrolled = false): CourseLearningEntry | null {
+  return courseLearningEntries(course, enrolled).find(item => item.accessible) ?? null;
 }
 
 /** 根据深链接解析当前课时；找不到 VIDEO 资源时返回 null，由学习页展示稳定 404。 */

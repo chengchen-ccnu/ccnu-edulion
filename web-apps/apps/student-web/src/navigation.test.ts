@@ -10,10 +10,11 @@ describe("student fixed navigation", () => {
         expect(buildStudentNavigation(routeName).map(item => item.label)).toEqual(labels);
       });
 
-  it("enables only course center and gives every coming-soon slot no href", () => {
+  it("enables course center and my learning while keeping later slots inert", () => {
     const items = buildStudentNavigation("courses");
 
-    expect(items.filter(item => item.state === "enabled").map(item => item.id)).toEqual(["course-center"]);
+    expect(items.filter(item => item.state === "enabled").map(item => item.id))
+      .toEqual(["course-center", "my-learning"]);
     expect(items.filter(item => item.state !== "enabled").every(item => item.href === undefined)).toBe(true);
   });
 

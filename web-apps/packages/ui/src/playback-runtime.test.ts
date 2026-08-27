@@ -38,5 +38,13 @@ describe("playback grant runtime", () => {
     expect(source).toContain("clearTimeout(refreshTimer)");
     expect(source).toContain("hls?.destroy()");
     expect(source).toContain('removeAttribute("src")');
+    expect(source).toContain("progressTracker.flush()");
+    expect(source).toContain('@timeupdate="handleTimeUpdate"');
+    expect(source).toContain('@ended="handleEnded"');
+    expect(source).toContain('hls.once(HlsClass.Events.MANIFEST_PARSED');
+    expect(source).toContain('preload="auto"');
+    expect(source).toContain('positionSecond !== lastPositionSecond');
+    expect(source).not.toContain('watch(() => props.initialPositionSeconds');
+    expect(source).toContain('@durationchange="reportDuration"');
   });
 });

@@ -19,7 +19,8 @@ import org.springframework.web.client.RestClientResponseException;
  */
 @Component
 public class HttpMediaPlaybackClient implements MediaPlaybackClient {
-    static final String HLS_VARIANT = "hls-v1";
+    static final String HLS_VARIANT = "hls-fmp4-v2";
+    static final String LEGACY_HLS_VARIANT = "hls-v1";
     private final RestClient client;
     private final CourseMediaAuthorizationIssuer authorizationIssuer;
 
@@ -35,38 +36,56 @@ public class HttpMediaPlaybackClient implements MediaPlaybackClient {
     @Override
     public CourseDtos.CourseMediaPlaybackGrant issuePlayback(
             String mediaId, String purpose, String visitorId, String traceId) {
-        String token = authorizationIssuer.issuePlayback(visitorId, mediaId, purpose, HLS_VARIANT, traceId);
         try {
-            CourseDtos.CourseMediaPlaybackGrant grant = client.post()
-                    .uri("/internal/v1/media/{mediaId}/access-grants", mediaId)
-                    .headers(headers -> headers.setBearerAuth(token))
-                    .header("X-Trace-Id", traceId)
-                    .body(Map.of(
-                            "visitorId", visitorId,
-                            "purpose", purpose,
-                            "accessType", "COURSE_PLAYBACK",
-                            "variant", HLS_VARIANT,
-                            "disposition", "INLINE"))
-                    .retrieve()
-                    .body(CourseDtos.CourseMediaPlaybackGrant.class);
-            if (grant == null || !"GET".equals(grant.method()) || grant.url() == null
-                    || grant.expiresAt() == null) {
-                throw unavailable();
-            }
-            return grant;
+            return requestVariant(mediaId, purpose, visitorId, traceId, HLS_VARIANT);
         } catch (RestClientResponseException exception) {
-            if (exception.getStatusCode().value() == 409) {
-                throw new CourseException(HttpStatus.CONFLICT, "MEDIA.NOT_READY", "媒体尚未处理完成");
-            }
+            // 已发布旧视频尚未生成 v2 时只回退一次 v1；其他错误不扩大为第二轮媒体调用。
             if (exception.getStatusCode().value() == 404) {
-                throw new CourseException(HttpStatus.NOT_FOUND, "COURSE.NOT_FOUND", "课程不存在或不可见");
+                try {
+                    return requestVariant(mediaId, purpose, visitorId, traceId, LEGACY_HLS_VARIANT);
+                } catch (RestClientResponseException legacyFailure) {
+                    throw mapFailure(legacyFailure);
+                }
             }
-            throw unavailable();
+            throw mapFailure(exception);
         } catch (CourseException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw unavailable();
         }
+    }
+
+    /** 使用与变体精确绑定的一次性令牌请求媒体授权；每次调用都生成新的 jti，回退不会重放令牌。 */
+    private CourseDtos.CourseMediaPlaybackGrant requestVariant(
+            String mediaId, String purpose, String visitorId, String traceId, String variant) {
+        String token = authorizationIssuer.issuePlayback(visitorId, mediaId, purpose, variant, traceId);
+        CourseDtos.CourseMediaPlaybackGrant grant = client.post()
+                .uri("/internal/v1/media/{mediaId}/access-grants", mediaId)
+                .headers(headers -> headers.setBearerAuth(token))
+                .header("X-Trace-Id", traceId)
+                .body(Map.of(
+                        "visitorId", visitorId,
+                        "purpose", purpose,
+                        "accessType", "COURSE_PLAYBACK",
+                        "variant", variant,
+                        "disposition", "INLINE"))
+                .retrieve()
+                .body(CourseDtos.CourseMediaPlaybackGrant.class);
+        if (grant == null || !"GET".equals(grant.method()) || grant.url() == null
+                || grant.expiresAt() == null) {
+            throw unavailable();
+        }
+        return grant;
+    }
+
+    private static CourseException mapFailure(RestClientResponseException exception) {
+        if (exception.getStatusCode().value() == 409) {
+            return new CourseException(HttpStatus.CONFLICT, "MEDIA.NOT_READY", "媒体尚未处理完成");
+        }
+        if (exception.getStatusCode().value() == 404) {
+            return new CourseException(HttpStatus.NOT_FOUND, "COURSE.NOT_FOUND", "课程不存在或不可见");
+        }
+        return unavailable();
     }
 
     private static CourseException unavailable() {

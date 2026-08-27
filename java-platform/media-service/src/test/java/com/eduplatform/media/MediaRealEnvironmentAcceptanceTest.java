@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -72,14 +73,20 @@ class MediaRealEnvironmentAcceptanceTest {
         String runId = UUID.randomUUID().toString();
         String prefix = "t07-acceptance/" + runId;
         try (ConfigurableApplicationContext raw = new SpringApplicationBuilder(MediaServiceApplication.class)
-                .profiles("local")
+                // test 只提供测试 classpath 隔离；local 后加载，保持真实 MySQL/Rabbit/OSS 配置优先。
+                .profiles("test", "local")
                 .run("--server.port=0",
+                        // 验收 classpath 含下游服务，只允许 Media 迁移进入专用 schema。
+                        "--spring.flyway.locations=filesystem:src/main/resources/db/migration",
                         "--platform.media.messaging.enabled=true",
                         "--platform.media.messaging.outbox-poll-delay=1h",
                         "--platform.media.oss.enabled=true",
                         "--platform.media.oss.key-prefix=" + prefix,
                         "--platform.media.worker.enabled=true",
+                        "--platform.media.worker.ffmpeg-path=ffmpeg",
                         "--platform.media.maintenance.enabled=false",
+                        "--platform.media.service-authorization.issuer=edu-platform-course-service",
+                        "--platform.media.service-authorization.audience=edu-platform-media-service",
                         "--platform.media.service-authorization.secret=" + SERVICE_SECRET,
                         "--platform.media.upload.multipart-threshold=1024",
                         "--platform.media.upload.part-size=5242880")) {
@@ -91,7 +98,11 @@ class MediaRealEnvironmentAcceptanceTest {
             ObjectStorage storage = context.getBean(ObjectStorage.class);
             RabbitTemplate rabbit = context.getBean(RabbitTemplate.class);
             OutboxPublisher outbox = context.getBean(OutboxPublisher.class);
+            MediaProperties runtimeProperties = context.getBean(MediaProperties.class);
+            assertThat(runtimeProperties.serviceAuthorization().issuer()).isEqualTo("edu-platform-course-service");
+            assertThat(runtimeProperties.serviceAuthorization().audience()).isEqualTo("edu-platform-media-service");
             RabbitAdmin admin = new RabbitAdmin(rabbit);
+            drainStaleAcceptanceDeadLetters(mapper, rabbit);
             assertAcceptanceQueuesEmpty(admin);
             List<String> eventIds = new ArrayList<>();
             try {
@@ -126,26 +137,35 @@ class MediaRealEnvironmentAcceptanceTest {
                 JsonNode readyVideo = awaitStatus(port, mapper, videoId, "READY", 60);
                 assertThat(readyVideo.get("processingStatus").asString()).isEqualTo("SUCCEEDED");
                 assertThat(readyVideo.get("variants")).anySatisfy(node ->
-                        assertThat(node.get("variant").asString()).isEqualTo("hls-v1"));
+                        assertThat(node.get("variant").asString()).isEqualTo("hls-fmp4-v2"));
                 JsonNode hlsGrant = mapper.readTree(send(port, "POST", "/api/v1/media/" + videoId
-                        + "/access-grants", "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}").body());
+                        + "/access-grants", "{\"variant\":\"hls-fmp4-v2\",\"disposition\":\"INLINE\"}").body());
                 HttpResponse<String> playlist = http.send(HttpRequest.newBuilder(
                                 URI.create(hlsGrant.get("url").asString())).GET().build(),
                         HttpResponse.BodyHandlers.ofString());
                 assertThat(playlist.statusCode()).isEqualTo(200);
+                Matcher initMatcher = Pattern.compile("#EXT-X-MAP:URI=\"([^\"]+)\"").matcher(playlist.body());
+                assertThat(initMatcher.find()).isTrue();
                 String segmentUrl = playlist.body().lines().filter(line -> !line.isBlank() && !line.startsWith("#"))
                         .findFirst().orElseThrow();
+                HttpResponse<byte[]> init = http.send(HttpRequest.newBuilder(URI.create(initMatcher.group(1))).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
                 HttpResponse<byte[]> segment = http.send(HttpRequest.newBuilder(URI.create(segmentUrl)).GET().build(),
                         HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(init.statusCode()).isEqualTo(200);
                 assertThat(segment.statusCode()).isEqualTo(200);
+                assertThat(init.body()).isNotEmpty();
                 assertThat(segment.body()).isNotEmpty();
-                assertHlsSegmentStreams(mapper, segment.body());
+                assertFmp4Streams(mapper, init.body(), segment.body());
 
                 String serviceToken = serviceToken(VISITOR, videoId);
-                JsonNode serviceGrant = mapper.readTree(sendInternal(port, serviceToken, videoId, """
+                HttpResponse<String> internalGrant = sendInternal(port, serviceToken, videoId, """
                         {"visitorId":"%s","purpose":"LESSON_VIDEO","accessType":"COURSE_PLAYBACK",
-                         "variant":"hls-v1","disposition":"INLINE"}
-                        """.formatted(VISITOR)).body());
+                         "variant":"hls-fmp4-v2","disposition":"INLINE"}
+                        """.formatted(VISITOR));
+                assertThat(internalGrant.statusCode()).withFailMessage("internal media grant returned %s: %s",
+                        internalGrant.statusCode(), internalGrant.body()).isEqualTo(201);
+                JsonNode serviceGrant = mapper.readTree(internalGrant.body());
                 HttpResponse<String> servicePlaylist = http.send(HttpRequest.newBuilder(
                                 URI.create(serviceGrant.get("url").asString())).GET().build(),
                         HttpResponse.BodyHandlers.ofString());
@@ -235,6 +255,37 @@ class MediaRealEnvironmentAcceptanceTest {
         assertThat(mapper.readTree(new String(dead.getBody(), StandardCharsets.UTF_8)).get("eventId").asString())
                 .isEqualTo(eventId);
         assertThat(dead.getMessageProperties().getHeaders()).containsKey("x-death");
+        // basicGet 的 ACK 与 Broker 队列计数更新存在短窗口；只吸收本轮同 eventId 的可能重复死信。
+        for (int attempt = 0; attempt < 8; attempt++) {
+            TimeUnit.MILLISECONDS.sleep(100);
+            Message duplicate = rabbit.receive(MediaRabbitTopology.DEAD_QUEUE);
+            if (duplicate == null) continue;
+            assertThat(mapper.readTree(new String(duplicate.getBody(), StandardCharsets.UTF_8))
+                    .get("eventId").asString()).isEqualTo(eventId);
+        }
+    }
+
+    /**
+     * 仅清理上次被中断验收留下的固定 poison 死信；遇到任何非本验收消息立即失败。
+     */
+    private void drainStaleAcceptanceDeadLetters(ObjectMapper mapper, RabbitTemplate rabbit) throws Exception {
+        rabbit.execute(channel -> {
+            com.rabbitmq.client.GetResponse stale;
+            while ((stale = channel.basicGet(MediaRabbitTopology.DEAD_QUEUE, false)) != null) {
+                long deliveryTag = stale.getEnvelope().getDeliveryTag();
+                JsonNode event = mapper.readTree(new String(stale.getBody(), StandardCharsets.UTF_8));
+                boolean acceptanceTrace = Set.of("trace-t07-poison", "trace-t07-acceptance")
+                        .contains(event.path("traceId").asString());
+                if (!"MediaUploaded".equals(event.path("eventType").asString()) || !acceptanceTrace
+                        || !OWNER.equals(event.path("payload").path("ownerId").asString())) {
+                    channel.basicNack(deliveryTag, false, true);
+                    throw new AssertionError("DLQ contains a message not owned by media real acceptance: type="
+                            + event.path("eventType").asString() + ", traceId=" + event.path("traceId").asString());
+                }
+                channel.basicAck(deliveryTag, false);
+            }
+            return null;
+        });
     }
 
     private void verifyUnackedRedelivery(CachingConnectionFactory springFactory, RabbitTemplate rabbit, String runId)
@@ -324,11 +375,14 @@ class MediaRealEnvironmentAcceptanceTest {
         }
     }
 
-    /** 下载的真实 OSS MPEG-TS 切片必须同时包含视频与 AAC 音频，证明完整授权链路没有丢声。 */
-    private void assertHlsSegmentStreams(ObjectMapper mapper, byte[] segment) throws Exception {
-        Path localSegment = Files.createTempFile("t08-hls-audio-", ".ts");
+    /** 下载的真实 OSS init 与 m4s 合并后必须同时含视频/AAC，证明 fMP4 授权链路没有丢声。 */
+    private void assertFmp4Streams(ObjectMapper mapper, byte[] init, byte[] segment) throws Exception {
+        Path localSegment = Files.createTempFile("t08-hls-audio-", ".mp4");
         try {
-            Files.write(localSegment, segment);
+            byte[] media = new byte[init.length + segment.length];
+            System.arraycopy(init, 0, media, 0, init.length);
+            System.arraycopy(segment, 0, media, init.length, segment.length);
+            Files.write(localSegment, media);
             List<JsonNode> streams = probeStreams(mapper, localSegment);
             assertThat(streams).anySatisfy(stream ->
                     assertThat(stream.path("codec_type").asString()).isEqualTo("video"));
@@ -375,14 +429,9 @@ class MediaRealEnvironmentAcceptanceTest {
         try {
             assertSourceStreams(mapper, source, false);
             Path playlist = scratch.resolve("index.m3u8");
-            runner.run(source, playlist, scratch.resolve("segment-%05d.ts"), properties);
+            runner.run(source, playlist, scratch.resolve("segment-%05d.m4s"), properties);
             assertThat(Files.readString(playlist, StandardCharsets.UTF_8)).contains("#EXTM3U");
-            Path segment;
-            try (var files = Files.list(scratch)) {
-                segment = files.filter(path -> path.getFileName().toString().endsWith(".ts"))
-                        .findFirst().orElseThrow();
-            }
-            assertSourceStreams(mapper, segment, false);
+            assertSourceStreams(mapper, playlist, false);
         } finally {
             Files.deleteIfExists(source);
             deleteRecursively(scratch);
@@ -559,10 +608,15 @@ class MediaRealEnvironmentAcceptanceTest {
     }
 
     /** 成功验收后四个持久队列都必须为空，确保本轮处理、引用、生命周期和死信消息没有残留。 */
-    private void assertAcceptanceQueuesEmpty(RabbitAdmin admin) {
+    private void assertAcceptanceQueuesEmpty(RabbitAdmin admin) throws InterruptedException {
         for (String queue : List.of(MediaRabbitTopology.PROCESSING_QUEUE, MediaRabbitTopology.REFERENCES_QUEUE,
                 MediaRabbitTopology.LIFECYCLE_QUEUE, MediaRabbitTopology.DEAD_QUEUE)) {
-            var information = admin.getQueueInfo(queue);
+            org.springframework.amqp.core.QueueInformation information = null;
+            for (int attempt = 0; attempt < 40; attempt++) {
+                information = admin.getQueueInfo(queue);
+                if (information != null && information.getMessageCount() == 0) break;
+                TimeUnit.MILLISECONDS.sleep(100);
+            }
             assertThat(information).as("RabbitMQ queue %s must exist", queue).isNotNull();
             assertThat(information.getMessageCount()).as("RabbitMQ queue %s cleanup", queue).isZero();
         }
@@ -587,7 +641,7 @@ class MediaRealEnvironmentAcceptanceTest {
                 .claim("mediaId", mediaId)
                 .claim("purpose", "LESSON_VIDEO")
                 .claim("accessType", "COURSE_PLAYBACK")
-                .claim("variant", "hls-v1")
+                .claim("variant", "hls-fmp4-v2")
                 .claim("disposition", "INLINE")
                 .claim("traceId", "real-service-authorization")
                 .build();

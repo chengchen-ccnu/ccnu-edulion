@@ -397,3 +397,28 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 实施边界：T12A 只启用既有 `/my-learning`，在课程详情接通报名/继续学习，并在既有学习页增加进度和笔记；不得搬迁播放器、创建第二套学习页、手写 DTO，或提前实现 T12B 测评、T12C 学情、T15 AI 与 T17 门户内容。必须复用 `learning:access`，同时具备教学能力的账号仍可作为学习者。
 - 验收边界：后续 T12A 必须覆盖深链接/刷新、匿名回跳、能力不足、loading/empty/partial-error、401/403/404/409/422/429/offline、重复/乱序进度、笔记所有权、报名最终一致窗口、响应式、键盘操作，以及离页后的播放器、请求、定时器和临时 URL 清理；不得用 Mock 成功替代真实 Gateway、Course、Learning 和媒体播放链路。
 - 数据：本次总控只执行 Git/文档状态更新和只读前置审计，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。
+
+## 2026-08-26 T12A 学习与进度前端实施验证
+
+- 范围与架构：启用 `/my-learning` 固定导航槽位，分页读取本人 ACTIVE 报名并独立组合 Course 发布详情与 Learning 进度；课程详情读取真实报名/进度并提供报名、开始/继续学习；既有 `/learn/:courseId/:lessonId` 原位增加单调进度与本人笔记。播放器仍只在学习页，测评、教师学情、AI、门户/通知/资料均未提前实现。收藏因 OpenAPI 0.14.0 没有契约而保持隐藏，不手写 DTO 或伪数据。
+- 能力与失败边界：`/my-learning` 和 `/learn/...` 都只声明 `learning:access`，不要求 `STUDENT`；统一工作台选择测试证明 TEACHER 型账号同时具有 learning/teaching 能力时得到学习与教学两个入口。页面/适配器覆盖 loading、empty、单卡 partial-error、401/403/404/409/422/429/503/offline；429 最多两次退避且进度重放复用相同 `clientEventId`/请求体，409 笔记编辑保留用户输入，报名投影最终一致 403 不做无界轮询。
+- 自动化：`pnpm.cmd --dir web-apps install --frozen-lockfile --offline` 完成且锁文件无漂移；`pnpm.cmd --dir web-apps run typecheck` 通过 3 应用和 5 共享包；`pnpm.cmd --dir web-apps run test` 的 23 文件 139 项全部通过；`pnpm.cmd --dir web-apps run build` 三端通过，仅保留既有 523.17 kB HLS 动态 chunk 提示；`pnpm.cmd --dir web-apps run check:api` 与 `git diff --check` 通过。新增测试覆盖生成 Gateway 路径、报名/进度/笔记、刷新会话失效映射、429 请求体复用、墙钟观看增量、暂停/结束、重复/乱序单调合并、离页中止、能力路由与跨任务边界。
+- 真实链路：实际启动 Gateway/IAM/Course/Learning/Media（8080～8084，全部 `UP`）与学生 Vue，浏览器只经 Gateway 和后端短期媒体授权。匿名开始学习保留完整深链接；登录后 PUBLIC 课程幂等报名，HLS 只有一个 video，`readyState=4`、92.04 秒、未静音。实际播放约 29 秒得到位置 28/累计 29 秒；笔记创建后 revision 0、编辑后 revision 1。刷新同一深链接后登录、28 秒位置与笔记恢复；`/my-learning` 展示真实报名/最近 0:28/继续学习，课程详情无 video 且显示继续学习。
+- 响应式/键盘/资源：390×844 下 `/my-learning` 和学习页的 `scrollWidth` 均等于 `clientWidth=375`，无横向溢出；固定导航、高亮、原生键盘控件与 `:focus-visible` 轮廓有效。浏览器 warning/error 为 0。路由切换/离页会中止 Course/Learning/Media 请求、429 等待和进度队列，并清理 HLS、刷新定时器和 video 源；测试与源码边界断言覆盖这些清理路径。
+- 数据与清理：仅复用四个用途明确的 dev Schema、既有 `student_test_01`、课程/课时/媒体。创建 1 报名、1 聚合进度、2 进度事件、1 T12A 笔记；播放另产生 5 Media 授权/nonce/临时清单，认证产生 7 刷新会话和 4 登录审计。结束时按精确 actor/course/enrollment/time/Object Key 删除临时 OSS 清单和四个 Schema 本轮记录，残留审计逐表为 0；没有新建数据库/表/迁移/Seed/账号/课程/媒体资产，没有清空表或列举 Bucket。验收服务端口 5173、8080～8084 均已停止。
+- 可读性与风险：新增 Vue 页面、API 适配器、进度队列和共享播放器跟踪器具有中文职责/输入/输出/权限/失败/副作用注释，生成代码未手工修改。报名投影仍有短暂最终一致窗口；`hls.js` 体积提示和缺少收藏契约记录在交付文档。实现/测试/验收提交 `dd491c4` 已推送到 `codex/t12a-learning-progress-web`，Ready [PR #30](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30) 已创建；本任务不自行合并。
+
+## 2026-08-26 T12A 进度语义、播放平滑度与学习卡片复核
+
+- 产品语义：课时页移除整课完成度、保存位置和累计观看时长，只使用媒体实际 duration 与当前位置显示“本视频进度”百分比；整课完成度继续在 `/my-learning`，并补充到课程详情。进度持久化协议、15 秒墙钟样本和自然结束完成课时规则未改变。
+- 播放诊断：本地配置确认授权 TTL 仍为 10 分钟。只读下载 media `1131a27a-7299-4ef1-8e59-77ba5fcd06df` 后，9×10 秒＋2.04 秒 MPEG-TS 清单完整解码，25fps 时间轴连续，源/HLS 无黑帧或亮度突变，切片 GET 50～427ms。真实整段复播在约 10/35/58/83 秒及 20/44/67 秒重复闪动，但始终 `readyState=4`、未 pause/seek/换 URL；隔离进度回写、ManagedMediaSource 与 HLS Worker 后时间点不变。已排除授权刷新、进度保存、Vue 重挂载、源画面、解码损坏和明显下载不足，问题收敛到 MPEG-TS 经 Chromium MSE 缓冲窗口切换；fMP4 HLS v2 留待下一轮实现与复验。
+- UI：`/my-learning` 改为紧凑横向学习记录卡，状态、课程完成度、最近位置与主次操作形成稳定层级；按钮统一使用 inline-flex 双向居中并让卡片操作等宽，移动端回落为单列。课程详情增加紧凑完成度区，不把播放器搬回详情页。
+- 自动化：OpenAPI 生成后的全 workspace typecheck 通过；Vitest 23 文件 140 项通过；三端生产构建通过，仅有既有 HLS chunk 体积提示。沙箱内 Vitest/Vite 因 esbuild `spawn EPERM` 未启动，同命令在批准的沙箱外通过。只读媒体诊断临时源码与临时下载目录均已删除，没有新增或修改数据库、表、迁移、Seed、业务数据或 OSS 对象。
+- 待续：`/my-learning` 与进度语义/UI 已完成复核；视频闪动仍未关闭，不能标记为最终验收通过。下一轮从版本化 fMP4 HLS（init.mp4/m4s 登记、清单短期 URL 重写、v1 兼容、最小开发资产重处理）继续，同一播放器整段无闪后再关闭该风险。
+
+## 2026-08-27 T12A fMP4 播放链路收口
+
+- 根因与实现：旧 `hls-v1` 的 MPEG-TS 在 Chromium MSE 缓冲窗口切换附近复现约 20～25 秒间隔的闪帧；本轮新增版本化 `hls-fmp4-v2`，FFmpeg 生成 H.264/AAC、关键帧对齐的 `init.mp4`/`.m4s` 与 HLS v7。Media 对普通媒体行和 `EXT-X-MAP` 统一规范化、登记和短期签名；Course 优先 v2，只有明确 404 才使用新 jti 回退 v1。外部 OpenAPI、浏览器 DTO、播放器实例和学习路由均未复制或改变。
+- 自动化：受影响 Java Reactor 测试通过；新增 fMP4 命令、清单解析/授权、HTTP v2 与旧 v1 权限、Course 404 单次回退覆盖。4 秒真实 FFmpeg 冒烟产出 init+2 个 m4s，`ffprobe` 识别 H.264/AAC。完整真实 Media 验收中的 v2 处理、OSS 上传和内部授权已通过，但套件最后仍停在既有 RabbitMQ unacked-redelivery 共享队列时序断言，因此如实记为部分通过而非全绿。
+- 真实资产与浏览器：仅对既有 dev media `1131a27a-7299-4ef1-8e59-77ba5fcd06df` 运行显式门控、幂等的 `T12AFmp4BackfillAcceptanceTest`，真实 MySQL/OSS/FFmpeg 1 项通过。登录后的既有 `/learn/5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057/18d2d6cc-f374-46b1-ad81-743f169d0ce9` 请求 `hls-fmp4-v2.m3u8`，从 0 连续播放到 92.12 秒结束；始终一个 video、`readyState=4`、无 pause/seek/URL 更换或控制台错误。刷新后仍恢复 100%、duration 92.178667 秒。自动检查无法度量单帧主观亮度，保留同一资产供用户目视确认。
+- 数据与边界：没有新建 Schema、表、迁移、Seed、账号、课程、课时或源媒体。仅保留上述 mediaId 的一个 v2 处理任务、一个变体、init/m4s 组件及对应精确 OSS 派生对象、消费/Outbox/审计记录；旧 v1 和源文件未动。清理须按 mediaId+variant 精确 Object Key 与外键顺序执行，重新生成使用同一显式门控测试。历史 v1 资产的批量迁移、T12B/T12C/T15/T17 均不在本轮范围。

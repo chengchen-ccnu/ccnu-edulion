@@ -1,36 +1,58 @@
 <script setup lang="ts">
 /**
  * 公共课程详情页；按路由 courseId 调用 GET /api/v1/courses/{courseId}。
- * 成功展示当前发布版本和目录预览，资源不存在/下架或网络失败时展示错误，不读取教师草稿。
- * 正式播放只通过 `/learn/:courseId/:lessonId` 打开；本页不申请授权、不持有 HLS 或短期 URL。
+ * 成功展示当前发布版本和目录预览，并在已恢复 learning:access 会话后组合真实报名与进度。
+ * 报名写入 Learning 后才进入既有 `/learn/...`；本页不申请播放授权、不持有 HLS 或短期 URL。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { CourseAccessType, CourseDetail, CourseLevel } from "@edu/api-client";
+import type { CourseAccessType, CourseDetail, CourseLevel, CourseProgress, Enrollment } from "@edu/api-client";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
+import { authStore } from "../auth";
 import { studentCourseApi } from "../course-api";
 import { courseLearningEntries, firstAccessibleLearningEntry } from "../course-learning";
+import { resumeLessonId } from "../learning-model";
+import { isAuthenticationRequired, studentLearningApi } from "../learning-api";
 
 const route = useRoute();
+const router = useRouter();
 const course = ref<CourseDetail | null>(null);
+const enrollment = ref<Enrollment | null>(null);
+const progress = ref<CourseProgress | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const personalizationLoading = ref(false);
+const personalizationError = ref("");
+const actionMessage = ref("");
+const enrolling = ref(false);
 const coverFailed = ref(false);
 let detailAbort: AbortController | null = null;
+let personalizationAbort: AbortController | null = null;
+let enrollAbort: AbortController | null = null;
 let loadGeneration = 0;
-const learningEntries = computed(() => course.value ? courseLearningEntries(course.value) : []);
-const firstLearningEntry = computed(() => course.value ? firstAccessibleLearningEntry(course.value) : null);
+const hasLearningAccess = computed(() => authStore.state.currentUser?.permissions.includes("learning:access") ?? false);
+const canUseLearningLinks = computed(() => authStore.state.status !== "authenticated" || hasLearningAccess.value);
+const learningEntries = computed(() => course.value ? courseLearningEntries(course.value, Boolean(enrollment.value)) : []);
+const firstLearningEntry = computed(() => course.value
+  ? firstAccessibleLearningEntry(course.value, Boolean(enrollment.value)) : null);
+const resumeId = computed(() => course.value
+  ? resumeLessonId(course.value, progress.value, Boolean(enrollment.value)) : null);
 
 watch(() => route.params.courseId, loadCourse, { immediate: true });
-onBeforeUnmount(cancelDetailRequest);
+watch(() => [course.value?.id, authStore.state.status, hasLearningAccess.value], loadPersonalization);
+onBeforeUnmount(cancelRequests);
 
 async function loadCourse(courseId: unknown) {
-  cancelDetailRequest();
+  cancelRequests();
+  personalizationLoading.value = false;
+  enrolling.value = false;
   const generation = ++loadGeneration;
   if (typeof courseId !== "string") return;
   loading.value = true;
   course.value = null;
+  enrollment.value = null;
+  progress.value = null;
   coverFailed.value = false;
   errorMessage.value = "";
   const controller = new AbortController();
@@ -42,11 +64,65 @@ async function loadCourse(courseId: unknown) {
     if (!controller.signal.aborted && generation === loadGeneration) {
       errorMessage.value = error instanceof GatewayRequestError && error.status === 404
         ? "课程不存在、尚未发布或已经下架。"
-        : error instanceof TypeError ? "网络连接不可用，请检查网络后重试。"
-          : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
+        : error instanceof GatewayRequestError && error.status === 429
+          ? "课程详情请求过于频繁，请稍后手动重试。"
+          : error instanceof TypeError ? "网络连接不可用，请检查网络后重试。"
+            : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
     }
   } finally {
     if (generation === loadGeneration) loading.value = false;
+  }
+}
+
+/** 公共详情只在会话已恢复且具备学习能力时读取本人报名/进度；匿名浏览不触发受保护请求。 */
+async function loadPersonalization() {
+  personalizationAbort?.abort();
+  personalizationAbort = null;
+  personalizationLoading.value = false;
+  enrollment.value = null;
+  progress.value = null;
+  personalizationError.value = "";
+  actionMessage.value = "";
+  if (!course.value || authStore.state.status !== "authenticated" || !hasLearningAccess.value) return;
+  const currentCourse = course.value;
+  const controller = new AbortController();
+  personalizationAbort = controller;
+  personalizationLoading.value = true;
+  try {
+    enrollment.value = await studentLearningApi.findActiveEnrollment(currentCourse.id, controller.signal);
+    if (currentCourse.accessType === "PUBLIC" || enrollment.value) {
+      progress.value = await studentLearningApi.progress(currentCourse.id, controller.signal);
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) personalizationError.value = personalizedErrorMessage(error);
+  } finally {
+    if (!controller.signal.aborted) personalizationLoading.value = false;
+  }
+}
+
+/** 报名成功后使用服务端事实更新页面，再进入最近课时；Course 播放投影可能短暂最终一致。 */
+async function enrollAndStart() {
+  if (!course.value || !hasLearningAccess.value || enrolling.value) return;
+  enrollAbort?.abort();
+  const controller = new AbortController();
+  enrollAbort = controller;
+  enrolling.value = true;
+  personalizationError.value = "";
+  actionMessage.value = "";
+  try {
+    enrollment.value = await studentLearningApi.enroll(course.value.id, controller.signal);
+    actionMessage.value = "报名成功，播放访问权限正在同步；若暂时收到 403，请稍候手动重试。";
+    try {
+      progress.value = await studentLearningApi.progress(course.value.id, controller.signal);
+    } catch (error) {
+      if (!(error instanceof GatewayRequestError && error.status === 403)) throw error;
+    }
+    const lessonId = resumeId.value ?? firstLearningEntry.value?.lesson.id;
+    if (lessonId) await router.push(`/learn/${course.value.id}/${lessonId}`);
+  } catch (error) {
+    if (!controller.signal.aborted) personalizationError.value = personalizedErrorMessage(error);
+  } finally {
+    if (!controller.signal.aborted) enrolling.value = false;
   }
 }
 
@@ -57,6 +133,26 @@ function learningEntryFor(lessonId: string) {
 function cancelDetailRequest() {
   detailAbort?.abort();
   detailAbort = null;
+}
+
+function cancelRequests() {
+  cancelDetailRequest();
+  personalizationAbort?.abort();
+  enrollAbort?.abort();
+}
+
+function personalizedErrorMessage(error: unknown): string {
+  if (isAuthenticationRequired(error)) return "登录状态已失效，请重新登录后继续。";
+  if (error instanceof TypeError) return "当前离线，课程公开信息仍可浏览；报名与进度恢复后可重试。";
+  if (!(error instanceof GatewayRequestError)) return "报名或进度暂时无法读取，请稍后重试。";
+  if (error.status === 401) return "登录状态已失效，请重新登录后继续。";
+  if (error.status === 403) return "当前账号没有学习权限，或该报名尚未生效。";
+  if (error.status === 404) return "报名或课程学习事实不存在、已下架或不可见。";
+  if (error.status === 409) return "报名状态已变化，请刷新后重试。";
+  if (error.status === 422) return "报名请求不符合当前课程规则，请检查后重试。";
+  if (error.status === 429) return "报名请求过于频繁，有限重试仍未成功，请稍后手动重试。";
+  if (error.status === 503) return "课程或学习服务暂时不可用，请稍后重试。";
+  return error.message;
 }
 
 function levelLabel(level: CourseLevel): string {
@@ -98,15 +194,51 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           <strong>{{ course.teacher.displayName }}</strong>
           <small>线上版本 {{ course.publishedVersion }}</small>
         </div>
-        <RouterLink v-if="firstLearningEntry" class="detail-learning-action"
-          :to="`/learn/${course.id}/${firstLearningEntry.lesson.id}`">
-          {{ course.accessType === "PUBLIC" ? "开始学习" : "试看课程" }}
+        <section v-if="enrollment && progress" class="detail-course-progress" aria-label="课程完成度">
+          <div>
+            <span>课程完成度</span>
+            <strong>{{ progress.completionPercent }}%</strong>
+          </div>
+          <div class="learning-progress-bar" :aria-label="`课程完成度 ${progress.completionPercent}%`">
+            <span :style="{ width: `${progress.completionPercent}%` }" />
+          </div>
+          <small>已完成 {{ progress.completedLessonCount }} / {{ progress.lessonCount }} 个课时</small>
+        </section>
+        <RouterLink v-if="enrollment && resumeId" class="detail-learning-action"
+          :to="`/learn/${course.id}/${resumeId}`">
+          {{ progress?.lessons.length ? "继续学习" : "开始学习" }}
           <span aria-hidden="true">→</span>
         </RouterLink>
-        <p v-else-if="course.accessType === 'ENROLLMENT_REQUIRED'" class="detail-access-note">
-          本课程需要报名，当前没有可试看视频；报名能力将在 T11 接通。
+        <button v-else-if="authStore.state.status === 'authenticated' && hasLearningAccess && learningEntries.length"
+          class="detail-learning-action" type="button" :disabled="enrolling || personalizationLoading"
+          @click="enrollAndStart">
+          {{ enrolling ? "正在报名…" : course.accessType === "PUBLIC" ? "开始学习" : "报名并开始学习" }}
+          <span aria-hidden="true">→</span>
+        </button>
+        <RouterLink v-else-if="authStore.state.status !== 'authenticated' && firstLearningEntry"
+          class="detail-learning-action" :to="`/learn/${course.id}/${firstLearningEntry.lesson.id}`">
+          {{ course.accessType === "PUBLIC" ? "开始学习" : "试看课程" }}<span aria-hidden="true">→</span>
+        </RouterLink>
+        <RouterLink v-else-if="authStore.state.status !== 'authenticated' && learningEntries.length"
+          class="detail-learning-action" :to="{ name: 'login', query: { redirect: `/courses/${course.id}` } }">
+          登录后报名<span aria-hidden="true">→</span>
+        </RouterLink>
+        <p v-else-if="authStore.state.status === 'authenticated' && !hasLearningAccess" class="detail-access-note">
+          当前账号没有 <code>learning:access</code>，不能报名或进入学习空间。
         </p>
+        <p v-else-if="course.accessType === 'ENROLLMENT_REQUIRED'" class="detail-access-note">本课程需要报名后访问，当前没有可试看视频。</p>
         <p v-else class="detail-access-note">当前发布版本暂时没有可播放的视频课时。</p>
+        <RouterLink v-if="course.accessType === 'ENROLLMENT_REQUIRED' && !enrollment
+            && authStore.state.status === 'authenticated' && hasLearningAccess
+            && learningEntries.some(item => item.lesson.previewable)"
+          class="detail-preview-link" :to="`/learn/${course.id}/${learningEntries.find(item => item.lesson.previewable)!.lesson.id}`">
+          先试看课程
+        </RouterLink>
+        <p v-if="actionMessage" class="feedback feedback--success" role="status">{{ actionMessage }}</p>
+        <p v-if="personalizationError" class="feedback feedback--warning" role="alert">
+          {{ personalizationError }}
+          <button type="button" @click="loadPersonalization">重试</button>
+        </p>
       </div>
     </section>
 
@@ -138,7 +270,7 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
                 <strong>{{ lesson.title }}</strong>
                 <small>{{ lessonTypeLabel(lesson.type) }}</small>
                 <em v-if="lesson.previewable">可试看</em>
-                <RouterLink v-if="learningEntryFor(lesson.id)?.accessible" class="lesson-play"
+                <RouterLink v-if="canUseLearningLinks && learningEntryFor(lesson.id)?.accessible" class="lesson-play"
                   :to="`/learn/${course.id}/${lesson.id}`">
                   {{ lesson.previewable && course.accessType === "ENROLLMENT_REQUIRED" ? "试看" : "进入学习" }}
                 </RouterLink>
@@ -148,7 +280,7 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           </li>
         </ol>
         <div v-else class="empty-inline">该课程暂未提供目录。</div>
-        <p class="scope-note">目录仅预览当前发布版本；视频会在独立学习页打开。本阶段不记录进度，也不实现报名、题目或智能答疑。</p>
+        <p class="scope-note">目录仅预览当前发布版本；报名、进度与继续学习来自 Learning，正式视频仍只在独立学习页打开。测评与 AI 尚未启用。</p>
       </section>
     </div>
   </template>
