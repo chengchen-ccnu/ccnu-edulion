@@ -21,6 +21,10 @@ platform:
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${LEARNING_MEDIA_REQUEST_TIMEOUT:5s}
+      authorization-issuer: ${LEARNING_MEDIA_AUTH_ISSUER:edu-platform-learning-service}
+      authorization-audience: ${COURSE_MEDIA_AUTH_AUDIENCE:edu-platform-media-service}
+      authorization-token-ttl: ${LEARNING_MEDIA_AUTH_TOKEN_TTL:30s}
+      authorization-secret: ${COURSE_MEDIA_AUTH_SECRET:}
     course:
       base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
       request-timeout: ${LEARNING_COURSE_REQUEST_TIMEOUT:3s}

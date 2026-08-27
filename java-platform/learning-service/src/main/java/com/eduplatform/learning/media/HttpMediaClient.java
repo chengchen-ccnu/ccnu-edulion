@@ -2,6 +2,7 @@ package com.eduplatform.learning.media;
 
 import com.eduplatform.learning.config.LearningProperties;
 import com.eduplatform.learning.service.QuestionException;
+import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.shared.api.FieldError;
 import java.io.InputStream;
 import java.net.URI;
@@ -10,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -22,9 +24,11 @@ public class HttpMediaClient implements MediaClient {
     private final RestClient media;
     private final HttpClient downloads;
     private final LearningProperties properties;
+    private final AssessmentMediaAuthorizationIssuer authorizationIssuer;
 
-    public HttpMediaClient(LearningProperties properties) {
+    public HttpMediaClient(LearningProperties properties, AssessmentMediaAuthorizationIssuer authorizationIssuer) {
         this.properties = properties;
+        this.authorizationIssuer = authorizationIssuer;
         this.downloads = HttpClient.newBuilder().connectTimeout(properties.media().requestTimeout()).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(downloads);
         requestFactory.setReadTimeout(properties.media().requestTimeout());
@@ -111,6 +115,39 @@ public class HttpMediaClient implements MediaClient {
         }
     }
 
+    /**
+     * 将学习域已裁决的测评访问事实换成单资产短期授权。
+     * 服务 JWT 只在方法栈内存在，不返回浏览器、不记日志也不入库。
+     */
+    @Override
+    public LearningDtos.MediaAccessGrant issueAssessmentAccess(String mediaId, String learnerId, String purpose,
+            LearningDtos.MediaDisposition disposition, String traceId) {
+        try {
+            String token = authorizationIssuer.issue(learnerId, mediaId, purpose, disposition.name(), traceId);
+            Grant grant = media.post().uri("/internal/v1/media/{mediaId}/access-grants", mediaId)
+                    .header("Authorization", "Bearer " + token)
+                    .header("X-Trace-Id", traceId)
+                    .body(Map.of("visitorId", learnerId, "purpose", purpose,
+                            "accessType", "ASSESSMENT_QUESTION", "variant", "ORIGINAL",
+                            "disposition", disposition.name()))
+                    .retrieve().body(Grant.class);
+            if (grant == null || !"GET".equals(grant.method()) || grant.expiresAt() == null) throw unavailable();
+            return new LearningDtos.MediaAccessGrant(grant.method(), grant.url(), grant.headers(), grant.expiresAt());
+        } catch (QuestionException exception) {
+            throw exception;
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 404) {
+                throw new QuestionException(HttpStatus.NOT_FOUND, "LEARNING.NOT_FOUND", "学习资源不存在或不可见");
+            }
+            if (exception.getStatusCode().value() == 409) {
+                throw new QuestionException(HttpStatus.CONFLICT, "MEDIA.NOT_READY", "媒体尚未就绪");
+            }
+            throw unavailable();
+        } catch (RuntimeException exception) {
+            throw unavailable();
+        }
+    }
+
     private static QuestionException notBindable(String mediaId, String reason) {
         return new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.MEDIA_NOT_BINDABLE", "媒体不可绑定",
                 List.of(new FieldError("mediaId", mediaId + ": " + reason)));
@@ -121,6 +158,6 @@ public class HttpMediaClient implements MediaClient {
     }
 
     private record Binding(String mediaId, String purpose, String status, boolean bindable) {}
-    private record Grant(String method, String url, Map<String, String> headers) {}
+    private record Grant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
     private record Asset(String mediaId, String purpose, String status) {}
 }

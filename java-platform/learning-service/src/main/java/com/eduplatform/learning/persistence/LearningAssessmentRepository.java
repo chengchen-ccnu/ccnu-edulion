@@ -141,9 +141,10 @@ public class LearningAssessmentRepository {
     }
 
     public void insertAssessment(AssessmentRow value) {
-        jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,assessment_type,status,answer_publication_policy,revision,published_at,archived_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,assessment_type,status,answer_publication_policy,opens_at,closes_at,time_limit_seconds,revision,published_at,archived_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 value.id(), value.ownerTeacherId(), value.courseId(), value.lessonId(), value.title(),
-                value.description(), value.type().name(), value.status().name(), value.policy().name(), value.revision(),
+                value.description(), value.type().name(), value.status().name(), value.policy().name(),
+                ts(value.opensAt()), ts(value.closesAt()), value.timeLimitSeconds(), value.revision(),
                 ts(value.publishedAt()), ts(value.archivedAt()), ts(value.createdAt()), ts(value.updatedAt()));
     }
     public Optional<AssessmentRow> assessment(String id) {
@@ -158,9 +159,11 @@ public class LearningAssessmentRepository {
                 id, teacherId).stream().findFirst().orElse(null);
     }
     public int updateAssessment(String id, String teacherId, long revision, String title, String description,
-            AssessmentType type, AnswerPublicationPolicy policy, Instant now) {
-        return jdbc.update("UPDATE assessment SET title=?,description=?,assessment_type=?,answer_publication_policy=?,revision=revision+1,updated_at=? WHERE id=? AND owner_teacher_id=? AND revision=? AND status='DRAFT'",
-                title, description, type.name(), policy.name(), ts(now), id, teacherId, revision);
+            AssessmentType type, AnswerPublicationPolicy policy, Instant opensAt, Instant closesAt,
+            Integer timeLimitSeconds, Instant now) {
+        return jdbc.update("UPDATE assessment SET title=?,description=?,assessment_type=?,answer_publication_policy=?,opens_at=?,closes_at=?,time_limit_seconds=?,revision=revision+1,updated_at=? WHERE id=? AND owner_teacher_id=? AND revision=? AND status='DRAFT'",
+                title, description, type.name(), policy.name(), ts(opensAt), ts(closesAt), timeLimitSeconds,
+                ts(now), id, teacherId, revision);
     }
     public int bumpDraftAssessmentRevision(String id, String teacherId, long revision, Instant now) {
         return jdbc.update("UPDATE assessment SET revision=revision+1,updated_at=? WHERE id=? AND owner_teacher_id=? AND revision=? AND status='DRAFT'",
@@ -217,15 +220,16 @@ public class LearningAssessmentRepository {
     }
     public List<AssessmentRow> listLearnerAssessments(String learnerId, String courseId, int page, int size) {
         String extra = courseId == null ? "" : " AND a.course_id=?";
-        Object[] args = courseId == null ? new Object[]{learnerId, size, (page - 1) * size}
-                : new Object[]{learnerId, courseId, size, (page - 1) * size};
-        return jdbc.query("SELECT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id JOIN enrollment e ON e.course_id=a.course_id AND e.learner_id=? AND e.status='ACTIVE' WHERE a.status='PUBLISHED'" + extra
-                + " ORDER BY a.published_at DESC,a.id LIMIT ? OFFSET ?", this::mapAssessment, args);
+        return jdbc.query("SELECT DISTINCT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id LEFT JOIN enrollment e ON e.course_id=a.course_id AND e.learner_id=? AND e.status='ACTIVE' LEFT JOIN assessment_attempt t ON t.assessment_id=a.id AND t.learner_id=? WHERE ((a.status='PUBLISHED' AND e.id IS NOT NULL) OR t.id IS NOT NULL)" + extra
+                + " ORDER BY a.published_at DESC,a.id LIMIT ? OFFSET ?", this::mapAssessment,
+                courseId == null ? new Object[]{learnerId, learnerId, size, (page - 1) * size}
+                        : new Object[]{learnerId, learnerId, courseId, size, (page - 1) * size});
     }
     public long countLearnerAssessments(String learnerId, String courseId) {
         String extra = courseId == null ? "" : " AND a.course_id=?";
-        Object[] args = courseId == null ? new Object[]{learnerId} : new Object[]{learnerId, courseId};
-        Long value = jdbc.queryForObject("SELECT COUNT(*) FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id JOIN enrollment e ON e.course_id=a.course_id AND e.learner_id=? AND e.status='ACTIVE' WHERE a.status='PUBLISHED'" + extra,
+        Object[] args = courseId == null ? new Object[]{learnerId, learnerId}
+                : new Object[]{learnerId, learnerId, courseId};
+        Long value = jdbc.queryForObject("SELECT COUNT(DISTINCT a.id) FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id LEFT JOIN enrollment e ON e.course_id=a.course_id AND e.learner_id=? AND e.status='ACTIVE' LEFT JOIN assessment_attempt t ON t.assessment_id=a.id AND t.learner_id=? WHERE ((a.status='PUBLISHED' AND e.id IS NOT NULL) OR t.id IS NOT NULL)" + extra,
                 Long.class, args); return value == null ? 0 : value;
     }
 
@@ -242,10 +246,11 @@ public class LearningAssessmentRepository {
                 .stream().findFirst().orElse(null);
     }
     public void insertAttempt(AttemptRow value) {
-        jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,draft_request_id,draft_fingerprint,submit_request_id,submission_fingerprint,score,total_points,submitted_at,graded_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,draft_request_id,draft_fingerprint,submit_request_id,submission_fingerprint,score,total_points,started_at,deadline_at,submitted_at,graded_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 value.id(), value.assessmentId(), value.learnerId(), value.status().name(), value.revision(),
                 value.draftRequestId(), value.draftFingerprint(), value.submitRequestId(), value.submissionFingerprint(),
-                value.score(), value.totalPoints(), ts(value.submittedAt()), ts(value.gradedAt()), ts(value.createdAt()), ts(value.updatedAt()));
+                value.score(), value.totalPoints(), ts(value.startedAt()), ts(value.deadlineAt()),
+                ts(value.submittedAt()), ts(value.gradedAt()), ts(value.createdAt()), ts(value.updatedAt()));
     }
     public void replaceDraftAnswers(String attemptId, List<LearningDtos.AnswerInput> answers, Instant now) {
         jdbc.update("DELETE FROM assessment_answer WHERE attempt_id=?", attemptId);
@@ -296,8 +301,8 @@ public class LearningAssessmentRepository {
     /** 同一 learner/course/questionVersion 只累加一行；同一次 attempt 只在首次提交事务调用一次。 */
     public void accumulateWrongQuestion(String id, String learnerId, String courseId, String assessmentId,
             String versionId, String attemptId, Instant now) {
-        jdbc.update("INSERT INTO wrong_question(id,learner_id,course_id,assessment_id,question_version_id,wrong_count,first_wrong_at,last_wrong_at,last_attempt_id) VALUES(?,?,?,?,?,1,?,?,?) ON DUPLICATE KEY UPDATE wrong_count=wrong_count+1,last_wrong_at=VALUES(last_wrong_at),last_attempt_id=VALUES(last_attempt_id),assessment_id=VALUES(assessment_id)",
-                id, learnerId, courseId, assessmentId, versionId, ts(now), ts(now), attemptId);
+        jdbc.update("INSERT INTO wrong_question(id,learner_id,course_id,assessment_id,question_version_id,wrong_count,mastery_status,revision,redo_attempts_used,first_wrong_at,last_wrong_at,last_attempt_id,updated_at) VALUES(?,?,?,?,?,1,'LEARNING',0,0,?,?,?,?) ON DUPLICATE KEY UPDATE wrong_count=wrong_count+1,mastery_status='LEARNING',revision=revision+1,last_wrong_at=VALUES(last_wrong_at),last_attempt_id=VALUES(last_attempt_id),assessment_id=VALUES(assessment_id),updated_at=VALUES(updated_at)",
+                id, learnerId, courseId, assessmentId, versionId, ts(now), ts(now), attemptId, ts(now));
     }
     /** 每个 attempt 的题目只累计一次错题，重复提交或重复批改不会无限增加计数。 */
     public boolean markWrongOccurrence(String attemptId, String assessmentQuestionId, Instant now) {
@@ -321,6 +326,41 @@ public class LearningAssessmentRepository {
                 ? jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question WHERE learner_id=?", Long.class, learnerId)
                 : jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question WHERE learner_id=? AND course_id=?", Long.class, learnerId, courseId);
         return value == null ? 0 : value;
+    }
+    public Optional<WrongRow> wrongQuestion(String id, String learnerId) {
+        return jdbc.query("SELECT * FROM wrong_question WHERE id=? AND learner_id=?", this::wrong, id, learnerId)
+                .stream().findFirst();
+    }
+    public WrongRow lockWrongQuestion(String id, String learnerId) {
+        return jdbc.query("SELECT * FROM wrong_question WHERE id=? AND learner_id=? FOR UPDATE", this::wrong,
+                id, learnerId).stream().findFirst().orElse(null);
+    }
+    public int updateWrongMastery(String id, String learnerId, long revision,
+            LearningDtos.WrongQuestionMasteryStatus status, Instant now) {
+        return jdbc.update("UPDATE wrong_question SET mastery_status=?,revision=revision+1,updated_at=? WHERE id=? AND learner_id=? AND revision=?",
+                status.name(), ts(now), id, learnerId, revision);
+    }
+    public Optional<RedoRow> redoByRequest(String learnerId, String requestId) {
+        return jdbc.query("SELECT * FROM wrong_question_redo WHERE learner_id=? AND client_request_id=?",
+                this::redo, learnerId, requestId).stream().findFirst();
+    }
+    public List<RedoRow> wrongQuestionRedos(String wrongQuestionId) {
+        return jdbc.query("SELECT * FROM wrong_question_redo WHERE wrong_question_id=? ORDER BY sequence_no",
+                this::redo, wrongQuestionId);
+    }
+    /** 锁定错题后写入一次独立重做，并原子消耗最多三次配额。 */
+    public void insertWrongQuestionRedo(RedoRow value, long expectedRevision, Instant now) {
+        int updated = jdbc.update("UPDATE wrong_question SET redo_attempts_used=redo_attempts_used+1,revision=revision+1,updated_at=? WHERE id=? AND learner_id=? AND revision=? AND redo_attempts_used<3",
+                ts(now), value.wrongQuestionId(), value.learnerId(), expectedRevision);
+        if (updated == 0) throw new org.springframework.dao.OptimisticLockingFailureException("wrong question redo conflict");
+        jdbc.update("INSERT INTO wrong_question_redo(id,wrong_question_id,learner_id,client_request_id,request_fingerprint,sequence_no,answer_json,score,correct,submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                value.id(), value.wrongQuestionId(), value.learnerId(), value.clientRequestId(),
+                value.requestFingerprint(), value.sequence(), json(value.answer()), value.score(), value.correct(),
+                ts(value.submittedAt()));
+    }
+    /** 查询某个媒体是否冻结在指定测评题目快照内，不查 media Schema。 */
+    public boolean assessmentContainsMedia(String assessmentId, String mediaId) {
+        return assessmentQuestions(assessmentId).stream().anyMatch(question -> snapshotContainsMedia(question.snapshot(), mediaId));
     }
     public List<StudentProjectionRow> studentProjections(String courseId, int page, int size) {
         return jdbc.query("SELECT e.learner_id,e.status enrollment_status,"
@@ -349,16 +389,22 @@ public class LearningAssessmentRepository {
     private ProgressRow progress(ResultSet rs, int row) throws SQLException { return new ProgressRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getLong("position_seconds"),rs.getLong("watched_seconds"),rs.getBoolean("completed"),instant(rs,"last_event_at"),rs.getLong("revision"),instant(rs,"created_at"),instant(rs,"updated_at")); }
     private NoteRow note(ResultSet rs, int row) throws SQLException { long p=rs.getLong("position_seconds"); return new NoteRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("content"),rs.wasNull()?null:p,rs.getLong("revision"),instant(rs,"created_at"),instant(rs,"updated_at")); }
     private IdempotencyRow idempotency(ResultSet rs,int row)throws SQLException{return new IdempotencyRow(rs.getString("owner_id"),rs.getString("client_request_id"),rs.getString("request_fingerprint"),rs.getString("resource_type"),rs.getString("resource_id"),instant(rs,"created_at"));}
-    private AssessmentRow mapAssessment(ResultSet rs,int row)throws SQLException{return new AssessmentRow(rs.getString("id"),rs.getString("owner_teacher_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("title"),rs.getString("description"),AssessmentType.valueOf(rs.getString("assessment_type")),AssessmentStatus.valueOf(rs.getString("status")),AnswerPublicationPolicy.valueOf(rs.getString("answer_publication_policy")),rs.getLong("revision"),instantNullable(rs,"published_at"),instantNullable(rs,"archived_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
+    private AssessmentRow mapAssessment(ResultSet rs,int row)throws SQLException{return new AssessmentRow(rs.getString("id"),rs.getString("owner_teacher_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("title"),rs.getString("description"),AssessmentType.valueOf(rs.getString("assessment_type")),AssessmentStatus.valueOf(rs.getString("status")),AnswerPublicationPolicy.valueOf(rs.getString("answer_publication_policy")),instantNullable(rs,"opens_at"),instantNullable(rs,"closes_at"),(Integer)rs.getObject("time_limit_seconds"),rs.getLong("revision"),instantNullable(rs,"published_at"),instantNullable(rs,"archived_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
     private AssessmentQuestionRow assessmentQuestion(ResultSet rs,int row)throws SQLException{return new AssessmentQuestionRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("question_id"),rs.getString("question_version_id"),rs.getInt("sequence_no"),rs.getBigDecimal("points"),read(rs.getString("snapshot_json"),QuestionDtos.VersionResponse.class),instant(rs,"created_at"));}
-    private AttemptRow attempt(ResultSet rs,int row)throws SQLException{return new AttemptRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("learner_id"),AttemptStatus.valueOf(rs.getString("status")),rs.getLong("revision"),rs.getString("draft_request_id"),rs.getString("draft_fingerprint"),rs.getString("submit_request_id"),rs.getString("submission_fingerprint"),rs.getBigDecimal("score"),rs.getBigDecimal("total_points"),instantNullable(rs,"submitted_at"),instantNullable(rs,"graded_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
+    private AttemptRow attempt(ResultSet rs,int row)throws SQLException{return new AttemptRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("learner_id"),AttemptStatus.valueOf(rs.getString("status")),rs.getLong("revision"),rs.getString("draft_request_id"),rs.getString("draft_fingerprint"),rs.getString("submit_request_id"),rs.getString("submission_fingerprint"),rs.getBigDecimal("score"),rs.getBigDecimal("total_points"),instant(rs,"started_at"),instantNullable(rs,"deadline_at"),instantNullable(rs,"submitted_at"),instantNullable(rs,"graded_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
     private AnswerRow answer(ResultSet rs,int row)throws SQLException{Object raw=rs.getObject("correct");Boolean correct=raw==null?null:(raw instanceof Boolean value?value:((Number)raw).intValue()!=0);return new AnswerRow(rs.getString("id"),rs.getString("attempt_id"),rs.getString("assessment_question_id"),read(rs.getString("answer_json"),new TypeReference<List<String>>(){}),rs.getBigDecimal("score"),correct,GradingStatus.valueOf(rs.getString("grading_status")),rs.getLong("revision"),rs.getString("graded_by"),instantNullable(rs,"graded_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
-    private WrongRow wrong(ResultSet rs,int row)throws SQLException{return new WrongRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("assessment_id"),rs.getString("question_version_id"),rs.getInt("wrong_count"),instant(rs,"first_wrong_at"),instant(rs,"last_wrong_at"),rs.getString("last_attempt_id"));}
+    private WrongRow wrong(ResultSet rs,int row)throws SQLException{return new WrongRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("assessment_id"),rs.getString("question_version_id"),rs.getInt("wrong_count"),LearningDtos.WrongQuestionMasteryStatus.valueOf(rs.getString("mastery_status")),rs.getLong("revision"),rs.getInt("redo_attempts_used"),instant(rs,"first_wrong_at"),instant(rs,"last_wrong_at"),rs.getString("last_attempt_id"),instant(rs,"updated_at"));}
+    private RedoRow redo(ResultSet rs,int row)throws SQLException{Object raw=rs.getObject("correct");Boolean correct=raw==null?null:(raw instanceof Boolean value?value:((Number)raw).intValue()!=0);return new RedoRow(rs.getString("id"),rs.getString("wrong_question_id"),rs.getString("learner_id"),rs.getString("client_request_id"),rs.getString("request_fingerprint"),rs.getInt("sequence_no"),read(rs.getString("answer_json"),new TypeReference<List<String>>(){}),rs.getBigDecimal("score"),correct,instant(rs,"submitted_at"));}
     private StudentProjectionRow studentProjection(ResultSet rs,int row)throws SQLException{return new StudentProjectionRow(rs.getString("learner_id"),EnrollmentStatus.valueOf(rs.getString("enrollment_status")),rs.getInt("completed_lessons"),rs.getLong("watched_seconds"),rs.getInt("submitted_attempts"),rs.getInt("graded_attempts"),rs.getBigDecimal("average_score"));}
 
     private String json(Object value) { try { return mapper.writeValueAsString(value); } catch (Exception e) { throw new IllegalStateException(e); } }
     private <T> T read(String value, Class<T> type) { try { return mapper.readValue(value,type); } catch(Exception e){throw new IllegalStateException(e);} }
     private <T> T read(String value, TypeReference<T> type) { try { return mapper.readValue(value,type); } catch(Exception e){throw new IllegalStateException(e);} }
+    private static boolean snapshotContainsMedia(QuestionDtos.VersionResponse snapshot, String mediaId) {
+        if (snapshot.media().stream().anyMatch(media -> media.mediaId().equals(mediaId))) return true;
+        return snapshot.children().stream().anyMatch(child -> child.media().stream()
+                .anyMatch(media -> media.mediaId().equals(mediaId)));
+    }
     private static Timestamp ts(Instant value){return value==null?null:Timestamp.from(value);}
     private static Instant instant(ResultSet rs,String name)throws SQLException{return rs.getTimestamp(name).toInstant();}
     private static Instant instantNullable(ResultSet rs,String name)throws SQLException{Timestamp value=rs.getTimestamp(name);return value==null?null:value.toInstant();}
@@ -367,10 +413,11 @@ public class LearningAssessmentRepository {
     public record ProgressRow(String id,String learnerId,String courseId,String lessonId,long positionSeconds,long watchedSeconds,boolean completed,Instant lastEventAt,long revision,Instant createdAt,Instant updatedAt){}
     public record NoteRow(String id,String learnerId,String courseId,String lessonId,String content,Long positionSeconds,long revision,Instant createdAt,Instant updatedAt){}
     public record IdempotencyRow(String ownerId,String requestId,String fingerprint,String resourceType,String resourceId,Instant createdAt){}
-    public record AssessmentRow(String id,String ownerTeacherId,String courseId,String lessonId,String title,String description,AssessmentType type,AssessmentStatus status,AnswerPublicationPolicy policy,long revision,Instant publishedAt,Instant archivedAt,Instant createdAt,Instant updatedAt){}
+    public record AssessmentRow(String id,String ownerTeacherId,String courseId,String lessonId,String title,String description,AssessmentType type,AssessmentStatus status,AnswerPublicationPolicy policy,Instant opensAt,Instant closesAt,Integer timeLimitSeconds,long revision,Instant publishedAt,Instant archivedAt,Instant createdAt,Instant updatedAt){}
     public record AssessmentQuestionRow(String id,String assessmentId,String questionId,String questionVersionId,int sequence,BigDecimal points,QuestionDtos.VersionResponse snapshot,Instant createdAt){}
-    public record AttemptRow(String id,String assessmentId,String learnerId,AttemptStatus status,long revision,String draftRequestId,String draftFingerprint,String submitRequestId,String submissionFingerprint,BigDecimal score,BigDecimal totalPoints,Instant submittedAt,Instant gradedAt,Instant createdAt,Instant updatedAt){}
+    public record AttemptRow(String id,String assessmentId,String learnerId,AttemptStatus status,long revision,String draftRequestId,String draftFingerprint,String submitRequestId,String submissionFingerprint,BigDecimal score,BigDecimal totalPoints,Instant startedAt,Instant deadlineAt,Instant submittedAt,Instant gradedAt,Instant createdAt,Instant updatedAt){}
     public record AnswerRow(String id,String attemptId,String assessmentQuestionId,List<String> answer,BigDecimal score,Boolean correct,GradingStatus gradingStatus,long revision,String gradedBy,Instant gradedAt,Instant createdAt,Instant updatedAt){}
-    public record WrongRow(String id,String learnerId,String courseId,String assessmentId,String questionVersionId,int wrongCount,Instant firstWrongAt,Instant lastWrongAt,String lastAttemptId){}
+    public record WrongRow(String id,String learnerId,String courseId,String assessmentId,String questionVersionId,int wrongCount,LearningDtos.WrongQuestionMasteryStatus masteryStatus,long revision,int redoAttemptsUsed,Instant firstWrongAt,Instant lastWrongAt,String lastAttemptId,Instant updatedAt){}
+    public record RedoRow(String id,String wrongQuestionId,String learnerId,String clientRequestId,String requestFingerprint,int sequence,List<String> answer,BigDecimal score,Boolean correct,Instant submittedAt){}
     public record StudentProjectionRow(String learnerId,EnrollmentStatus enrollmentStatus,int completedLessons,long watchedSeconds,int submittedAttempts,int gradedAttempts,BigDecimal averageScore){}
 }

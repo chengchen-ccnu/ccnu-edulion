@@ -17,6 +17,10 @@ platform:
     media:
       base-url: http://127.0.0.1:8083
       request-timeout: 1s
+      authorization-issuer: edu-platform-learning-service-test
+      authorization-audience: edu-platform-media-service-test
+      authorization-token-ttl: 30s
+      authorization-secret: test-only-course-media-auth-secret-32-bytes
     course:
       base-url: http://127.0.0.1:8082
       request-timeout: 1s

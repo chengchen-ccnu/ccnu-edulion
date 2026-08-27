@@ -128,7 +128,7 @@ public class LearningController {
 
     @GetMapping("/api/v1/learning/assessments")
     /** 分页返回已分配到本人 ACTIVE 报名课程的已发布测评。 */
-    public LearningDtos.AssessmentPage assessments(@RequestHeader("X-User-Id") String userId,
+    public LearningDtos.LearnerAssessmentPage assessments(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @RequestParam(required = false) String courseId,
@@ -156,6 +156,15 @@ public class LearningController {
         var value = learning.startAttempt(LearningIdentity.learner(userId, roles, permissions).userId(),
                 assessmentId, request);
         return ResponseEntity.created(URI.create("/api/v1/learning/attempts/" + value.id() + "/draft")).body(value);
+    }
+
+    @GetMapping("/api/v1/learning/attempts/{attemptId}/draft")
+    /** 刷新后按 owner 恢复尚可写的草稿、服务时间与冻结截止时间。 */
+    public LearningDtos.AttemptDraft getDraft(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String attemptId) {
+        return learning.getDraft(LearningIdentity.learner(userId, roles, permissions).userId(), attemptId);
     }
 
     @PutMapping("/api/v1/learning/attempts/{attemptId}/draft")
@@ -195,6 +204,52 @@ public class LearningController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         return learning.wrongQuestions(LearningIdentity.learner(userId, roles, permissions).userId(), courseId,
                 page, size);
+    }
+
+    @GetMapping("/api/v1/learning/wrong-questions/{wrongQuestionId}")
+    /** 返回本人错题安全快照、掌握状态和最多三次重做历史。 */
+    public LearningDtos.WrongQuestion wrongQuestion(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String wrongQuestionId) {
+        return learning.wrongQuestion(LearningIdentity.learner(userId, roles, permissions).userId(), wrongQuestionId);
+    }
+
+    @PutMapping("/api/v1/learning/wrong-questions/{wrongQuestionId}/mastery")
+    /** 使用 revision 幂等更新本人错题掌握状态。 */
+    public LearningDtos.WrongQuestion mastery(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String wrongQuestionId,
+            @Valid @RequestBody LearningDtos.UpdateWrongQuestionMasteryRequest request) {
+        return learning.updateWrongQuestionMastery(
+                LearningIdentity.learner(userId, roles, permissions).userId(), wrongQuestionId, request);
+    }
+
+    @PostMapping("/api/v1/learning/wrong-questions/{wrongQuestionId}/redos")
+    /** 记录一次独立有限重做，不重开原已提交 attempt。 */
+    public ResponseEntity<LearningDtos.WrongQuestionRedoResult> redo(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String wrongQuestionId,
+            @Valid @RequestBody LearningDtos.RedoWrongQuestionRequest request) {
+        var value = learning.redoWrongQuestion(
+                LearningIdentity.learner(userId, roles, permissions).userId(), wrongQuestionId, request);
+        return value.created() ? ResponseEntity.status(201).body(value.result()) : ResponseEntity.ok(value.result());
+    }
+
+    @PostMapping("/api/v1/learning/assessments/{assessmentId}/media/{mediaId}/access-grants")
+    /** 以测评访问/attempt owner 事实换取单个冻结题目媒体的短期授权。 */
+    public ResponseEntity<LearningDtos.MediaAccessGrant> assessmentMedia(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @PathVariable String mediaId,
+            @Valid @RequestBody LearningDtos.CreateAssessmentMediaAccessGrantRequest request,
+            HttpServletRequest servlet) {
+        return ResponseEntity.status(201).body(learning.assessmentMediaAccess(
+                LearningIdentity.learner(userId, roles, permissions).userId(), assessmentId, mediaId,
+                request, trace(servlet)));
     }
 
     private static String trace(HttpServletRequest request) {

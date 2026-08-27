@@ -268,6 +268,21 @@ class GatewayRouteSecurityTest {
         client.get().uri("/api/v1/learning/enrollments")
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STUDENT", "teaching:access")))
                 .exchange().expectStatus().isForbidden();
+
+        client.get().uri("/api/v1/learning/attempts/00000000-0000-4000-8000-000000000201/draft")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STAFF", "learning:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("STAFF");
+        client.post().uri("/api/v1/learning/assessments/00000000-0000-4000-8000-000000000202/media/"
+                        + "00000000-0000-4000-8000-000000000203/access-grants")
+                .header("Content-Type", "application/json")
+                .bodyValue("{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STUDENT", "learning:access")))
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.route").isEqualTo("learning");
+        client.post().uri("/api/v1/learning/wrong-questions/00000000-0000-4000-8000-000000000204/redos")
+                .header("Content-Type", "application/json").bodyValue("{}")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STUDENT", "teaching:access")))
+                .exchange().expectStatus().isForbidden();
     }
 
     private String token(Instant issuedAt, Instant expiresAt) {

@@ -430,3 +430,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 调整结论：新增最小 T11A“测评前端契约闭环”，先以 OpenAPI 为事实源补齐上述读写与短期媒体授权，再向前演进 Learning/Media/Gateway 和生成客户端；不拆 learning-service，不引入第二套 OSS 客户端，不实现 Vue、监考、复杂防作弊或无限重考。T09B 与 T11 均已合并，T11A 前置满足；T12B 改为依赖 T11A 和已合并的 T12A。
 - 后续验收重点：T11A 必须验证列表状态与刷新恢复、一次性提交/有限重做边界、考试时间由服务端裁决、归档后本人结果可读且答案发布策略不泄漏、错题 owner/掌握幂等，以及教师私有题媒体仅对获授权测评学习者短期可读；401/403/404/409/422/429/503 与媒体令牌防重放保持现有安全语义。
 - 数据：本次总控只执行 Git 合并、只读代码/契约审计和文档规划，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。
+
+## 2026-08-27 T11A 测评前端契约闭环
+
+- 契约优先：OpenAPI 从 0.14.0 向前演进到 0.15.0 后才实现服务端并重新生成客户端。学习者列表现在返回服务端时间、当前 attempt ID/状态、参与状态、恢复/结果布尔值；新增草稿恢复、归档结果安全试卷、错题详情/掌握/最多三次重做和测评题目媒体授权。创建/更新/摘要补齐仅 EXAM 可用的开放、截止和限时字段。
+- 时间与不可变性：开始作答时冻结 `startedAt/deadlineAt`，deadline 取全局截止与开始+限时较早者；开放前、截止后和草稿超时均由服务端拒绝。超时提交忽略客户端后补答案，仅结算最后保存草稿。提交仍只成功一次；错题重做是独立不可变记录，不修改或重开原 attempt。
+- 权限与防泄漏：列表/草稿/结果/错题均按本人，教师组卷/发布/批改按 owner；归档或取消报名后本人仍可按历史 attempt 读取自包含安全结果。学习者题目 DTO 不含答案、解析或评分规则，结果答案继续服从公布策略。测试覆盖他人 404、报名/测评访问、409 revision/重复提交、422 输入和依赖 503；401/403/429 由 Gateway/统一 OpenAPI 边界保持。
+- 媒体授权：Learning 只从冻结试卷确认 mediaId/用途并复用既有 `HttpMediaClient`，不接 OSS SDK。内部 JWT 绑定 learning issuer、audience、visitor、mediaId、用途、`ASSESSMENT_QUESTION`、`ORIGINAL`、disposition、traceId、jti；Media 将 course/learning issuer 与各自 accessType 严格绑定并用既有 nonce 表防重放。浏览器只获得短期读 grant，永不获得服务 JWT、密钥、Bucket 或 Object Key。
+- 数据演进：新增 Learning V10，补 `assessment` 时间、`assessment_attempt` 开始/截止、`wrong_question` 掌握/revision/重做计数和 `wrong_question_redo`；不修改已合并迁移，不新增跨 Schema 外键/查询/Join。真实 MySQL 与真实 OSS/RabbitMQ 验收的最终结果、精确 Fixture/清理见 `docs/delivery/T11A-assessment-ui-contract.md`。
+- 自动化：完整 Java Reactor 8 模块通过；Gateway 12/12、Learning 52 项（4 个真实项按开关跳过）、Media 25 项（4 个真实项按开关跳过）无失败。OpenAPI 客户端重新生成，前端 8 workspace 类型检查、23 文件 140 项测试和三端构建通过。真实 MySQL 验收 4 项中 3 项通过、旧 root 用例跳过；隔离的真实题图 MySQL/OSS/learning issuer/jti 重放验收 1/1 通过。完整 Media 综合真实用例仍在既有 RabbitMQ unacked-redelivery 时序断言失败，关键 T11A 链路已在该断言之外独立通过，未将综合用例误记为全绿。
+- 边界：没有实现 T12B Vue 页面、监考、复杂防作弊、无限重考、第二套媒体客户端、支付、LLM 判分、hash gate、baseline、contract freeze 或额外限流器。T12B 必须等待本 PR 合并，只消费生成客户端并遵守既有四条测评路由职责。
+- 发布：关键实现提交 `f3c6801` 已推送，Ready [PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32) 已创建；本任务不自行合并。

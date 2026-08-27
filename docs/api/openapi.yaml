@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.14.0
-  description: T11 Gateway contract. Adds capability-based enrollment, monotonic lesson progress, owned notes, immutable assessment snapshots, draft/submission/grading/result/wrong-question flows and teacher-scoped learning projections. Learner assessment reads never expose answers, analyses or scoring rules before the configured publication policy allows them.
+  version: 0.15.0
+  description: T11A Gateway contract. Closes refresh-safe learner assessment state, server-authoritative EXAM timing, archived immutable result projections, bounded wrong-question redo/mastery and assessment-fact-based short-lived media authorization. Learner reads never expose answers, analyses or scoring rules before the configured publication policy allows them.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -1513,10 +1513,12 @@ paths:
           in: query
           schema: {type: string, format: uuid}
       responses:
-        '200': {description: Available assessments ordered by publish time descending., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentPage'}}}}
+        '200': {description: Available assessments with refresh-safe participation and current-attempt state, ordered by publish time descending., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerAssessmentPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/learning/assessments/{assessmentId}:
     get:
       tags: [Assessments]
@@ -1525,15 +1527,19 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AssessmentId'
       responses:
-        '200': {description: Learner-safe paper snapshot., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerAssessment'}}}}
+        '200': {description: Learner-safe paper snapshot with server time and effective attempt deadline. Before the open time or without assessment access, no paper content is returned., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerAssessment'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/learning/assessments/{assessmentId}/attempts:
     post:
       tags: [Assessments]
       operationId: startAssessmentAttempt
       summary: Idempotently start or return the current learner's draft attempt
+      description: The service checks assessment access, opensAt/closesAt and its own clock before creating a draft. For EXAM, deadlineAt is frozen as the earlier of closesAt and startedAt plus timeLimitSeconds. A submitted or graded immutable attempt is never reopened.
       parameters:
         - $ref: '#/components/parameters/AssessmentId'
       requestBody:
@@ -1546,11 +1552,28 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/learning/attempts/{attemptId}/draft:
+    get:
+      tags: [Assessments]
+      operationId: getAttemptDraft
+      summary: Restore the current learner's mutable draft and server-authoritative deadline
+      description: Returns only an owned, unexpired DRAFT attempt. Once submitted or graded, clients use the immutable result endpoint; once timed out, clients must call the submission endpoint so the service can finalize the last saved answers and cannot restore a writable draft.
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+      responses:
+        '200': {description: Refresh-safe draft, current server time and frozen effective deadline., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptDraft'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
     put:
       tags: [Assessments]
       operationId: saveAttemptDraft
-      summary: Idempotently replace the current learner's answer draft
+      summary: Idempotently replace the current learner's answer draft before the service deadline
       parameters:
         - $ref: '#/components/parameters/AttemptId'
       requestBody:
@@ -1563,12 +1586,13 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/learning/attempts/{attemptId}/submission:
     post:
       tags: [Assessments]
       operationId: submitAttempt
       summary: Submit once and transactionally auto-grade reliable objective answers
-      description: An identical clientRequestId and final answer set returns the original result. A different retry or concurrent conflicting submission returns 409. Short-answer and non-standard fill answers wait for manual grading.
+      description: An identical clientRequestId and final answer set returns the original result. A different retry or concurrent conflicting submission returns 409. The service rejects a client-clock-based extension and atomically finalizes a timed-out draft from its last saved answers. Short-answer and non-standard fill answers wait for manual grading.
       parameters:
         - $ref: '#/components/parameters/AttemptId'
       requestBody:
@@ -1581,6 +1605,7 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/learning/attempts/{attemptId}/result:
     get:
       tags: [Assessments]
@@ -1589,10 +1614,11 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AttemptId'
       responses:
-        '200': {description: Result. correctAnswer and analysis are null until the publication policy permits disclosure., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptResult'}}}}
+        '200': {description: Self-contained immutable result that remains readable after assessment archival. Question content is always safe; correctAnswer and analysis are null until the publication policy permits disclosure., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptResult'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/learning/wrong-questions:
     get:
       tags: [Assessments]
@@ -1605,9 +1631,83 @@ paths:
           in: query
           schema: {type: string, format: uuid}
       responses:
-        '200': {description: Wrong questions ordered by lastWrongAt descending., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestionPage'}}}}
+        '200': {description: Wrong questions with immutable safe content, mastery and bounded redo state, ordered by lastWrongAt descending., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestionPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/wrong-questions/{wrongQuestionId}:
+    get:
+      tags: [Assessments]
+      operationId: getWrongQuestion
+      summary: Get one owned wrong question with immutable safe content and redo history
+      parameters:
+        - $ref: '#/components/parameters/WrongQuestionId'
+      responses:
+        '200': {description: Owned wrong-question detail., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestion'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/wrong-questions/{wrongQuestionId}/mastery:
+    put:
+      tags: [Assessments]
+      operationId: updateWrongQuestionMastery
+      summary: Idempotently update the learner-owned mastery state using optimistic revision
+      parameters:
+        - $ref: '#/components/parameters/WrongQuestionId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UpdateWrongQuestionMasteryRequest'}}}
+      responses:
+        '200': {description: Updated wrong-question projection., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestion'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/wrong-questions/{wrongQuestionId}/redos:
+    post:
+      tags: [Assessments]
+      operationId: redoWrongQuestion
+      summary: Submit one independent bounded redo without reopening the original assessment attempt
+      description: Each wrong-question record permits at most three immutable redo submissions. The same clientRequestId and answer is replay-safe; a conflicting reuse, stale revision or exhausted allowance returns 409. The response reveals correctness and score but never bypasses the assessment answer-publication policy for correctAnswer or analysis.
+      parameters:
+        - $ref: '#/components/parameters/WrongQuestionId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RedoWrongQuestionRequest'}}}
+      responses:
+        '201': {description: Independent redo recorded., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestionRedoResult'}}}}
+        '200': {description: Identical redo replay returned., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestionRedoResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/assessments/{assessmentId}/media/{mediaId}/access-grants:
+    post:
+      tags: [Assessments]
+      operationId: createAssessmentMediaAccessGrant
+      summary: Authorize short-lived assessment question media after learning-domain access checks
+      description: learning-service proves current published assessment access or ownership of an existing attempt/result, verifies the mediaId is frozen in that assessment snapshot, and exchanges a short-lived one-time service token with media-service. The browser cannot assert media ownership, purpose, storage key or visibility and never receives the service token.
+      parameters:
+        - $ref: '#/components/parameters/AssessmentId'
+        - $ref: '#/components/parameters/MediaId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CreateAssessmentMediaAccessGrantRequest'}}}
+      responses:
+        '201': {description: Short-lived media read grant., content: {application/json: {schema: {$ref: '#/components/schemas/MediaAccessGrant'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/MediaConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
   /api/v1/teacher/assessments:
     get:
       tags: [Teacher Assessments]
@@ -2188,6 +2288,11 @@ components:
       schema: {type: string, format: uuid}
     AttemptId:
       name: attemptId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    WrongQuestionId:
+      name: wrongQuestionId
       in: path
       required: true
       schema: {type: string, format: uuid}
@@ -4153,10 +4258,14 @@ components:
     AttemptStatus:
       type: string
       enum: [DRAFT, SUBMITTED, PARTIALLY_GRADED, GRADED]
+    LearnerAssessmentState:
+      type: string
+      description: Safe participation state derived from the service clock, assessment window and the current learner's single immutable attempt.
+      enum: [NOT_OPEN, AVAILABLE, IN_PROGRESS, SUBMITTED, PARTIALLY_GRADED, GRADED, CLOSED]
     CreateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, courseId, lessonId, title, description, type, answerPublicationPolicy]
+      required: [clientRequestId, courseId, lessonId, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         clientRequestId: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -4165,16 +4274,32 @@ components:
         description: {type: string, maxLength: 5000}
         type: {$ref: '#/components/schemas/AssessmentType'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
+        opensAt:
+          type: [string, 'null']
+          format: date-time
+          description: Optional server-enforced EXAM open time. Must be null for other assessment types.
+        closesAt:
+          type: [string, 'null']
+          format: date-time
+          description: Optional server-enforced EXAM close time and must be later than opensAt when both are present. Must be null for other types.
+        timeLimitSeconds:
+          type: [integer, 'null']
+          minimum: 60
+          maximum: 28800
+          description: Optional EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt. Must be null for other types.
     UpdateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [expectedRevision, title, description, type, answerPublicationPolicy]
+      required: [expectedRevision, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         title: {type: string, minLength: 1, maxLength: 160}
         description: {type: string, maxLength: 5000}
         type: {$ref: '#/components/schemas/AssessmentType'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
+        opensAt: {type: [string, 'null'], format: date-time}
+        closesAt: {type: [string, 'null'], format: date-time}
+        timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
     AssessmentQuestionInput:
       type: object
       additionalProperties: false
@@ -4204,7 +4329,7 @@ components:
     AssessmentSummary:
       type: object
       additionalProperties: false
-      required: [id, courseId, lessonId, title, type, status, answerPublicationPolicy, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
+      required: [id, courseId, lessonId, title, type, status, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -4213,6 +4338,9 @@ components:
         type: {$ref: '#/components/schemas/AssessmentType'}
         status: {$ref: '#/components/schemas/AssessmentStatus'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
+        opensAt: {type: [string, 'null'], format: date-time}
+        closesAt: {type: [string, 'null'], format: date-time}
+        timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
         questionCount: {type: integer, minimum: 0}
         totalPoints: {type: number, minimum: 0}
         revision: {type: integer, format: int64, minimum: 0}
@@ -4228,6 +4356,48 @@ components:
         page: {type: integer, minimum: 1}
         size: {type: integer, minimum: 1, maximum: 100}
         total: {type: integer, format: int64, minimum: 0}
+    AttemptSummary:
+      type: object
+      additionalProperties: false
+      required: [id, status, revision, startedAt, deadlineAt, submittedAt, gradedAt]
+      properties:
+        id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/AttemptStatus'}
+        revision: {type: integer, format: int64, minimum: 0}
+        startedAt: {type: string, format: date-time}
+        deadlineAt: {type: [string, 'null'], format: date-time}
+        submittedAt: {type: [string, 'null'], format: date-time}
+        gradedAt: {type: [string, 'null'], format: date-time}
+    LearnerAssessmentSummary:
+      allOf:
+        - $ref: '#/components/schemas/AssessmentSummary'
+        - type: object
+          required: [learnerState, currentAttempt, resumeAllowed, resultAvailable]
+          properties:
+            learnerState: {$ref: '#/components/schemas/LearnerAssessmentState'}
+            currentAttempt:
+              oneOf:
+                - $ref: '#/components/schemas/AttemptSummary'
+                - type: 'null'
+            resumeAllowed:
+              type: boolean
+              description: True only while the owned attempt is DRAFT and the server deadline has not passed.
+            resultAvailable:
+              type: boolean
+              description: True for submitted, partially graded or graded attempts, including after assessment archival.
+    LearnerAssessmentPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total, serverTime]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/LearnerAssessmentSummary'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+        serverTime:
+          type: string
+          format: date-time
+          description: Authoritative response-generation time for display calibration only; all availability decisions remain server-side.
     LearnerAssessmentQuestion:
       type: object
       additionalProperties: false
@@ -4248,10 +4418,15 @@ components:
         - $ref: '#/components/schemas/AssessmentSummary'
         - type: object
           additionalProperties: false
-          required: [description, questions]
+          required: [description, questions, serverTime, currentAttempt]
           properties:
             description: {type: string}
             questions: {type: array, items: {$ref: '#/components/schemas/LearnerAssessmentQuestion'}}
+            serverTime: {type: string, format: date-time}
+            currentAttempt:
+              oneOf:
+                - $ref: '#/components/schemas/AttemptSummary'
+                - type: 'null'
     TeacherAssessmentQuestion:
       type: object
       additionalProperties: false
@@ -4306,13 +4481,19 @@ components:
     AttemptDraft:
       type: object
       additionalProperties: false
-      required: [id, assessmentId, status, revision, answers, createdAt, updatedAt]
+      required: [id, assessmentId, status, revision, answers, startedAt, deadlineAt, serverTime, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
         status: {$ref: '#/components/schemas/AttemptStatus'}
         revision: {type: integer, format: int64, minimum: 0}
         answers: {type: array, items: {$ref: '#/components/schemas/AttemptAnswerInput'}}
+        startedAt: {type: string, format: date-time}
+        deadlineAt:
+          type: [string, 'null']
+          format: date-time
+          description: Frozen effective deadline decided by the service; null means no time limit or close time.
+        serverTime: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
     AttemptAnswerResult:
@@ -4335,7 +4516,7 @@ components:
     AttemptResult:
       type: object
       additionalProperties: false
-      required: [attemptId, assessmentId, learnerId, status, revision, score, totalPoints, submittedAt, gradedAt, answers]
+      required: [attemptId, assessmentId, learnerId, status, revision, score, totalPoints, submittedAt, gradedAt, assessment, answers]
       properties:
         attemptId: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
@@ -4346,7 +4527,25 @@ components:
         totalPoints: {type: number, minimum: 0}
         submittedAt: {type: [string, 'null'], format: date-time}
         gradedAt: {type: [string, 'null'], format: date-time}
+        assessment: {$ref: '#/components/schemas/AttemptResultAssessment'}
         answers: {type: array, items: {$ref: '#/components/schemas/AttemptAnswerResult'}}
+    AttemptResultAssessment:
+      type: object
+      additionalProperties: false
+      description: Immutable self-contained assessment projection read from the frozen paper snapshot, never from the question bank current pointer or published-only list.
+      required: [id, courseId, lessonId, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questions]
+      properties:
+        id: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: [string, 'null'], format: uuid}
+        title: {type: string}
+        description: {type: string}
+        type: {$ref: '#/components/schemas/AssessmentType'}
+        answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
+        opensAt: {type: [string, 'null'], format: date-time}
+        closesAt: {type: [string, 'null'], format: date-time}
+        timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
+        questions: {type: array, items: {$ref: '#/components/schemas/LearnerAssessmentQuestion'}}
     ManualGradeItem:
       type: object
       additionalProperties: false
@@ -4375,15 +4574,65 @@ components:
     WrongQuestion:
       type: object
       additionalProperties: false
-      required: [id, courseId, assessmentId, questionVersionId, wrongCount, firstWrongAt, lastWrongAt]
+      required: [id, courseId, assessmentId, questionVersionId, wrongCount, masteryStatus, revision, redoAttemptsUsed, redoAttemptsLimit, redoAvailable, question, redoHistory, firstWrongAt, lastWrongAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
         questionVersionId: {type: string, format: uuid}
         wrongCount: {type: integer, minimum: 1}
+        masteryStatus: {$ref: '#/components/schemas/WrongQuestionMasteryStatus'}
+        revision: {type: integer, format: int64, minimum: 0}
+        redoAttemptsUsed: {type: integer, minimum: 0, maximum: 3}
+        redoAttemptsLimit: {type: integer, const: 3}
+        redoAvailable: {type: boolean}
+        question:
+          $ref: '#/components/schemas/LearnerAssessmentQuestion'
+          description: Immutable learner-safe question snapshot from the original assessment; it contains no correct answer or analysis.
+        redoHistory:
+          type: array
+          maxItems: 3
+          items: {$ref: '#/components/schemas/WrongQuestionRedoResult'}
         firstWrongAt: {type: string, format: date-time}
         lastWrongAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    WrongQuestionMasteryStatus:
+      type: string
+      enum: [LEARNING, MASTERED]
+    UpdateWrongQuestionMasteryRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, masteryStatus]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        masteryStatus: {$ref: '#/components/schemas/WrongQuestionMasteryStatus'}
+    RedoWrongQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, answer]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        answer:
+          type: array
+          maxItems: 50
+          items: {type: string, maxLength: 20000}
+    WrongQuestionRedoResult:
+      type: object
+      additionalProperties: false
+      required: [id, wrongQuestionId, sequence, submittedAnswer, score, correct, submittedAt, replayed]
+      properties:
+        id: {type: string, format: uuid}
+        wrongQuestionId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1, maximum: 3}
+        submittedAnswer: {type: array, items: {type: string}}
+        score: {type: [number, 'null'], minimum: 0}
+        correct:
+          type: [boolean, 'null']
+          description: Null for a subjective question that cannot be reliably auto-graded; such a redo still consumes one of the three bounded attempts.
+        submittedAt: {type: string, format: date-time}
+        replayed: {type: boolean}
     WrongQuestionPage:
       type: object
       additionalProperties: false
@@ -4431,6 +4680,19 @@ components:
           description: Used only during this call; media-service must not persist or log it.
         scope:
           $ref: '#/components/schemas/MediaAssetScope'
+    CreateAssessmentMediaAccessGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [variant, disposition]
+      properties:
+        variant:
+          type: string
+          const: ORIGINAL
+          description: T11A assessment question media uses the frozen original READY asset; the browser cannot select an arbitrary derived variant.
+        disposition:
+          type: string
+          enum: [INLINE, ATTACHMENT]
+          description: QUESTION_IMAGE and QUESTION_AUDIO require INLINE; QUESTION_ATTACHMENT requires ATTACHMENT. The service derives and validates the exact purpose from the assessment snapshot.
     MediaPurpose:
       type: string
       description: Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.

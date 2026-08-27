@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,16 +24,20 @@ class HttpMediaClientTest {
     private String observedRoles;
     private String observedPermissions;
     private String observedTransferBody;
+    private String observedAuthorization;
+    private String observedInternalBody;
 
     @BeforeEach
     void start() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handle); server.start();
         LearningProperties properties = new LearningProperties(new LearningProperties.Media(
-                "http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(2)),
+                "http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(2),
+                "edu-learning-service", "edu-media-service", Duration.ofSeconds(30),
+                "test-assessment-media-secret-32-bytes-minimum"),
                 new LearningProperties.Course("http://127.0.0.1:8082", Duration.ofSeconds(2)),
                 new LearningProperties.ImportSettings(1024, Duration.ofHours(1), false, Duration.ofSeconds(1), Duration.ofSeconds(1), 3));
-        client = new HttpMediaClient(properties);
+        client = new HttpMediaClient(properties, new AssessmentMediaAuthorizationIssuer(properties));
     }
 
     @AfterEach void stop() { server.stop(0); }
@@ -62,6 +68,23 @@ class HttpMediaClientTest {
         assertThat(observedTransferBody).contains("\"scope\":\"SYSTEM\"");
     }
 
+    @Test
+    void assessmentAccessUsesLearningIssuerAndBindsTheInternalRequest() {
+        var grant = client.issueAssessmentAccess("00000000-0000-4000-8000-000000000406",
+                "00000000-0000-4000-8000-000000009102", "QUESTION_IMAGE",
+                com.eduplatform.learning.web.LearningDtos.MediaDisposition.INLINE, "trace-assessment-media");
+        assertThat(grant.method()).isEqualTo("GET");
+        assertThat(observedAuthorization).startsWith("Bearer ");
+        var decoder = NimbusJwtDecoder.withSecretKey(new SecretKeySpec(
+                "test-assessment-media-secret-32-bytes-minimum".getBytes(StandardCharsets.UTF_8), "HmacSHA256")).build();
+        var jwt = decoder.decode(observedAuthorization.substring(7));
+        assertThat(jwt.getClaimAsString("iss")).isEqualTo("edu-learning-service");
+        assertThat(jwt.getClaimAsString("accessType")).isEqualTo("ASSESSMENT_QUESTION");
+        assertThat(jwt.getClaimAsString("mediaId")).isEqualTo("00000000-0000-4000-8000-000000000406");
+        assertThat(observedInternalBody).contains("\"visitorId\":\"00000000-0000-4000-8000-000000009102\"",
+                "\"purpose\":\"QUESTION_IMAGE\"", "\"variant\":\"ORIGINAL\"", "\"disposition\":\"INLINE\"");
+    }
+
     private void assertNotBindable(String id, String reason) {
         assertThatThrownBy(() -> client.requireBindable(id, "QUESTION_IMAGE",
                 "00000000-0000-4000-8000-000000009101", "trace-bind"))
@@ -74,6 +97,12 @@ class HttpMediaClientTest {
     private void handle(HttpExchange exchange) throws IOException {
         byte[] requestBody = exchange.getRequestBody().readAllBytes(); String path = exchange.getRequestURI().getPath();
         if (path.equals("/download")) { respond(exchange, 200, "type,difficulty"); return; }
+        if (path.startsWith("/internal/v1/media/")) {
+            observedAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+            observedInternalBody = new String(requestBody, StandardCharsets.UTF_8);
+            respond(exchange, 201, "{\"method\":\"GET\",\"url\":\"https://fixture.invalid/private\","
+                    + "\"headers\":{},\"expiresAt\":\"2026-08-27T10:00:00Z\"}"); return;
+        }
         if (path.equals("/api/v1/media/external-image-transfers")) {
             observedRoles = exchange.getRequestHeaders().getFirst("X-User-Roles");
             observedPermissions = exchange.getRequestHeaders().getFirst("X-User-Permissions");

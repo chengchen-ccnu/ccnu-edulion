@@ -3,6 +3,8 @@ package com.eduplatform.learning;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.eduplatform.learning.course.CourseFactsClient;
@@ -55,6 +57,7 @@ class LearningAssessmentIntegrationTest {
     @BeforeEach
     void reset() {
         jdbc.update("DELETE FROM manual_grading_record");
+        jdbc.update("DELETE FROM wrong_question_redo");
         jdbc.update("DELETE FROM wrong_question_occurrence");
         jdbc.update("DELETE FROM wrong_question");
         jdbc.update("DELETE FROM assessment_answer");
@@ -198,7 +201,7 @@ class LearningAssessmentIntegrationTest {
         var created = service.createAssessment(TEACHER_AS_LEARNER,
                 new LearningDtos.CreateAssessmentRequest(UUID.randomUUID(), UUID.fromString(COURSE),
                         UUID.fromString(LESSON), "快照测评", "验证题目范围", LearningDtos.AssessmentType.PRACTICE,
-                        LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION), "trace-create");
+                        LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION, null, null, null), "trace-create");
         var selected = service.replaceQuestions(TEACHER_AS_LEARNER, created.assessment().id(),
                 new LearningDtos.ReplaceQuestionsRequest(0, List.of(
                         new LearningDtos.AssessmentQuestionInput(UUID.fromString(systemVersion), 1, BigDecimal.ONE),
@@ -230,12 +233,170 @@ class LearningAssessmentIntegrationTest {
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
     }
 
+    @Test
+    void refreshRecoveryUsesServerDeadlineAndArchivedResultRemainsReadableWithoutAnswers() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-enroll-exam");
+        Instant now = Instant.now();
+        repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
+                "限时考试", "服务端裁决时间", LearningDtos.AssessmentType.EXAM,
+                LearningDtos.AssessmentStatus.PUBLISHED, LearningDtos.AnswerPublicationPolicy.NEVER,
+                now.plusSeconds(60), now.plusSeconds(600), 120, 1, now, null, now, now));
+        repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
+        addQuestion("00000000-0000-4000-8000-000000016001", 1, QuestionModels.Type.SINGLE_CHOICE,
+                List.of("A"), "不得公开的考试解析");
+
+        var notOpen = service.learnerAssessments(LEARNER, COURSE, 1, 20).items().get(0);
+        assertThat(notOpen.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.NOT_OPEN);
+        assertThat(notOpen.currentAttempt()).isNull();
+        assertThatThrownBy(() -> service.learnerAssessment(LEARNER, ASSESSMENT))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_NOT_OPEN");
+                });
+
+        jdbc.update("UPDATE assessment SET opens_at=? WHERE id=?",
+                java.sql.Timestamp.from(now.minusSeconds(1)), ASSESSMENT);
+        var started = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        assertThat(started.deadlineAt()).isAfter(started.startedAt()).isBeforeOrEqualTo(started.startedAt().plusSeconds(120));
+        var inProgress = service.learnerAssessments(LEARNER, COURSE, 1, 20).items().get(0);
+        assertThat(inProgress.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.IN_PROGRESS);
+        assertThat(inProgress.currentAttempt().id()).isEqualTo(started.id());
+        assertThat(inProgress.resumeAllowed()).isTrue();
+        assertThat(service.getDraft(LEARNER, started.id()).id()).isEqualTo(started.id());
+
+        var saved = service.saveDraft(LEARNER, started.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), 0, List.of(answer("00000000-0000-4000-8000-000000016001", "B"))));
+        jdbc.update("UPDATE assessment_attempt SET deadline_at=? WHERE id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), started.id());
+        assertThatThrownBy(() -> service.getDraft(LEARNER, started.id()))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.ATTEMPT_DEADLINE_PASSED");
+                });
+        var submitted = service.submit(LEARNER, started.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), saved.revision(), List.of(answer("00000000-0000-4000-8000-000000016001", "A"))));
+        assertThat(submitted.score()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(submitted.answers().get(0).submittedAnswer()).containsExactly("B");
+        assertThat(submitted.answers().get(0).correctAnswer()).isNull();
+        assertThat(mapper.writeValueAsString(submitted)).doesNotContain("不得公开的考试解析");
+
+        service.publication(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.UpdatePublicationRequest(1, LearningDtos.AssessmentStatus.ARCHIVED),
+                "trace-archive-exam");
+        jdbc.update("UPDATE enrollment SET status='CANCELED',canceled_at=? WHERE learner_id=? AND course_id=?",
+                java.sql.Timestamp.from(Instant.now()), LEARNER, COURSE);
+        var archived = service.learnerResult(LEARNER, started.id());
+        assertThat(archived.assessment().title()).isEqualTo("限时考试");
+        assertThat(archived.assessment().questions()).hasSize(1);
+        var archivedList = service.learnerAssessments(LEARNER, COURSE, 1, 20).items().get(0);
+        assertThat(archivedList.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.GRADED);
+        assertThat(archivedList.resultAvailable()).isTrue();
+        assertThat(archivedList.resumeAllowed()).isFalse();
+    }
+
+    @Test
+    void wrongQuestionMasteryAndThreeImmutableRedosNeverReopenSubmittedAttempt() {
+        service.enroll(LEARNER, COURSE, "trace-enroll-redo");
+        seedPublishedAssessment();
+        var draft = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        List<LearningDtos.AnswerInput> answers = List.of(
+                answer("00000000-0000-4000-8000-000000014001", "B"),
+                answer("00000000-0000-4000-8000-000000014002", "A", "C"),
+                answer("00000000-0000-4000-8000-000000014003", "TRUE"),
+                answer("00000000-0000-4000-8000-000000014004", "a b"),
+                answer("00000000-0000-4000-8000-000000014005", "过程"));
+        var submitted = service.submit(LEARNER, draft.id(),
+                new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), 0, answers));
+        var wrong = service.wrongQuestions(LEARNER, COURSE, 1, 20).items().get(0);
+        String wrongId = wrong.id();
+        assertThat(wrong.question().id()).isEqualTo("00000000-0000-4000-8000-000000014001");
+        assertThat(service.wrongQuestion(LEARNER, wrongId).question().stem()).contains("测试题干");
+        assertThatThrownBy(() -> service.wrongQuestion(OTHER, wrongId))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        UUID masteryRequest = UUID.randomUUID();
+        long learningRevision = wrong.revision();
+        wrong = service.updateWrongQuestionMastery(LEARNER, wrongId,
+                new LearningDtos.UpdateWrongQuestionMasteryRequest(masteryRequest, learningRevision,
+                        LearningDtos.WrongQuestionMasteryStatus.MASTERED));
+        assertThat(wrong.masteryStatus()).isEqualTo(LearningDtos.WrongQuestionMasteryStatus.MASTERED);
+        assertThat(service.updateWrongQuestionMastery(LEARNER, wrongId,
+                new LearningDtos.UpdateWrongQuestionMasteryRequest(masteryRequest, learningRevision,
+                        LearningDtos.WrongQuestionMasteryStatus.MASTERED)).revision()).isEqualTo(wrong.revision());
+        assertThatThrownBy(() -> service.updateWrongQuestionMastery(LEARNER, wrongId,
+                new LearningDtos.UpdateWrongQuestionMasteryRequest(UUID.randomUUID(), 0,
+                        LearningDtos.WrongQuestionMasteryStatus.LEARNING)))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(409));
+
+        UUID firstRequest = UUID.randomUUID();
+        var firstRedo = service.redoWrongQuestion(LEARNER, wrongId,
+                new LearningDtos.RedoWrongQuestionRequest(firstRequest, wrong.revision(), List.of("A")));
+        assertThat(firstRedo.created()).isTrue();
+        assertThat(firstRedo.result().correct()).isTrue();
+        assertThat(service.redoWrongQuestion(LEARNER, wrongId,
+                new LearningDtos.RedoWrongQuestionRequest(firstRequest, wrong.revision(), List.of("A"))).created()).isFalse();
+        for (int sequence = 2; sequence <= 3; sequence++) {
+            wrong = service.wrongQuestion(LEARNER, wrongId);
+            service.redoWrongQuestion(LEARNER, wrongId, new LearningDtos.RedoWrongQuestionRequest(
+                    UUID.randomUUID(), wrong.revision(), List.of("A")));
+        }
+        wrong = service.wrongQuestion(LEARNER, wrongId);
+        assertThat(wrong.redoAttemptsUsed()).isEqualTo(3);
+        assertThat(wrong.redoHistory()).extracting(LearningDtos.WrongQuestionRedoResult::sequence)
+                .containsExactly(1, 2, 3);
+        long exhaustedRevision = wrong.revision();
+        assertThatThrownBy(() -> service.redoWrongQuestion(LEARNER, wrongId,
+                new LearningDtos.RedoWrongQuestionRequest(UUID.randomUUID(), exhaustedRevision, List.of("A"))))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.WRONG_QUESTION_REDO_EXHAUSTED");
+                });
+        assertThat(service.learnerResult(LEARNER, draft.id()).status()).isEqualTo(submitted.status());
+        assertThat(jdbc.queryForObject("SELECT status FROM assessment_attempt WHERE id=?", String.class, draft.id()))
+                .isEqualTo("PARTIALLY_GRADED");
+    }
+
+    @Test
+    void assessmentMediaGrantUsesFrozenAccessFactAndExactDisposition() {
+        service.enroll(LEARNER, COURSE, "trace-enroll-media");
+        seedMediaAssessment();
+        String mediaId = "00000000-0000-4000-8000-000000017901";
+        var expected = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/private-image", java.util.Map.of(),
+                Instant.now().plusSeconds(30));
+        when(media.issueAssessmentAccess(eq(mediaId), eq(LEARNER), eq("QUESTION_IMAGE"),
+                eq(LearningDtos.MediaDisposition.INLINE), anyString())).thenReturn(expected);
+        var grant = service.assessmentMediaAccess(LEARNER, ASSESSMENT, mediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-assessment-media");
+        assertThat(grant.url()).isEqualTo(expected.url());
+        verify(media).issueAssessmentAccess(eq(mediaId), eq(LEARNER), eq("QUESTION_IMAGE"),
+                eq(LearningDtos.MediaDisposition.INLINE), eq("trace-assessment-media"));
+        assertThatThrownBy(() -> service.assessmentMediaAccess(LEARNER, ASSESSMENT, mediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.ATTACHMENT),
+                "trace-wrong-disposition"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(422));
+        assertThatThrownBy(() -> service.assessmentMediaAccess(OTHER, ASSESSMENT, mediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-other-media"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        service.publication(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.UpdatePublicationRequest(1, LearningDtos.AssessmentStatus.ARCHIVED), "trace-archive-media");
+        jdbc.update("UPDATE enrollment SET status='CANCELED' WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
+        assertThat(service.assessmentMediaAccess(LEARNER, ASSESSMENT, mediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-historical-media").url()).isEqualTo(expected.url());
+    }
+
     private void seedPublishedAssessment() {
         Instant now = Instant.now();
         repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
                 "综合测评", "包含客观题与解答题", LearningDtos.AssessmentType.HOMEWORK,
                 LearningDtos.AssessmentStatus.PUBLISHED, LearningDtos.AnswerPublicationPolicy.AFTER_GRADED,
-                1, now, null, now, now));
+                null, null, null, 1, now, null, now, now));
         repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
         addQuestion("00000000-0000-4000-8000-000000014001", 1, QuestionModels.Type.SINGLE_CHOICE,
                 List.of("A"), "单选解析");
@@ -247,6 +408,26 @@ class LearningAssessmentIntegrationTest {
                 List.of("a b"), "填空解析");
         addQuestion("00000000-0000-4000-8000-000000014005", 5, QuestionModels.Type.SHORT_ANSWER,
                 List.of("标准过程"), "解答解析");
+    }
+
+    private void seedMediaAssessment() {
+        Instant now = Instant.now();
+        repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
+                "图片测评", "私有题目图片", LearningDtos.AssessmentType.PRACTICE,
+                LearningDtos.AssessmentStatus.PUBLISHED, LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION,
+                null, null, null, 1, now, null, now, now));
+        repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
+        QuestionDtos.VersionResponse snapshot = new QuestionDtos.VersionResponse(
+                UUID.randomUUID().toString(), 1, QuestionModels.Type.SINGLE_CHOICE,
+                QuestionModels.Difficulty.MEDIUM, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
+                QuestionModels.Subject.MATHEMATICS, "带私有图片的题目", List.of(
+                        new QuestionDtos.OptionInput("A", "选项 A")), List.of("A"), "解析", List.of(),
+                List.of(new QuestionDtos.MediaResponse(UUID.randomUUID().toString(),
+                        "00000000-0000-4000-8000-000000017901", QuestionModels.MediaPurpose.QUESTION_IMAGE, 1)),
+                null, List.of(), now);
+        repository.insertAssessmentQuestion(new AssessmentQuestionRow(
+                "00000000-0000-4000-8000-000000017001", ASSESSMENT, UUID.randomUUID().toString(),
+                snapshot.id(), 1, BigDecimal.ONE, snapshot, now));
     }
 
     private void addQuestion(String id, int sequence, QuestionModels.Type type, List<String> answers,

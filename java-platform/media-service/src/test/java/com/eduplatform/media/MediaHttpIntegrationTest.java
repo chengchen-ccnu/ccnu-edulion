@@ -3,6 +3,7 @@ package com.eduplatform.media;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.eduplatform.media.messaging.MediaEventFactory;
+import com.eduplatform.media.config.MediaProperties;
 import com.eduplatform.media.messaging.MediaEventParser;
 import com.eduplatform.media.messaging.MediaReferenceListener;
 import com.eduplatform.media.persistence.MediaRepository;
@@ -40,6 +41,7 @@ import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -68,6 +70,7 @@ class MediaHttpIntegrationTest {
     @Autowired MediaMessageRecoverer recoverer;
     @Autowired FakeFfmpegCommandRunner ffmpeg;
     @Autowired FakeExternalImageDownloader externalImages;
+    @Autowired MediaProperties mediaProperties;
     private final HttpClient client = HttpClient.newHttpClient();
 
     @BeforeEach
@@ -295,6 +298,45 @@ class MediaHttpIntegrationTest {
         String playbackToken = serviceToken(UUID.randomUUID().toString(), TEACHER, cover.mediaId(),
                 "COURSE_COVER", "ORIGINAL", "edu-platform-media-service-test", now, now.plusSeconds(30));
         assertThat(sendInternal(playbackToken, cover.mediaId(), body).statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    /** 学习域签发的题目媒体令牌只能访问精确 ORIGINAL，并由 jti 唯一消费；课程域 issuer 不能越权代签。 */
+    void internalAssessmentMediaAuthorizationRequiresLearningIssuerAndRejectsReplay() throws Exception {
+        CompletedTestAsset image = createUploadedAsset("00000000-0000-4000-8000-000000007304",
+                "QUESTION_IMAGE", "private-assessment.png", "image/png",
+                new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 1});
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(image.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        String mediaId = image.mediaId();
+        String body = internalAccessBody(STUDENT, "QUESTION_IMAGE", "ASSESSMENT_QUESTION", "ORIGINAL");
+        Instant now = Instant.now();
+        String token = serviceTokenForAccess(UUID.randomUUID().toString(), STUDENT, mediaId,
+                "QUESTION_IMAGE", "ASSESSMENT_QUESTION", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30), "edu-platform-learning-service-test", "INLINE");
+        SecretKey diagnosticKey = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        var decoded = NimbusJwtDecoder.withSecretKey(diagnosticKey).build().decode(token);
+        assertThat(mediaProperties.serviceAuthorization().assessmentIssuer())
+                .isEqualTo(decoded.getClaimAsString("iss"));
+        assertThat(decoded.getClaimAsString("accessType")).isEqualTo("ASSESSMENT_QUESTION");
+
+        HttpResponse<String> granted = sendInternal(token, mediaId, body);
+        assertThat(granted.statusCode()).withFailMessage(granted.body()).isEqualTo(201);
+        assertThat(granted.body()).doesNotContain("objectKey", "bucket");
+        assertThat(sendInternal(token, mediaId, body).statusCode()).isEqualTo(403);
+
+        String courseIssuerToken = serviceTokenForAccess(UUID.randomUUID().toString(), STUDENT, mediaId,
+                "QUESTION_IMAGE", "ASSESSMENT_QUESTION", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+        assertThat(sendInternal(courseIssuerToken, mediaId, body).statusCode()).isEqualTo(403);
+        String wrongDisposition = serviceTokenForAccess(UUID.randomUUID().toString(), STUDENT, mediaId,
+                "QUESTION_IMAGE", "ASSESSMENT_QUESTION", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30), "edu-platform-learning-service-test", "ATTACHMENT");
+        assertThat(sendInternal(wrongDisposition, mediaId, body).statusCode()).isEqualTo(403);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization", Integer.class))
+                .isEqualTo(1);
     }
 
     @Test
@@ -563,10 +605,17 @@ class MediaHttpIntegrationTest {
 
     private static String serviceTokenForAccess(String tokenId, String visitorId, String mediaId, String purpose,
             String accessType, String variant, String audience, Instant issuedAt, Instant expiresAt) {
+        return serviceTokenForAccess(tokenId, visitorId, mediaId, purpose, accessType, variant, audience,
+                issuedAt, expiresAt, "edu-platform-course-service-test", "INLINE");
+    }
+
+    private static String serviceTokenForAccess(String tokenId, String visitorId, String mediaId, String purpose,
+            String accessType, String variant, String audience, Instant issuedAt, Instant expiresAt,
+            String issuer, String disposition) {
         SecretKey key = new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
         JwtClaimsSet claims = JwtClaimsSet.builder()
-                .issuer("edu-platform-course-service-test")
+                .issuer(issuer)
                 .audience(List.of(audience))
                 .subject(visitorId)
                 .id(tokenId)
@@ -576,7 +625,7 @@ class MediaHttpIntegrationTest {
                 .claim("purpose", purpose)
                 .claim("accessType", accessType)
                 .claim("variant", variant)
-                .claim("disposition", "INLINE")
+                .claim("disposition", disposition)
                 .claim("traceId", "trace-service-auth-test")
                 .build();
         return encoder.encode(JwtEncoderParameters.from(
