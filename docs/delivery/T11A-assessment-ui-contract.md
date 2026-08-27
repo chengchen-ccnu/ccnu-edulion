@@ -101,4 +101,4 @@ OpenAPI 0.15.0 新增或扩展：
 
 - 分支：`codex/t11a-assessment-ui-contract`
 - 关键实现提交：`f3c6801`
-- Ready PR：[PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32)；本任务不自行合并
+- PR：[PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32)，于 2026-08-27 由总控在最新提交全部检查成功后合并到 `main@981d08736610be90221ce233925dda9b5da599d1`
