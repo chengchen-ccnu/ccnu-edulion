@@ -101,5 +101,5 @@ OpenAPI 0.15.0 新增或扩展：
 人工可读性检查已覆盖新增/修改的 DTO、服务状态机、仓储 SQL、JWT 签发/验证、控制器、迁移和真实验收；权限、输入、输出、时间裁决、数据库/媒体副作用、重试和失败语义均有中文 Javadoc 或边界注释。生成客户端没有手工加注释。
 
 - 分支：`codex/t11a-assessment-ui-contract`
-- 关键提交：提交后回填
-- Ready PR：创建后回填；不得由本任务自行合并
+- 关键实现提交：`f3c6801`
+- Ready PR：[PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32)；本任务不自行合并

@@ -440,3 +440,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据演进：新增 Learning V10，补 `assessment` 时间、`assessment_attempt` 开始/截止、`wrong_question` 掌握/revision/重做计数和 `wrong_question_redo`；不修改已合并迁移，不新增跨 Schema 外键/查询/Join。真实 MySQL 与真实 OSS/RabbitMQ 验收的最终结果、精确 Fixture/清理见 `docs/delivery/T11A-assessment-ui-contract.md`。
 - 自动化：完整 Java Reactor 8 模块通过；Gateway 12/12、Learning 52 项（4 个真实项按开关跳过）、Media 25 项（4 个真实项按开关跳过）无失败。OpenAPI 客户端重新生成，前端 8 workspace 类型检查、23 文件 140 项测试和三端构建通过。真实 MySQL 验收 4 项中 3 项通过、旧 root 用例跳过；隔离的真实题图 MySQL/OSS/learning issuer/jti 重放验收 1/1 通过。完整 Media 综合真实用例仍在既有 RabbitMQ unacked-redelivery 时序断言失败，关键 T11A 链路已在该断言之外独立通过，未将综合用例误记为全绿。
 - 边界：没有实现 T12B Vue 页面、监考、复杂防作弊、无限重考、第二套媒体客户端、支付、LLM 判分、hash gate、baseline、contract freeze 或额外限流器。T12B 必须等待本 PR 合并，只消费生成客户端并遵守既有四条测评路由职责。
+- 发布：关键实现提交 `f3c6801` 已推送，Ready [PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32) 已创建；本任务不自行合并。
