@@ -415,3 +415,10 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - UI：`/my-learning` 改为紧凑横向学习记录卡，状态、课程完成度、最近位置与主次操作形成稳定层级；按钮统一使用 inline-flex 双向居中并让卡片操作等宽，移动端回落为单列。课程详情增加紧凑完成度区，不把播放器搬回详情页。
 - 自动化：OpenAPI 生成后的全 workspace typecheck 通过；Vitest 23 文件 140 项通过；三端生产构建通过，仅有既有 HLS chunk 体积提示。沙箱内 Vitest/Vite 因 esbuild `spawn EPERM` 未启动，同命令在批准的沙箱外通过。只读媒体诊断临时源码与临时下载目录均已删除，没有新增或修改数据库、表、迁移、Seed、业务数据或 OSS 对象。
 - 待续：`/my-learning` 与进度语义/UI 已完成复核；视频闪动仍未关闭，不能标记为最终验收通过。下一轮从版本化 fMP4 HLS（init.mp4/m4s 登记、清单短期 URL 重写、v1 兼容、最小开发资产重处理）继续，同一播放器整段无闪后再关闭该风险。
+
+## 2026-08-27 T12A fMP4 播放链路收口
+
+- 根因与实现：旧 `hls-v1` 的 MPEG-TS 在 Chromium MSE 缓冲窗口切换附近复现约 20～25 秒间隔的闪帧；本轮新增版本化 `hls-fmp4-v2`，FFmpeg 生成 H.264/AAC、关键帧对齐的 `init.mp4`/`.m4s` 与 HLS v7。Media 对普通媒体行和 `EXT-X-MAP` 统一规范化、登记和短期签名；Course 优先 v2，只有明确 404 才使用新 jti 回退 v1。外部 OpenAPI、浏览器 DTO、播放器实例和学习路由均未复制或改变。
+- 自动化：受影响 Java Reactor 测试通过；新增 fMP4 命令、清单解析/授权、HTTP v2 与旧 v1 权限、Course 404 单次回退覆盖。4 秒真实 FFmpeg 冒烟产出 init+2 个 m4s，`ffprobe` 识别 H.264/AAC。完整真实 Media 验收中的 v2 处理、OSS 上传和内部授权已通过，但套件最后仍停在既有 RabbitMQ unacked-redelivery 共享队列时序断言，因此如实记为部分通过而非全绿。
+- 真实资产与浏览器：仅对既有 dev media `1131a27a-7299-4ef1-8e59-77ba5fcd06df` 运行显式门控、幂等的 `T12AFmp4BackfillAcceptanceTest`，真实 MySQL/OSS/FFmpeg 1 项通过。登录后的既有 `/learn/5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057/18d2d6cc-f374-46b1-ad81-743f169d0ce9` 请求 `hls-fmp4-v2.m3u8`，从 0 连续播放到 92.12 秒结束；始终一个 video、`readyState=4`、无 pause/seek/URL 更换或控制台错误。刷新后仍恢复 100%、duration 92.178667 秒。自动检查无法度量单帧主观亮度，保留同一资产供用户目视确认。
+- 数据与边界：没有新建 Schema、表、迁移、Seed、账号、课程、课时或源媒体。仅保留上述 mediaId 的一个 v2 处理任务、一个变体、init/m4s 组件及对应精确 OSS 派生对象、消费/Outbox/审计记录；旧 v1 和源文件未动。清理须按 mediaId+variant 精确 Object Key 与外键顺序执行，重新生成使用同一显式门控测试。历史 v1 资产的批量迁移、T12B/T12C/T15/T17 均不在本轮范围。

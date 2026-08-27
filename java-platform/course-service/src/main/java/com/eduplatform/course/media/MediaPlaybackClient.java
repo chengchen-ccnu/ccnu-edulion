@@ -5,7 +5,7 @@ import com.eduplatform.course.web.CourseDtos;
 /** course-service 在完成领域可见性判断后申请媒体短期访问授权的服务端端口。 */
 public interface MediaPlaybackClient {
     /**
-     * 申请一次 hls-v1 播放授权；调用会携带不可由浏览器获得的一次性服务令牌。
+     * 优先申请 hls-fmp4-v2 播放授权；旧资产没有 v2 时由实现有限回退 hls-v1。
      *
      * @param mediaId 课程绑定中解析出的稳定媒体 ID
      * @param purpose 课程绑定中解析出的精确用途，当前必须为 LESSON_VIDEO

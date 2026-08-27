@@ -15,12 +15,13 @@ T12A 启用学生端 `/my-learning`，在公共课程详情接通真实报名、
 - 课程完成度按已完成课时/当前发布目录汇总，只在课程详情与 `/my-learning` 展示；单课学习页读取 video 实际时长，以当前位置计算当前视频百分比，不再把整课完成度或累计观看秒数混在课时面板中。
 - 播放器按真实播放墙钟时间生成进度增量，默认每累计 15 秒、暂停或结束时发出领域中立样本。页面为每个样本只生成一个 `clientEventId`，串行上报；认证刷新与最多两次 429 退避复用完全相同的请求体，重复/乱序响应不会让本地进度倒退。
 - 后台播放授权刷新先取得新清单，再复用现有 HLS/MediaSource 加载，初次加载以外不展示授权 loading，也不在请求开始时销毁当前播放管线。初始恢复位置只在首次装载/切换资源时读取；服务端进度回写不再驱动 `video.currentTime`，课时页位置显示降为秒级更新，减少无意义的整页重绘。
+- Media 新上传视频默认生成版本化 `hls-fmp4-v2`：FFmpeg 输出 H.264/AAC、`init.mp4` 与独立关键帧对齐的 `.m4s`；清单规范化和访问授权同时识别普通媒体行与 `EXT-X-MAP`，所有组件仍逐个签发短期 URL。Course 播放先请求 v2，仅在 Media 明确返回 404 时使用新的单次服务令牌回退既有 `hls-v1`，不会对 409/403/5xx 做二次请求。
 - 笔记支持本人列表、新建、按 revision 更新、删除和按时间点定位播放器。409 时保留编辑输入并提示重新载入；422 字段错误展示在输入区。
 - 路由切换或离页会中止 Course/Learning/Media 请求、429 等待与未发送进度队列，清理 HLS 实例、授权刷新定时器和 video 临时地址。
 
 ## 使用的 API
 
-本任务没有修改 `docs/api/openapi.yaml`，直接复用并重新生成/校验以下 OpenAPI 0.14.0 契约：
+本任务没有修改 `docs/api/openapi.yaml`，直接复用并重新生成/校验以下 OpenAPI 0.14.0 契约。`hls-fmp4-v2` 是既有内部播放请求中自由字符串 `variant` 的向前版本，不增加浏览器 DTO 或外部 REST 字段：
 
 - `GET/POST /api/v1/learning/enrollments`
 - `GET /api/v1/learning/courses/{courseId}/progress`
@@ -35,6 +36,8 @@ T12A 启用学生端 `/my-learning`，在公共课程详情接通真实报名、
 
 生产代码没有创建或修改数据库、表、Flyway 迁移、事件契约或 Seed。真实验收只使用用途明确的既有 `edu_platform_iam_dev`、`edu_platform_course_dev`、`edu_platform_learning_dev`、`edu_platform_media_dev`，没有创建新 Schema 或业务表。
 
+为复验用户正在观看的既有开发课时，使用显式门控的 `T12AFmp4BackfillAcceptanceTest` 对 media `1131a27a-7299-4ef1-8e59-77ba5fcd06df` 幂等补产了一套 `hls-fmp4-v2` 派生数据：一个 `processing_job`、一个 `media_variant`、`init.mp4` 与 `.m4s` 的 `media_variant_component` 记录，以及该次处理对应的消费、MediaReady Outbox 和审计记录；OSS 只新增同一 mediaId/version 前缀下的精确清单、初始化段和媒体段，旧 `hls-v1`、源文件、课程绑定均未修改。重复执行若 v2 已存在会直接返回，新目标的 MediaUploaded eventId 由 mediaId 确定性生成。清理时须先按该 mediaId 与变体名读取并逐个删除记录中的精确 Object Key，再按外键顺序删除该变体组件、变体、`HLS_TRANSCODE/hls-fmp4-v2` 处理任务及 `trace-t12a-fmp4-backfill` 对应的 Outbox/审计/消费记录；本次首次补产的源消费 eventId 为 `0995deac-20d3-43d6-acc8-53831083687d`，MediaReady 消费记录可由同 trace 的 Outbox eventId 精确定位。不得列举或清空 Bucket/表。
+
 学生端继续使用既有 `VITE_GATEWAY_BASE_URL`。真实本地验收将页面/Gateway 统一为 `http://127.0.0.1:5173` / `http://127.0.0.1:8080`；日常默认的 `localhost:5173` / `localhost:8080` 同样有效，但两组主机名不得混用，否则既有 `SameSite=Strict` HttpOnly 刷新 Cookie 不能跨站恢复。Java 服务仍通过 `scripts/Invoke-WithLocalEnvironment.ps1` 注入本地 DPAPI 凭据，未读取、打印或提交密码、Token、AccessKey 或签名 URL。
 
 启动方式：
@@ -45,6 +48,16 @@ pnpm.cmd --dir web-apps --filter @edu/student-web run dev
 
 Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命令和 local profile 启动；启用真实报名投影验收时设置 `RABBITMQ_ENABLED=true`。
 
+对一个明确的开发课时视频补产或重新生成 v2 时，只能在仓库根目录通过本地凭据包装器执行，并替换为经确认的精确 mediaId：
+
+```powershell
+& scripts/Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  $env:T12A_FMP4_BACKFILL = 'true'
+  $env:T12A_MEDIA_ID = '1131a27a-7299-4ef1-8e59-77ba5fcd06df'
+  mvn "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml -pl media-service -am "-Dtest=T12AFmp4BackfillAcceptanceTest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+}
+```
+
 ## 自动化测试与实际结果
 
 已执行并通过：
@@ -54,8 +67,13 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 - `pnpm.cmd --dir web-apps run test`：23 个测试文件、140 项全部通过。新增覆盖 Gateway 路径、报名/进度/笔记、刷新会话失效映射、429 请求体复用、播放墙钟计时、暂停/结束上报、当前视频百分比、重复/乱序单调合并、离页中止、能力路由及 T12A/T12B/T15 边界。
 - `pnpm.cmd --dir web-apps run build`：学生、教师、管理三端生产构建全部通过；只有既有 `hls.js` 约 523 kB chunk 警告，无构建失败。
 - `pnpm.cmd --dir web-apps run check:api`：通过，生成客户端已跟踪且与 OpenAPI 0.14.0 无漂移。
+- `mvn "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml -pl media-service,course-service -am test`：Gateway 12、Course 17（1 跳过）、Learning 47（3 跳过）、Media 23（3 个显式真实环境用例默认跳过），零失败；新增覆盖 fMP4 命令、清单 `EXT-X-MAP` 规范化/授权、v2 服务令牌绑定和 Course 仅在 404 时的一次 v1 回退。
+- 真实 FFmpeg 冒烟：4 秒 H.264/AAC 输入成功生成 `init.mp4`、两个 `.m4s` 和 HLS v7 清单，拼接 init+媒体段后 `ffprobe` 识别 H.264/AAC。
+- `T12A_FMP4_BACKFILL=true` 且精确 `T12A_MEDIA_ID=1131a27a-7299-4ef1-8e59-77ba5fcd06df` 的 `T12AFmp4BackfillAcceptanceTest`：1 项通过，真实 MySQL、OSS、FFmpeg 链路补产 v2；测试拒绝非 `edu_platform_media_dev`、非 `LESSON_VIDEO` 或未显式指定的目标。
 - `git diff --check`：通过。
-- 人工可读性检查：完成。新增页面、API 适配器、进度队列和共享播放器跟踪器均有中文 TSDoc/JSDoc，说明输入、输出、权限、有限重试、最终一致与离页副作用；生成代码未手工改注释。
+- 人工可读性检查：完成。新增页面、API 适配器、进度队列、共享播放器跟踪器及本轮 HLS 解析、处理、授权和兼容回退均有中文 TSDoc/Javadoc，说明输入、输出、权限、有限重试、最终一致与离页/对象写入副作用；生成代码未手工改注释。
+
+真实 `MediaRealEnvironmentAcceptanceTest` 也已实际跑到 v2 产物上传、真实 OSS、FFmpeg 和内部授权均通过；整套用例最终停在既有 RabbitMQ `verifyUnackedRedelivery` 的共享队列时序断言（预期重投消息得到 null）。因此不把这一次整套真实环境测试记为全绿，相关核心结果由独立补产用例、单元/HTTP 集成测试和下述浏览器播放共同验证。
 
 ## 真实浏览器验收与测试数据
 
@@ -67,9 +85,9 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 - 实际播放约 29 秒产生两条增量进度事件；首次 15 秒周期上报后，暂停再次同步，Learning 聚合为位置 28 秒、累计观看 29 秒。创建并编辑 `T12A 验收笔记 20260826`，revision 从 0 增为 1。
 - 刷新相同 `/learn/...` 深链接后仍处于登录态，播放器重新达到 `readyState=4` 并恢复到 28 秒，笔记和进度均恢复。`/my-learning` 显示真实课程、0% 完成度、0/2 课时、最近位置 0:28 和“继续学习”；课程详情显示“继续学习”且 `<video>` 数仍为 0。
 - `/my-learning` 与学习页在 390×844 视口的 `scrollWidth` 均等于 `clientWidth=375`，没有横向溢出；移动端仍只有一个 video、进度/笔记可见。固定导航高亮正确，原生按钮/链接/输入均可键盘操作并有 `:focus-visible` 轮廓。浏览器控制台 warning/error 为 0。
-- 针对用户报告的短周期闪动，使用只读诊断从既有 `edu_platform_media_dev` 和 OSS 下载该课时稳定 HLS 派生产物到本机临时目录：清单为 9 个 10 秒切片加 1 个 2.04 秒尾片，完整 FFmpeg 解码退出码 0，逐帧 25fps 时间轴连续，源文件与 HLS 均无亮度突变/黑帧，单片 GET 为 50～427ms。真实浏览器多轮整段复播依次在约 10/35/58/83 秒、20/44/67 秒重复闪动；播放期间始终 `readyState=4`、未暂停、未 seek、未换 URL。关闭进度回写位置监听、ManagedMediaSource 和 HLS Worker 后闪动时间点不变，排除了授权 TTL（默认 10 分钟）、进度保存、Vue 重挂载、源视频画面、解码损坏和明显下载不足。问题已收敛到既有 MPEG-TS HLS 经 Chromium MSE 缓冲窗口切换的链路，fMP4 HLS v2 尚未实现，将在下一轮继续。临时诊断源码和下载文件均删除，未写数据库或 OSS。
+- 针对用户报告的短周期闪动，先确认旧 `hls-v1` 的 MPEG-TS 在 Chromium MSE 缓冲窗口切换附近稳定复现，而授权 TTL、进度保存、Vue 重挂载、源画面、解码损坏和明显下载不足均不是触发源。本轮将同一课时补产为 fMP4 v2 后，在真实登录会话中从 0 连续播放到 92.12 秒结束：始终只有一个 video、`readyState=4`、没有 pause/seek/URL 更换和浏览器 warning/error，播放器请求的签名清单文件名为 `hls-fmp4-v2.m3u8`。随后刷新相同深链接，仍恢复 100% 当前视频进度，video 数为 1、duration 92.178667 秒。自动检查未再观测到播放管线重建或错误；单帧主观亮度仍建议由用户在相同浏览器做一次目视确认。
 
-本轮仅为 `student_test_01` 创建最小专用数据：上述课程的一条报名、一条聚合进度、两条进度事件和一条带 `T12A` 标识的笔记；播放链路另产生 5 条 Media 访问授权、5 个服务授权 nonce/精确临时 HLS 清单，并因登录/刷新产生 7 条刷新会话和 4 条登录审计。没有创建新账号、课程、课时、媒体资产、上传或长期 OSS 对象。
+前一轮仅为 `student_test_01` 创建并已清理最小报名/进度/笔记及临时授权数据。本轮没有新建账号、课程、课时、源媒体、Schema、表、迁移或 Seed；仅保留上文精确 mediaId 的版本化 v2 派生资产供 PR 和用户目视复验，播放产生的短期授权/临时清单按既有过期回收机制处理。
 
 验收结束后，临时清理用例先按 actor/开始时间查询每个授权的精确 Object Key，经既有 `ObjectStorage.delete` 删除 5 个临时清单，再删除对应授权/nonce；随后按 learner/course/enrollment 和时间边界删除 Learning 报名、进度、事件、笔记、Outbox，Course 报名投影/消费记录，以及 IAM 本轮刷新会话/登录审计。最终残留审计对四个 dev Schema 的上述表逐项断言为 0。没有清空表、列举 Bucket、修改既有课程/媒体或影响其他测试数据；所有临时清理源码在提交前删除。Media 临时清理第一次启动遇到测试 classpath 中 Gateway 自动配置冲突，沿用仓库 T09A 真实验收的精确自动配置排除后复跑成功，失败尝试未执行删除。
 
@@ -80,12 +98,14 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 3. 播放超过 15 秒后暂停，确认课时页只显示当前视频百分比，课程详情显示整课完成度；新增笔记、编辑并点击时间点定位。
 4. 刷新深链接，确认 HttpOnly 刷新会话、播放位置和笔记恢复；离开页面后确认不再发出旧课时请求。
 5. 进入 `/my-learning`，确认真实报名卡片、进度、最近位置和“继续学习”；再到课程详情确认行动按钮显示“继续学习”。
-6. 使用同时具有 `learning:access` 与 `teaching:access` 的测试身份，确认工作台选择同时提供学习和教学空间；移除学习能力时学习路由进入 403。
+6. 在浏览器开发工具中确认签名清单名为 `hls-fmp4-v2.m3u8`，从头连续播放整段，目视确认旧 v1 在约 20～25 秒间隔出现的闪帧不再发生。
+7. 使用同时具有 `learning:access` 与 `teaching:access` 的测试身份，确认工作台选择同时提供学习和教学空间；移除学习能力时学习路由进入 403。
 
 ## 已知风险与后续依赖
 
 - Learning Outbox 到 Course 报名访问投影是最终一致；刚报名时播放可能短暂 403，页面提供有界、可解释的人工重试，不轮询放大压力。
-- 既有 MPEG-TS HLS 在 Chromium MSE 缓冲窗口切换时仍会主观闪动，是本轮未关闭的验收风险。下一轮应实现版本化 fMP4 HLS 派生（init 与 m4s 组件授权、旧 v1 兼容和最小开发资产重处理），再用同一播放器整段复验；不得以继续叠加前端缓冲参数冒充修复。
+- 新上传视频已使用 fMP4 v2，Course 对尚未补产的历史资产仍会回退 MPEG-TS v1，因此未批量迁移的旧视频在 Chromium 上仍可能保留原闪帧表现；批量迁移需另行评审对象存储成本与回滚，不在 T12A 中扩大执行范围。
+- 自动浏览器验收能确认连续播放、单 video、稳定 URL/readyState、无事件错误和刷新恢复，但不能客观度量单帧亮度；当前开发资产已留给用户按上述步骤做最终主观目视复核。
 - `hls.js` 生产 chunk 仍约 523 kB，是既有 T08B 动态播放依赖；本任务没有复制依赖或播放器。进一步拆分需以性能数据单独评审。
 - `/my-learning` 收藏没有现行 OpenAPI 契约，未伪造入口或数据；需先由后续总控任务补契约。
 - T12B、T12C、T15、T17 继续在冻结路由与稳定导航槽位内实现，不应复制学习页、播放器或 Learning DTO。
@@ -93,5 +113,5 @@ Gateway、IAM、Course、Learning、Media 按仓库 `AGENTS.md` 中的 Maven 命
 ## Git 交付
 
 - 分支：`codex/t12a-learning-progress-web`
-- 实现/测试/验收提交：`dd491c4`
+- 实现/测试/验收提交：`dd491c4`、`38e7db2`，以及 PR 最新的 fMP4 v2 收口提交
 - PR：[#30 T12A 学习与进度前端](https://github.com/chengchen-ccnu/ccnu-edulion/pull/30)，Ready/Open；本任务不自行合并。

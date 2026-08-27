@@ -5,6 +5,7 @@ import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.domain.MediaVariant;
 import com.eduplatform.media.domain.MediaVariantComponent;
 import com.eduplatform.media.domain.TemporaryAccessObject;
+import com.eduplatform.media.hls.HlsPlaylistComponent;
 import com.eduplatform.media.persistence.MediaRepository;
 import com.eduplatform.media.storage.ObjectKeyFactory;
 import com.eduplatform.media.storage.ObjectStorage;
@@ -72,22 +73,22 @@ public class HlsAccessGrantService {
             for (MediaVariantComponent component : repository.listVariantComponents(variant.variantId())) {
                 components.put(component.componentName(), component);
             }
-            List<StorageGrant> segmentGrants = new ArrayList<>();
+            List<StorageGrant> componentGrants = new ArrayList<>();
             List<String> output = new ArrayList<>();
             for (String line : Files.readAllLines(source, StandardCharsets.UTF_8)) {
-                String value = line.trim();
-                if (value.isEmpty() || value.startsWith("#")) {
+                String name = HlsPlaylistComponent.name(line);
+                if (name == null) {
                     output.add(line);
                     continue;
                 }
-                MediaVariantComponent component = components.get(value);
+                MediaVariantComponent component = components.get(name);
                 if (component == null) throw new IllegalStateException("HLS playlist component is not registered");
-                StorageGrant segment = storage.authorizeGet(component.objectKey(), component.componentName(),
+                StorageGrant componentGrant = storage.authorizeGet(component.objectKey(), component.componentName(),
                         "INLINE", properties.oss().accessGrantTtl());
-                segmentGrants.add(segment);
-                output.add(segment.url().toString());
+                componentGrants.add(componentGrant);
+                output.add(HlsPlaylistComponent.replace(line, componentGrant.url().toString()));
             }
-            if (segmentGrants.size() != components.size() || segmentGrants.isEmpty()) {
+            if (componentGrants.size() != components.size() || componentGrants.isEmpty()) {
                 throw new IllegalStateException("HLS component registry does not match playlist");
             }
             Files.write(rewritten, output, StandardCharsets.UTF_8);
@@ -95,7 +96,7 @@ public class HlsAccessGrantService {
             uploaded = true;
             StorageGrant playlistGrant = storage.authorizeGet(temporaryKey, variant.variantName() + ".m3u8",
                     disposition.name(), properties.oss().accessGrantTtl());
-            java.time.Instant expiresAt = segmentGrants.stream().map(StorageGrant::expiresAt)
+            java.time.Instant expiresAt = componentGrants.stream().map(StorageGrant::expiresAt)
                     .min(Comparator.naturalOrder()).orElse(playlistGrant.expiresAt());
             if (playlistGrant.expiresAt().isBefore(expiresAt)) expiresAt = playlistGrant.expiresAt();
             java.time.Instant finalExpiresAt = expiresAt;

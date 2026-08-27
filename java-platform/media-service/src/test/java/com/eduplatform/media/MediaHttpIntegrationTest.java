@@ -54,6 +54,7 @@ class MediaHttpIntegrationTest {
     private static final String TEACHER = "00000000-0000-4000-8000-000000007101";
     private static final String STUDENT = "00000000-0000-4000-8000-000000007102";
     private static final String SERVICE_SECRET = "test-only-course-media-auth-secret-32-bytes";
+    private static final String HLS_V2 = "hls-fmp4-v2";
     @Value("${local.server.port}") int port;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper mapper;
@@ -183,20 +184,20 @@ class MediaHttpIntegrationTest {
         JsonNode ready = mapper.readTree(send("GET", "/api/v1/media/" + video.mediaId(), null, "TEACHER").body());
         assertThat(ready.get("status").asString()).isEqualTo("READY");
         assertThat(ready.get("variants")).anySatisfy(value ->
-                assertThat(value.get("variant").asString()).isEqualTo("hls-v1"));
-        assertThat(ready.get("variants").get(0).get("componentCount").asInt()).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant_component", Integer.class)).isEqualTo(1);
+                assertThat(value.get("variant").asString()).isEqualTo(HLS_V2));
+        assertThat(ready.get("variants").get(0).get("componentCount").asInt()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant_component", Integer.class)).isEqualTo(2);
         assertThat(ffmpeg.lastScratch()).isNotNull();
         assertThat(Files.exists(ffmpeg.lastScratch())).isFalse();
 
         JsonNode grant = mapper.readTree(send("POST", "/api/v1/media/" + video.mediaId() + "/access-grants",
-                "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}", "TEACHER").body());
+                "{\"variant\":\"" + HLS_V2 + "\",\"disposition\":\"INLINE\"}", "TEACHER").body());
         assertThat(sendAs("POST", "/api/v1/media/" + video.mediaId() + "/access-grants",
-                "{\"variant\":\"hls-v1\",\"disposition\":\"INLINE\"}", "STUDENT", STUDENT).statusCode())
+                "{\"variant\":\"" + HLS_V2 + "\",\"disposition\":\"INLINE\"}", "STUDENT", STUDENT).statusCode())
                 .isEqualTo(404);
         String authorizedPlaylist = storage.readSigned(grant.get("url").asString());
         assertThat(authorizedPlaylist).contains("#EXTM3U", "https://oss.test/read/")
-                .doesNotContain("segment-00000.ts\n");
+                .doesNotContain("URI=\"init.mp4\"", "segment-00000.m4s\n");
         String temporaryKey = jdbc.queryForObject("SELECT object_key FROM temporary_access_object", String.class);
         jdbc.update("UPDATE temporary_access_object SET expires_at = ?",
                 java.sql.Timestamp.from(Instant.now().minusSeconds(1)));
@@ -215,10 +216,10 @@ class MediaHttpIntegrationTest {
                 .filter(event -> event.aggregateId().equals(video.mediaId()) && event.eventType().equals("MediaUploaded"))
                 .findFirst().orElseThrow();
         coordinator.process(parser.parse(uploaded.payloadJson()));
-        String body = internalPlaybackBody(STUDENT, "LESSON_VIDEO", "hls-v1");
+        String body = internalPlaybackBody(STUDENT, "LESSON_VIDEO", HLS_V2);
         Instant now = Instant.now();
         String token = serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
-                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30));
+                "LESSON_VIDEO", HLS_V2, "edu-platform-media-service-test", now, now.plusSeconds(30));
 
         HttpResponse<String> granted = sendInternal(token, video.mediaId(), body);
         assertThat(granted.statusCode()).isEqualTo(201);
@@ -229,26 +230,32 @@ class MediaHttpIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization", Integer.class))
                 .isEqualTo(1);
 
+        String legacyBody = internalPlaybackBody(STUDENT, "LESSON_VIDEO", "hls-v1");
+        String legacyToken = serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
+                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30));
+        // 该测试资产只生成 v2；404 而非 403 证明旧变体仍可通过服务授权并进入变体查找。
+        assertThat(sendInternal(legacyToken, video.mediaId(), legacyBody).statusCode()).isEqualTo(404);
+
         assertThat(sendInternal(token, video.mediaId(), body).statusCode()).isEqualTo(403);
         assertThat(sendInternal(token.substring(0, token.length() - 1) + "x", video.mediaId(), body).statusCode())
                 .isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
-                "LESSON_VIDEO", "hls-v1", "wrong-audience", now, now.plusSeconds(30)),
+                "LESSON_VIDEO", HLS_V2, "wrong-audience", now, now.plusSeconds(30)),
                 video.mediaId(), body).statusCode()).isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
-                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test",
+                "LESSON_VIDEO", HLS_V2, "edu-platform-media-service-test",
                 now.minusSeconds(60), now.minusSeconds(30)), video.mediaId(), body).statusCode()).isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT,
-                "00000000-0000-4000-8000-000000007999", "LESSON_VIDEO", "hls-v1",
+                "00000000-0000-4000-8000-000000007999", "LESSON_VIDEO", HLS_V2,
                 "edu-platform-media-service-test", now, now.plusSeconds(30)),
                 video.mediaId(), body).statusCode()).isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
-                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30)),
-                video.mediaId(), internalPlaybackBody(TEACHER, "LESSON_VIDEO", "hls-v1")).statusCode())
+                "LESSON_VIDEO", HLS_V2, "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), internalPlaybackBody(TEACHER, "LESSON_VIDEO", HLS_V2)).statusCode())
                 .isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
-                "COURSE_COVER", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30)),
-                video.mediaId(), internalPlaybackBody(STUDENT, "COURSE_COVER", "hls-v1")).statusCode())
+                "COURSE_COVER", HLS_V2, "edu-platform-media-service-test", now, now.plusSeconds(30)),
+                video.mediaId(), internalPlaybackBody(STUDENT, "COURSE_COVER", HLS_V2)).statusCode())
                 .isEqualTo(403);
         assertThat(sendInternal(serviceToken(UUID.randomUUID().toString(), STUDENT, video.mediaId(),
                 "LESSON_VIDEO", "ORIGINAL", "edu-platform-media-service-test", now, now.plusSeconds(30)),
@@ -259,7 +266,7 @@ class MediaHttpIntegrationTest {
         CompletedTestAsset pending = createUploadedAsset("00000000-0000-4000-8000-000000007221",
                 "LESSON_VIDEO", "pending.mp4", "video/mp4", "pending".getBytes(StandardCharsets.UTF_8));
         String pendingToken = serviceToken(UUID.randomUUID().toString(), STUDENT, pending.mediaId(),
-                "LESSON_VIDEO", "hls-v1", "edu-platform-media-service-test", now, now.plusSeconds(30));
+                "LESSON_VIDEO", HLS_V2, "edu-platform-media-service-test", now, now.plusSeconds(30));
         assertThat(sendInternal(pendingToken, pending.mediaId(), body).statusCode()).isEqualTo(409);
     }
 

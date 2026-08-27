@@ -27,9 +27,11 @@ class FakeFfmpegCommandRunner extends FfmpegCommandRunner {
             throw new IllegalStateException("deterministic ffmpeg failure");
         }
         try {
-            Path segment = playlist.getParent().resolve("segment-00000.ts");
-            Files.writeString(playlist, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:2.0,\n" + segment + "\n"
-                    + "#EXT-X-ENDLIST\n", StandardCharsets.UTF_8);
+            Path init = playlist.getParent().resolve("init.mp4");
+            Path segment = playlist.getParent().resolve("segment-00000.m4s");
+            Files.writeString(playlist, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MAP:URI=\"" + init
+                    + "\"\n#EXTINF:2.0,\n" + segment + "\n#EXT-X-ENDLIST\n", StandardCharsets.UTF_8);
+            Files.write(init, new byte[] {0, 1, 2, 3});
             Files.write(segment, new byte[] {1, 2, 3, 4});
         } catch (Exception exception) {
             throw new IllegalStateException(exception);
