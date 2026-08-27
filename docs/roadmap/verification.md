@@ -441,3 +441,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：完整 Java Reactor 8 模块通过；Gateway 12/12、Learning 52 项（4 个真实项按开关跳过）、Media 25 项（4 个真实项按开关跳过）无失败。OpenAPI 客户端重新生成，前端 8 workspace 类型检查、23 文件 140 项测试和三端构建通过。真实 MySQL 验收 4 项中 3 项通过、旧 root 用例跳过；隔离的真实题图 MySQL/OSS/learning issuer/jti 重放验收 1/1 通过。完整 Media 综合真实用例仍在既有 RabbitMQ unacked-redelivery 时序断言失败，关键 T11A 链路已在该断言之外独立通过，未将综合用例误记为全绿。
 - 边界：没有实现 T12B Vue 页面、监考、复杂防作弊、无限重考、第二套媒体客户端、支付、LLM 判分、hash gate、baseline、contract freeze 或额外限流器。T12B 必须等待本 PR 合并，只消费生成客户端并遵守既有四条测评路由职责。
 - 发布：关键实现提交 `f3c6801` 已推送，Ready [PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32) 已创建；本任务不自行合并。
+
+## 2026-08-27 T11A 合并与 T12B 前置审计
+
+- 合并与清理：[PR #32](https://github.com/chengchen-ccnu/ccnu-edulion/pull/32) 在 Ready、可合并且路由文档修正后的最新两组 Java、Frontend、Python、OpenAPI 检查全部成功后合并为 `main@981d08736610be90221ce233925dda9b5da599d1`；本地 `main` 已同步，`codex/t11a-assessment-ui-contract` 本地和远端分支已清理。
+- 前置结论：T09B 已冻结结构化题目/组合题与不可变版本，T11/T11A 已提供 OpenAPI 0.15.0 的测评列表状态、草稿、一次性提交、归档结果、错题掌握/有限重做、题图短期授权和教师组卷/发布/批改，T12A 已稳定学生导航及学习页。生成客户端包含全部对应路径，T12B 的契约、路由、权限和数据前置均满足。
+- 页面边界：T12B 只启用既有学生 `/practice`、`/practice/:assessmentId`、`/attempt/:attemptId/result`、`/wrong-questions`，以及教师 `/teacher/assessments` 和课程编排中的测评绑定；不得把作答或结果塞回课程详情，不得复制学习页/播放器、手写 DTO，或提前实现 T12C 学情、T15 AI、监考和复杂防作弊。
+- 验收重点：后续必须覆盖刷新恢复、服务端时间/截止裁决、自动保存与离页清理、一次性提交、答案发布策略、归档结果、错题三次重做/掌握 revision、教师 owner/题目版本/发布/批改冲突、测评题媒体短期授权、401/403/404/409/422/429/503/offline，以及手机学生端、平板教师端和键盘可访问性；真实流程只能经 Gateway 和生成客户端。
+- 数据：本次总控只执行 Git 合并、只读前置审计和文档状态更新，没有连接或修改数据库、Redis、RabbitMQ、OSS 或 FFmpeg，没有创建、修改或清理表、消息、对象、Seed、伪数据及迁移检查点。
