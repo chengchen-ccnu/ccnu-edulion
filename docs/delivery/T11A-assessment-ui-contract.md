@@ -65,12 +65,11 @@ OpenAPI 0.15.0 新增或扩展：
 
 完整验证结果：
 
-- `mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml verify`：8 个 Reactor 模块 `BUILD SUCCESS`；Gateway 12/12、IAM 9/9、Course 17 项（1 跳过）、Learning 52 项（4 个真实环境项按开关跳过）、Media 25 项（4 个真实环境项按开关跳过），无失败；Operation 无测试。
+- `mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify`：8 个 Reactor 模块 `BUILD SUCCESS`；Gateway 12/12、IAM 9/9、Course 17 项（1 跳过）、Learning 52 项（4 个真实环境项按开关跳过）、Media 25 项（4 个真实环境项按开关跳过），无失败；Operation 无测试。
 - `pnpm.cmd --dir web-apps run generate:api`：成功重新生成 OpenAPI 0.15.0 客户端；`typecheck`：3 应用和 5 共享包通过；`test`：23 文件 140 项通过；`build`：学生、教师、管理三端通过。沙箱内 Vitest/Vite 因 esbuild `spawn EPERM` 无法启动，批准的沙箱外同命令通过。
 - `LearningMysqlMigrationAcceptanceTest`：真实 MySQL 4 项中 3 项通过，1 个旧版 root 凭据用例按设计跳过；Flyway 确认 `edu_platform_learning_dev` 位于 V10。
 - `MediaRealEnvironmentAcceptanceTest#validatesAssessmentQuestionMediaAuthorizationAndReplayProtection`：真实 MySQL/OSS/服务授权 1/1 通过，首次授权和固定字节下载成功，同一 jti 重放为 403，finally 精确清理通过。
 - 完整 `MediaRealEnvironmentAcceptanceTest` 的 T11A 媒体步骤执行成功后，仍在既有 RabbitMQ unacked-redelivery 时序断言失败；临时 poison 消息被既有消费者有限重试后进入 DLQ，第二连接取不到预期临时消息。该既有综合用例如实保留为未全绿，T11A 关键链路由上面的独立真实用例隔离验证。
-- 带 `clean` 的完整 Java 命令曾因工作区外既有 Java 进程锁定 `shared-kernel` 产物无法删除；未终止未知用户进程，改用不删除产物的完整 `verify` 并通过。
 
 ## 真实环境、伪数据与清理
 
