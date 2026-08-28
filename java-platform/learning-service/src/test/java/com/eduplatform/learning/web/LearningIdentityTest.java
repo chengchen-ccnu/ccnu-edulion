@@ -21,6 +21,8 @@ class LearningIdentityTest {
     void missingCapabilityIs403AndInvalidIdentityIs401() {
         assertThatThrownBy(() -> LearningIdentity.learner(USER, "STUDENT", ""))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(403));
+        assertThatThrownBy(() -> LearningIdentity.teaching(USER, "TEACHER", "learning:access"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(403));
         assertThatThrownBy(() -> LearningIdentity.learner("spoofed", "STUDENT", "learning:access"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(401));
     }

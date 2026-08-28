@@ -133,7 +133,7 @@ class LearningAssessmentIntegrationTest {
     }
 
     @Test
-    void submissionAutoGradesFourObjectiveTypesThenManualGradeFinalizesAndDisclosesAnswers() throws Exception {
+    void submissionAutoGradesFourObjectiveTypesThenManualGradeFinalizesWithoutLeakingUnpublishedFacts() throws Exception {
         service.enroll(LEARNER, COURSE, "trace-enroll");
         seedPublishedAssessment();
         String safePaper = mapper.writeValueAsString(service.learnerAssessment(LEARNER, ASSESSMENT));
@@ -155,9 +155,13 @@ class LearningAssessmentIntegrationTest {
         UUID submitRequest = UUID.randomUUID();
         var partial = service.submit(LEARNER, draft.id(),
                 new LearningDtos.SubmitAttemptRequest(submitRequest, saved.revision(), answers));
-        assertThat(partial.status()).isEqualTo(LearningDtos.AttemptStatus.PARTIALLY_GRADED);
-        assertThat(partial.score()).isEqualByComparingTo("6.00");
+        assertThat(partial.status()).isEqualTo(LearningDtos.AttemptStatus.SUBMITTED);
+        assertThat(partial.gradeVisible()).isFalse();
+        assertThat(partial.score()).isNull();
         assertThat(partial.answers()).allSatisfy(value -> {
+            assertThat(value.score()).isNull();
+            assertThat(value.correct()).isNull();
+            assertThat(value.gradingStatus()).isNull();
             assertThat(value.correctAnswer()).isNull();
             assertThat(value.analysis()).isNull();
         });
@@ -184,6 +188,10 @@ class LearningAssessmentIntegrationTest {
                                 UUID.fromString("00000000-0000-4000-8000-000000014005"),
                                 BigDecimal.TEN, "陈旧批改")))))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(409));
+        assertThat(service.learnerResult(LEARNER, draft.id()).answerVisible()).isFalse();
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+        assertSafeProjection(service.learnerResult(LEARNER, draft.id()), false, true);
     }
 
     @Test
@@ -276,7 +284,8 @@ class LearningAssessmentIntegrationTest {
                 });
         var submitted = service.submit(LEARNER, started.id(), new LearningDtos.SubmitAttemptRequest(
                 UUID.randomUUID(), saved.revision(), List.of(answer("00000000-0000-4000-8000-000000016001", "A"))));
-        assertThat(submitted.score()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(submitted.gradeVisible()).isFalse();
+        assertThat(submitted.score()).isNull();
         assertThat(submitted.answers().get(0).submittedAnswer()).containsExactly("B");
         assertThat(submitted.answers().get(0).correctAnswer()).isNull();
         assertThat(mapper.writeValueAsString(submitted)).doesNotContain("不得公开的考试解析");
@@ -290,7 +299,7 @@ class LearningAssessmentIntegrationTest {
         assertThat(archived.assessment().title()).isEqualTo("限时考试");
         assertThat(archived.assessment().questions()).hasSize(1);
         var archivedList = service.learnerAssessments(LEARNER, COURSE, 1, 20).items().get(0);
-        assertThat(archivedList.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.GRADED);
+        assertThat(archivedList.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.SUBMITTED);
         assertThat(archivedList.resultAvailable()).isTrue();
         assertThat(archivedList.resumeAllowed()).isFalse();
     }
@@ -391,11 +400,237 @@ class LearningAssessmentIntegrationTest {
                 "trace-historical-media").url()).isEqualTo(expected.url());
     }
 
+    @Test
+    void irreversibleCloseIsOwnerScopedIdempotentAndSettlesOnlyLastSavedDraftInBoundedBatch() {
+        service.enroll(LEARNER, COURSE, "trace-close-enroll");
+        service.enroll(OTHER, COURSE, "trace-close-other-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.HOMEWORK,
+                LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.MANUAL_AFTER_CLOSE);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        var saved = service.saveDraft(LEARNER, draft.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), draft.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001", "B"))));
+        assertThat(service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).activeAttemptCount()).isEqualTo(1);
+
+        assertThatThrownBy(() -> service.closeAssessment(OTHER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 0)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(409));
+
+        UUID closeRequest = UUID.randomUUID();
+        var closed = service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(closeRequest, 1));
+        assertThat(closed.affectedInProgressAttemptCount()).isEqualTo(1);
+        assertThat(closed.assessment().settlementStatus())
+                .isEqualTo(LearningDtos.AssessmentSettlementStatus.PENDING);
+        assertThat(closed.assessment().pendingSettlementCount()).isEqualTo(1);
+        assertThat(closed.assessment().resultsReady()).isFalse();
+        assertThat(service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(closeRequest, 1)).replayed()).isTrue();
+        assertThatThrownBy(() -> service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 2)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_ALREADY_CLOSED"));
+        assertThatThrownBy(() -> service.startAttempt(OTHER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID())))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_CLOSED"));
+        assertThatThrownBy(() -> service.getDraft(LEARNER, draft.id()))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_CLOSED"));
+        assertThatThrownBy(() -> service.saveDraft(LEARNER, draft.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), saved.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001", "A")))))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_CLOSED"));
+
+        assertThat(service.processSettlementBatch(ASSESSMENT, 1)).isEqualTo(1);
+        var settled = service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER);
+        assertThat(settled.settlementStatus()).isEqualTo(LearningDtos.AssessmentSettlementStatus.COMPLETED);
+        assertThat(settled.pendingSettlementCount()).isZero();
+        assertThat(service.processSettlementBatch(ASSESSMENT, 1)).isZero();
+        var result = service.learnerResult(LEARNER, draft.id());
+        assertThat(result.status()).isEqualTo(LearningDtos.AttemptStatus.SUBMITTED);
+        assertThat(result.answers().get(0).submittedAnswer()).containsExactly("B");
+        assertThat(result.gradeVisible()).isFalse();
+        assertThat(result.answerVisible()).isFalse();
+    }
+
+    @Test
+    void manualAnswerAndGradePublicationProduceNeitherAnswerOnlyAndFullSafeProjections() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-manual-release-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.HOMEWORK,
+                LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.MANUAL_AFTER_CLOSE);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        List<LearningDtos.AnswerInput> answers = completeFixtureAnswers();
+        var hidden = service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), draft.revision(), answers));
+        assertSafeProjection(hidden, false, false);
+        String hiddenJson = mapper.writeValueAsString(hidden);
+        assertThat(hiddenJson).contains("\"gradeVisible\":false", "\"answerVisible\":false",
+                "\"score\":null", "\"correct\":null", "\"gradingStatus\":null");
+        assertThat(hiddenJson).doesNotContain("标准过程", "解答解析");
+
+        assertThatThrownBy(() -> service.publishAnswers(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(UUID.randomUUID(), 1)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_NOT_CLOSED"));
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+        assertThatThrownBy(() -> service.publishGrades(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(UUID.randomUUID(), 2)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.MANUAL_GRADING_PENDING"));
+
+        UUID answerPublicationRequest = UUID.randomUUID();
+        var answersPublished = service.publishAnswers(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(answerPublicationRequest, 2));
+        assertThat(answersPublished.replayed()).isFalse();
+        assertSafeProjection(service.learnerResult(LEARNER, draft.id()), false, true);
+        assertThat(service.publishAnswers(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(answerPublicationRequest, 2)).replayed()).isTrue();
+        assertThatThrownBy(() -> service.publishAnswers(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(UUID.randomUUID(), 3)))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ANSWER_ALREADY_PUBLISHED"));
+
+        var graded = service.manualGrade(TEACHER_AS_LEARNER, draft.id(),
+                new LearningDtos.ManualGradeRequest(UUID.randomUUID(), hidden.revision(), List.of(
+                        new LearningDtos.ManualGradeItem(
+                                UUID.fromString("00000000-0000-4000-8000-000000014005"),
+                                new BigDecimal("1.00"), "首次批改"))));
+        UUID gradePublicationRequest = UUID.randomUUID();
+        var gradesPublished = service.publishGrades(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(gradePublicationRequest, 3));
+        assertThat(gradesPublished.replayed()).isFalse();
+        var full = service.learnerResult(LEARNER, draft.id());
+        assertSafeProjection(full, true, true);
+        assertThat(full.score()).isEqualByComparingTo("9.00");
+        assertThat(service.publishGrades(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.PublishAssessmentResultRequest(gradePublicationRequest, 3)).replayed()).isTrue();
+
+        Instant originalPublishedAt = gradesPublished.assessment().gradePublishedAt();
+        var regraded = service.manualGrade(TEACHER_AS_LEARNER, draft.id(),
+                new LearningDtos.ManualGradeRequest(UUID.randomUUID(), graded.revision(), List.of(
+                        new LearningDtos.ManualGradeItem(
+                                UUID.fromString("00000000-0000-4000-8000-000000014005"),
+                                BigDecimal.ZERO, "复核改判"))));
+        var latest = service.learnerResult(LEARNER, draft.id());
+        assertThat(latest.score()).isEqualByComparingTo("8.00");
+        assertThat(latest.gradeUpdatedAt()).isEqualTo(regraded.gradeUpdatedAt()).isNotNull();
+        assertThat(service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).gradePublishedAt())
+                .isEqualTo(originalPublishedAt);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM manual_grading_record", Integer.class)).isEqualTo(2);
+
+        long assessmentRevision = service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).revision();
+        service.publication(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.UpdatePublicationRequest(assessmentRevision, LearningDtos.AssessmentStatus.ARCHIVED),
+                "trace-archive-published-result");
+        jdbc.update("UPDATE enrollment SET status='CANCELED',canceled_at=? WHERE learner_id=? AND course_id=?",
+                java.sql.Timestamp.from(Instant.now()), LEARNER, COURSE);
+        assertThat(service.learnerResult(LEARNER, draft.id()).score()).isEqualByComparingTo("8.00");
+    }
+
+    @Test
+    void automaticGradePublicationCanExposeGradesOnlyAndIllegalAfterSubmissionPolicyIsRejected() throws Exception {
+        assertThatThrownBy(() -> service.createAssessment(TEACHER_AS_LEARNER,
+                new LearningDtos.CreateAssessmentRequest(UUID.randomUUID(), UUID.fromString(COURSE),
+                        UUID.fromString(LESSON), "非法策略", "作业不能提交后泄题",
+                        LearningDtos.AssessmentType.HOMEWORK,
+                        LearningDtos.GradePublicationPolicy.MANUAL,
+                        LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION,
+                        null, null, null), "trace-invalid-policy"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(422);
+                    assertThat(error.code()).isEqualTo("LEARNING.ANSWER_POLICY_INVALID");
+                });
+
+        service.enroll(LEARNER, COURSE, "trace-auto-grade-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.EXAM,
+                LearningDtos.GradePublicationPolicy.AUTOMATIC_AFTER_GRADING,
+                LearningDtos.AnswerPublicationPolicy.NEVER);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        var hidden = service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), draft.revision(), completeFixtureAnswers()));
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+        var graded = service.manualGrade(TEACHER_AS_LEARNER, draft.id(),
+                new LearningDtos.ManualGradeRequest(UUID.randomUUID(), hidden.revision(), List.of(
+                        new LearningDtos.ManualGradeItem(
+                                UUID.fromString("00000000-0000-4000-8000-000000014005"),
+                                new BigDecimal("1.00"), "自动公布前完成批改"))));
+        var gradeOnly = service.learnerResult(LEARNER, draft.id());
+        assertSafeProjection(gradeOnly, true, false);
+        assertThat(gradeOnly.score()).isEqualByComparingTo(graded.score());
+        String json = mapper.writeValueAsString(gradeOnly);
+        assertThat(json).contains("\"gradeVisible\":true", "\"answerVisible\":false");
+        assertThat(json).doesNotContain("标准过程", "解答解析");
+        assertThat(service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).resultsReady()).isTrue();
+    }
+
+    @Test
+    void practiceAfterSubmissionPublishesAnswersWithoutPublishingGrades() {
+        service.enroll(LEARNER, COURSE, "trace-practice-release-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.PRACTICE,
+                LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        var result = service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), draft.revision(), completeFixtureAnswers()));
+        assertSafeProjection(result, false, true);
+        assertThat(service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).answerPublicationStatus())
+                .isEqualTo(LearningDtos.ResultPublicationStatus.PUBLISHED);
+    }
+
+    @Test
+    void settlementFailureStopsAfterFiveAttemptsAndNeverReportsResultsReady() {
+        service.enroll(LEARNER, COURSE, "trace-finite-settlement-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.HOMEWORK,
+                LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.NEVER);
+        service.startAttempt(LEARNER, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            service.recordSettlementFailure(ASSESSMENT, new IllegalStateException("synthetic-safe-failure"));
+        }
+        var failed = repository.assessment(ASSESSMENT).orElseThrow();
+        assertThat(failed.settlementStatus()).isEqualTo(LearningDtos.AssessmentSettlementStatus.FAILED);
+        assertThat(failed.settlementAttempts()).isEqualTo(5);
+        assertThat(failed.settlementLastError()).isEqualTo("IllegalStateException");
+        assertThat(failed.settlementNextAttemptAt()).isNull();
+        assertThat(service.teacherAssessment(ASSESSMENT, TEACHER_AS_LEARNER).resultsReady()).isFalse();
+        assertThat(service.dueSettlementAssessments(10)).doesNotContain(ASSESSMENT);
+    }
+
     private void seedPublishedAssessment() {
+        seedPublishedAssessment(LearningDtos.AssessmentType.HOMEWORK,
+                LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.AFTER_ASSESSMENT_GRADED);
+    }
+
+    private void seedPublishedAssessment(LearningDtos.AssessmentType type,
+            LearningDtos.GradePublicationPolicy gradePolicy,
+            LearningDtos.AnswerPublicationPolicy answerPolicy) {
         Instant now = Instant.now();
         repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
-                "综合测评", "包含客观题与解答题", LearningDtos.AssessmentType.HOMEWORK,
-                LearningDtos.AssessmentStatus.PUBLISHED, LearningDtos.AnswerPublicationPolicy.AFTER_GRADED,
+                "综合测评", "包含客观题与解答题", type, LearningDtos.AssessmentStatus.PUBLISHED,
+                gradePolicy, answerPolicy, LearningDtos.AssessmentCloseStatus.OPEN,
+                LearningDtos.AssessmentSettlementStatus.NOT_STARTED, null, 0, 0, null, null,
+                LearningDtos.ResultPublicationStatus.UNPUBLISHED,
+                LearningDtos.ResultPublicationStatus.UNPUBLISHED, null, null,
                 null, null, null, 1, now, null, now, now));
         repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
         addQuestion("00000000-0000-4000-8000-000000014001", 1, QuestionModels.Type.SINGLE_CHOICE,
@@ -408,6 +643,50 @@ class LearningAssessmentIntegrationTest {
                 List.of("a b"), "填空解析");
         addQuestion("00000000-0000-4000-8000-000000014005", 5, QuestionModels.Type.SHORT_ANSWER,
                 List.of("标准过程"), "解答解析");
+    }
+
+    private static List<LearningDtos.AnswerInput> completeFixtureAnswers() {
+        return List.of(
+                answer("00000000-0000-4000-8000-000000014001", "A"),
+                answer("00000000-0000-4000-8000-000000014002", "A", "C"),
+                answer("00000000-0000-4000-8000-000000014003", "TRUE"),
+                answer("00000000-0000-4000-8000-000000014004", "a b"),
+                answer("00000000-0000-4000-8000-000000014005", "本人解题过程"));
+    }
+
+    /** 验证四态结果中的不可见侧严格使用 null，且可见侧同时包含相应业务事实。 */
+    private static void assertSafeProjection(LearningDtos.AttemptResult result,
+            boolean gradeVisible, boolean answerVisible) {
+        assertThat(result.gradeVisible()).isEqualTo(gradeVisible);
+        assertThat(result.answerVisible()).isEqualTo(answerVisible);
+        if (gradeVisible) {
+            assertThat(result.score()).isNotNull();
+            assertThat(result.gradeUpdatedAt()).isNotNull();
+            assertThat(result.answers()).allSatisfy(answer -> {
+                assertThat(answer.score()).isNotNull();
+                assertThat(answer.correct()).isNotNull();
+                assertThat(answer.gradingStatus()).isNotNull();
+            });
+        } else {
+            assertThat(result.score()).isNull();
+            assertThat(result.gradeUpdatedAt()).isNull();
+            assertThat(result.answers()).allSatisfy(answer -> {
+                assertThat(answer.score()).isNull();
+                assertThat(answer.correct()).isNull();
+                assertThat(answer.gradingStatus()).isNull();
+            });
+        }
+        if (answerVisible) {
+            assertThat(result.answers()).allSatisfy(answer -> {
+                assertThat(answer.correctAnswer()).isNotNull();
+                assertThat(answer.analysis()).isNotNull();
+            });
+        } else {
+            assertThat(result.answers()).allSatisfy(answer -> {
+                assertThat(answer.correctAnswer()).isNull();
+                assertThat(answer.analysis()).isNull();
+            });
+        }
     }
 
     private void seedMediaAssessment() {

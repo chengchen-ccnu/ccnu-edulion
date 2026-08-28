@@ -8,6 +8,7 @@ import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AnswerRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentQuestionRow;
+import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentProjectionCounts;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AttemptRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.EnrollmentRow;
@@ -19,10 +20,14 @@ import com.eduplatform.learning.persistence.QuestionRepository;
 import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.learning.web.LearningDtos.AnswerInput;
 import com.eduplatform.learning.web.LearningDtos.AnswerPublicationPolicy;
+import com.eduplatform.learning.web.LearningDtos.AssessmentCloseStatus;
+import com.eduplatform.learning.web.LearningDtos.AssessmentSettlementStatus;
 import com.eduplatform.learning.web.LearningDtos.AssessmentStatus;
 import com.eduplatform.learning.web.LearningDtos.AttemptStatus;
 import com.eduplatform.learning.web.LearningDtos.EnrollmentStatus;
+import com.eduplatform.learning.web.LearningDtos.GradePublicationPolicy;
 import com.eduplatform.learning.web.LearningDtos.GradingStatus;
+import com.eduplatform.learning.web.LearningDtos.ResultPublicationStatus;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -50,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * T11A 学习与测评领域服务。所有写操作在 learning Schema 内完成；课程发布、课时归属和教师所有权
+ * T11B 学习与测评领域服务。所有写操作在 learning Schema 内完成；课程发布、课时归属和教师所有权
  * 只通过 course-service 版本化 API 校验，报名访问事实则通过同事务 Outbox 异步投影到 course-service。
  */
 @Service
@@ -206,6 +211,7 @@ public class LearningAssessmentService {
     public AssessmentCreation createAssessment(String teacherId,
             LearningDtos.CreateAssessmentRequest input, String traceId) {
         validateAssessmentTiming(input.type(), input.opensAt(), input.closesAt(), input.timeLimitSeconds());
+        validateAnswerPublicationPolicy(input.type(), input.answerPublicationPolicy());
         String requestId = input.clientRequestId().toString();
         String fingerprint = fingerprint(input);
         var replay = repository.idempotency(teacherId, requestId).orElse(null);
@@ -217,8 +223,11 @@ public class LearningAssessmentService {
         String id = UUID.randomUUID().toString();
         repository.insertAssessment(new AssessmentRow(id, teacherId, input.courseId().toString(),
                 input.lessonId() == null ? null : input.lessonId().toString(), input.title(), input.description(),
-                input.type(), AssessmentStatus.DRAFT, input.answerPublicationPolicy(), input.opensAt(),
-                input.closesAt(), input.timeLimitSeconds(), 0, null, null, now, now));
+                input.type(), AssessmentStatus.DRAFT, input.gradePublicationPolicy(),
+                canonicalAnswerPolicy(input.answerPublicationPolicy()), AssessmentCloseStatus.OPEN,
+                AssessmentSettlementStatus.NOT_STARTED, null, 0, 0, null, null,
+                ResultPublicationStatus.UNPUBLISHED, ResultPublicationStatus.UNPUBLISHED, null, null,
+                input.opensAt(), input.closesAt(), input.timeLimitSeconds(), 0, null, null, now, now));
         repository.insertIdempotency(teacherId, requestId, fingerprint, "ASSESSMENT", id, now);
         return new AssessmentCreation(teacherAssessment(id, teacherId), true);
     }
@@ -228,10 +237,11 @@ public class LearningAssessmentService {
     public LearningDtos.TeacherAssessment updateAssessment(String teacherId, String assessmentId,
             LearningDtos.UpdateAssessmentRequest input) {
         validateAssessmentTiming(input.type(), input.opensAt(), input.closesAt(), input.timeLimitSeconds());
+        validateAnswerPublicationPolicy(input.type(), input.answerPublicationPolicy());
         repository.ownedAssessment(assessmentId, teacherId).orElseThrow(this::notFound);
         if (repository.updateAssessment(assessmentId, teacherId, input.expectedRevision(), input.title(),
-                input.description(), input.type(), input.answerPublicationPolicy(), input.opensAt(), input.closesAt(),
-                input.timeLimitSeconds(), Instant.now()) == 0) {
+                input.description(), input.type(), input.gradePublicationPolicy(), input.answerPublicationPolicy(),
+                input.opensAt(), input.closesAt(), input.timeLimitSeconds(), Instant.now()) == 0) {
             throw conflict("LEARNING.ASSESSMENT_REVISION_CONFLICT", "测评已发布、归档或被其他请求更新");
         }
         return teacherAssessment(assessmentId, teacherId);
@@ -318,6 +328,111 @@ public class LearningAssessmentService {
         return teacherAssessment(assessmentId, teacherId);
     }
 
+    /**
+     * 不可撤销地关闭本人已发布测评。关闭事务冻结影响人数并立即阻断新 attempt/答案写入，
+     * 草稿只由后续固定批量处理器按服务端最后成功保存内容结算。
+     */
+    @Transactional
+    public LearningDtos.CloseAssessmentResult closeAssessment(String teacherId, String assessmentId,
+            LearningDtos.CloseAssessmentRequest input) {
+        AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
+        if (assessment == null) throw notFound();
+        String requestId = input.clientRequestId().toString();
+        String fingerprint = fingerprint(Map.of("assessmentId", assessmentId,
+                "expectedRevision", input.expectedRevision(), "command", "CLOSE"));
+        var replay = repository.idempotency(teacherId, requestId).orElse(null);
+        if (replay != null) {
+            idempotentResource(replay, fingerprint, "ASSESSMENT_CLOSE");
+            LearningDtos.TeacherAssessment current = teacherAssessment(assessmentId, teacherId);
+            return new LearningDtos.CloseAssessmentResult(current,
+                    current.affectedInProgressAttemptCount(), true);
+        }
+        if (assessment.status() != AssessmentStatus.PUBLISHED) {
+            throw invalid("LEARNING.ASSESSMENT_CLOSE_NOT_ALLOWED", "只有已发布测评可以结束整场");
+        }
+        if (assessment.closeStatus() == AssessmentCloseStatus.CLOSED) {
+            throw conflict("LEARNING.ASSESSMENT_ALREADY_CLOSED", "测评已经结束且不可撤回");
+        }
+        if (assessment.revision() != input.expectedRevision()) {
+            throw conflict("LEARNING.ASSESSMENT_REVISION_CONFLICT", "测评 revision 已变化，请刷新后重试");
+        }
+        int affected = repository.countDraftAttempts(assessmentId);
+        Instant now = Instant.now();
+        if (repository.closeAssessment(assessmentId, teacherId, input.expectedRevision(), affected, now) == 0) {
+            throw conflict("LEARNING.ASSESSMENT_REVISION_CONFLICT", "测评状态或 revision 已变化");
+        }
+        repository.insertIdempotency(teacherId, requestId, fingerprint, "ASSESSMENT_CLOSE", assessmentId, now);
+        if (affected == 0) evaluateAutomaticPublications(assessmentId, now);
+        return new LearningDtos.CloseAssessmentResult(teacherAssessment(assessmentId, teacherId), affected, false);
+    }
+
+    /** 手动公布成绩；只接受配置为 MANUAL 且已关闭、已结算、无待批内容的测评。 */
+    @Transactional
+    public LearningDtos.AssessmentPublicationCommandResult publishGrades(String teacherId, String assessmentId,
+            LearningDtos.PublishAssessmentResultRequest input) {
+        return publishResultFact(teacherId, assessmentId, input, true);
+    }
+
+    /** 手动公布参考答案/解析；必须已关闭并完成草稿结算，但不要求主观题批改完成。 */
+    @Transactional
+    public LearningDtos.AssessmentPublicationCommandResult publishAnswers(String teacherId, String assessmentId,
+            LearningDtos.PublishAssessmentResultRequest input) {
+        return publishResultFact(teacherId, assessmentId, input, false);
+    }
+
+    /** 校验 owner、状态、策略、资格、幂等与 revision 后，只把对应公布事实从未公布推进为已公布。 */
+    private LearningDtos.AssessmentPublicationCommandResult publishResultFact(String teacherId,
+            String assessmentId, LearningDtos.PublishAssessmentResultRequest input, boolean gradeCommand) {
+        AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
+        if (assessment == null) throw notFound();
+        String type = gradeCommand ? "GRADE_PUBLICATION" : "ANSWER_PUBLICATION";
+        String requestId = input.clientRequestId().toString();
+        String fingerprint = fingerprint(Map.of("assessmentId", assessmentId,
+                "expectedRevision", input.expectedRevision(), "command", type));
+        var replay = repository.idempotency(teacherId, requestId).orElse(null);
+        if (replay != null) {
+            idempotentResource(replay, fingerprint, type);
+            return new LearningDtos.AssessmentPublicationCommandResult(
+                    teacherAssessment(assessmentId, teacherId), true);
+        }
+        if (assessment.revision() != input.expectedRevision()) {
+            throw conflict("LEARNING.ASSESSMENT_REVISION_CONFLICT", "测评 revision 已变化，请刷新后重试");
+        }
+        if (assessment.status() != AssessmentStatus.PUBLISHED) {
+            throw invalid("LEARNING.RESULT_PUBLICATION_NOT_ALLOWED", "只有仍处于已发布状态的测评可以公布结果");
+        }
+        if (assessment.closeStatus() != AssessmentCloseStatus.CLOSED) {
+            throw invalid("LEARNING.ASSESSMENT_NOT_CLOSED", "整场结束后才能公布结果");
+        }
+        AssessmentProjectionCounts counts = repository.assessmentProjectionCounts(assessmentId);
+        if (counts.activeAttempts() != 0 || assessment.settlementStatus() != AssessmentSettlementStatus.COMPLETED) {
+            throw invalid("LEARNING.ASSESSMENT_SETTLEMENT_PENDING", "仍有草稿待结算，暂不能公布");
+        }
+        Instant now = Instant.now();
+        if (gradeCommand) {
+            if (assessment.gradePolicy() != GradePublicationPolicy.MANUAL) {
+                throw invalid("LEARNING.GRADE_PUBLICATION_POLICY_INVALID", "当前测评配置为自动公布成绩");
+            }
+            if (counts.pendingManualAnswers() != 0) {
+                throw invalid("LEARNING.MANUAL_GRADING_PENDING", "仍有内容待人工批改，暂不能公布成绩");
+            }
+            if (assessment.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED
+                    || repository.publishGrades(assessmentId, input.expectedRevision(), now) == 0) {
+                throw conflict("LEARNING.GRADE_ALREADY_PUBLISHED", "成绩已经公布或 revision 已变化");
+            }
+        } else {
+            if (assessment.answerPolicy() != AnswerPublicationPolicy.MANUAL_AFTER_CLOSE) {
+                throw invalid("LEARNING.ANSWER_PUBLICATION_POLICY_INVALID", "当前参考答案策略不允许手动公布");
+            }
+            if (assessment.answerPublicationStatus() == ResultPublicationStatus.PUBLISHED
+                    || repository.publishAnswers(assessmentId, input.expectedRevision(), now) == 0) {
+                throw conflict("LEARNING.ANSWER_ALREADY_PUBLISHED", "参考答案已经公布或 revision 已变化");
+            }
+        }
+        repository.insertIdempotency(teacherId, requestId, fingerprint, type, assessmentId, now);
+        return new LearningDtos.AssessmentPublicationCommandResult(teacherAssessment(assessmentId, teacherId), false);
+    }
+
     /** 按 owner、可选课程/状态返回教师测评分页；指定课程时先验证课程所有权。 */
     public LearningDtos.AssessmentPage teacherAssessments(String teacherId, String courseId,
             AssessmentStatus status, int page, int size, String traceId) {
@@ -333,7 +448,13 @@ public class LearningAssessmentService {
         List<AssessmentQuestionRow> items = repository.assessmentQuestions(id);
         LearningDtos.AssessmentSummary summary = summary(row, items);
         return new LearningDtos.TeacherAssessment(summary.id(), summary.courseId(), summary.lessonId(),
-                summary.title(), summary.type(), summary.status(), summary.answerPublicationPolicy(),
+                summary.title(), summary.type(), summary.status(), summary.closeStatus(), summary.settlementStatus(),
+                summary.gradePublicationPolicy(), summary.answerPublicationPolicy(),
+                summary.gradePublicationStatus(), summary.answerPublicationStatus(), summary.closedAt(),
+                summary.affectedInProgressAttemptCount(), summary.activeAttemptCount(),
+                summary.pendingSettlementCount(), summary.pendingManualGradingAttemptCount(),
+                summary.pendingManualGradingAnswerCount(), summary.gradePublishedAt(), summary.answerPublishedAt(),
+                summary.gradePublicationEligible(), summary.answerPublicationEligible(), summary.resultsReady(),
                 summary.opensAt(), summary.closesAt(), summary.timeLimitSeconds(), summary.questionCount(),
                 summary.totalPoints(), summary.revision(), summary.publishedAt(),
                 summary.createdAt(), summary.updatedAt(), row.description(), items.stream().map(item ->
@@ -361,18 +482,27 @@ public class LearningAssessmentService {
         LearningDtos.AssessmentSummary summary = summary(row, items);
         List<LearningDtos.LearnerQuestion> safe = items.stream().map(this::learnerQuestion).toList();
         return new LearningDtos.LearnerAssessment(summary.id(), summary.courseId(), summary.lessonId(),
-                summary.title(), summary.type(), summary.status(), summary.answerPublicationPolicy(),
+                summary.title(), summary.type(), summary.status(), summary.closeStatus(), summary.settlementStatus(),
+                summary.gradePublicationPolicy(), summary.answerPublicationPolicy(),
+                summary.gradePublicationStatus(), summary.answerPublicationStatus(), summary.closedAt(),
+                summary.affectedInProgressAttemptCount(), summary.activeAttemptCount(),
+                summary.pendingSettlementCount(), summary.pendingManualGradingAttemptCount(),
+                summary.pendingManualGradingAnswerCount(), summary.gradePublishedAt(), summary.answerPublishedAt(),
+                summary.gradePublicationEligible(), summary.answerPublicationEligible(), summary.resultsReady(),
                 summary.opensAt(), summary.closesAt(), summary.timeLimitSeconds(), summary.questionCount(),
                 summary.totalPoints(), summary.revision(), summary.publishedAt(),
                 summary.createdAt(), summary.updatedAt(), row.description(), safe, now,
-                attemptSummary(repository.attemptForLearner(assessmentId, learnerId).orElse(null)));
+                attemptSummary(repository.attemptForLearner(assessmentId, learnerId).orElse(null),
+                        row.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED));
     }
 
     /** 为本人开始一次已分配的测评作答；同 learner/assessment 重试返回原草稿。 */
     @Transactional
     public LearningDtos.AttemptDraft startAttempt(String learnerId, String assessmentId,
             LearningDtos.StartAttemptRequest input) {
-        AssessmentRow assessment = publishedForLearner(learnerId, assessmentId);
+        publishedForLearner(learnerId, assessmentId);
+        AssessmentRow assessment = repository.lockAssessment(assessmentId);
+        if (assessment == null) throw notFound();
         Instant now = Instant.now();
         requireAssessmentOpen(assessment, now);
         AttemptRow existing = repository.attemptForLearner(assessmentId, learnerId).orElse(null);
@@ -402,6 +532,8 @@ public class LearningAssessmentService {
         if (attempt.status() != AttemptStatus.DRAFT) {
             throw conflict("LEARNING.ATTEMPT_ALREADY_SUBMITTED", "试卷已提交，请查看结果");
         }
+        AssessmentRow assessment = repository.assessment(attempt.assessmentId()).orElseThrow(this::notFound);
+        requireAssessmentAcceptsAnswers(assessment);
         Instant now = Instant.now();
         requireBeforeDeadline(attempt, now);
         return draft(attempt, now);
@@ -411,6 +543,9 @@ public class LearningAssessmentService {
     @Transactional
     public LearningDtos.AttemptDraft saveDraft(String learnerId, String attemptId,
             LearningDtos.SaveDraftRequest input) {
+        AttemptRow visible = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
+        AssessmentRow assessment = repository.lockAssessment(visible.assessmentId());
+        if (assessment == null) throw notFound();
         AttemptRow attempt = repository.lockAttempt(attemptId);
         if (attempt == null || !attempt.learnerId().equals(learnerId)) throw notFound();
         String requestId = input.clientRequestId().toString();
@@ -422,6 +557,7 @@ public class LearningAssessmentService {
         if (attempt.status() != AttemptStatus.DRAFT || attempt.revision() != input.expectedRevision()) {
             throw conflict("LEARNING.ATTEMPT_REVISION_CONFLICT", "作答状态或 revision 已变化");
         }
+        requireAssessmentAcceptsAnswers(assessment);
         requireBeforeDeadline(attempt, Instant.now());
         validateAnswers(attempt.assessmentId(), input.answers(), false);
         Instant now = Instant.now();
@@ -436,12 +572,16 @@ public class LearningAssessmentService {
     @Transactional
     public LearningDtos.AttemptResult submit(String learnerId, String attemptId,
             LearningDtos.SubmitAttemptRequest input) {
+        AttemptRow visible = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
+        AssessmentRow assessment = repository.lockAssessment(visible.assessmentId());
+        if (assessment == null) throw notFound();
         AttemptRow attempt = repository.lockAttempt(attemptId);
         if (attempt == null || !attempt.learnerId().equals(learnerId)) throw notFound();
         String requestId = input.clientRequestId().toString();
         List<AssessmentQuestionRow> items = repository.assessmentQuestions(attempt.assessmentId());
         boolean timedOut = attempt.deadlineAt() != null && !Instant.now().isBefore(attempt.deadlineAt());
-        List<AnswerInput> requested = timedOut
+        boolean wholeAssessmentClosed = assessment.closeStatus() == AssessmentCloseStatus.CLOSED;
+        List<AnswerInput> requested = timedOut || wholeAssessmentClosed
                 ? repository.answers(attemptId).stream().map(answer -> new AnswerInput(
                         UUID.fromString(answer.assessmentQuestionId()), answer.answer())).toList()
                 : input.answers();
@@ -455,16 +595,80 @@ public class LearningAssessmentService {
         }
         if (attempt.revision() != input.expectedRevision()) throw conflict("LEARNING.ATTEMPT_REVISION_CONFLICT", "作答 revision 已变化");
         validateAnswers(attempt.assessmentId(), complete, true);
+        finalizeLockedDraft(attempt, requestId, fingerprint, complete, items, Instant.now());
+        evaluateAutomaticPublications(assessment.id(), Instant.now());
+        return result(attemptId, learnerId, false);
+    }
+
+    /**
+     * 一次有界结算最多处理 batchSize 份草稿；每份只读取服务端最后保存答案并使用确定性请求 ID。
+     * 整批事务失败会整体回滚，外层处理器记录有限重试；不会出现半份试卷结算。
+     */
+    @Transactional
+    public int processSettlementBatch(String assessmentId, int batchSize) {
+        AssessmentRow assessment = repository.lockAssessment(assessmentId);
+        if (assessment == null || assessment.closeStatus() != AssessmentCloseStatus.CLOSED
+                || (assessment.settlementStatus() != AssessmentSettlementStatus.PENDING
+                        && assessment.settlementStatus() != AssessmentSettlementStatus.PROCESSING)) {
+            return 0;
+        }
         Instant now = Instant.now();
-        repository.replaceDraftAnswers(attemptId, complete, now);
-        if (repository.submitAttempt(attemptId, input.expectedRevision(), requestId, fingerprint,
+        repository.markSettlementProcessing(assessmentId, now);
+        List<AssessmentQuestionRow> items = repository.assessmentQuestions(assessmentId);
+        List<AttemptRow> drafts = repository.draftAttemptsForSettlement(assessmentId, batchSize);
+        for (AttemptRow attempt : drafts) {
+            List<AnswerInput> saved = repository.answers(attempt.id()).stream().map(answer -> new AnswerInput(
+                    UUID.fromString(answer.assessmentQuestionId()), answer.answer())).toList();
+            List<AnswerInput> complete = completeAnswers(items, saved);
+            String requestId = UUID.nameUUIDFromBytes(("assessment-settlement:" + attempt.id())
+                    .getBytes(StandardCharsets.UTF_8)).toString();
+            finalizeLockedDraft(attempt, requestId, fingerprint(complete), complete, items, now);
+        }
+        int remaining = repository.countDraftAttempts(assessmentId);
+        repository.markSettlementBatchSucceeded(assessmentId, remaining, Instant.now());
+        if (remaining == 0) evaluateAutomaticPublications(assessmentId, Instant.now());
+        return drafts.size();
+    }
+
+    /** 每次调度只返回固定上限的到期测评 ID，不在服务内无限循环。 */
+    public List<String> dueSettlementAssessments(int limit) {
+        return repository.dueSettlementAssessmentIds(Instant.now(), limit);
+    }
+
+    /** 独立事务记录一次安全失败摘要和有限退避；第五次失败后保留 FAILED 供人工诊断。 */
+    @Transactional
+    public void recordSettlementFailure(String assessmentId, RuntimeException failure) {
+        AssessmentRow assessment = repository.lockAssessment(assessmentId);
+        if (assessment == null || assessment.settlementStatus() == AssessmentSettlementStatus.COMPLETED
+                || assessment.settlementStatus() == AssessmentSettlementStatus.FAILED) return;
+        int attempts = assessment.settlementAttempts() + 1;
+        long delaySeconds = switch (Math.min(attempts, 5)) {
+            case 1 -> 1;
+            case 2 -> 5;
+            case 3 -> 30;
+            case 4 -> 120;
+            default -> 300;
+        };
+        String safeError = failure.getClass().getSimpleName();
+        repository.markSettlementBatchFailed(assessmentId, attempts,
+                Instant.now().plusSeconds(delaySeconds), safeError, Instant.now());
+    }
+
+    /**
+     * 使用调用方已锁定的草稿和服务端答案完成一次不可变提交与判分；输入必须是补齐后的整卷答案，
+     * 输出通过 attempt/answer 状态写回数据库，任一步失败由外层事务整体回滚。
+     */
+    private void finalizeLockedDraft(AttemptRow attempt, String requestId, String fingerprint,
+            List<AnswerInput> complete, List<AssessmentQuestionRow> items, Instant now) {
+        repository.replaceDraftAnswers(attempt.id(), complete, now);
+        if (repository.submitAttempt(attempt.id(), attempt.revision(), requestId, fingerprint,
                 AttemptStatus.SUBMITTED, null, now) == 0) {
             throw conflict("LEARNING.ATTEMPT_ALREADY_SUBMITTED", "试卷已由其他请求提交");
         }
         Map<String, AssessmentQuestionRow> byId = index(items);
         boolean pendingManual = false;
         BigDecimal score = BigDecimal.ZERO;
-        for (AnswerRow answer : repository.answers(attemptId)) {
+        for (AnswerRow answer : repository.answers(attempt.id())) {
             AssessmentQuestionRow item = byId.get(answer.assessmentQuestionId());
             AutoGrade grade = autoGrade(item.snapshot(), answer.answer(), item.points());
             if (grade == null) {
@@ -477,12 +681,38 @@ public class LearningAssessmentService {
             if (!grade.correct()) recordWrong(attempt, item, now);
         }
         AttemptStatus finalStatus = pendingManual ? AttemptStatus.PARTIALLY_GRADED : AttemptStatus.GRADED;
-        repository.updateAttemptGrade(attemptId, finalStatus, score,
+        repository.updateAttemptGrade(attempt.id(), finalStatus, score,
                 finalStatus == AttemptStatus.GRADED ? now : null, now);
-        return result(attemptId, learnerId, false);
+    }
+
+    /** 在同一 assessment 行锁下推进不可撤回的自动公布事实，绝不把 Redis/RabbitMQ 当可见性来源。 */
+    private void evaluateAutomaticPublications(String assessmentId, Instant now) {
+        AssessmentRow assessment = repository.lockAssessment(assessmentId);
+        if (assessment == null) throw notFound();
+        if (assessment.type() == LearningDtos.AssessmentType.PRACTICE
+                && assessment.answerPolicy() == AnswerPublicationPolicy.AFTER_SUBMISSION
+                && assessment.answerPublicationStatus() == ResultPublicationStatus.UNPUBLISHED) {
+            repository.publishAnswers(assessmentId, assessment.revision(), now);
+            assessment = repository.lockAssessment(assessmentId);
+        }
+        AssessmentProjectionCounts counts = repository.assessmentProjectionCounts(assessmentId);
+        boolean readyForWholeAssessmentPublication = assessment.closeStatus() == AssessmentCloseStatus.CLOSED
+                && assessment.settlementStatus() == AssessmentSettlementStatus.COMPLETED
+                && counts.activeAttempts() == 0 && counts.pendingManualAnswers() == 0;
+        if (!readyForWholeAssessmentPublication) return;
+        if (assessment.gradePolicy() == GradePublicationPolicy.AUTOMATIC_AFTER_GRADING
+                && assessment.gradePublicationStatus() == ResultPublicationStatus.UNPUBLISHED) {
+            repository.publishGrades(assessmentId, assessment.revision(), now);
+            assessment = repository.lockAssessment(assessmentId);
+        }
+        if (assessment.answerPolicy() == AnswerPublicationPolicy.AFTER_ASSESSMENT_GRADED
+                && assessment.answerPublicationStatus() == ResultPublicationStatus.UNPUBLISHED) {
+            repository.publishAnswers(assessmentId, assessment.revision(), now);
+        }
     }
 
     /** 返回本人已提交成绩，正确答案/解析是否存在由公布策略决定。 */
+    @Transactional(readOnly = true)
     public LearningDtos.AttemptResult learnerResult(String learnerId, String attemptId) {
         return result(attemptId, learnerId, false);
     }
@@ -595,10 +825,12 @@ public class LearningAssessmentService {
         String fingerprint = fingerprint(input.grades());
         var replay = repository.idempotency(teacherId, requestId).orElse(null);
         if (replay != null) return teacherResult(teacherId, idempotentResource(replay, fingerprint, "MANUAL_GRADE"));
+        AttemptRow visible = repository.attempt(attemptId).orElse(null);
+        if (visible == null) throw notFound();
+        AssessmentRow assessment = repository.lockOwnedAssessment(visible.assessmentId(), teacherId);
+        if (assessment == null) throw notFound();
         AttemptRow attempt = repository.lockAttempt(attemptId);
-        if (attempt == null) throw notFound();
-        AssessmentRow assessment = repository.ownedAssessment(attempt.assessmentId(), teacherId).orElseThrow(this::notFound);
-        if ((attempt.status() != AttemptStatus.PARTIALLY_GRADED && attempt.status() != AttemptStatus.SUBMITTED)
+        if (attempt == null || attempt.status() == AttemptStatus.DRAFT
                 || attempt.revision() != input.expectedRevision()) {
             throw conflict("LEARNING.GRADING_REVISION_CONFLICT", "作答状态或 revision 已变化，请刷新后批改");
         }
@@ -610,8 +842,8 @@ public class LearningAssessmentService {
             if (!unique.add(questionId)) throw invalid("LEARNING.GRADING_DUPLICATE", "同一道题不能在一次请求中重复批改");
             AssessmentQuestionRow item = items.get(questionId);
             AnswerRow answer = repository.answer(attemptId, questionId).orElseThrow(this::notFound);
-            if (item == null || answer.gradingStatus() != GradingStatus.PENDING_MANUAL) {
-                throw conflict("LEARNING.ANSWER_ALREADY_GRADED", "答案已经评分或不需要人工批改");
+            if (item == null || answer.gradingStatus() == GradingStatus.AUTO_GRADED) {
+                throw conflict("LEARNING.ANSWER_NOT_MANUALLY_GRADABLE", "该答案不需要或不允许人工批改");
             }
             if (grade.score().compareTo(item.points()) > 0) throw invalid("LEARNING.GRADE_OUT_OF_RANGE", "人工得分不能超过题目分值");
             repository.insertManualGrade(UUID.randomUUID().toString(), requestId, attemptId, answer.id(),
@@ -627,10 +859,12 @@ public class LearningAssessmentService {
         repository.updateAttemptGrade(attemptId, pending ? AttemptStatus.PARTIALLY_GRADED : AttemptStatus.GRADED,
                 score, pending ? null : now, now);
         repository.insertIdempotency(teacherId, requestId, fingerprint, "MANUAL_GRADE", attemptId, now);
+        evaluateAutomaticPublications(assessment.id(), now);
         return teacherResult(teacherId, attemptId);
     }
 
     /** 校验测评 owner 后分页返回已作答学生的评分结果。 */
+    @Transactional(readOnly = true)
     public LearningDtos.AttemptResultPage teacherResults(String teacherId, String assessmentId, int page, int size) {
         repository.ownedAssessment(assessmentId, teacherId).orElseThrow(this::notFound);
         List<LearningDtos.AttemptResult> values = repository.assessmentAttempts(assessmentId, page, size).stream()
@@ -641,8 +875,7 @@ public class LearningAssessmentService {
 
     /** 返回教师本人测评中的单次完整结果，包含评分所需答案与解析。 */
     public LearningDtos.AttemptResult teacherResult(String teacherId, String attemptId) {
-        AttemptRow attempt = repository.lockAttempt(attemptId);
-        if (attempt == null) throw notFound();
+        AttemptRow attempt = repository.attempt(attemptId).orElseThrow(this::notFound);
         repository.ownedAssessment(attempt.assessmentId(), teacherId).orElseThrow(this::notFound);
         return result(attemptId, attempt.learnerId(), true);
     }
@@ -657,28 +890,38 @@ public class LearningAssessmentService {
                         row.averageScore())).toList(), page, size, repository.countStudentProjections(courseId));
     }
 
+    /**
+     * 根据两个独立公布事实裁剪学生结果。未授权侧始终输出契约规定的 null，
+     * 教师视图保留批改所需完整事实；两者都只读取冻结试卷，不追随题库新版本。
+     */
     private LearningDtos.AttemptResult result(String attemptId, String learnerId, boolean teacherView) {
         AttemptRow attempt = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
         AssessmentRow assessment = repository.assessment(attempt.assessmentId()).orElseThrow(this::notFound);
         if (attempt.status() == AttemptStatus.DRAFT) throw conflict("LEARNING.ATTEMPT_NOT_SUBMITTED", "试卷尚未提交");
-        boolean disclose = teacherView || assessment.policy() == AnswerPublicationPolicy.AFTER_SUBMISSION
-                || (assessment.policy() == AnswerPublicationPolicy.AFTER_GRADED && attempt.status() == AttemptStatus.GRADED);
+        boolean gradeVisible = teacherView
+                || assessment.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED;
+        boolean answerVisible = teacherView
+                || assessment.answerPublicationStatus() == ResultPublicationStatus.PUBLISHED;
         Map<String, AssessmentQuestionRow> items = index(repository.assessmentQuestions(attempt.assessmentId()));
         List<LearningDtos.AnswerResult> answers = repository.answers(attemptId).stream().map(answer -> {
             AssessmentQuestionRow item = items.get(answer.assessmentQuestionId());
-            return new LearningDtos.AnswerResult(answer.assessmentQuestionId(), answer.answer(), answer.score(),
-                    answer.correct(), answer.gradingStatus(), disclose ? item.snapshot().answers() : null,
-                    disclose ? item.snapshot().analysis() : null);
+            return new LearningDtos.AnswerResult(answer.assessmentQuestionId(), answer.answer(),
+                    gradeVisible ? answer.score() : null, gradeVisible ? answer.correct() : null,
+                    gradeVisible ? answer.gradingStatus() : null,
+                    answerVisible ? item.snapshot().answers() : null,
+                    answerVisible ? item.snapshot().analysis() : null);
         }).toList();
         List<LearningDtos.LearnerQuestion> safeQuestions = repository.assessmentQuestions(attempt.assessmentId())
                 .stream().map(this::learnerQuestion).toList();
         LearningDtos.AttemptResultAssessment frozen = new LearningDtos.AttemptResultAssessment(
                 assessment.id(), assessment.courseId(), assessment.lessonId(), assessment.title(),
-                assessment.description(), assessment.type(), assessment.policy(), assessment.opensAt(),
-                assessment.closesAt(), assessment.timeLimitSeconds(), safeQuestions);
+                assessment.description(), assessment.type(), assessment.gradePolicy(), assessment.answerPolicy(),
+                assessment.opensAt(), assessment.closesAt(), assessment.timeLimitSeconds(), safeQuestions);
+        AttemptStatus visibleStatus = gradeVisible ? attempt.status() : AttemptStatus.SUBMITTED;
         return new LearningDtos.AttemptResult(attempt.id(), attempt.assessmentId(), attempt.learnerId(),
-                attempt.status(), attempt.revision(), attempt.score(), attempt.totalPoints(), attempt.submittedAt(),
-                attempt.gradedAt(), frozen, answers);
+                visibleStatus, attempt.revision(), gradeVisible, answerVisible,
+                gradeVisible ? attempt.score() : null, attempt.totalPoints(), attempt.submittedAt(),
+                gradeVisible ? attempt.gradeUpdatedAt() : null, frozen, answers);
     }
 
     private AssessmentRow publishedForLearner(String learnerId, String assessmentId) {
@@ -783,9 +1026,21 @@ public class LearningAssessmentService {
         return summary(row, repository.assessmentQuestions(row.id()));
     }
 
-    private static LearningDtos.AssessmentSummary summary(AssessmentRow row, List<AssessmentQuestionRow> items) {
+    /** 聚合关闭影响、当前草稿、待批人数/题数和公布资格，结果就绪不会早于草稿清零与批改完成。 */
+    private LearningDtos.AssessmentSummary summary(AssessmentRow row, List<AssessmentQuestionRow> items) {
+        AssessmentProjectionCounts counts = repository.assessmentProjectionCounts(row.id());
+        int pendingSettlement = row.closeStatus() == AssessmentCloseStatus.CLOSED ? counts.activeAttempts() : 0;
+        boolean settled = row.closeStatus() == AssessmentCloseStatus.CLOSED
+                && row.settlementStatus() == AssessmentSettlementStatus.COMPLETED && pendingSettlement == 0;
+        boolean gradeEligible = settled && counts.pendingManualAnswers() == 0;
+        boolean answerEligible = settled && row.answerPolicy() != AnswerPublicationPolicy.NEVER;
         return new LearningDtos.AssessmentSummary(row.id(), row.courseId(), row.lessonId(), row.title(), row.type(),
-                row.status(), row.policy(), row.opensAt(), row.closesAt(), row.timeLimitSeconds(),
+                row.status(), row.closeStatus(), row.settlementStatus(), row.gradePolicy(), row.answerPolicy(),
+                row.gradePublicationStatus(), row.answerPublicationStatus(), row.closedAt(),
+                row.closeAffectedAttemptCount(), counts.activeAttempts(), pendingSettlement,
+                counts.pendingManualAttempts(), counts.pendingManualAnswers(), row.gradePublishedAt(),
+                row.answerPublishedAt(), gradeEligible, answerEligible,
+                gradeEligible, row.opensAt(), row.closesAt(), row.timeLimitSeconds(),
                 items.size(), total(items), row.revision(), row.publishedAt(),
                 row.createdAt(), row.updatedAt());
     }
@@ -794,7 +1049,10 @@ public class LearningAssessmentService {
         LearningDtos.AssessmentSummary value = summary(row);
         LearningDtos.LearnerAssessmentState state;
         if (attempt != null) {
-            state = switch (attempt.status()) {
+            AttemptStatus projectedStatus = row.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED
+                    ? attempt.status()
+                    : (attempt.status() == AttemptStatus.DRAFT ? AttemptStatus.DRAFT : AttemptStatus.SUBMITTED);
+            state = switch (projectedStatus) {
                 case DRAFT -> deadlinePassed(attempt, now)
                         ? LearningDtos.LearnerAssessmentState.CLOSED
                         : LearningDtos.LearnerAssessmentState.IN_PROGRESS;
@@ -809,18 +1067,28 @@ public class LearningAssessmentService {
         } else {
             state = LearningDtos.LearnerAssessmentState.AVAILABLE;
         }
-        boolean resume = attempt != null && attempt.status() == AttemptStatus.DRAFT && !deadlinePassed(attempt, now);
+        boolean resume = attempt != null && attempt.status() == AttemptStatus.DRAFT
+                && row.closeStatus() == AssessmentCloseStatus.OPEN && !deadlinePassed(attempt, now);
         boolean resultAvailable = attempt != null && attempt.status() != AttemptStatus.DRAFT;
         return new LearningDtos.LearnerAssessmentSummary(value.id(), value.courseId(), value.lessonId(),
-                value.title(), value.type(), value.status(), value.answerPublicationPolicy(), value.opensAt(),
+                value.title(), value.type(), value.status(), value.closeStatus(), value.settlementStatus(),
+                value.gradePublicationPolicy(), value.answerPublicationPolicy(), value.gradePublicationStatus(),
+                value.answerPublicationStatus(), value.closedAt(), value.affectedInProgressAttemptCount(),
+                value.activeAttemptCount(), value.pendingSettlementCount(),
+                value.pendingManualGradingAttemptCount(), value.pendingManualGradingAnswerCount(),
+                value.gradePublishedAt(), value.answerPublishedAt(), value.gradePublicationEligible(),
+                value.answerPublicationEligible(), value.resultsReady(), value.opensAt(),
                 value.closesAt(), value.timeLimitSeconds(), value.questionCount(), value.totalPoints(),
                 value.revision(), value.publishedAt(), value.createdAt(), value.updatedAt(), state,
-                attemptSummary(attempt), resume, resultAvailable);
+                attemptSummary(attempt, row.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED),
+                resume, resultAvailable);
     }
 
-    private static LearningDtos.AttemptSummary attemptSummary(AttemptRow attempt) {
-        return attempt == null ? null : new LearningDtos.AttemptSummary(attempt.id(), attempt.status(),
-                attempt.revision(), attempt.startedAt(), attempt.deadlineAt(), attempt.submittedAt(), attempt.gradedAt());
+    private static LearningDtos.AttemptSummary attemptSummary(AttemptRow attempt, boolean gradeVisible) {
+        return attempt == null ? null : new LearningDtos.AttemptSummary(attempt.id(),
+                gradeVisible || attempt.status() == AttemptStatus.DRAFT ? attempt.status() : AttemptStatus.SUBMITTED,
+                attempt.revision(), attempt.startedAt(), attempt.deadlineAt(), attempt.submittedAt(),
+                gradeVisible ? attempt.gradedAt() : null);
     }
 
     private static Instant effectiveDeadline(AssessmentRow assessment, Instant startedAt) {
@@ -842,11 +1110,18 @@ public class LearningAssessmentService {
     }
 
     private static void requireAssessmentOpen(AssessmentRow assessment, Instant now) {
+        requireAssessmentAcceptsAnswers(assessment);
         if (assessment.opensAt() != null && now.isBefore(assessment.opensAt())) {
             throw conflict("LEARNING.ASSESSMENT_NOT_OPEN", "测评尚未开放");
         }
         if (assessment.closesAt() != null && !now.isBefore(assessment.closesAt())) {
             throw conflict("LEARNING.ASSESSMENT_CLOSED", "测评已截止");
+        }
+    }
+
+    private static void requireAssessmentAcceptsAnswers(AssessmentRow assessment) {
+        if (assessment.closeStatus() == AssessmentCloseStatus.CLOSED) {
+            throw conflict("LEARNING.ASSESSMENT_CLOSED", "整场测评已结束，不再接受新作答或答案写入");
         }
     }
 
@@ -859,6 +1134,18 @@ public class LearningAssessmentService {
         if (opensAt != null && closesAt != null && !opensAt.isBefore(closesAt)) {
             throw invalid("LEARNING.ASSESSMENT_WINDOW_INVALID", "开放时间必须早于截止时间");
         }
+    }
+
+    private static void validateAnswerPublicationPolicy(LearningDtos.AssessmentType type,
+            AnswerPublicationPolicy policy) {
+        if (policy == AnswerPublicationPolicy.AFTER_SUBMISSION && type != LearningDtos.AssessmentType.PRACTICE) {
+            throw invalid("LEARNING.ANSWER_POLICY_INVALID", "AFTER_SUBMISSION 只能用于普通练习");
+        }
+    }
+
+    private static AnswerPublicationPolicy canonicalAnswerPolicy(AnswerPublicationPolicy value) {
+        return value == AnswerPublicationPolicy.AFTER_GRADED
+                ? AnswerPublicationPolicy.AFTER_ASSESSMENT_GRADED : value;
     }
 
     private LearningDtos.WrongQuestion wrongQuestion(WrongRow row) {

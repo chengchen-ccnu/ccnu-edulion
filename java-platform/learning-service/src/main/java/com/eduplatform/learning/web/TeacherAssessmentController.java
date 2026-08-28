@@ -106,6 +106,40 @@ public class TeacherAssessmentController {
                 request, trace(servlet));
     }
 
+    @PostMapping("/api/v1/teacher/assessments/{assessmentId}/closure")
+    /** 不可撤销结束本人测评，冻结受影响草稿数并启动有界结算；重复相同请求返回原关闭事实。 */
+    public LearningDtos.CloseAssessmentResult close(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @Valid @RequestBody LearningDtos.CloseAssessmentRequest request) {
+        return learning.closeAssessment(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request);
+    }
+
+    @PostMapping("/api/v1/teacher/assessments/{assessmentId}/grade-publication")
+    /** 在关闭、草稿结算和人工批改均完成后不可撤回地公布成绩。 */
+    public LearningDtos.AssessmentPublicationCommandResult publishGrades(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId,
+            @Valid @RequestBody LearningDtos.PublishAssessmentResultRequest request) {
+        return learning.publishGrades(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request);
+    }
+
+    @PostMapping("/api/v1/teacher/assessments/{assessmentId}/answer-publication")
+    /** 在关闭且草稿结算完成后不可撤回地公布参考答案；不要求主观题批改完成。 */
+    public LearningDtos.AssessmentPublicationCommandResult publishAnswers(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId,
+            @Valid @RequestBody LearningDtos.PublishAssessmentResultRequest request) {
+        return learning.publishAnswers(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request);
+    }
+
     @GetMapping("/api/v1/teacher/assessments/{assessmentId}/results")
     /** 分页返回本人测评的学生提交和评分结果。 */
     public LearningDtos.AttemptResultPage results(@RequestHeader("X-User-Id") String userId,
