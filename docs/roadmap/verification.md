@@ -471,3 +471,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实数据：经 `scripts/Invoke-WithLocalEnvironment.ps1` 在明确的 `edu_platform_learning_dev` 将 Flyway V10 正常迁移到 V11。MySQL 验收 4 项中 3 项通过，需 `LEGACY_QUESTION_ROOT` 的旧题库用例按设计跳过；随机 EXAM、attempt、wrong、redo Fixture 按精确 ID 逆序删除并逐项为 0。没有创建数据库、业务表或 local seed，没有修改现有正式题库、课程、用户、媒体、消息或对象；只保留 V11 Schema/Flyway 历史。
 - 后续：T12B 可在本 PR 合并后只消费 OpenAPI 0.16.0 生成客户端实现既有测评路由。持续五次失败的结算保留 FAILED 供运维诊断，首期没有管理恢复 API；容量压测和动态批量调参留待后续。
 - 发布：关键实现提交 `8d84b92` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 已创建，目标为 `main`，本任务未自行合并。
+
+## 2026-08-28 T11B 合并与 T12B 前置审计
+
+- 合并与清理：[PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@a254641`；本地 `main` 已同步，`codex/t11b-assessment-result-release` 本地和远端功能分支均已清理。
+- 前置结论：T09B 已提供结构化普通题/组合题和不可变版本；T11A 已提供参与状态、服务端时间、草稿恢复、错题 redo、归档结果和题图授权；T11B 已提供 OpenAPI 0.16.0、整场关闭、草稿有界结算、成绩/参考答案独立公布、资格计数、重新批改审计及四态安全结果；T12A 已稳定学习导航和课程学习页。因此 T12B 的代码、契约、路由、权限和数据准备机制前置均满足。
+- 实施边界：T12B 作为一个任务只启用既有 `/practice`、`/practice/:assessmentId`、`/attempt/:attemptId/result`、`/wrong-questions`、`/teacher/assessments` 以及课程编排中的测评跳转；只消费生成客户端，不修改 T11B 后端补洞，不复制学习页/播放器，不提前实现 T12C、AI、逐学生/定时公布、撤回或复杂监考。
+- 验收重点：必须覆盖稳定请求标识的自动保存与有限重试、服务端截止锁定、最后成功草稿提交、组合题连续展示、结果双视图深链、四种公布组合、防泄漏、页内错题 redo、不可撤销关闭二次确认、待结算/待批资格、重新批改 409、401/403/404/409/422/429/503/offline、手机学生端、平板教师端、键盘可访问性和离页清理。临时验收数据须精确清理；可选 local seed 只能引用固定既有 SYSTEM 题并提供幂等清理/重建，题目缺失时明确失败。
+- 数据：本次总控只执行 Git 合并、文档状态更新和只读前置审计，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
