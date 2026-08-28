@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.15.0
-  description: T11A Gateway contract. Closes refresh-safe learner assessment state, server-authoritative EXAM timing, archived immutable result projections, bounded wrong-question redo/mastery and assessment-fact-based short-lived media authorization. Learner reads never expose answers, analyses or scoring rules before the configured publication policy allows them.
+  version: 0.16.0
+  description: T11B Gateway contract. Adds irreversible assessment closure with bounded recoverable draft settlement, independent grade/reference-answer publication facts, regrading after publication and server-side four-state safe learner result projections. Hidden grade or answer data is serialized as the explicit null values defined below and is never delegated to frontend CSS.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -1819,6 +1819,63 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/teacher/assessments/{assessmentId}/closure:
+    post:
+      tags: [Teacher Assessments]
+      operationId: closeTeacherAssessment
+      summary: Irreversibly close an owned published assessment and enqueue bounded draft settlement
+      description: Closing immediately rejects new attempts and answer writes. Existing drafts are finalized only from their last successfully saved server answers by bounded, idempotent and recoverable background batches. The affected count is frozen in the close receipt; pendingSettlementCount remains authoritative until it reaches zero.
+      parameters:
+        - $ref: '#/components/parameters/AssessmentId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CloseAssessmentRequest'}}}
+      responses:
+        '200': {description: Close receipt or identical idempotent replay., content: {application/json: {schema: {$ref: '#/components/schemas/CloseAssessmentResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/teacher/assessments/{assessmentId}/grade-publication:
+    post:
+      tags: [Teacher Assessments]
+      operationId: publishAssessmentGrades
+      summary: Irreversibly publish all current and future recalculated grades for an owned assessment
+      description: Requires the assessment to be closed, all drafts settled and every answer needing manual grading completed. Publication cannot be withdrawn; later regrading updates the visible score and gradeUpdatedAt without changing the publication fact.
+      parameters:
+        - $ref: '#/components/parameters/AssessmentId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishAssessmentResultRequest'}}}
+      responses:
+        '200': {description: Current teacher assessment and replay marker., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentPublicationCommandResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/teacher/assessments/{assessmentId}/answer-publication:
+    post:
+      tags: [Teacher Assessments]
+      operationId: publishAssessmentAnswers
+      summary: Irreversibly publish reference answers and analyses for an owned assessment
+      description: Manual publication requires closure and zero pending draft settlements but does not require subjective grading to finish. HOMEWORK and EXAM answers can never be published before whole-assessment closure.
+      parameters:
+        - $ref: '#/components/parameters/AssessmentId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishAssessmentResultRequest'}}}
+      responses:
+        '200': {description: Current teacher assessment and replay marker., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentPublicationCommandResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/teacher/assessments/{assessmentId}/results:
     get:
       tags: [Teacher Assessments]
@@ -4252,9 +4309,23 @@ components:
     AssessmentStatus:
       type: string
       enum: [DRAFT, PUBLISHED, ARCHIVED]
+    AssessmentCloseStatus:
+      type: string
+      enum: [OPEN, CLOSED]
+    AssessmentSettlementStatus:
+      type: string
+      description: FAILED means the finite automatic retries were exhausted; the persisted assessment and drafts remain recoverable and are never treated as ready.
+      enum: [NOT_STARTED, PENDING, PROCESSING, COMPLETED, FAILED]
+    GradePublicationPolicy:
+      type: string
+      enum: [AUTOMATIC_AFTER_GRADING, MANUAL]
+    ResultPublicationStatus:
+      type: string
+      enum: [UNPUBLISHED, PUBLISHED]
     AnswerPublicationPolicy:
       type: string
-      enum: [AFTER_SUBMISSION, AFTER_GRADED, NEVER]
+      description: AFTER_SUBMISSION is valid only for PRACTICE. AFTER_GRADED is a deprecated compatibility alias for the safe whole-assessment AFTER_ASSESSMENT_GRADED policy; neither form discloses HOMEWORK or EXAM answers before closure. MANUAL_AFTER_CLOSE requires an explicit teacher command. NEVER cannot be manually overridden.
+      enum: [AFTER_SUBMISSION, AFTER_GRADED, AFTER_ASSESSMENT_GRADED, MANUAL_AFTER_CLOSE, NEVER]
     AttemptStatus:
       type: string
       enum: [DRAFT, SUBMITTED, PARTIALLY_GRADED, GRADED]
@@ -4265,7 +4336,7 @@ components:
     CreateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, courseId, lessonId, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
+      required: [clientRequestId, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         clientRequestId: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -4273,6 +4344,7 @@ components:
         title: {type: string, minLength: 1, maxLength: 160}
         description: {type: string, maxLength: 5000}
         type: {$ref: '#/components/schemas/AssessmentType'}
+        gradePublicationPolicy: {$ref: '#/components/schemas/GradePublicationPolicy'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
         opensAt:
           type: [string, 'null']
@@ -4290,12 +4362,13 @@ components:
     UpdateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [expectedRevision, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
+      required: [expectedRevision, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         title: {type: string, minLength: 1, maxLength: 160}
         description: {type: string, maxLength: 5000}
         type: {$ref: '#/components/schemas/AssessmentType'}
+        gradePublicationPolicy: {$ref: '#/components/schemas/GradePublicationPolicy'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
         opensAt: {type: [string, 'null'], format: date-time}
         closesAt: {type: [string, 'null'], format: date-time}
@@ -4326,10 +4399,24 @@ components:
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         status: {type: string, enum: [PUBLISHED, ARCHIVED]}
+    CloseAssessmentRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+    PublishAssessmentResultRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
     AssessmentSummary:
       type: object
       additionalProperties: false
-      required: [id, courseId, lessonId, title, type, status, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
+      required: [id, courseId, lessonId, title, type, status, closeStatus, settlementStatus, gradePublicationPolicy, answerPublicationPolicy, gradePublicationStatus, answerPublicationStatus, closedAt, affectedInProgressAttemptCount, activeAttemptCount, pendingSettlementCount, pendingManualGradingAttemptCount, pendingManualGradingAnswerCount, gradePublishedAt, answerPublishedAt, gradePublicationEligible, answerPublicationEligible, resultsReady, opensAt, closesAt, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -4337,7 +4424,23 @@ components:
         title: {type: string}
         type: {$ref: '#/components/schemas/AssessmentType'}
         status: {$ref: '#/components/schemas/AssessmentStatus'}
+        closeStatus: {$ref: '#/components/schemas/AssessmentCloseStatus'}
+        settlementStatus: {$ref: '#/components/schemas/AssessmentSettlementStatus'}
+        gradePublicationPolicy: {$ref: '#/components/schemas/GradePublicationPolicy'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
+        gradePublicationStatus: {$ref: '#/components/schemas/ResultPublicationStatus'}
+        answerPublicationStatus: {$ref: '#/components/schemas/ResultPublicationStatus'}
+        closedAt: {type: [string, 'null'], format: date-time}
+        affectedInProgressAttemptCount: {type: integer, minimum: 0, description: Frozen number of DRAFT attempts observed by the irreversible close transaction.}
+        activeAttemptCount: {type: integer, minimum: 0, description: Current DRAFT attempts; before closure this supports the high-risk confirmation preview.}
+        pendingSettlementCount: {type: integer, minimum: 0}
+        pendingManualGradingAttemptCount: {type: integer, minimum: 0}
+        pendingManualGradingAnswerCount: {type: integer, minimum: 0}
+        gradePublishedAt: {type: [string, 'null'], format: date-time}
+        answerPublishedAt: {type: [string, 'null'], format: date-time}
+        gradePublicationEligible: {type: boolean}
+        answerPublicationEligible: {type: boolean}
+        resultsReady: {type: boolean, description: True only after closure, zero pending settlements and zero answers requiring manual grading.}
         opensAt: {type: [string, 'null'], format: date-time}
         closesAt: {type: [string, 'null'], format: date-time}
         timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
@@ -4446,6 +4549,21 @@ components:
           properties:
             description: {type: string}
             questions: {type: array, items: {$ref: '#/components/schemas/TeacherAssessmentQuestion'}}
+    CloseAssessmentResult:
+      type: object
+      additionalProperties: false
+      required: [assessment, affectedInProgressAttemptCount, replayed]
+      properties:
+        assessment: {$ref: '#/components/schemas/TeacherAssessment'}
+        affectedInProgressAttemptCount: {type: integer, minimum: 0}
+        replayed: {type: boolean}
+    AssessmentPublicationCommandResult:
+      type: object
+      additionalProperties: false
+      required: [assessment, replayed]
+      properties:
+        assessment: {$ref: '#/components/schemas/TeacherAssessment'}
+        replayed: {type: boolean}
     AttemptAnswerInput:
       type: object
       additionalProperties: false
@@ -4505,7 +4623,10 @@ components:
         submittedAnswer: {type: array, items: {type: string}}
         score: {type: [number, 'null'], minimum: 0}
         correct: {type: [boolean, 'null']}
-        gradingStatus: {type: string, enum: [PENDING_MANUAL, AUTO_GRADED, MANUALLY_GRADED]}
+        gradingStatus:
+          type: [string, 'null']
+          enum: [PENDING_MANUAL, AUTO_GRADED, MANUALLY_GRADED, null]
+          description: Null when gradeVisible is false so the response cannot reveal grading progress.
         correctAnswer:
           type: [array, 'null']
           items: {type: string}
@@ -4516,24 +4637,29 @@ components:
     AttemptResult:
       type: object
       additionalProperties: false
-      required: [attemptId, assessmentId, learnerId, status, revision, score, totalPoints, submittedAt, gradedAt, assessment, answers]
+      required: [attemptId, assessmentId, learnerId, status, revision, gradeVisible, answerVisible, score, totalPoints, submittedAt, gradeUpdatedAt, assessment, answers]
       properties:
         attemptId: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
         learnerId: {type: string, format: uuid}
         status: {$ref: '#/components/schemas/AttemptStatus'}
         revision: {type: integer, format: int64, minimum: 0}
+        gradeVisible: {type: boolean}
+        answerVisible: {type: boolean}
         score: {type: [number, 'null'], minimum: 0}
         totalPoints: {type: number, minimum: 0}
         submittedAt: {type: [string, 'null'], format: date-time}
-        gradedAt: {type: [string, 'null'], format: date-time}
+        gradeUpdatedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Latest grading or regrading time; null when gradeVisible is false.
         assessment: {$ref: '#/components/schemas/AttemptResultAssessment'}
         answers: {type: array, items: {$ref: '#/components/schemas/AttemptAnswerResult'}}
     AttemptResultAssessment:
       type: object
       additionalProperties: false
       description: Immutable self-contained assessment projection read from the frozen paper snapshot, never from the question bank current pointer or published-only list.
-      required: [id, courseId, lessonId, title, description, type, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questions]
+      required: [id, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questions]
       properties:
         id: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -4541,6 +4667,7 @@ components:
         title: {type: string}
         description: {type: string}
         type: {$ref: '#/components/schemas/AssessmentType'}
+        gradePublicationPolicy: {$ref: '#/components/schemas/GradePublicationPolicy'}
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
         opensAt: {type: [string, 'null'], format: date-time}
         closesAt: {type: [string, 'null'], format: date-time}

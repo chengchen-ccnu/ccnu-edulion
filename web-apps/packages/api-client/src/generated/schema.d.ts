@@ -1153,6 +1153,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/assessments/{assessmentId}/closure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Irreversibly close an owned published assessment and enqueue bounded draft settlement
+         * @description Closing immediately rejects new attempts and answer writes. Existing drafts are finalized only from their last successfully saved server answers by bounded, idempotent and recoverable background batches. The affected count is frozen in the close receipt; pendingSettlementCount remains authoritative until it reaches zero.
+         */
+        post: operations["closeTeacherAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}/grade-publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Irreversibly publish all current and future recalculated grades for an owned assessment
+         * @description Requires the assessment to be closed, all drafts settled and every answer needing manual grading completed. Publication cannot be withdrawn; later regrading updates the visible score and gradeUpdatedAt without changing the publication fact.
+         */
+        post: operations["publishAssessmentGrades"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/assessments/{assessmentId}/answer-publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Irreversibly publish reference answers and analyses for an owned assessment
+         * @description Manual publication requires closure and zero pending draft settlements but does not require subjective grading to finish. HOMEWORK and EXAM answers can never be published before whole-assessment closure.
+         */
+        post: operations["publishAssessmentAnswers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/assessments/{assessmentId}/results": {
         parameters: {
             query?: never;
@@ -2384,7 +2444,21 @@ export interface components {
         /** @enum {string} */
         AssessmentStatus: "DRAFT" | "PUBLISHED" | "ARCHIVED";
         /** @enum {string} */
-        AnswerPublicationPolicy: "AFTER_SUBMISSION" | "AFTER_GRADED" | "NEVER";
+        AssessmentCloseStatus: "OPEN" | "CLOSED";
+        /**
+         * @description FAILED means the finite automatic retries were exhausted; the persisted assessment and drafts remain recoverable and are never treated as ready.
+         * @enum {string}
+         */
+        AssessmentSettlementStatus: "NOT_STARTED" | "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
+        /** @enum {string} */
+        GradePublicationPolicy: "AUTOMATIC_AFTER_GRADING" | "MANUAL";
+        /** @enum {string} */
+        ResultPublicationStatus: "UNPUBLISHED" | "PUBLISHED";
+        /**
+         * @description AFTER_SUBMISSION is valid only for PRACTICE. AFTER_GRADED is a deprecated compatibility alias for the safe whole-assessment AFTER_ASSESSMENT_GRADED policy; neither form discloses HOMEWORK or EXAM answers before closure. MANUAL_AFTER_CLOSE requires an explicit teacher command. NEVER cannot be manually overridden.
+         * @enum {string}
+         */
+        AnswerPublicationPolicy: "AFTER_SUBMISSION" | "AFTER_GRADED" | "AFTER_ASSESSMENT_GRADED" | "MANUAL_AFTER_CLOSE" | "NEVER";
         /** @enum {string} */
         AttemptStatus: "DRAFT" | "SUBMITTED" | "PARTIALLY_GRADED" | "GRADED";
         /**
@@ -2402,6 +2476,7 @@ export interface components {
             title: string;
             description: string;
             type: components["schemas"]["AssessmentType"];
+            gradePublicationPolicy: components["schemas"]["GradePublicationPolicy"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
             /**
              * Format: date-time
@@ -2422,6 +2497,7 @@ export interface components {
             title: string;
             description: string;
             type: components["schemas"]["AssessmentType"];
+            gradePublicationPolicy: components["schemas"]["GradePublicationPolicy"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
             /** Format: date-time */
             opensAt: string | null;
@@ -2446,6 +2522,18 @@ export interface components {
             /** @enum {string} */
             status: "PUBLISHED" | "ARCHIVED";
         };
+        CloseAssessmentRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        PublishAssessmentResultRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
         AssessmentSummary: {
             /** Format: uuid */
             id: string;
@@ -2456,7 +2544,29 @@ export interface components {
             title: string;
             type: components["schemas"]["AssessmentType"];
             status: components["schemas"]["AssessmentStatus"];
+            closeStatus: components["schemas"]["AssessmentCloseStatus"];
+            settlementStatus: components["schemas"]["AssessmentSettlementStatus"];
+            gradePublicationPolicy: components["schemas"]["GradePublicationPolicy"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
+            gradePublicationStatus: components["schemas"]["ResultPublicationStatus"];
+            answerPublicationStatus: components["schemas"]["ResultPublicationStatus"];
+            /** Format: date-time */
+            closedAt: string | null;
+            /** @description Frozen number of DRAFT attempts observed by the irreversible close transaction. */
+            affectedInProgressAttemptCount: number;
+            /** @description Current DRAFT attempts; before closure this supports the high-risk confirmation preview. */
+            activeAttemptCount: number;
+            pendingSettlementCount: number;
+            pendingManualGradingAttemptCount: number;
+            pendingManualGradingAnswerCount: number;
+            /** Format: date-time */
+            gradePublishedAt: string | null;
+            /** Format: date-time */
+            answerPublishedAt: string | null;
+            gradePublicationEligible: boolean;
+            answerPublicationEligible: boolean;
+            /** @description True only after closure */
+            resultsReady: boolean;
             /** Format: date-time */
             opensAt: string | null;
             /** Format: date-time */
@@ -2549,6 +2659,15 @@ export interface components {
             description: string;
             questions: components["schemas"]["TeacherAssessmentQuestion"][];
         };
+        CloseAssessmentResult: {
+            assessment: components["schemas"]["TeacherAssessment"];
+            affectedInProgressAttemptCount: number;
+            replayed: boolean;
+        };
+        AssessmentPublicationCommandResult: {
+            assessment: components["schemas"]["TeacherAssessment"];
+            replayed: boolean;
+        };
         AttemptAnswerInput: {
             /** Format: uuid */
             assessmentQuestionId: string;
@@ -2601,8 +2720,11 @@ export interface components {
             submittedAnswer: string[];
             score: number | null;
             correct: boolean | null;
-            /** @enum {string} */
-            gradingStatus: "PENDING_MANUAL" | "AUTO_GRADED" | "MANUALLY_GRADED";
+            /**
+             * @description Null when gradeVisible is false so the response cannot reveal grading progress.
+             * @enum {string|null}
+             */
+            gradingStatus: "PENDING_MANUAL" | "AUTO_GRADED" | "MANUALLY_GRADED" | null;
             /** @description Null until the assessment answer-publication policy permits disclosure. */
             correctAnswer: string[] | null;
             /** @description Null until the assessment answer-publication policy permits disclosure. */
@@ -2618,12 +2740,17 @@ export interface components {
             status: components["schemas"]["AttemptStatus"];
             /** Format: int64 */
             revision: number;
+            gradeVisible: boolean;
+            answerVisible: boolean;
             score: number | null;
             totalPoints: number;
             /** Format: date-time */
             submittedAt: string | null;
-            /** Format: date-time */
-            gradedAt: string | null;
+            /**
+             * Format: date-time
+             * @description Latest grading or regrading time; null when gradeVisible is false.
+             */
+            gradeUpdatedAt: string | null;
             assessment: components["schemas"]["AttemptResultAssessment"];
             answers: components["schemas"]["AttemptAnswerResult"][];
         };
@@ -2638,6 +2765,7 @@ export interface components {
             title: string;
             description: string;
             type: components["schemas"]["AssessmentType"];
+            gradePublicationPolicy: components["schemas"]["GradePublicationPolicy"];
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
             /** Format: date-time */
             opensAt: string | null;
@@ -5531,6 +5659,102 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    closeTeacherAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAssessmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Close receipt or identical idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseAssessmentResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    publishAssessmentGrades: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishAssessmentResultRequest"];
+            };
+        };
+        responses: {
+            /** @description Current teacher assessment and replay marker. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentPublicationCommandResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    publishAssessmentAnswers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishAssessmentResultRequest"];
+            };
+        };
+        responses: {
+            /** @description Current teacher assessment and replay marker. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentPublicationCommandResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     listAssessmentResults: {

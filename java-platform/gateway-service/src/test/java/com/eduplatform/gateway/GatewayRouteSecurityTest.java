@@ -260,6 +260,15 @@ class GatewayRouteSecurityTest {
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STAFF", "teaching:access")))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("STAFF");
+        client.post().uri("/api/v1/teacher/assessments/00000000-0000-4000-8000-000000000205/closure")
+                .header("Content-Type", "application/json").bodyValue("{}")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "learning:access")))
+                .exchange().expectStatus().isForbidden();
+        client.post().uri("/api/v1/teacher/assessments/00000000-0000-4000-8000-000000000205/closure")
+                .header("Content-Type", "application/json").bodyValue("{}")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STAFF", "teaching:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.permissions").isEqualTo("teaching:access");
 
         client.get().uri("/api/v1/learning/enrollments")
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "learning:access")))

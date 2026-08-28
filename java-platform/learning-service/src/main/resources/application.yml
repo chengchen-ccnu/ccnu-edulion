@@ -18,6 +18,7 @@ management:
         include: health,info
 platform:
   learning:
+    assessment-settlement-poll-delay: ${LEARNING_ASSESSMENT_SETTLEMENT_POLL_DELAY:2s}
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${LEARNING_MEDIA_REQUEST_TIMEOUT:5s}

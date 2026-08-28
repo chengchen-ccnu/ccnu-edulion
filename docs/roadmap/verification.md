@@ -460,3 +460,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 演示数据：T12B 的临时边界数据必须精确清理；另可提供明确标记、生产禁用的幂等 local seed，从固定既有 SYSTEM 题 ID 建立最小普通练习、限时测评、客观题、主观题、组合题、错题重做和待批场景，并提供独立清理/重建命令。固定题不存在时明确失败，不随机抽题、不复制题干答案。
 - 调整结论：先独立合并本次总控文档，再从最新 `main` 实施 `codex/t11b-assessment-result-release`。T11B 契约、实现、生成客户端和安全验证合并前，T12B 保持阻断；T11B 不实现 Vue，T12B 不修改后端补洞。
 - 数据与范围：本次总控只修改页面规格与路线图并执行 Git 编排，不修改 OpenAPI、Java、Vue、数据库迁移或生成客户端；没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
+
+## 2026-08-28 T11B 测评关闭与结果公布契约实施验证
+
+- 契约与边界：OpenAPI 先从 0.15.0 向前演进到 0.16.0，新增 owner 范围内的不可撤销关闭、成绩公布和答案公布命令，并扩展关闭/结算、待结算/待批计数、公布资格/时间及两个结果可见性字段。客户端从同一 OpenAPI 重新生成；未创建 T12B Vue 页面、前端路由或第二套 DTO。
+- 关闭与结算：关闭命令校验 `teaching:access`、owner、资格、`clientRequestId` 和 `expectedRevision`，事务冻结 DRAFT 影响数后立即阻断新 attempt、草稿恢复和答案写入。后台每轮最多 10 场、每场 50 份，只按最后成功保存答案结算；确定性结算请求、事务回滚和数据库状态支持恢复，1/5/30/120/300 秒有限退避在第五次后进入 FAILED，待结算清零前 `resultsReady` 始终为 false。
+- 公布与安全：成绩和答案分别单向公布。`AFTER_SUBMISSION` 只允许 PRACTICE；作业/考试关闭前无法泄题；手动答案公布只需关闭且结算清零，成绩公布还要求人工待批清零。学生响应通过 `gradeVisible/answerVisible` 与显式 null 实现均未公布、仅成绩、仅答案、全部公布四态，序列化断言确认未授权值不在响应体中；归档后本人仍按 attempt owner 读取冻结结果。
+- 重新批改：成绩公布后允许基于最新 attempt revision 追加人工评分审计和更新总分/`gradeUpdatedAt`，不撤回公布、不改变原公布时间、不删除历史；陈旧 revision 返回 409。
+- 自动化：Learning 定向 11 项 T11/T11A/T11B 集成用例通过；最终完整 Java Reactor `clean verify` 的 8 个模块全部成功，Gateway 12/12、Learning 57 项中 53 项通过且 4 项按真实环境开关跳过、Media 25 项中 21 项通过且 4 项按真实环境开关跳过。OpenAPI 生成和全 workspace 类型检查通过；Vitest 在批准的沙箱外 23 文件 140 项通过，三端构建通过，仅有既有 HLS chunk 体积提示。沙箱内 Vitest/Vite 的首次 `spawn EPERM` 属执行环境限制，未误记为业务失败。
+- 真实数据：经 `scripts/Invoke-WithLocalEnvironment.ps1` 在明确的 `edu_platform_learning_dev` 将 Flyway V10 正常迁移到 V11。MySQL 验收 4 项中 3 项通过，需 `LEGACY_QUESTION_ROOT` 的旧题库用例按设计跳过；随机 EXAM、attempt、wrong、redo Fixture 按精确 ID 逆序删除并逐项为 0。没有创建数据库、业务表或 local seed，没有修改现有正式题库、课程、用户、媒体、消息或对象；只保留 V11 Schema/Flyway 历史。
+- 后续：T12B 可在本 PR 合并后只消费 OpenAPI 0.16.0 生成客户端实现既有测评路由。持续五次失败的结算保留 FAILED 供运维诊断，首期没有管理恢复 API；容量压测和动态批量调参留待后续。
+- 发布：关键实现提交 `8d84b92` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 已创建，目标为 `main`，本任务未自行合并。

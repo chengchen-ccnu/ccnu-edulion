@@ -67,26 +67,26 @@ class LearningMysqlMigrationAcceptanceTest {
     }
 
     /**
-     * 验证真实开发库按 V8 -> V9 -> V10 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
+     * 验证真实开发库按 V8 -> V9 -> V10 -> V11 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
      * 该断言只读 Flyway 历史与表元数据，不创建任何 Fixture。
      */
     @Test
-    void flywayV10NormallyAdvancesTheExistingV9Schema() {
+    void flywayV11NormallyAdvancesTheExistingV10Schema() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
                 String.class);
-        assertThat(versions).contains("8", "9", "10").doesNotContain("4");
+        assertThat(versions).contains("8", "9", "10", "11").doesNotContain("4");
         List<String> actual = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
         assertThat(actual).containsAll(TABLES);
     }
 
     /**
-     * 在真实 MySQL 上写入一组最小 T11A 时间/错题重做事实，验证约束后按精确随机 ID 逆序清理。
+     * 在真实 MySQL 上写入一组最小 T11A 时间/错题重做与 T11B 关闭/公布事实，验证约束后按精确随机 ID 逆序清理。
      * 不创建课程、用户或跨 Schema 记录，也不读取任何存量业务行。
      */
     @Test
-    void t11aTimingAndFiniteRedoSchemaWorksOnMysqlAndFixtureIsPreciselyRemoved() {
+    void t11aTimingAndT11bReleaseFactsWorkOnMysqlAndFixtureIsPreciselyRemoved() {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_learning_dev");
         String assessmentId = UUID.randomUUID().toString();
         String attemptId = UUID.randomUUID().toString();
@@ -101,6 +101,11 @@ class LearningMysqlMigrationAcceptanceTest {
             jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,total_points,started_at,deadline_at,created_at,updated_at) VALUES(?,? ,?,'GRADED',1,1.00,?,?,?,?)",
                     attemptId, assessmentId, UUID.randomUUID().toString(), Timestamp.from(now),
                     Timestamp.from(now.plusSeconds(120)), Timestamp.from(now), Timestamp.from(now));
+            jdbc.update("UPDATE assessment SET close_status='CLOSED',settlement_status='COMPLETED',closed_at=?,"
+                            + "grade_publication_status='PUBLISHED',grade_published_at=?,revision=revision+1 WHERE id=?",
+                    Timestamp.from(now), Timestamp.from(now), assessmentId);
+            jdbc.update("UPDATE assessment_attempt SET grade_updated_at=? WHERE id=?",
+                    Timestamp.from(now), attemptId);
             String learnerId = jdbc.queryForObject("SELECT learner_id FROM assessment_attempt WHERE id=?", String.class,
                     attemptId);
             jdbc.update("INSERT INTO wrong_question(id,learner_id,course_id,assessment_id,question_version_id,wrong_count,mastery_status,revision,redo_attempts_used,first_wrong_at,last_wrong_at,last_attempt_id,updated_at) VALUES(?,?,?,?,?,1,'LEARNING',0,0,?,?,?,?)",
@@ -110,9 +115,19 @@ class LearningMysqlMigrationAcceptanceTest {
                     redoId, wrongId, learnerId, UUID.randomUUID().toString(), "a".repeat(64), Timestamp.from(now));
             assertThat(jdbc.queryForObject("SELECT time_limit_seconds FROM assessment WHERE id=?", Integer.class,
                     assessmentId)).isEqualTo(120);
+            assertThat(jdbc.queryForObject("SELECT answer_release_policy FROM assessment WHERE id=?", String.class,
+                    assessmentId)).isEqualTo("NEVER");
+            assertThat(jdbc.queryForObject("SELECT close_status FROM assessment WHERE id=?", String.class,
+                    assessmentId)).isEqualTo("CLOSED");
+            assertThat(jdbc.queryForObject("SELECT grade_publication_status FROM assessment WHERE id=?", String.class,
+                    assessmentId)).isEqualTo("PUBLISHED");
+            assertThat(jdbc.queryForObject("SELECT grade_updated_at IS NOT NULL FROM assessment_attempt WHERE id=?",
+                    Boolean.class, attemptId)).isTrue();
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM wrong_question_redo WHERE wrong_question_id=?",
                     Integer.class, wrongId)).isEqualTo(1);
             assertThatThrownBy(() -> jdbc.update("UPDATE assessment SET assessment_type='PRACTICE' WHERE id=?",
+                    assessmentId)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE assessment SET settlement_attempts=6 WHERE id=?",
                     assessmentId)).isInstanceOf(org.springframework.dao.DataAccessException.class);
         } finally {
             jdbc.update("DELETE FROM wrong_question_redo WHERE id=?", redoId);

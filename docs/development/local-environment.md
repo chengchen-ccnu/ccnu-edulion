@@ -281,6 +281,16 @@ T11A 不创建数据库，只在 `edu_platform_learning_dev` 上正常向前应�
 
 Learning 用例创建一份随机 EXAM、一个 GRADED attempt、一条错题和一次重做，按 redo → wrong → attempt → assessment 删除并断言为 0。Media 用例在本轮 UUID OSS 前缀内新增固定合成 `QUESTION_IMAGE`，验证 learning issuer 授权、真实下载和 jti 重放 403，再按数据库记录的精确 Object Key 与 owner/visitor 清理；禁止列举 Bucket、清空表或触碰既有媒体。
 
+### T11B 测评关闭、草稿结算与结果公布
+
+T11B 不创建数据库，只在用途明确的 `edu_platform_learning_dev` 上由 Flyway 从 V10 正常向前应用 Learning V11。V11 保留旧答案策略列并增加向前扩展策略、整场关闭/有限结算、成绩与答案独立公布事实，以及 attempt 最新成绩更新时间；不得修改 V9/V10、启用 baseline/out-of-order 或把 Redis/RabbitMQ 作为可见性事实。
+
+| 变量 | 默认值 | 含义 |
+|---|---:|---|
+| `LEARNING_ASSESSMENT_SETTLEMENT_POLL_DELAY` | `2s` | 关闭后草稿结算轮询间隔；每轮最多 10 场、每场 50 份，失败最多五次有限退避 |
+
+真实 MySQL 验收继续使用上方 `LearningMysqlMigrationAcceptanceTest` 命令。用例会再次拒绝非 `edu_platform_learning_dev` 目标，以随机 UUID 创建最小 assessment/attempt/wrong/redo，验证 V11 关闭、公布、最后成绩时间和有限重试约束，并在 `finally` 中精确逆序删除全部 Fixture。没有 local seed；重复验收直接重跑命令，不会复用或修改现有正式题库。
+
 历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。0.13.0 起创建、批次和清理端点只对具备 `administration:access` 的管理员开放，任务冻结为 `SYSTEM`，正式题目直接为 `ACTIVE`，图片也创建为管理员持有的 `SYSTEM` 资产；教师端既有旧任务只读，不再复核、继续提交或清理历史 JSON。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前管理员的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。
