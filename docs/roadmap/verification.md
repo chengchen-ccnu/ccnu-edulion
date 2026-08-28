@@ -470,3 +470,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：Learning 定向 11 项 T11/T11A/T11B 集成用例通过；最终完整 Java Reactor `clean verify` 的 8 个模块全部成功，Gateway 12/12、Learning 57 项中 53 项通过且 4 项按真实环境开关跳过、Media 25 项中 21 项通过且 4 项按真实环境开关跳过。OpenAPI 生成和全 workspace 类型检查通过；Vitest 在批准的沙箱外 23 文件 140 项通过，三端构建通过，仅有既有 HLS chunk 体积提示。沙箱内 Vitest/Vite 的首次 `spawn EPERM` 属执行环境限制，未误记为业务失败。
 - 真实数据：经 `scripts/Invoke-WithLocalEnvironment.ps1` 在明确的 `edu_platform_learning_dev` 将 Flyway V10 正常迁移到 V11。MySQL 验收 4 项中 3 项通过，需 `LEGACY_QUESTION_ROOT` 的旧题库用例按设计跳过；随机 EXAM、attempt、wrong、redo Fixture 按精确 ID 逆序删除并逐项为 0。没有创建数据库、业务表或 local seed，没有修改现有正式题库、课程、用户、媒体、消息或对象；只保留 V11 Schema/Flyway 历史。
 - 后续：T12B 可在本 PR 合并后只消费 OpenAPI 0.16.0 生成客户端实现既有测评路由。持续五次失败的结算保留 FAILED 供运维诊断，首期没有管理恢复 API；容量压测和动态批量调参留待后续。
+- 发布：关键实现提交 `8d84b92` 已按规定使用 `git push origin HEAD` 推送；Ready [PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 已创建，目标为 `main`，本任务未自行合并。

@@ -88,4 +88,4 @@ OpenAPI 0.16.0 新增：
 
 关闭/结算/公布状态机、权限/owner、幂等、revision、有限重试、安全投影和重新批改均补充通俗中文 Javadoc/注释；OpenAPI 和 V11 SQL 对空值、兼容列、单向状态及风险作了说明。生成代码未手工修改。
 
-分支为 `codex/t11b-assessment-result-release`。关键提交和 Ready PR 信息在发布完成后由同一任务补写；本任务不会自行合并。
+分支为 `codex/t11b-assessment-result-release`，关键实现提交为 `8d84b92`。Ready [PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 已创建并面向 `main`；本任务不会自行合并。
