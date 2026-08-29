@@ -492,3 +492,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 发布：关键实现提交 `71ff6b46612f374823122f77ca3bcb6338db478a` 已按规则使用 `git push origin HEAD` 推送；Ready [PR #37](https://github.com/chengchen-ccnu/ccnu-edulion/pull/37) 已创建，目标为 `main`，本任务不自行合并。
 - 验收重点：必须覆盖稳定请求标识的自动保存与有限重试、服务端截止锁定、最后成功草稿提交、组合题连续展示、结果双视图深链、四种公布组合、防泄漏、页内错题 redo、不可撤销关闭二次确认、待结算/待批资格、重新批改 409、401/403/404/409/422/429/503/offline、手机学生端、平板教师端、键盘可访问性和离页清理。临时验收数据须精确清理；可选 local seed 只能引用固定既有 SYSTEM 题并提供幂等清理/重建，题目缺失时明确失败。
 - 数据：没有新建或修改 Schema、表、迁移、RabbitMQ 消息、OSS 对象、课程、课时或账号。教师真实验收创建的随机 assessment 及关联作答/批改数据已按精确 ID 事务删除并复查剩余 0；随后执行 Seed `Rebuild`，仅在 `edu_platform_learning_dev` 保留可由 `Cleanup` 精确删除、由 `Initialize/Rebuild` 幂等恢复的固定 T12B 演示数据。
+
+## 2026-08-29 T12B 合并与网课基础能力/Redis 路线收口
+
+- 合并与清理：[PR #37](https://github.com/chengchen-ccnu/ccnu-edulion/pull/37) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@5d866ba`；本地 `main` 已快进同步，`codex/t12b-assessment-web` 本地和远端分支均已清理。T12B 更新为已完成、已合并。
+- 缺口证据：总体架构建议稿曾提及注册、找回密码、收藏、评价、图文/课件、字幕、多码率、Redis 缓存/会话/进度等能力，但 OpenAPI 0.16.0 身份契约仍只有登录、刷新、退出和当前用户，页面规格无注册/找回/账号安全/教师申请路由，Java 服务也只有 Redis 依赖、配置和健康检查，没有 `RedisTemplate`、Spring Cache 或 Gateway Redis 限流的业务使用。因此这些能力不能继续被视为会由 T16/T18 自动补齐。
+- 产品收口：总体架构和页面规格明确学生自主注册、角色中立身份入口、普通账号申请教师、管理员不可公开注册、密码生命周期、会话版本、用户/分类管理、收藏评价、免费课程取消报名、图文/课件、播放器字幕/清晰度、HOMEWORK 时间/迟交/次数、教师成绩册及公共协议页面。新路由归入既有固定导航高亮组，不增加第六个学生主导航或第二套登录表单。
+- Redis 收口：T12D 负责 Gateway 多实例身份/高风险接口限流、验证码、短期锁定和会话版本缓存；T12G 负责普通播放心跳缓冲及可靠批量落库；T14 复用用户额度、并发和会话预算；T16A 负责热点 Sorted Set、课程/教师/首页缓存、通知未读计数、事件失效和重建。MySQL 继续保存账号、Refresh Session、申请、发布、进度完成、作答和成绩事实；Redis 锁不替代数据库事务、唯一约束或正式提交幂等。
+- 任务顺序：新增 T11C、T12D～T12G、T16A，并把 T12D 设为当前下一实施任务；T12C 优先级后移。T12D 的 T02 Redis 基础、T04 IAM/Gateway/统一登录、T07 `TEACHER_QUALIFICATION` 媒体能力均已合并，OpenAPI/页面/backlog 缺口已由本次文档任务冻结，因此其前置条件满足。T12D 只做契约和后端，不提前实现 T12E 页面、T16 审核决定或绑定短信供应商。
+- 验证与数据：本任务只修改总体架构、页面规格、backlog 和本验证记录；`git diff --check` 通过。未修改 OpenAPI、Java、Python、Vue、数据库迁移或配置，未连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg、外部模型或短信/邮件服务，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
