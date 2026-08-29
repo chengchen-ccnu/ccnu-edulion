@@ -113,5 +113,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAsses
 新增页面、API 适配器、作答状态机、安全渲染组件、Seed 和 nullable 快照修复均有通俗中文 TSDoc/Javadoc，说明职责、输入、输出、权限、幂等/revision、有限重试、数据库/媒体副作用和离页清理；生成代码没有手工补注释。已完成人工可读性检查。
 
 - 分支：`codex/t12b-assessment-web`
-- 关键提交：待本次文档和代码提交后回填
-- PR：待推送后创建 Ready PR，不自行合并
+- 关键实现提交：`71ff6b46612f374823122f77ca3bcb6338db478a`
+- PR：[T12B 测评闭环前端 #37](https://github.com/chengchen-ccnu/ccnu-edulion/pull/37)，Ready/Open，等待总控验收，不自行合并

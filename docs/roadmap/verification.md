@@ -489,5 +489,6 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：`install --frozen-lockfile`、`generate:api`、`check:api`、`typecheck` 全部通过；Vitest 29 文件 191 项全部通过；三端生产 build 通过，只保留既有大 chunk 提示。`mvn ... clean verify` 八个 Reactor 模块全部成功（2 分 09 秒），Gateway 12/12、IAM 9/9、Course 17 项中 1 跳过、Learning 59 项中 5 个显式门控项跳过、Media 25 项中 4 个显式门控项跳过，无失败。test/build 沙箱内因 Windows esbuild `spawn EPERM` 无法启动，批准后在沙箱外以同一命令通过。
 - 真实浏览器：学生 6 场状态、四种结果、双视图、草稿刷新、完整提交、错题主观 redo、掌握更新和 15→5→0 秒考试截止均通过；教师完整闭环和刷新 query 恢复通过。学生 375 px、教师 1024/1440 px 均无横向溢出，控制台 warning/error 为 0且无敏感信息。自动控制能定位焦点但 Tab/Enter 激活未可靠产生导航，最终键盘激活仍需人工复核。
 - 外部依赖：题图授权经 Gateway 成功，真实对象下载为 HTTP 200、`image/png`、2810 bytes；开发 OSS Bucket 未返回允许前端 origin 的 CORS 响应头，浏览器安全 fetch→Blob 因此显示“图片暂不可用”。未改成签名直链、Gateway 代理或其他绕过。完成浏览器题图验收前，需为开发 Bucket 配置精确学生/教师 origin 的 GET/HEAD CORS 并复验。
+- 发布：关键实现提交 `71ff6b46612f374823122f77ca3bcb6338db478a` 已按规则使用 `git push origin HEAD` 推送；Ready [PR #37](https://github.com/chengchen-ccnu/ccnu-edulion/pull/37) 已创建，目标为 `main`，本任务不自行合并。
 - 验收重点：必须覆盖稳定请求标识的自动保存与有限重试、服务端截止锁定、最后成功草稿提交、组合题连续展示、结果双视图深链、四种公布组合、防泄漏、页内错题 redo、不可撤销关闭二次确认、待结算/待批资格、重新批改 409、401/403/404/409/422/429/503/offline、手机学生端、平板教师端、键盘可访问性和离页清理。临时验收数据须精确清理；可选 local seed 只能引用固定既有 SYSTEM 题并提供幂等清理/重建，题目缺失时明确失败。
-- 数据：本次总控只执行 Git 合并、文档状态更新和只读前置审计，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
+- 数据：没有新建或修改 Schema、表、迁移、RabbitMQ 消息、OSS 对象、课程、课时或账号。教师真实验收创建的随机 assessment 及关联作答/批改数据已按精确 ID 事务删除并复查剩余 0；随后执行 Seed `Rebuild`，仅在 `edu_platform_learning_dev` 保留可由 `Cleanup` 精确删除、由 `Initialize/Rebuild` 幂等恢复的固定 T12B 演示数据。
