@@ -511,4 +511,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 安全边界：生产环境没有真实短信/邮件供应商时挑战接口明确 503；验证目标/验证码和登录维度使用 HMAC 摘要，不记录明文验证码。Redis 不作为唯一事实源、不替代数据库事务/唯一约束；没有第二套登录入口、T12E 页面、T16 审核决定或跨服务数据库访问。
 - 自动化：Java `clean verify` 的 8 个 Reactor 模块全部通过，共 134 项测试、122 项通过、12 项真实外部环境用例按开关跳过；前端 OpenAPI 生成、全 workspace 类型检查、29 个 Vitest 文件 191 项测试及三端生产构建通过；Python 字节码、8 项单元测试和 wheel 构建通过；两个 PowerShell 脚本通过 AST 语法解析。Vitest/Vite 因 esbuild `spawn EPERM`、pip 因构建隔离下载限制分别经批准在沙箱外复跑后成功。
 - 本机初始化限制：自动为存量用户目录补建新增 DPAPI IAM 安全文件的操作被当前沙箱策略拒绝，未绕过；现有开发机需由当前 Windows 用户重跑 `scripts/Initialize-LocalEnvironment.ps1`。仓库实现、真实 MySQL/Redis/Gateway 验收及自动化不依赖提交任何凭据文件。
-- 发布：最终提交和 Ready PR 在创建后补充；任务不会自行合并。
+- 发布：关键实现提交 `e888c8f7308b458bb7632eab353557a84f413849` 已按规则使用 `git push origin HEAD` 推送；Ready [PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 已创建，目标为 `main`，核对为 OPEN 且 `isDraft=false`。创建时 CI 正在执行，本任务不自行合并。
