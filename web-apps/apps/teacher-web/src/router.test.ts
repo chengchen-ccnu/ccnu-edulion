@@ -13,8 +13,20 @@ describe("T10 teacher question routes", () => {
   });
 
   it("guards every T10 route with teaching:access instead of a placeholder page", () => {
-    const routeBlock = source.slice(source.indexOf("/teacher/questions"), source.indexOf("/forbidden"));
+    const routeBlock = source.slice(source.indexOf("/teacher/questions"), source.indexOf("/teacher/assessments"));
     expect(routeBlock.match(/requiredPermission: "teaching:access"/g)).toHaveLength(6);
     expect(routeBlock).not.toContain("PlaceholderPage");
+  });
+});
+
+describe("T12B teacher assessment route", () => {
+  const source = readFileSync(fileURLToPath(new URL("./router.ts", import.meta.url)), "utf8");
+
+  it("registers exactly the frozen assessment route and protects it by teaching capability", () => {
+    const matches = source.match(/path: "\/teacher\/assessments"/g) ?? [];
+    expect(matches).toHaveLength(1);
+    const block = source.slice(source.indexOf('/teacher/assessments"'), source.indexOf('/forbidden"'));
+    expect(block).toContain('requiredPermission: "teaching:access"');
+    expect(block).not.toContain("PlaceholderPage");
   });
 });

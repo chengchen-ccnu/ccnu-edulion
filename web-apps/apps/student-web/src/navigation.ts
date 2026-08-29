@@ -16,7 +16,8 @@ export function buildStudentNavigation(routeName: string | null | undefined): Sh
       kind: "router", href: "/courses" },
     { id: "my-learning", label: "我的学习", state: "enabled", current: isLearning,
       kind: "router", href: "/my-learning" },
-    { id: "practice-center", label: "练习中心", state: "coming-soon", current: isPractice },
+    { id: "practice-center", label: "练习中心", state: "enabled", current: isPractice,
+      kind: "router", href: "/practice" },
     { id: "ai-tutor", label: "AI 答疑", state: "coming-soon", current: isAi }
   ];
 }

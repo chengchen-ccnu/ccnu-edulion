@@ -110,7 +110,10 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     role: "STUDENT",
     permission: "learning:access",
     path: "/my-learning",
-    accepts: path => path === "/my-learning" || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
+    accepts: path => path === "/my-learning" || path === "/practice" || path === "/wrong-questions"
+      || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
+      || /^\/practice\/[0-9A-Za-z-]+$/.test(path)
+      || /^\/attempt\/[0-9A-Za-z-]+\/result$/.test(path)
   },
   {
     id: "teacher",
@@ -121,6 +124,7 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     accepts: path => path === "/teacher/dashboard"
       || path === "/teacher/courses"
       || path === "/teacher/courses/new"
+      || path === "/teacher/assessments"
       || /^\/teacher\/courses\/[0-9A-Za-z-]+\/(edit|curriculum)$/.test(path)
   },
   {

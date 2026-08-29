@@ -33,6 +33,8 @@ export const router = createRouter({ history: createWebHistory(), routes: [
     meta: { requiresAuth: true, requiredPermission: "teaching:access" } },
   { path: "/teacher/question-imports/:importTaskId", name: "teacher-question-import-detail", component: () => import("./views/TeacherQuestionImportDetailPage.vue"),
     meta: { requiresAuth: true, requiredPermission: "teaching:access" } },
+  { path: "/teacher/assessments", name: "teacher-assessments", component: () => import("./views/TeacherAssessmentPage.vue"),
+    meta: { requiresAuth: true, requiredPermission: "teaching:access" } },
   { path: "/forbidden", name: "forbidden", component: AccessDeniedPage,
     meta: { requiresAuth: true }, props: { store: authStore } },
   { path: "/:pathMatch(.*)*", component: PlaceholderPage,

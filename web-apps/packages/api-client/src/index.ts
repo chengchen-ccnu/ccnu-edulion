@@ -67,6 +67,7 @@ export type CreateQuestionRequest = components["schemas"]["CreateQuestionRequest
 export type UpdateQuestionRequest = components["schemas"]["UpdateQuestionRequest"];
 export type UpdateQuestionStatusRequest = components["schemas"]["UpdateQuestionStatusRequest"];
 export type QuestionPage = components["schemas"]["QuestionPage"];
+export type QuestionSummary = components["schemas"]["QuestionSummary"];
 export type TeacherQuestion = components["schemas"]["TeacherQuestion"];
 export type QuestionVersion = components["schemas"]["QuestionVersion"];
 export type QuestionVersionPage = components["schemas"]["QuestionVersionPage"];
@@ -96,6 +97,40 @@ export type CourseProgress = components["schemas"]["CourseProgress"];
 export type CreateLearningNoteRequest = components["schemas"]["CreateLearningNoteRequest"];
 export type UpdateLearningNoteRequest = components["schemas"]["UpdateLearningNoteRequest"];
 export type LearningNote = components["schemas"]["LearningNote"];
+export type AssessmentType = components["schemas"]["AssessmentType"];
+export type AssessmentStatus = components["schemas"]["AssessmentStatus"];
+export type AssessmentSummary = components["schemas"]["AssessmentSummary"];
+export type LearnerAssessmentState = components["schemas"]["LearnerAssessmentState"];
+export type LearnerAssessmentSummary = components["schemas"]["LearnerAssessmentSummary"];
+export type LearnerAssessmentPage = components["schemas"]["LearnerAssessmentPage"];
+export type LearnerAssessmentQuestion = components["schemas"]["LearnerAssessmentQuestion"];
+export type LearnerAssessment = components["schemas"]["LearnerAssessment"];
+export type AttemptStatus = components["schemas"]["AttemptStatus"];
+export type AttemptAnswerInput = components["schemas"]["AttemptAnswerInput"];
+export type AttemptDraft = components["schemas"]["AttemptDraft"];
+export type AttemptResult = components["schemas"]["AttemptResult"];
+export type StartAttemptRequest = components["schemas"]["StartAttemptRequest"];
+export type SaveAttemptDraftRequest = components["schemas"]["SaveAttemptDraftRequest"];
+export type SubmitAttemptRequest = components["schemas"]["SubmitAttemptRequest"];
+export type WrongQuestion = components["schemas"]["WrongQuestion"];
+export type WrongQuestionPage = components["schemas"]["WrongQuestionPage"];
+export type WrongQuestionMasteryStatus = components["schemas"]["WrongQuestionMasteryStatus"];
+export type UpdateWrongQuestionMasteryRequest = components["schemas"]["UpdateWrongQuestionMasteryRequest"];
+export type RedoWrongQuestionRequest = components["schemas"]["RedoWrongQuestionRequest"];
+export type WrongQuestionRedoResult = components["schemas"]["WrongQuestionRedoResult"];
+export type CreateAssessmentMediaAccessGrantRequest = components["schemas"]["CreateAssessmentMediaAccessGrantRequest"];
+export type AssessmentPage = components["schemas"]["AssessmentPage"];
+export type TeacherAssessment = components["schemas"]["TeacherAssessment"];
+export type CreateAssessmentRequest = components["schemas"]["CreateAssessmentRequest"];
+export type UpdateAssessmentRequest = components["schemas"]["UpdateAssessmentRequest"];
+export type ReplaceAssessmentQuestionsRequest = components["schemas"]["ReplaceAssessmentQuestionsRequest"];
+export type UpdateAssessmentPublicationRequest = components["schemas"]["UpdateAssessmentPublicationRequest"];
+export type CloseAssessmentRequest = components["schemas"]["CloseAssessmentRequest"];
+export type CloseAssessmentResult = components["schemas"]["CloseAssessmentResult"];
+export type PublishAssessmentResultRequest = components["schemas"]["PublishAssessmentResultRequest"];
+export type AssessmentPublicationCommandResult = components["schemas"]["AssessmentPublicationCommandResult"];
+export type TeacherAttemptResultPage = components["schemas"]["TeacherAttemptResultPage"];
+export type ManualGradeRequest = components["schemas"]["ManualGradeRequest"];
 export type ListCoursesQuery = NonNullable<paths["/api/v1/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherCoursesQuery = NonNullable<paths["/api/v1/teacher/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherQuestionsQuery = NonNullable<paths["/api/v1/teacher/questions"]["get"]["parameters"]["query"]>;
@@ -105,12 +140,17 @@ export type ListTeacherQuestionVersionsQuery = NonNullable<paths["/api/v1/teache
 export type ListQuestionImportsQuery = NonNullable<paths["/api/v1/teacher/question-imports"]["get"]["parameters"]["query"]>;
 export type ListLegacyQuestionImportItemsQuery = NonNullable<paths["/api/v1/teacher/question-imports/{importTaskId}/items"]["get"]["parameters"]["query"]>;
 export type ListMyEnrollmentsQuery = NonNullable<paths["/api/v1/learning/enrollments"]["get"]["parameters"]["query"]>;
+export type ListLearnerAssessmentsQuery = NonNullable<paths["/api/v1/learning/assessments"]["get"]["parameters"]["query"]>;
+export type ListWrongQuestionsQuery = NonNullable<paths["/api/v1/learning/wrong-questions"]["get"]["parameters"]["query"]>;
+export type ListTeacherAssessmentsQuery = NonNullable<paths["/api/v1/teacher/assessments"]["get"]["parameters"]["query"]>;
+export type ListAssessmentResultsQuery = NonNullable<paths["/api/v1/teacher/assessments/{assessmentId}/results"]["get"]["parameters"]["query"]>;
 
 /** Gateway HTTP 状态、稳定错误码和按字段错误的人工维护异常投影。 */
 export class GatewayRequestError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fieldErrors: Record<string, string>;
+  readonly retryAfterSeconds: number | null;
 
   constructor(response: Response, error?: ApiError) {
     super(error?.message ?? `Gateway request failed with status ${response.status}`);
@@ -118,6 +158,9 @@ export class GatewayRequestError extends Error {
     this.status = response.status;
     this.code = error?.code ?? "COMMON.UNEXPECTED_ERROR";
     this.fieldErrors = Object.fromEntries((error?.fieldErrors ?? []).map(item => [item.field, item.reason]));
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+    this.retryAfterSeconds = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null;
   }
 }
 

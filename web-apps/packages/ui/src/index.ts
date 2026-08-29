@@ -1,5 +1,8 @@
 export { default as AppShell } from "./AppShell.vue";
 export { default as HlsVideoPlayer } from "./HlsVideoPlayer.vue";
+export { default as SafeAssessmentContent } from "./SafeAssessmentContent.vue";
+export type { AssessmentContentMedia, AssessmentMediaGrant, AssessmentMediaResolver } from "./SafeAssessmentContent.vue";
+export { renderAssessmentContent } from "./render-assessment-content";
 export { playbackErrorMessage } from "./playback-runtime";
 export { createPlaybackProgressTracker } from "./playback-progress";
 export type { PlaybackProgressSample, PlaybackProgressTracker } from "./playback-progress";

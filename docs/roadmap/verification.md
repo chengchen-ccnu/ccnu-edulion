@@ -477,5 +477,17 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 合并与清理：[PR #35](https://github.com/chengchen-ccnu/ccnu-edulion/pull/35) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@a254641`；本地 `main` 已同步，`codex/t11b-assessment-result-release` 本地和远端功能分支均已清理。
 - 前置结论：T09B 已提供结构化普通题/组合题和不可变版本；T11A 已提供参与状态、服务端时间、草稿恢复、错题 redo、归档结果和题图授权；T11B 已提供 OpenAPI 0.16.0、整场关闭、草稿有界结算、成绩/参考答案独立公布、资格计数、重新批改审计及四态安全结果；T12A 已稳定学习导航和课程学习页。因此 T12B 的代码、契约、路由、权限和数据准备机制前置均满足。
 - 实施边界：T12B 作为一个任务只启用既有 `/practice`、`/practice/:assessmentId`、`/attempt/:attemptId/result`、`/wrong-questions`、`/teacher/assessments` 以及课程编排中的测评跳转；只消费生成客户端，不修改 T11B 后端补洞，不复制学习页/播放器，不提前实现 T12C、AI、逐学生/定时公布、撤回或复杂监考。
+
+## 2026-08-29 T12B 测评闭环前端实施与真实验收
+
+- 路由与边界：学生四条冻结测评路由和固定“练习中心”槽位已启用，作答/结果/错题共用高亮；学习页只按 courseId 查询并在返回结果内筛 lessonId。教师只使用 `/teacher/assessments`，assessmentId/panel/courseId/lessonId/status/page 由 URL 恢复，课程编排只跳转。没有平行详情、课程详情作答、复制播放器、T12C、AI 或占位成功页。
+- 契约与安全：OpenAPI 保持 0.16.0，前端 DTO 全部由生成 Schema 派生。结果严格以 `gradeVisible`/`answerVisible` 展示四态；未授权成绩、判分、答案和解析不进入 DOM。题目内容经 Markdown 清洗和严格 KaTeX 渲染，题图先经测评媒体授权再下载为临时 Blob，离页中止请求并撤销 URL。教师只显示 learnerId，不伪造姓名或历史评语。
+- 学生闭环：练习中心显示可参与/进行中/已完成与服务端时间；作答支持主问题连续区块、组合题有序小问、全部契约题型、题号导航和整卷概览。防抖＋定时兜底保存复用稳定请求 ID/请求体，429/离线/5xx 有限重试且旧响应不能覆盖新状态；考试按 serverTime/deadlineAt 校准、刷新恢复、到期锁定并只提交最后成功草稿。结果 `view=all`/`view=single` 深链复用同一 DTO；错题掌握和最多三次 redo 不重开原 attempt。
+- 教师闭环：真实页面完成草稿创建/编辑、SYSTEM 组合题＋简答题精确版本组卷、调序计分、发布、关闭影响数确认、PENDING→COMPLETED 结算、待批计数、逐份批改、成绩/答案独立不可撤回公布、公布后重批、409 保留 6.5/5.5 与本地评语后载入最新 revision 重提，以及归档。联调发现并修复成功后旧 422 提示残留、results 面板被残留 attemptId 拉回 grading 两项页面状态缺陷。
+- nullable 快照：真实组合题冻结暴露知识点 parentId/grade 和历史来源 jsonEdition/jsonGrade 允许为空却在 JSON 往返时被省略；经用户授权只在现有 DTO 序列化边界显式保留 null，并增加 H2 快照往返测试。OpenAPI、Learning 状态机、数据库和迁移均未改变。
+- 演示数据：新增显式 local、生产禁用的幂等 Seed，只允许 `edu_platform_learning_dev`，从三个固定 `KG_MATH_T10B_V3` source ref 解析 SYSTEM 单选/简答/含图组合题。保留 6 场 assessment、6 份 attempt、10 条冻结题快照、2 条错题/redo 与可选的一条 Seed 自有 ACTIVE 报名；`Initialize/Cleanup/Rebuild` 均经凭据包装器执行并按固定 ID/owner 精确处理。随机临时教师验收 assessment 及其分配、草稿、答案和批改记录已事务删除，复查剩余 0；最后 `Rebuild` 恢复固定演示初态。
+- 自动化：`install --frozen-lockfile`、`generate:api`、`check:api`、`typecheck` 全部通过；Vitest 29 文件 191 项全部通过；三端生产 build 通过，只保留既有大 chunk 提示。`mvn ... clean verify` 八个 Reactor 模块全部成功（2 分 09 秒），Gateway 12/12、IAM 9/9、Course 17 项中 1 跳过、Learning 59 项中 5 个显式门控项跳过、Media 25 项中 4 个显式门控项跳过，无失败。test/build 沙箱内因 Windows esbuild `spawn EPERM` 无法启动，批准后在沙箱外以同一命令通过。
+- 真实浏览器：学生 6 场状态、四种结果、双视图、草稿刷新、完整提交、错题主观 redo、掌握更新和 15→5→0 秒考试截止均通过；教师完整闭环和刷新 query 恢复通过。学生 375 px、教师 1024/1440 px 均无横向溢出，控制台 warning/error 为 0且无敏感信息。自动控制能定位焦点但 Tab/Enter 激活未可靠产生导航，最终键盘激活仍需人工复核。
+- 外部依赖：题图授权经 Gateway 成功，真实对象下载为 HTTP 200、`image/png`、2810 bytes；开发 OSS Bucket 未返回允许前端 origin 的 CORS 响应头，浏览器安全 fetch→Blob 因此显示“图片暂不可用”。未改成签名直链、Gateway 代理或其他绕过。完成浏览器题图验收前，需为开发 Bucket 配置精确学生/教师 origin 的 GET/HEAD CORS 并复验。
 - 验收重点：必须覆盖稳定请求标识的自动保存与有限重试、服务端截止锁定、最后成功草稿提交、组合题连续展示、结果双视图深链、四种公布组合、防泄漏、页内错题 redo、不可撤销关闭二次确认、待结算/待批资格、重新批改 409、401/403/404/409/422/429/503/offline、手机学生端、平板教师端、键盘可访问性和离页清理。临时验收数据须精确清理；可选 local seed 只能引用固定既有 SYSTEM 题并提供幂等清理/重建，题目缺失时明确失败。
 - 数据：本次总控只执行 Git 合并、文档状态更新和只读前置审计，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。

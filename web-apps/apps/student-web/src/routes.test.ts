@@ -34,6 +34,18 @@ describe("student application routes", () => {
     expect(myLearning?.meta?.requiredRole).toBeUndefined();
   });
 
+  it.each([
+    ["/practice", "practice"],
+    ["/practice/:assessmentId", "practice-attempt"],
+    ["/attempt/:attemptId/result", "attempt-result"],
+    ["/wrong-questions", "wrong-questions"]
+  ])("protects T12B route %s with learning:access", (path, name) => {
+    const route = studentRoutes.find(item => item.path === path);
+    expect(route?.name).toBe(name);
+    expect(route?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
+    expect(route?.meta?.requiredRole).toBeUndefined();
+  });
+
   it("keeps playback implementation out of the public course detail component", () => {
     const detailSource = readFileSync(new URL("./views/CourseDetailPage.vue", import.meta.url), "utf8");
     const learningSource = readFileSync(new URL("./views/CourseLearningPage.vue", import.meta.url), "utf8");
