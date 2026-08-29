@@ -229,6 +229,7 @@ function messageFor(error: unknown, fallback: string): string {
     <div class="editor-subnav">
       <RouterLink :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">基本信息</RouterLink>
       <strong>章节与课时</strong>
+      <RouterLink :to="{ name: 'teacher-assessments', query: { courseId: course.id, panel: 'basic' } }">管理课程测评</RouterLink>
       <span>视频 READY 后保存目录，才可 owner 预览</span>
     </div>
     <p v-if="course.publishedVersion && course.hasUnpublishedChanges" class="version-notice">
@@ -263,6 +264,10 @@ function messageFor(error: unknown, fallback: string): string {
                 <button type="button" :disabled="lessonIndex === 0" title="课时上移" @click="moveLesson(chapter, lessonIndex, -1)">↑</button>
                 <button type="button" :disabled="lessonIndex === chapter.lessons.length - 1" title="课时下移" @click="moveLesson(chapter, lessonIndex, 1)">↓</button>
                 <button class="danger-link" type="button" @click="removeLesson(chapter, lessonIndex)">删除</button>
+                <RouterLink v-if="lesson.id" class="lesson-assessment-link"
+                  :to="{ name: 'teacher-assessments', query: { courseId: course.id, lessonId: lesson.id, panel: 'basic' } }">
+                  测评
+                </RouterLink>
               </div>
               <div v-if="lesson.type === 'VIDEO'" class="lesson-video-editor">
                 <MediaUploadField v-if="lesson.id" :model-value="videoMediaId(lesson)" purpose="LESSON_VIDEO"

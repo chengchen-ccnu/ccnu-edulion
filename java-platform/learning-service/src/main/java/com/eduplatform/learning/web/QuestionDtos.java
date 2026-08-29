@@ -137,11 +137,18 @@ public final class QuestionDtos {
             @NotBlank @Size(max = 100) String name, UUID parentId, @NotNull QuestionModels.Grade grade,
             @Min(0) @Max(100000) int sortOrder, boolean enabled) {}
 
+    /**
+     * 题目版本中的知识点快照。父节点和年级允许为空，但持久化 JSON 必须显式保留 null，
+     * 否则严格反序列化会把“字段缺失”误判为损坏的历史快照。
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record KnowledgePointResponse(String id, String code, String name, String parentId,
             QuestionModels.Stage stage, QuestionModels.Grade grade, QuestionModels.Subject subject,
             int sortOrder, boolean enabled, long revision, List<KnowledgePointResponse> children) {}
 
     public record MediaResponse(String id, String mediaId, QuestionModels.MediaPurpose purpose, int sequence) {}
+    /** 旧题来源快照中的版本、年级等元数据允许为空，持久化时必须保留这些 null 字段。 */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record LegacySourceResponse(String sourceSystem, String externalId, String originalDifficulty,
             String pathEdition, String jsonEdition, String pathGrade, String jsonGrade, boolean metadataConflict) {}
     public record ChildResponse(String questionId, String versionId, int versionNumber, int sequence,

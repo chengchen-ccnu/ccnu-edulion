@@ -132,6 +132,39 @@ class LearningAssessmentIntegrationTest {
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
     }
 
+    /**
+     * 验证测评快照会显式保存知识点中的可空字段，防止从 MySQL JSON 读回时因字段缺失而失败。
+     */
+    @Test
+    void assessmentQuestionSnapshotRoundTripsNullableKnowledgePointFields() {
+        Instant now = Instant.now();
+        repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
+                "可空知识点快照", "验证持久化往返", LearningDtos.AssessmentType.PRACTICE,
+                LearningDtos.AssessmentStatus.DRAFT, LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION,
+                null, null, null, 1, now, null, now, now));
+        var knowledgePoint = new QuestionDtos.KnowledgePointResponse(
+                "00000000-0000-4000-8000-000000018001", "JUNIOR_MATH_TEST", "测试知识点", null,
+                QuestionModels.Stage.JUNIOR, null, QuestionModels.Subject.MATHEMATICS,
+                1, true, 0, List.of());
+        var legacySource = new QuestionDtos.LegacySourceResponse(
+                "KG_MATH_TEST", "test-source-1", "MEDIUM", "人教版", null, "七年级", null, false);
+        var snapshot = new QuestionDtos.VersionResponse(
+                "00000000-0000-4000-8000-000000018101", 1, QuestionModels.Type.SINGLE_CHOICE,
+                QuestionModels.Difficulty.MEDIUM, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
+                QuestionModels.Subject.MATHEMATICS, "测试题干", List.of(new QuestionDtos.OptionInput("A", "选项 A")),
+                List.of("A"), "测试解析", List.of(knowledgePoint), List.of(), legacySource, List.of(), now);
+        repository.insertAssessmentQuestion(new AssessmentQuestionRow(
+                "00000000-0000-4000-8000-000000018201", ASSESSMENT,
+                "00000000-0000-4000-8000-000000018301", snapshot.id(), 1, BigDecimal.ONE, snapshot, now));
+
+        var restored = repository.assessmentQuestions(ASSESSMENT).get(0).snapshot().knowledgePoints().get(0);
+        assertThat(restored.parentId()).isNull();
+        assertThat(restored.grade()).isNull();
+        var restoredLegacySource = repository.assessmentQuestions(ASSESSMENT).get(0).snapshot().legacySource();
+        assertThat(restoredLegacySource.jsonEdition()).isNull();
+        assertThat(restoredLegacySource.jsonGrade()).isNull();
+    }
+
     @Test
     void submissionAutoGradesFourObjectiveTypesThenManualGradeFinalizesWithoutLeakingUnpublishedFacts() throws Exception {
         service.enroll(LEARNER, COURSE, "trace-enroll");

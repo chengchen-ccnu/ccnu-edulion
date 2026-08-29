@@ -291,6 +291,27 @@ T11B 不创建数据库，只在用途明确的 `edu_platform_learning_dev` 上�
 
 真实 MySQL 验收继续使用上方 `LearningMysqlMigrationAcceptanceTest` 命令。用例会再次拒绝非 `edu_platform_learning_dev` 目标，以随机 UUID 创建最小 assessment/attempt/wrong/redo，验证 V11 关闭、公布、最后成绩时间和有限重试约束，并在 `finally` 中精确逆序删除全部 Fixture。没有 local seed；重复验收直接重跑命令，不会复用或修改现有正式题库。
 
+### T12B 测评闭环前端演示数据
+
+T12B 不创建 Schema、表或迁移，只在用途明确的 `edu_platform_learning_dev` 中维护一组生产禁用、固定 ID、幂等的页面演示数据。`T12BAssessmentDemoSeedTest` 会先校验 `T12B_DEMO_SEED_ENABLED=true`、`local` profile 和目标 Schema，再从固定稳定 source ref 解析既有 `SYSTEM` 题版本；题目缺失、数量或类型不符合预期时直接失败，不随机抽题、不复制题干/答案，也不遍历历史 JSON。
+
+演示集为固定测试教师 `teacher_test_01` 和学习者 `student_test_01` 创建或复用一条 ACTIVE 报名，并保留 6 场测评、6 份作答、10 条冻结测评题快照、2 条错题及确定性的重做历史。页面可覆盖普通练习可恢复草稿、限时考试、客观题、主观题、组合题、真实题图、待人工批改，以及成绩/参考答案“均未公布、仅成绩、仅答案、均已公布”四种状态。生产 profile 不会自动执行该测试。
+
+所有操作必须从仓库根目录执行；脚本内部统一调用 `Invoke-WithLocalEnvironment.ps1`，不会读取、打印或拼接 DPAPI 凭据：
+
+```powershell
+# 首次初始化；若固定 ID 已存在则校验所有权与内容后保持幂等。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAssessmentDemoSeed.ps1 -Action Initialize
+
+# 只删除本 Seed 固定 ID 拥有的测评、作答、答案、批改、错题、分配、幂等记录和由 Seed 创建的报名。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAssessmentDemoSeed.ps1 -Action Cleanup
+
+# 先精确清理再按同一固定 ID 重建，恢复所有演示状态。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAssessmentDemoSeed.ps1 -Action Rebuild
+```
+
+`Cleanup` 在删除前逐项核对固定 assessment 的 owner、课程、标题标记和固定报名的 learner/course/version；任何归属异常都会拒绝执行。它按错题重做/发生记录 → 错题 → 人工批改/答案 → attempt → 分配/冻结题目 → assessment 的外键顺序删除，不清空表、不触碰既有 SYSTEM 题、媒体、课程、账号或非本 Seed 报名。
+
 历史 JSON 不走 `QUESTION_IMPORT_SOURCE` 上传，也不让服务端接收目录路径。只读迁移脚本逐文件读取，默认 DryRun、每批最多 20、每任务最多 1000，终端只输出计数。0.13.0 起创建、批次和清理端点只对具备 `administration:access` 的管理员开放，任务冻结为 `SYSTEM`，正式题目直接为 `ACTIVE`，图片也创建为管理员持有的 `SYSTEM` 资产；教师端既有旧任务只读，不再复核、继续提交或清理历史 JSON。实际批量导入仍必须显式使用 `-Action Import`；单任务清理携带原任务 ID，全量编排可使用 Import 检查点逐任务精确清理。示例只做 5 项 dry-run：
 
 脚本只经 Gateway 调用，必须先把当前管理员的短期 Access Token 放入当前进程的 `EDU_MIGRATION_ACCESS_TOKEN`；不得把 Token 写入命令参数、`local.env`、仓库或日志，操作后立即移除该环境变量。

@@ -5,13 +5,14 @@
  * 切换课时或离页会中止目录/学习请求、丢弃旧进度队列；播放器继续销毁 HLS、定时器和短期 URL。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { CourseDetail, CourseProgress, Enrollment, LearningNote, LessonProgress } from "@edu/api-client";
+import type { CourseDetail, CourseProgress, Enrollment, LearnerAssessmentSummary, LearningNote, LessonProgress } from "@edu/api-client";
 import { HlsVideoPlayer, playbackErrorMessage } from "@edu/ui";
 import type { PlaybackProgressSample } from "@edu/ui";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { studentCourseApi } from "../course-api";
+import { studentAssessmentApi } from "../assessment-api";
 import { courseLearningEntries, findLearningEntry } from "../course-learning";
 import { mergeCourseProgress, videoProgressPercent as calculateVideoProgressPercent } from "../learning-model";
 import { isAuthenticationRequired, studentLearningApi } from "../learning-api";
@@ -24,12 +25,14 @@ const enrollment = ref<Enrollment | null>(null);
 const progress = ref<CourseProgress | null>(null);
 const reportedProgress = ref<LessonProgress | null>(null);
 const notes = ref<LearningNote[]>([]);
+const lessonAssessments = ref<LearnerAssessmentSummary[]>([]);
 const loading = ref(false);
 const errorMessage = ref("");
 const enrollmentMessage = ref("");
 const enrollmentError = ref("");
 const progressError = ref("");
 const notesError = ref("");
+const assessmentsError = ref("");
 const noteContent = ref("");
 const noteFieldError = ref("");
 const noteSaving = ref(false);
@@ -109,9 +112,10 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
     notesError.value = "报名后才可创建和查看本课笔记。";
     return;
   }
-  const [progressResult, notesResult] = await Promise.allSettled([
+  const [progressResult, notesResult, assessmentsResult] = await Promise.allSettled([
     studentLearningApi.progress(detail.id, controller.signal),
-    studentLearningApi.notes(detail.id, lessonId, controller.signal)
+    studentLearningApi.notes(detail.id, lessonId, controller.signal),
+    studentAssessmentApi.list({ page: 1, size: 100, courseId: detail.id }, controller.signal)
   ]);
   if (stale(controller, generation)) return;
   if (progressResult.status === "fulfilled") {
@@ -122,6 +126,9 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
   }
   if (notesResult.status === "fulfilled") notes.value = notesResult.value;
   else notesError.value = learningErrorMessage(notesResult.reason, "本课笔记暂时无法读取。");
+  if (assessmentsResult.status === "fulfilled") {
+    lessonAssessments.value = assessmentsResult.value.items.filter(item => item.lessonId === lessonId);
+  } else assessmentsError.value = learningErrorMessage(assessmentsResult.reason, "本课练习暂时无法读取。");
   startProgressSync(detail.id, lessonId);
 }
 
@@ -244,11 +251,13 @@ function resetPageState() {
   progress.value = null;
   reportedProgress.value = null;
   notes.value = [];
+  lessonAssessments.value = [];
   errorMessage.value = "";
   enrollmentMessage.value = "";
   enrollmentError.value = "";
   progressError.value = "";
   notesError.value = "";
+  assessmentsError.value = "";
   noteContent.value = "";
   noteFieldError.value = "";
   noteSaving.value = false;
@@ -390,6 +399,15 @@ function cancelPage() {
         <p v-else-if="!notesError" class="empty-inline">还没有笔记。播放课程时记录第一个关键点吧。</p>
       </section>
 
+      <section class="lesson-assessments-panel" aria-labelledby="lesson-assessments-heading">
+        <header><div><span class="section-kicker">ASSESSMENTS</span><h3 id="lesson-assessments-heading">本课练习</h3></div>
+          <RouterLink to="/practice">查看练习中心</RouterLink></header>
+        <p v-if="assessmentsError" class="panel-error" role="alert">{{ assessmentsError }}</p>
+        <ul v-if="lessonAssessments.length"><li v-for="item in lessonAssessments" :key="item.id"><div><strong>{{ item.title }}</strong>
+          <small>{{ item.type }} · {{ item.learnerState }}</small></div><RouterLink :to="`/practice/${item.id}`">进入测评</RouterLink></li></ul>
+        <p v-else-if="!assessmentsError" class="empty-inline">当前课时没有已发布测评。</p>
+      </section>
+
       <nav class="lesson-navigation" aria-label="课时导航">
         <RouterLink v-if="previous?.accessible" :to="`/learn/${course.id}/${previous.lesson.id}`"><small>上一课</small><strong>{{ previous.lesson.title }}</strong></RouterLink>
         <span v-else class="lesson-navigation__disabled"><small>上一课</small><strong>{{ previous ? "需要报名" : "已经是第一课" }}</strong></span>
@@ -413,7 +431,7 @@ function cancelPage() {
           </li>
         </ol>
       </details>
-      <p>当前学习页已接通真实进度和本人笔记；测评与 AI 将在后续任务中沿用本路由启用。</p>
+      <p>当前学习页已接通真实进度、本人笔记和课时练习入口；AI 将在后续任务中沿用本路由启用。</p>
     </aside>
   </div>
 </template>

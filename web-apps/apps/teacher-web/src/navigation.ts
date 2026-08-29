@@ -26,8 +26,9 @@ export function buildTeacherNavigation(routeName: string | null | undefined, use
     { id: "question-bank", label: "题库", state: canTeach ? "enabled" : "permission-required",
       current: inQuestionBank, kind: canTeach ? "router" : undefined,
       href: canTeach ? "/teacher/questions" : undefined },
-    { id: "assessment-management", label: "测评管理", state: "coming-soon",
-      current: routeName === "teacher-assessments" },
+    { id: "assessment-management", label: "测评管理", state: canTeach ? "enabled" : "permission-required",
+      current: routeName === "teacher-assessments", kind: canTeach ? "router" : undefined,
+      href: canTeach ? "/teacher/assessments" : undefined },
     { id: "student-analysis", label: "学情分析", state: "coming-soon", current: routeName === "teacher-students" },
     { id: "media-center", label: "媒体中心", state: "coming-soon", current: routeName === "teacher-media" }
   ];

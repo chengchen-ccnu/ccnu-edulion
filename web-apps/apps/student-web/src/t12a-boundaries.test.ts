@@ -30,8 +30,9 @@ describe("T12A page boundaries", () => {
     expect(learning).toContain("onBeforeUnmount(cancelPage)");
     expect(learning).toContain("progressSync?.dispose()");
     expect(learning).toContain("pageAbort?.abort()");
-    expect(learning).toContain("测评与 AI 将在后续任务");
-    expect(learning).not.toContain("assessmentApi");
+    expect(learning).toContain("本课练习");
+    expect(learning).toContain("studentAssessmentApi.list");
+    expect(learning).toContain("AI 将在后续任务");
     expect(learning).not.toContain("aiApi");
   });
 });

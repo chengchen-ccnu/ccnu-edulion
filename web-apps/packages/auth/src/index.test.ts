@@ -194,6 +194,30 @@ describe("post-login routing", () => {
     expect(destination).toMatchObject({ kind: "target", target: { href: `http://student.test${target}` } });
   });
 
+  it.each([
+    "/practice",
+    "/practice/00000000-0000-4000-8000-000000000401",
+    "/attempt/00000000-0000-4000-8000-000000000501/result?view=single&question=2",
+    "/wrong-questions?page=2"
+  ])("allows the T12B learning redirect %s", target => {
+    const currentUser = user(["TEACHER"], ["learning:access"]);
+    expect(resolveInternalRedirect(target, urls)).toMatchObject({ access: "workspace", requestedPath: target });
+    expect(selectPostLoginDestination(currentUser, target, urls)).toMatchObject({
+      kind: "target", target: { href: `http://student.test${target}` }
+    });
+  });
+
+  it.each([
+    "https://evil.example/practice",
+    "//evil.example/practice",
+    "/\\evil.example/practice",
+    "\\\\evil.example\\practice",
+    "/practice\\..\\admin",
+    "/practice-unknown"
+  ])("rejects malicious or unknown T12B redirect %s", target => {
+    expect(resolveInternalRedirect(target, urls)).toBeNull();
+  });
+
   it("offers learning and teaching workspaces to a teacher-shaped account with both capabilities", () => {
     const workspaces = availableWorkspaces(user(["TEACHER"], ["learning:access", "teaching:access"]), urls);
 
