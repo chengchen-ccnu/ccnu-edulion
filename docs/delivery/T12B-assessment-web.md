@@ -81,9 +81,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAsses
 - 教师在真实页面创建并编辑临时 HOMEWORK，加入一个 SYSTEM 组合题和一个 SYSTEM 简答题，调整顺序与 12/8 分并发布不可变试卷。关闭前页面显示 1 份进行中草稿；确认后冻结影响数为 1，结算由 PENDING 变为 COMPLETED，待批计数为 1 人/2 题。
 - 教师逐题评分后结果从 PARTIALLY_GRADED/2 待批变为 GRADED/0 待批，成绩与参考答案分别独立公布。公布后再次批改，学生总分由 13 更新为 12，两类公布状态保持 PUBLISHED。
 - 在评分表已录入 6.5/5.5 和本地评语后，由并发请求推进 attempt revision；浏览器提交得到 409，得分/评语完整保留，载入最新 revision 后再次提交成功。最后归档为 ARCHIVED，刷新仍恢复 assessmentId 和 publication 面板。
-- 学生 375 px、教师 1024 px 和 1440 px 检查中 `scrollWidth == clientWidth`，无横向溢出；原生链接、按钮、输入和 `aria-current` 均保留。浏览器自动化能把焦点落到目标链接，但其 Enter/Tab 控制未可靠产生后续导航，因此键盘激活的最终人工复核仍列为下述已知验证缺口，自动化单测已覆盖固定顺序与焦点样式。
+- 学生 375 px、教师 1024 px 和 1440 px 检查中 `scrollWidth == clientWidth`，无横向溢出；原生链接、按钮、输入和 `aria-current` 均保留。自动化单测覆盖固定顺序与焦点样式；用户随后使用真实键盘复核 Tab/Shift+Tab、Enter/Space、关闭确认、标签切换、题号导航和错题入口，焦点可见、顺序和激活行为均正常。
 
-题图链路的真实结果需要单独说明：`createAssessmentMediaAccessGrant` 经 Gateway 成功返回短期授权，授权对象以真实请求下载得到 HTTP 200、`image/png`、2810 bytes；但 OSS 对学生源站请求没有返回 `Access-Control-Allow-Origin`，浏览器 fetch→Blob 被 CORS 正常阻止，页面显示“图片暂不可用”。实现没有把签名 URL直接放进 DOM，也没有增加 Gateway 文件代理或绕过授权。要让题图在浏览器显示，需在对应开发 Bucket 配置允许实际学生/教师前端 origin 的 GET/HEAD CORS 后复验。
+题图链路已完成最终复验：`createAssessmentMediaAccessGrant` 经 Gateway 返回短期授权，授权对象以真实请求下载得到 HTTP 200、`image/png`、2810 bytes；开发 Bucket 补齐学生/教师实际前端 origin 的 GET/HEAD CORS 后，用户确认浏览器 fetch→Blob 与题图展示正常。实现仍只使用临时 Blob URL，没有把签名 URL 直接放进 DOM，也没有增加 Gateway 文件代理或其他绕过。
 
 ## 临时数据清理
 
@@ -98,13 +98,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12BAsses
 3. 打开 `/wrong-questions`，更新掌握状态并 redo 主观错题，确认历史、剩余次数和“无自动判分”说明。
 4. 打开限时考试，保存后刷新并等待截止，确认锁定和最后草稿提交。
 5. 以 `teacher_test_01` 打开 `/teacher/assessments`，创建草稿、从 SYSTEM 题库加入组合题/简答题、调序计分并发布；使用一份进行中作答验证关闭影响数、结算、人工批改、独立公布、公布后重批和归档。
-6. 在开发者工具确认所有前端 API 都指向 Gateway；为开发 OSS Bucket 补齐精确 origin CORS 后，复验题图 Blob 展示和离页 URL 撤销。
+6. 在开发者工具确认所有前端 API 都指向 Gateway；开发 OSS Bucket 使用精确 origin 的 GET/HEAD CORS，题图通过短期授权下载为 Blob 展示，离页撤销临时 URL。
 7. 结束临时验收后精确清理随机 assessment；演示完毕可执行 Seed `Cleanup`，需要恢复时执行 `Rebuild`。
 
 ## 已知风险与后续依赖
 
-- 开发 OSS Bucket 当前缺少前端 origin CORS，真实题图授权和对象本身有效，但安全 Blob 展示未通过浏览器验收。这是外部存储配置依赖；不得改成长期/直接签名 URL，也不得让 Gateway 代理对象文件。
-- 浏览器自动化的 Tab/Enter 激活未可靠触发导航；语义控件、固定 DOM 顺序、焦点样式和 aria 状态已自动化覆盖，但仍需人工键盘走查一次关闭确认、标签切换、题号导航和错题入口。
 - Vite 对 `hls.js` 及应用入口保留大 chunk 提示；本任务没有复制播放器或引入第二套媒体客户端。性能拆分应基于 T18 数据独立处理。
 - 首期仍不含 FAILED 结算管理恢复、批量评分、逐学生/定时公布、撤回、复杂监考、T12C 学情或 AI。
 
