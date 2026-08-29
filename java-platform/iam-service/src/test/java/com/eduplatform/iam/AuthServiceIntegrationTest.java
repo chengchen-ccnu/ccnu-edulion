@@ -29,6 +29,13 @@ class AuthServiceIntegrationTest {
 
     @BeforeEach
     void resetData() {
+        jdbc.update("DELETE FROM teacher_application_command");
+        jdbc.update("DELETE FROM teacher_application");
+        jdbc.update("DELETE FROM admin_account_command");
+        jdbc.update("DELETE FROM account_security_audit");
+        jdbc.update("DELETE FROM protocol_agreement");
+        jdbc.update("DELETE FROM registration_request");
+        jdbc.update("DELETE FROM user_identity");
         jdbc.update("DELETE FROM login_audit");
         jdbc.update("DELETE FROM refresh_session");
         jdbc.update("DELETE FROM user_role");

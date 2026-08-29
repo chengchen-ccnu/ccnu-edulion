@@ -29,7 +29,9 @@ import org.springframework.test.context.DynamicPropertySource;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "platform.gateway.jwt.secret=test-only-secret-with-at-least-32-bytes",
         "platform.gateway.jwt.issuer=edu-platform-iam-test",
-        "platform.gateway.jwt.audience=edu-platform-gateway-test"
+        "platform.gateway.jwt.audience=edu-platform-gateway-test",
+        "platform.gateway.rate-limit.enabled=false",
+        "platform.gateway.session-validation.enabled=false"
 })
 class GatewayRouteSecurityTest {
     private static final String SECRET = "test-only-secret-with-at-least-32-bytes";

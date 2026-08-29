@@ -13,6 +13,7 @@ $ErrorActionPreference = "Stop"
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
+$iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $commandExitCode = 0
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
@@ -25,6 +26,10 @@ if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $serviceCredentialPath -PathType Leaf)) {
     throw "Missing encrypted course/media service authorization secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
+}
+
+if (-not (Test-Path -LiteralPath $iamSecurityCredentialPath -PathType Leaf)) {
+    throw "Missing encrypted IAM security secrets. Run scripts/Initialize-LocalEnvironment.ps1 to add them."
 }
 
 $originalEnvironment = @{}
@@ -86,6 +91,21 @@ try {
     $serviceNetworkCredential = $serviceCredential.GetNetworkCredential()
     Set-ScopedEnvironmentVariable -Name "COURSE_MEDIA_AUTH_SECRET" -Value $serviceNetworkCredential.Password
 
+    $iamSecurityCredential = Import-Clixml -LiteralPath $iamSecurityCredentialPath
+    if ($iamSecurityCredential -isnot [PSCredential] -or $iamSecurityCredential.UserName -ne "iam-security") {
+        throw "The encrypted IAM security credential has an unexpected format."
+    }
+    $iamSecurityNetworkCredential = $iamSecurityCredential.GetNetworkCredential()
+    $iamSecurityPayload = $iamSecurityNetworkCredential.Password | ConvertFrom-Json
+    if ($iamSecurityPayload.jwtSecret.Length -lt 32 `
+            -or $iamSecurityPayload.verificationHmacSecret.Length -lt 32 `
+            -or $iamSecurityPayload.localVerificationCode -notmatch "^[0-9]{6}$") {
+        throw "The encrypted IAM security credential is incomplete."
+    }
+    Set-ScopedEnvironmentVariable -Name "IAM_JWT_SECRET" -Value $iamSecurityPayload.jwtSecret
+    Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_HMAC_SECRET" -Value $iamSecurityPayload.verificationHmacSecret
+    Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_FIXED_CODE" -Value $iamSecurityPayload.localVerificationCode
+
     & $ScriptBlock
     if (Test-Path Variable:LASTEXITCODE) {
         $commandExitCode = $LASTEXITCODE
@@ -106,6 +126,9 @@ finally {
     $credential = $null
     $serviceNetworkCredential = $null
     $serviceCredential = $null
+    $iamSecurityPayload = $null
+    $iamSecurityNetworkCredential = $null
+    $iamSecurityCredential = $null
 }
 
 if ($null -ne $commandExitCode -and $commandExitCode -ne 0) {

@@ -154,6 +154,31 @@ source java-platform/iam-service/src/main/resources/db/seed/cleanup-iam-seed.sql
 
 清理脚本只删除上述固定测试账号、角色、权限及其会话和登录审计。重新生成时再次显式启用 Seed 并重启 IAM；完成后应清除当前进程中的 `IAM_SEED_PASSWORD` 和 `IAM_JWT_SECRET`。
 
+### T12D 账号生命周期与 Redis 身份安全
+
+IAM V2 只在明确的 `edu_platform_iam_dev`/`edu_platform_iam_test` 上向前增加 `user_identity`、`registration_request`、`protocol_agreement`、`teacher_application`、`teacher_application_command`、`account_security_audit` 和 `admin_account_command`，并为账号与 Refresh Session 增加持久会话版本/设备字段。Redis 只保存带 TTL 的验证挑战摘要、发送冷却、登录失败/短期锁定、Gateway 限流窗口和 `sessionVersion` 缓存；缓存缺失或 Redis 故障时返回显式 503，不会跳过验证、锁定或限流。
+
+`scripts/Initialize-LocalEnvironment.ps1` 另外维护本机 `iam-security.credential.clixml`：内部的 JWT HMAC、验证码 HMAC 和 local 固定验证码均由 Windows DPAPI 加密。旧环境首次升级需重跑一次初始化脚本；它只补齐缺失的加密文件，不覆盖已有 MySQL 凭据。`Invoke-WithLocalEnvironment.ps1` 仅在子命令期间解密并注入 `IAM_JWT_SECRET`、`IAM_VERIFICATION_HMAC_SECRET` 和 `IAM_VERIFICATION_FIXED_CODE`，结束后恢复环境；禁止读取、打印或把它们复制到 `local.env`。生产环境必须将 `IAM_VERIFICATION_DELIVERY_MODE` 改为已审评的供应商适配器；T12D 未接入真实短信/邮件，因此非 local/test 环境默认明确返回 503。
+
+固定 local/test Seed 仍只有 `student_test_01`、`teacher_test_01`、`admin_test_01`；T12D 为三个账号增加 `example.invalid` 测试邮箱身份，并为学生增加 `local-v1` 用户协议/隐私同意。不创建教师申请、资质媒体、审核决定或管理员命令。重复启动是幂等的；`cleanup-iam-seed.sql` 按外键逆序精确清理这些固定 ID 的身份、协议、会话、申请/命令派生事实和审计；重建方式是清理后显式设置 `IAM_SEED_ENABLED=true` 并经安全包装脚本重启 IAM。
+
+真实 MySQL/Redis 与 Gateway/Redis 验收默认跳过，只能经安全包装脚本显式运行：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:IAM_REDIS_MYSQL_ACCEPTANCE = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl iam-service -am `
+        '-Dtest=IamRedisMysqlRealAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    $env:GATEWAY_REDIS_ACCEPTANCE = 'true'
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl gateway-service -am `
+        '-Dtest=GatewayRedisRealAcceptanceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+}
+```
+
+IAM 用例在连接前强制核对 `edu_platform_iam_dev`，仅创建一个随机 `t12d_*` 账号并在 `finally` 中按精确 ID/Key 清理；Gateway 用例启动真实随机端口、本机 Redis Lua 和内存 IAM Stub，验证第 11 次登录返回 `429` 及 `Retry-After`，最终只删除本轮唯一限流 Key。
+
 ## T04 统一登录入口
 
 本地前端地址固定为 student `http://localhost:5173`、teacher `http://localhost:5174`、admin `http://localhost:5175`。统一登录入口只有 student 的 `/login`；teacher/admin 未登录时通过 `VITE_STUDENT_WEB_URL` 跳转到该入口，并携带经过白名单校验的内部 `redirect`。三个地址分别由 `VITE_STUDENT_WEB_URL`、`VITE_TEACHER_WEB_URL`、`VITE_ADMIN_WEB_URL` 配置。Vite 使用严格端口，若端口已占用应停止旧进程，不会自动改用未被 Gateway CORS 允许的其他端口。

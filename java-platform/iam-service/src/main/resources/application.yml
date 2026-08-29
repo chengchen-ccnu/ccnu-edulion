@@ -28,6 +28,20 @@ platform:
     login-rate-limit:
       attempts: ${IAM_LOGIN_RATE_LIMIT_ATTEMPTS:5}
       window: ${IAM_LOGIN_RATE_LIMIT_WINDOW:15m}
+    security-store: ${IAM_SECURITY_STORE:redis}
+    verification:
+      ttl: ${IAM_VERIFICATION_TTL:10m}
+      cooldown: ${IAM_VERIFICATION_COOLDOWN:60s}
+      max-attempts: ${IAM_VERIFICATION_MAX_ATTEMPTS:5}
+      delivery-mode: ${IAM_VERIFICATION_DELIVERY_MODE:disabled}
+      fixed-code: ${IAM_VERIFICATION_FIXED_CODE:}
+      hmac-secret: ${IAM_VERIFICATION_HMAC_SECRET:}
+    session-cache:
+      key-prefix: ${IAM_SESSION_VERSION_KEY_PREFIX:edu:iam:session-version}
+      ttl: ${IAM_SESSION_VERSION_CACHE_TTL:20m}
+    media:
+      base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
+      request-timeout: ${IAM_MEDIA_REQUEST_TIMEOUT:5s}
 
 ---
 spring:
@@ -37,5 +51,3 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
-      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
-      - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration

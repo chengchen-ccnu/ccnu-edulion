@@ -13,6 +13,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -31,7 +33,9 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AuthException.class)
     ResponseEntity<ApiError> handleAuth(AuthException exception, HttpServletRequest request) {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.status());
-        if (exception.status() == HttpStatus.TOO_MANY_REQUESTS) {
+        if (exception.retryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, Long.toString(Math.max(1L, exception.retryAfterSeconds())));
+        } else if (exception.status() == HttpStatus.TOO_MANY_REQUESTS) {
             response.header(HttpHeaders.RETRY_AFTER, "60");
         }
         if (request.getRequestURI().endsWith("/auth/refresh")
@@ -51,6 +55,12 @@ public class ApiExceptionHandler {
                 .toList();
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(error("COMMON.VALIDATION_FAILED", "请求参数不合法", request, fields));
+    }
+
+    @ExceptionHandler({HandlerMethodValidationException.class, MethodArgumentTypeMismatchException.class})
+    ResponseEntity<ApiError> handleRequestParameterValidation(Exception exception, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(error("COMMON.VALIDATION_FAILED", "请求参数不合法", request, List.of()));
     }
 
     @ExceptionHandler(Exception.class)

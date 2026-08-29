@@ -11,6 +11,11 @@ public class RefreshSession {
     private String tokenHash;
     private String status;
     private Instant expiresAt;
+    private long sessionVersion;
+    private String deviceId;
+    private String deviceName;
+    private Instant createdAt;
+    private Instant lastUsedAt;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -26,4 +31,14 @@ public class RefreshSession {
     public void setStatus(String status) { this.status = status; }
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+    public long getSessionVersion() { return sessionVersion; }
+    public void setSessionVersion(long sessionVersion) { this.sessionVersion = sessionVersion; }
+    public String getDeviceId() { return deviceId; }
+    public void setDeviceId(String deviceId) { this.deviceId = deviceId; }
+    public String getDeviceName() { return deviceName; }
+    public void setDeviceName(String deviceName) { this.deviceName = deviceName; }
+    public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public Instant getLastUsedAt() { return lastUsedAt; }
+    public void setLastUsedAt(Instant lastUsedAt) { this.lastUsedAt = lastUsedAt; }
 }

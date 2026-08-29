@@ -6,6 +6,7 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashSet;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -26,6 +27,10 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 @Configuration
 @EnableConfigurationProperties(IamProperties.class)
@@ -69,13 +74,28 @@ public class SecurityConfig {
     @Bean
     /** 构建无服务器 Session 的安全过滤链；状态只来自 JWT 和刷新 Cookie。 */
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
+        JwtGrantedAuthoritiesConverter roles = new JwtGrantedAuthoritiesConverter();
+        roles.setAuthoritiesClaimName("roles"); roles.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            LinkedHashSet<GrantedAuthority> values = new LinkedHashSet<>();
+            roles.convert(jwt).forEach(authority -> values.add(new SimpleGrantedAuthority(authority.getAuthority())));
+            List<String> permissions = jwt.getClaimAsStringList("permissions");
+            if (permissions != null) permissions.forEach(value -> values.add(new SimpleGrantedAuthority(value)));
+            return values;
+        });
         http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(
                         org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/**", "/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout",
+                                "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
+                                "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
+                                "/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/api/v1/admin/users", "/api/v1/admin/users/**")
+                                .hasAuthority("administration:access")
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults())
+                .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
                         .authenticationEntryPoint((request, response, exception) -> {
                             response.setStatus(401);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);

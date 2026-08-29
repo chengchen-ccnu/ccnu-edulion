@@ -53,6 +53,18 @@ class MediaPurposePolicyTest {
                 "diagram.svg", "image/svg+xml", 5), Set.of("TEACHER"), 10)).isInstanceOf(MediaException.class);
     }
 
+    @Test
+    /** 普通学习账号可上传严格私有资质；教师角色不能借此重复申请或上传第二份身份材料。 */
+    void enablesTeacherQualificationOnlyForStudentRole() {
+        assertThat(policy.validate(request(MediaPurpose.TEACHER_QUALIFICATION,
+                "qualification.pdf", "application/pdf", 20), Set.of("STUDENT"), 10).mode())
+                .isEqualTo(UploadMode.MULTIPART);
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.TEACHER_QUALIFICATION,
+                "qualification.pdf", "application/pdf", 5), Set.of("TEACHER"), 10))
+                .isInstanceOfSatisfying(MediaException.class,
+                        error -> assertThat(error.code()).isEqualTo("MEDIA.PURPOSE_FORBIDDEN"));
+    }
+
     private void assertMode(MediaPurpose purpose, String filename, String mimeType, long size, UploadMode expected) {
         assertThat(policy.validate(request(purpose, filename, mimeType, size), Set.of("TEACHER"), 10).mode())
                 .isEqualTo(expected);

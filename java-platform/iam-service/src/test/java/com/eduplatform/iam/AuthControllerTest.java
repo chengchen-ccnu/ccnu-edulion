@@ -23,6 +23,10 @@ class AuthControllerTest {
             new IamProperties.Jwt("issuer", "audience", "secret", Duration.ofMinutes(15)),
             new IamProperties.Refresh(Duration.ofDays(7), false),
             new IamProperties.LoginRateLimit(5, Duration.ofMinutes(15)),
+            new IamProperties.Verification(Duration.ofMinutes(10), Duration.ofMinutes(1), 5,
+                    "fixed-local", "246810", "test-only-verification-hmac-secret-32-bytes"),
+            new IamProperties.SessionCache("edu:iam:session-version", Duration.ofMinutes(20)),
+            new IamProperties.Media("http://127.0.0.1:8083", Duration.ofSeconds(5)),
             new IamProperties.Seed(false, ""));
     private final AuthController controller = new AuthController(authService, properties);
 
