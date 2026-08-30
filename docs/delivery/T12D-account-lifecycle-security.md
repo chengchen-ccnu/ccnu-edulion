@@ -1,5 +1,7 @@
 # T12D account lifecycle and Redis identity security delivery
 
+> 后续补口：本文件记录已合并的 T12D 基线。唯一登录身份、算式 CAPTCHA、SMTP、当前协议、身份绑定/换绑/解绑、四个 `.invalid` Seed 和 Cookie Path 的现行实现以 [`T12D.1-identity-security.md`](T12D.1-identity-security.md) 为准；下文“三个 Seed/无邮件供应商”等描述仅是 T12D 当时事实。
+
 ## 任务目标与边界
 
 T12D 先将外部契约从 OpenAPI 0.16.0 向前演进到 0.17.0，再在既有 Gateway、IAM 和 Media 边界内实现学生注册、一次验证挑战、密码找回/重置/修改、持久会话版本、当前/全部设备退出、教师申请提交、管理员账号控制以及 Redis 多实例限流和短期身份安全状态。

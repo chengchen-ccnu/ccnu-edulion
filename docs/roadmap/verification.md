@@ -532,3 +532,16 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 安全收口：验证码、完整身份和 Token 不进入 URL/历史/日志；退出网络失败不能伪装成服务端已撤销。账号注销不塞入 T12D.1/T12E，新增 T12H 独立设计冷静期、恢复、跨域数据保留和审计，冻结前安全页不展示注销按钮。
 - 编排：尚未开发且未推送的 `codex/t12e-account-security-web` 仅含上一轮总控状态提交，已直接重命名为 `codex/t12d1-identity-security-contract` 以保留历史并撤销错误实施顺序。T12D.1 只做契约与后端补口；合并后重新准备 T12E，只消费生成客户端。
 - 数据与验证：本轮只修改 Markdown 总控文档并执行 Git 分支整理，不修改 OpenAPI、Java、Python、Vue、Flyway、生成代码或配置；没有连接 MySQL、Redis、RabbitMQ、OSS、FFmpeg、SMTP 或外部模型，没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、验证码或会话。
+
+## 2026-08-30 T12D.1 唯一身份、协议与验证安全补口验证记录
+
+- 门禁与契约：实施开始时分支为 `codex/t12d1-identity-security-contract` 且工作区干净；完整阅读 `AGENTS.md`、页面规格、backlog、verification、ADR-0003、T12D 交付和工业架构设计。先将 OpenAPI 向前演进到 0.18.0 并评审，再实现 IAM、Gateway、Redis、SMTP 和生成客户端；没有新增 T12E 页面或第二套 DTO。
+- 唯一身份与协议：正式/test 登录只查询已验证 EMAIL/PHONE，邮箱 trim+小写、手机号仅接受中国大陆 11 位并保存 `+86` E.164；昵称按 Unicode code point 校验 1～30 个可见字符并允许中文、补充平面字符和重名，内部 `account` 由服务端 UUID 生成。注册必须同意当前生效的 TERMS/PRIVACY；local/test 正文明确不可正式发布。
+- 登录与 CAPTCHA：普通密码和一次性验证码登录均只接受邮箱/手机号；验证码登录只登录已有 ACTIVE 账号且未知身份不发送、不注册、响应同形。注册、找回和验证码登录发送前消费 Redis 算式 CAPTCHA；密码第 4～5 次先消费 CAPTCHA，第 5 次密码仍错后锁 15 分钟。CAPTCHA 错误不会执行密码校验或增加密码失败次数；错误/刷新次数有界，正确答案一次消费，回答只以 HMAC 摘要进入 Redis。
+- 发送与渠道：业务只依赖 `VerificationDeliveryPort`；local/test 固定码无网络副作用，标准 SMTP 适配器拒绝 `.invalid`、正常委托 JavaMailSender，发送失败补偿删除挑战与冷却。生产没有短信适配器时渠道能力关闭手机注册/验证码登录。检查本机只确认 DPAPI SMTP 凭据文件不存在、未读取任何凭据内容；因此真实 SMTP 端到端发信明确未验收且未伪造通过。
+- 身份状态机与会话：身份查询只返回掩码值和 revision；绑定校验当前密码与新身份验证码并撤销其他设备，换绑先验证后原子替换，解绑禁止删除最后身份，两者撤销全部设备。三种变更均递增 revision/sessionVersion、写安全审计并支持 `clientRequestId` 幂等及 409。继续使用 15 分钟内存 Access JWT、7 天 HttpOnly Refresh Cookie、MySQL Refresh Session 和 Redis sessionVersion；Cookie Path 为 `/api/v1`，Gateway 在非 IAM 路由精确剥离 `EDU_REFRESH`。
+- 迁移与 Seed：没有改写 V1/V2；IAM V3 只向前增加每用户每身份类型唯一约束、注册指纹、`protocol_document` 和 `identity_change_command`。local/test Seed 幂等生成 `student1@example.invalid`、`teacher1@example.invalid`、`teacher2@example.invalid`、`admin1@example.invalid`，均已验证且不发送 SMTP；清理脚本只按四个固定 user ID 和外键逆序删除，并提供显式重建方式。
+- 自动化：最新 Java `clean verify` 的 8 个 Reactor 模块全部通过，共 150 项测试、138 项执行通过、12 项外部验收按开关跳过；IAM 为 28 项、27 项执行通过、1 项真实环境用例默认跳过。OpenAPI 客户端重复生成无漂移；全 workspace 类型检查通过；29 个 Vitest 文件 191 项测试通过；admin/student/teacher 三端生产构建通过。PowerShell SMTP 初始化/安全注入脚本 AST 语法解析和 `git diff --check` 通过。
+- 真实基础设施：全部命令只经 `scripts/Invoke-WithLocalEnvironment.ps1` 注入秘密。真实 MySQL 8 `edu_platform_iam_dev` 已从 Flyway V2 正常迁移到 V3；IAM+Redis 验收 1/1 通过，覆盖挑战/CAPTCHA 一次消费、错误上限、有限刷新、密码阈值/锁定、sessionVersion 与 Refresh 撤销。真实随机端口 Gateway+Redis 验收 1/1 通过，覆盖第 11 次限流 429/`Retry-After`。随机账号、身份、协议、审计、会话和全部本轮 Redis Key 均在 `finally` 中按精确 ID/Key 清理；只保留 V3 Schema/Flyway 迁移事实。
+- 边界：未实现 T12E Vue 页面、真实短信、账号注销、人工申诉、反馈提交、“记住我”、完整 JWT 黑名单、完整 Redis Session 或跨服务数据库访问。没有创建 Media/课程/学习/运营伪数据、OSS 对象、RabbitMQ 消息或外部模型数据。
+- 发布：实现检查点为 `682fd9e`、`26ed7d0`；最终文档提交、`git push origin HEAD` 和 Ready PR 将在创建后补记，本任务不自行合并。
