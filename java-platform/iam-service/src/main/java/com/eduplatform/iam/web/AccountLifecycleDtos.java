@@ -26,11 +26,10 @@ public final class AccountLifecycleDtos {
     public record RegisterRequest(@NotNull UUID clientRequestId, @NotNull UUID challengeId,
             @NotNull IdentityType identityType, @NotBlank @Size(max = 254) String target,
             @NotBlank @Pattern(regexp = "^[0-9]{6}$") String verificationCode,
-            @NotBlank @Pattern(regexp = "^[a-zA-Z][a-zA-Z0-9_]{4,31}$") String account,
-            @NotBlank @Size(max = 80) String displayName,
+            @NotBlank @Size(max = 30) String nickname,
             @NotBlank @Size(min = 12, max = 128) String password,
             @NotNull @Size(min = 2, max = 2) List<@Valid Agreement> agreements) {}
-    public record RegistrationResult(UUID userId, String account, String displayName,
+    public record RegistrationResult(UUID userId, String nickname,
             List<String> roles, List<String> permissions, Instant createdAt) {}
     public record ResetPasswordRequest(@NotNull UUID challengeId, @NotNull IdentityType identityType,
             @NotBlank @Size(max = 254) String target,

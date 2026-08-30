@@ -1,6 +1,8 @@
 package com.eduplatform.iam.persistence;
 
 import com.eduplatform.iam.domain.RefreshSession;
+import com.eduplatform.iam.domain.ProtocolDocument;
+import com.eduplatform.iam.domain.UserIdentity;
 import com.eduplatform.iam.domain.UserAccount;
 import com.eduplatform.iam.domain.TeacherApplication;
 import java.time.Instant;
@@ -23,6 +25,9 @@ public interface IamMapper {
 
     @Select("SELECT id, account, display_name, password_hash, status, avatar_url, session_version, revision, created_at, updated_at FROM `user` WHERE id = #{id}")
     UserAccount findUserById(String id);
+
+    @Select("SELECT id, account, display_name, password_hash, status, avatar_url, session_version, revision, created_at, updated_at FROM `user` WHERE id = #{id} FOR UPDATE")
+    UserAccount findUserByIdForUpdate(String id);
 
     @Select("SELECT r.code FROM `role` r JOIN user_role ur ON ur.role_id = r.id WHERE ur.user_id = #{userId} ORDER BY r.code")
     List<String> findRoles(String userId);
@@ -58,6 +63,13 @@ public interface IamMapper {
     @Update("UPDATE refresh_session SET last_used_at = #{now} WHERE id = #{id}")
     int touchRefreshSession(@Param("id") String id, @Param("now") Instant now);
 
+    @Update("UPDATE refresh_session SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP(6) WHERE user_id = #{userId} AND status = 'ACTIVE' AND id <> #{currentSessionId}")
+    int revokeOtherUserSessions(@Param("userId") String userId, @Param("currentSessionId") String currentSessionId);
+
+    @Update("UPDATE refresh_session SET session_version = #{sessionVersion}, last_used_at = #{now} WHERE id = #{sessionId} AND user_id = #{userId} AND status = 'ACTIVE'")
+    int updateRefreshSessionVersion(@Param("sessionId") String sessionId, @Param("userId") String userId,
+            @Param("sessionVersion") long sessionVersion, @Param("now") Instant now);
+
     @Insert("INSERT INTO login_audit (account, user_id, outcome, remote_address, trace_id, occurred_at) VALUES (#{account}, #{userId}, #{outcome}, #{remoteAddress}, #{traceId}, #{occurredAt})")
     int insertLoginAudit(@Param("account") String account, @Param("userId") String userId,
             @Param("outcome") String outcome, @Param("remoteAddress") String remoteAddress,
@@ -83,14 +95,16 @@ public interface IamMapper {
             @Param("type") String type, @Param("version") String version,
             @Param("now") Instant now, @Param("remoteAddress") String remoteAddress);
 
-    @Insert("INSERT INTO registration_request (client_request_id, user_id, account, identity_type, identity_digest, created_at) VALUES (#{requestId}, #{userId}, #{account}, #{identityType}, #{identityDigest}, #{now})")
+    @Insert("INSERT INTO registration_request (client_request_id, user_id, account, identity_type, identity_digest, request_fingerprint, created_at) VALUES (#{requestId}, #{userId}, #{account}, #{identityType}, #{identityDigest}, #{fingerprint}, #{now})")
     int insertRegistrationRequest(@Param("requestId") String requestId, @Param("userId") String userId,
             @Param("account") String account, @Param("identityType") String identityType,
-            @Param("identityDigest") String identityDigest, @Param("now") Instant now);
+            @Param("identityDigest") String identityDigest, @Param("fingerprint") String fingerprint,
+            @Param("now") Instant now);
 
-    @Select("SELECT user_id FROM registration_request WHERE client_request_id = #{requestId} AND account = #{account} AND identity_type = #{identityType} AND identity_digest = #{identityDigest}")
-    String findRegistrationReplay(@Param("requestId") String requestId, @Param("account") String account,
-            @Param("identityType") String identityType, @Param("identityDigest") String identityDigest);
+    @Select("SELECT user_id FROM registration_request WHERE client_request_id = #{requestId} AND identity_type = #{identityType} AND identity_digest = #{identityDigest} AND request_fingerprint = #{fingerprint}")
+    String findRegistrationReplay(@Param("requestId") String requestId,
+            @Param("identityType") String identityType, @Param("identityDigest") String identityDigest,
+            @Param("fingerprint") String fingerprint);
 
     @Update("UPDATE `user` SET password_hash = #{passwordHash}, session_version = session_version + 1, revision = revision + 1 WHERE id = #{userId} AND status = 'ACTIVE'")
     int changePasswordAndBumpSession(@Param("userId") String userId, @Param("passwordHash") String passwordHash);
@@ -106,6 +120,10 @@ public interface IamMapper {
 
     @Update("UPDATE `user` SET session_version = session_version + 1, revision = revision + 1 WHERE id = #{userId} AND revision = #{expectedRevision} AND status = 'ACTIVE'")
     int forceRevokeSessions(@Param("userId") String userId, @Param("expectedRevision") long expectedRevision);
+
+    @Update("UPDATE `user` SET session_version = session_version + 1, revision = revision + 1 WHERE id = #{userId} AND revision = #{expectedRevision} AND status = 'ACTIVE'")
+    int bumpIdentityRevisionAndSession(@Param("userId") String userId,
+            @Param("expectedRevision") long expectedRevision);
 
     @Insert("INSERT INTO account_security_audit (id, user_id, actor_id, action, reason, remote_address, trace_id, occurred_at) VALUES (#{id}, #{userId}, #{actorId}, #{action}, #{reason}, #{remoteAddress}, #{traceId}, #{now})")
     int insertSecurityAudit(@Param("id") String id, @Param("userId") String userId,
@@ -143,6 +161,49 @@ public interface IamMapper {
 
     @Select("SELECT CONCAT(identity_type, ':', normalized_value) FROM user_identity WHERE user_id = #{userId} ORDER BY identity_type")
     List<String> findIdentities(String userId);
+
+    @Select("SELECT id, user_id, identity_type, normalized_value, verified_at, created_at FROM user_identity WHERE user_id = #{userId} ORDER BY identity_type")
+    List<UserIdentity> listUserIdentities(String userId);
+
+    @Select("SELECT id, user_id, identity_type, normalized_value, verified_at, created_at FROM user_identity WHERE user_id = #{userId} AND identity_type = #{type}")
+    UserIdentity findUserIdentityByType(@Param("userId") String userId, @Param("type") String type);
+
+    @Update("UPDATE user_identity SET normalized_value = #{value}, verified_at = #{now} WHERE user_id = #{userId} AND identity_type = #{type}")
+    int replaceIdentity(@Param("userId") String userId, @Param("type") String type,
+            @Param("value") String value, @Param("now") Instant now);
+
+    @org.apache.ibatis.annotations.Delete("DELETE FROM user_identity WHERE user_id = #{userId} AND identity_type = #{type}")
+    int deleteIdentity(@Param("userId") String userId, @Param("type") String type);
+
+    @Select("SELECT COUNT(*) FROM user_identity WHERE user_id = #{userId}")
+    int countUserIdentities(String userId);
+
+    @Select("SELECT id, document_type, document_version, body, effective_at, is_current AS current, requires_reconsent, created_at FROM protocol_document WHERE is_current = TRUE AND effective_at <= CURRENT_TIMESTAMP(6) ORDER BY document_type")
+    List<ProtocolDocument> listCurrentProtocolDocuments();
+
+    @Select("SELECT id, document_type, document_version, body, effective_at, is_current AS current, requires_reconsent, created_at FROM protocol_document WHERE document_type = #{type} AND is_current = TRUE AND effective_at <= CURRENT_TIMESTAMP(6) ORDER BY effective_at DESC LIMIT 1")
+    ProtocolDocument findCurrentProtocolDocument(String type);
+
+    @Update("UPDATE protocol_document SET is_current = FALSE WHERE document_type = #{type} AND is_current = TRUE")
+    int clearCurrentProtocolDocument(String type);
+
+    @Insert("INSERT IGNORE INTO protocol_document (id, document_type, document_version, body, effective_at, is_current, requires_reconsent, created_at) VALUES (#{id}, #{type}, #{version}, #{body}, #{effectiveAt}, FALSE, #{requiresReconsent}, #{now})")
+    int insertProtocolDocumentIfAbsent(@Param("id") String id, @Param("type") String type,
+            @Param("version") String version, @Param("body") String body,
+            @Param("effectiveAt") Instant effectiveAt, @Param("requiresReconsent") boolean requiresReconsent,
+            @Param("now") Instant now);
+
+    @Update("UPDATE protocol_document SET is_current = TRUE WHERE id = #{id}")
+    int markProtocolDocumentCurrent(String id);
+
+    @Select("SELECT resulting_revision FROM identity_change_command WHERE client_request_id = #{requestId} AND user_id = #{userId} AND command_type = #{type} AND request_fingerprint = #{fingerprint}")
+    Long findIdentityCommandReplay(@Param("requestId") String requestId, @Param("userId") String userId,
+            @Param("type") String type, @Param("fingerprint") String fingerprint);
+
+    @Insert("INSERT INTO identity_change_command (client_request_id, user_id, command_type, request_fingerprint, resulting_revision, created_at) VALUES (#{requestId}, #{userId}, #{type}, #{fingerprint}, #{revision}, #{now})")
+    int insertIdentityCommand(@Param("requestId") String requestId, @Param("userId") String userId,
+            @Param("type") String type, @Param("fingerprint") String fingerprint,
+            @Param("revision") long revision, @Param("now") Instant now);
 
     @Select("SELECT resulting_revision FROM admin_account_command WHERE actor_id = #{actorId} AND client_request_id = #{requestId} AND target_user_id = #{targetId} AND command_type = #{type} AND request_fingerprint = #{fingerprint}")
     Long findAdminCommandReplay(@Param("actorId") String actorId, @Param("requestId") String requestId,

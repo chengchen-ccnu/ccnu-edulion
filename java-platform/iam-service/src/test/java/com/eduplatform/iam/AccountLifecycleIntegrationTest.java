@@ -74,13 +74,13 @@ class AccountLifecycleIntegrationTest {
 
         AccountLifecycleDtos.RegisterRequest replay = new AccountLifecycleDtos.RegisterRequest(
                 registered.requestId(), registered.challengeId(), AccountLifecycleDtos.IdentityType.EMAIL,
-                registered.email(), CODE, "lifecycle_student", "生命周期学生", "Initial-password-01",
+                registered.email(), CODE, "生命周期学生", "Initial-password-01",
                 agreements());
         assertThat(registrations.register(replay, "127.0.0.1", "trace-replay").userId().toString())
                 .isEqualTo(registered.userId());
         AccountLifecycleDtos.RegisterRequest reusedChallenge = new AccountLifecycleDtos.RegisterRequest(
                 UUID.randomUUID(), registered.challengeId(), AccountLifecycleDtos.IdentityType.EMAIL,
-                registered.email(), CODE, "lifecycle_other", "重放学生", "Initial-password-01", agreements());
+                registered.email(), CODE, "重放学生", "Initial-password-01", agreements());
         assertThatThrownBy(() -> registrations.register(reusedChallenge, "127.0.0.1", "trace-reuse"))
                 .isInstanceOfSatisfying(AuthException.class,
                         error -> assertThat(error.code()).isEqualTo("IAM.VERIFICATION_FAILED"));
@@ -186,7 +186,7 @@ class AccountLifecycleIntegrationTest {
         UUID requestId = UUID.randomUUID();
         AccountLifecycleDtos.RegisterRequest request = new AccountLifecycleDtos.RegisterRequest(requestId,
                 UUID.fromString(challenge.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL, email, CODE,
-                account, "生命周期测试学生", "Initial-password-01", agreements());
+                "生命周期测试学生", "Initial-password-01", agreements());
         String userId = registrations.register(request, "127.0.0.1", "trace-register").userId().toString();
         return new Registered(userId, email, requestId, UUID.fromString(challenge.challengeId()));
     }

@@ -14,6 +14,40 @@ public class InMemoryIdentitySecurityStore implements IdentitySecurityStore {
     private final Map<String, TimedValue> values = new ConcurrentHashMap<>();
 
     @Override
+    public void createCaptcha(String id, String answer, Duration ttl, int maxRefreshes) {
+        values.put("captcha:" + id, new TimedValue(String.join("|", answer, "0", "0"),
+                Instant.now().plus(ttl)));
+    }
+
+    @Override
+    public synchronized CaptchaRefresh refreshCaptcha(String previousId, String replacementId,
+            String answer, Duration ttl, int maxRefreshes) {
+        TimedValue current = active("captcha:" + previousId);
+        if (current == null) return new CaptchaRefresh(false, false, 0);
+        int refreshes = Integer.parseInt(current.value().split("\\|", -1)[2]);
+        values.remove("captcha:" + previousId);
+        if (refreshes >= maxRefreshes) return new CaptchaRefresh(false, true, 0);
+        int next = refreshes + 1;
+        values.put("captcha:" + replacementId, new TimedValue(String.join("|", answer, "0",
+                Integer.toString(next)), Instant.now().plus(ttl)));
+        return new CaptchaRefresh(true, false, maxRefreshes - next);
+    }
+
+    @Override
+    public synchronized boolean consumeCaptcha(String id, String answer, int maxAttempts) {
+        String key = "captcha:" + id;
+        TimedValue current = active(key);
+        if (current == null) return false;
+        String[] fields = current.value().split("\\|", -1);
+        if (fields[0].equals(answer)) { values.remove(key); return true; }
+        int failures = Integer.parseInt(fields[1]) + 1;
+        if (failures >= maxAttempts) values.remove(key);
+        else values.put(key, new TimedValue(String.join("|", fields[0], Integer.toString(failures), fields[2]),
+                current.expiresAt()));
+        return false;
+    }
+
+    @Override
     public ChallengeCreation createChallenge(String id, String purpose, String type, String target,
             String code, Duration ttl, Duration cooldown) {
         String cooldownKey = "cooldown:" + purpose + ":" + target;
@@ -24,6 +58,12 @@ public class InMemoryIdentitySecurityStore implements IdentitySecurityStore {
         values.put("challenge:" + id, new TimedValue(String.join("|", purpose, type, target, code, "0"),
                 Instant.now().plus(ttl)));
         return new ChallengeCreation(true, cooldown.toSeconds());
+    }
+
+    @Override
+    public void cancelChallenge(String id, String purpose, String target) {
+        values.remove("challenge:" + id);
+        values.remove("cooldown:" + purpose + ":" + target);
     }
 
     @Override
@@ -48,10 +88,16 @@ public class InMemoryIdentitySecurityStore implements IdentitySecurityStore {
         return Math.max(ttl("lock:a:" + account), ttl("lock:i:" + address));
     }
 
-    @Override public synchronized long recordLoginFailure(String account, String address, int attempts, Duration window) {
-        long accountRetry = increment("fail:a:" + account, "lock:a:" + account, attempts, window);
-        long addressRetry = increment("fail:i:" + address, "lock:i:" + address, attempts * 4, window);
-        return Math.max(accountRetry, addressRetry);
+    @Override public long loginFailureCount(String account) {
+        TimedValue value = active("fail:a:" + account);
+        return value == null ? 0L : Long.parseLong(value.value());
+    }
+
+    @Override public synchronized LoginFailure recordLoginFailure(String account, String address,
+            int attempts, Duration window) {
+        long accountFailures = increment("fail:a:" + account, "lock:a:" + account, attempts, window);
+        increment("fail:i:" + address, "lock:i:" + address, attempts * 4, window);
+        return new LoginFailure(accountFailures, loginLockRetrySeconds(account, address));
     }
 
     @Override public void clearLoginFailures(String account, String address) {
@@ -69,7 +115,7 @@ public class InMemoryIdentitySecurityStore implements IdentitySecurityStore {
         Instant expiry = current == null ? Instant.now().plus(window) : current.expiresAt();
         values.put(counter, new TimedValue(Integer.toString(value), expiry));
         if (value >= limit) values.put(lock, new TimedValue("1", Instant.now().plus(window)));
-        return ttl(lock);
+        return value;
     }
     private TimedValue active(String key) {
         TimedValue value = values.get(key);

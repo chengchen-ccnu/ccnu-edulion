@@ -14,6 +14,26 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(prefix = "platform.iam", name = "security-store", havingValue = "redis",
         matchIfMissing = true)
 public class RedisIdentitySecurityStore implements IdentitySecurityStore {
+    private static final DefaultRedisScript<Long> CONSUME_CAPTCHA = new DefaultRedisScript<>("""
+            if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+            if redis.call('HGET', KEYS[1], 'answerDigest') ~= ARGV[1] then
+                local failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
+                if failures >= tonumber(ARGV[2]) then redis.call('DEL', KEYS[1]) end
+                return 0
+            end
+            redis.call('DEL', KEYS[1])
+            return 1
+            """, Long.class);
+    private static final DefaultRedisScript<Long> REFRESH_CAPTCHA = new DefaultRedisScript<>("""
+            if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+            local refreshes = tonumber(redis.call('HGET', KEYS[1], 'refreshes') or '0')
+            if refreshes >= tonumber(ARGV[3]) then redis.call('DEL', KEYS[1]); return -2 end
+            refreshes = refreshes + 1
+            redis.call('DEL', KEYS[1])
+            redis.call('HSET', KEYS[2], 'answerDigest', ARGV[1], 'failures', '0', 'refreshes', tostring(refreshes))
+            redis.call('PEXPIRE', KEYS[2], ARGV[2])
+            return tonumber(ARGV[3]) - refreshes
+            """, Long.class);
     private static final DefaultRedisScript<Long> CONSUME = new DefaultRedisScript<>("""
             if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
             if redis.call('HGET', KEYS[1], 'purpose') ~= ARGV[1]
@@ -32,9 +52,8 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
             if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
             if count >= tonumber(ARGV[1]) then
                 redis.call('SET', KEYS[2], '1', 'PX', ARGV[2])
-                return redis.call('PTTL', KEYS[2])
             end
-            return 0
+            return count
             """, Long.class);
 
     private final StringRedisTemplate redis;
@@ -43,6 +62,30 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
     public RedisIdentitySecurityStore(StringRedisTemplate redis, IamProperties properties) {
         this.redis = redis;
         this.prefix = properties.sessionCache().keyPrefix().replace(":session-version", "");
+    }
+
+    @Override
+    public void createCaptcha(String captchaId, String answerDigest, Duration ttl, int maxRefreshes) {
+        String key = captcha(captchaId);
+        redis.opsForHash().putAll(key, Map.of("answerDigest", answerDigest, "failures", "0", "refreshes", "0"));
+        redis.expire(key, ttl);
+    }
+
+    @Override
+    public CaptchaRefresh refreshCaptcha(String previousCaptchaId, String replacementCaptchaId,
+            String answerDigest, Duration ttl, int maxRefreshes) {
+        Long result = redis.execute(REFRESH_CAPTCHA, List.of(captcha(previousCaptchaId),
+                captcha(replacementCaptchaId)), answerDigest, Long.toString(ttl.toMillis()),
+                Integer.toString(maxRefreshes));
+        long value = result == null ? -1L : result;
+        return new CaptchaRefresh(value >= 0, value == -2L, value < 0 ? 0 : (int) value);
+    }
+
+    @Override
+    public boolean consumeCaptcha(String captchaId, String answerDigest, int maxAttempts) {
+        Long result = redis.execute(CONSUME_CAPTCHA, List.of(captcha(captchaId)), answerDigest,
+                Integer.toString(maxAttempts));
+        return result != null && result == 1L;
     }
 
     @Override
@@ -62,6 +105,12 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
     }
 
     @Override
+    public void cancelChallenge(String challengeId, String purpose, String targetDigest) {
+        redis.delete(List.of(prefix + ":challenge:" + challengeId,
+                prefix + ":challenge-cooldown:" + purpose + ":" + targetDigest));
+    }
+
+    @Override
     public boolean consumeChallenge(String challengeId, String purpose, String identityType,
             String targetDigest, String codeDigest, int maxAttempts) {
         Long result = redis.execute(CONSUME, List.of(prefix + ":challenge:" + challengeId),
@@ -75,10 +124,16 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
     }
 
     @Override
-    public long recordLoginFailure(String accountDigest, String addressDigest, int attempts, Duration window) {
+    public long loginFailureCount(String accountDigest) {
+        String value = redis.opsForValue().get(failAccount(accountDigest));
+        return value == null ? 0L : Long.parseLong(value);
+    }
+
+    @Override
+    public LoginFailure recordLoginFailure(String accountDigest, String addressDigest, int attempts, Duration window) {
         long account = failure(failAccount(accountDigest), lockAccount(accountDigest), attempts, window);
-        long address = failure(failAddress(addressDigest), lockAddress(addressDigest), attempts * 4, window);
-        return Math.max(account, address);
+        failure(failAddress(addressDigest), lockAddress(addressDigest), attempts * 4, window);
+        return new LoginFailure(account, loginLockRetrySeconds(accountDigest, addressDigest));
     }
 
     @Override
@@ -97,9 +152,9 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
     @Override public void invalidateSessionVersion(String userId) { redis.delete(sessionKey(userId)); }
 
     private long failure(String failureKey, String lockKey, int attempts, Duration window) {
-        Long millis = redis.execute(FAILURE, List.of(failureKey, lockKey),
+        Long count = redis.execute(FAILURE, List.of(failureKey, lockKey),
                 Integer.toString(attempts), Long.toString(window.toMillis()));
-        return millis == null ? 0L : (Math.max(0L, millis) + 999L) / 1000L;
+        return count == null ? 0L : count;
     }
 
     private long ttl(String key) {
@@ -112,4 +167,5 @@ public class RedisIdentitySecurityStore implements IdentitySecurityStore {
     private String lockAccount(String digest) { return prefix + ":login-lock:account:" + digest; }
     private String lockAddress(String digest) { return prefix + ":login-lock:ip:" + digest; }
     private String sessionKey(String userId) { return prefix + ":session-version:" + userId; }
+    private String captcha(String id) { return prefix + ":captcha:" + id; }
 }

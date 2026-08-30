@@ -1,6 +1,18 @@
 spring:
   application:
     name: iam-service
+  mail:
+    host: ${IAM_SMTP_HOST:localhost}
+    port: ${IAM_SMTP_PORT:587}
+    username: ${IAM_SMTP_USERNAME:}
+    password: ${IAM_SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${IAM_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${IAM_SMTP_STARTTLS:true}
+      mail.smtp.starttls.required: ${IAM_SMTP_STARTTLS_REQUIRED:true}
+      mail.smtp.connectiontimeout: ${IAM_SMTP_CONNECTION_TIMEOUT_MS:5000}
+      mail.smtp.timeout: ${IAM_SMTP_TIMEOUT_MS:5000}
+      mail.smtp.writetimeout: ${IAM_SMTP_WRITE_TIMEOUT_MS:5000}
   flyway:
     enabled: false
   jackson:
@@ -36,6 +48,11 @@ platform:
       delivery-mode: ${IAM_VERIFICATION_DELIVERY_MODE:disabled}
       fixed-code: ${IAM_VERIFICATION_FIXED_CODE:}
       hmac-secret: ${IAM_VERIFICATION_HMAC_SECRET:}
+      smtp-from: ${IAM_SMTP_FROM:}
+    captcha:
+      ttl: ${IAM_CAPTCHA_TTL:2m}
+      max-attempts: ${IAM_CAPTCHA_MAX_ATTEMPTS:5}
+      max-refreshes: ${IAM_CAPTCHA_MAX_REFRESHES:3}
     session-cache:
       key-prefix: ${IAM_SESSION_VERSION_KEY_PREFIX:edu:iam:session-version}
       ttl: ${IAM_SESSION_VERSION_CACHE_TTL:20m}

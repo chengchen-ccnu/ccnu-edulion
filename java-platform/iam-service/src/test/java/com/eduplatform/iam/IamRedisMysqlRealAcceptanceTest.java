@@ -67,7 +67,7 @@ class IamRedisMysqlRealAcceptanceTest {
             VerificationChallengeService.Challenge challenge = challenges.create("REGISTRATION", "EMAIL", email);
             challengeId = challenge.challengeId();
             var request = new AccountLifecycleDtos.RegisterRequest(requestId, UUID.fromString(challengeId),
-                    AccountLifecycleDtos.IdentityType.EMAIL, email, "246810", account, "T12D 真实验收学生",
+                    AccountLifecycleDtos.IdentityType.EMAIL, email, "246810", "T12D 真实验收学生",
                     "Acceptance-password-01", List.of(
                             new AccountLifecycleDtos.Agreement("TERMS", "acceptance-v1"),
                             new AccountLifecycleDtos.Agreement("PRIVACY", "acceptance-v1")));
