@@ -192,6 +192,9 @@ IAM V3 只向前增加 `(user_id, identity_type)` 唯一约束、注册指纹、
 }
 ```
 
+Windows PowerShell 5.1 若受本机执行策略限制，可仅对本次子进程使用
+`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/Initialize-LocalSmtp.ps1 ...`，不修改用户级或系统级策略。已有 `IAM_SMTP_FROM` 时可省略 `-FromAddress`；脚本会复用该非敏感配置，并通过临时文件原子替换 `local.env`。SMTP 用户名和授权码仍只在本机凭据窗口输入并写入 DPAPI 文件，不得放入命令参数、对话或日志。
+
 未配置该加密文件或 `IAM_VERIFICATION_DELIVERY_MODE` 不是 `smtp` 时，不得宣称真实发信通过。local/test 固定验证码继续用于确定性测试；手机渠道在 local/test 可用，生产没有短信适配器时 `/api/v1/auth/channel-capabilities` 会关闭手机注册和手机验证码登录。Refresh Cookie 的 Path 现为 `/api/v1`，Gateway 只向 IAM 路由保留 `EDU_REFRESH`，其他服务即使收到普通 Cookie 也不会收到刷新凭据。
 
 T12D.1 的真实 IAM 验收仍使用上方安全包装命令和严格的 `edu_platform_iam_dev`；用例创建一个随机账号、已验证邮箱、临时协议（仅当库中没有对应当前版本时）及精确 Redis Key，并在 `finally` 中按 ID/Key 删除后断言账号不存在。Flyway V3 和协议表结构作为迁移事实保留。Seed 清理/重建沿用上方命令，四个 `.invalid` 身份和 local/test 协议正文均明确不可用于正式发布。

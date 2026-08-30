@@ -554,3 +554,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实 SMTP 结果：算式 CAPTCHA 图片为 `8 - 7 = ?`，答案只用于本次请求并未写入日志；挑战请求已到达 IAM，但 SMTP 主机 DNS 解析和 587 端口连通，投递仍返回 `IAM.VERIFICATION_DELIVERY_UNAVAILABLE`（HTTP 503）。因此没有确认真实邮件的发件人、注册用途、有效期或正文，也没有向 `.invalid` Seed 地址发信；没有继续注册或消费邮箱验证码，不能宣称真实 SMTP 成功。
 - 清理：发送失败触发应用补偿删除挑战/冷却；本轮没有创建账号、身份、协议、Refresh Session 或安全审计。停止服务后按本轮已知 CAPTCHA ID 和 Gateway 限流哈希精确清理，Redis 已知临时 Key 余量为 0；没有执行扫描删除、清表、Seed 清理或修改既有 Seed。未创建任何数据库、表、伪数据、媒体对象、RabbitMQ 消息或 OSS 对象。
 - 后续阻塞：若要补齐真实 SMTP 成功与验证码错误/过期/重放验收，需要当前 Windows 用户重新运行 `scripts/Initialize-LocalSmtp.ps1` 检查/更新本机 DPAPI SMTP 配置后再重试；凭据不得发到对话。当前真实 SMTP 投递失败结果保留为未通过，不阻塞已完成的自动化 Gateway 修复验证。
+
+## 2026-08-30 T12D.1 真实 SMTP 成功复验与邮件文案收口
+
+- 环境与门禁：保持 `codex/t12d1-identity-security-contract` 和现有 Ready/Open PR #40，不创建分支或 PR。SMTP 初始化脚本修复 Windows PowerShell 5.1 未初始化变量后，由当前 Windows 用户在本机交互保存 DPAPI 凭据；IAM/Gateway 只经 `scripts/Invoke-WithLocalEnvironment.ps1` 启动。IAM 连接专用 `edu_platform_iam_dev`，Flyway 保持 V3；未读取、打印或落盘 SMTP 用户名、密码、授权码、验证码或完整收件地址。
+- 真实 SMTP：通过 Gateway 创建算式 CAPTCHA 后，两次向操作者控制的真实邮箱创建 EMAIL 挑战，注册和验证码登录均返回 202，操作者均收到六位随机数字验证码。第二封真实邮件由操作者确认发件显示与本机配置一致，正文以自然语言说明正在登录、10 分钟有效、只能使用一次及非本人忽略，不再展示机械的“用途：登录”。没有向任何 `.invalid` Seed 地址发送 SMTP。
+- 受控验证：注册挑战前 4 次错误码均返回 `422/IAM.VERIFICATION_FAILED`，随后正确码成功创建 1 个学生账号；使用新请求 ID 重放已消费挑战仍返回相同 422。验证码登录挑战连续 5 次错误后被销毁，之后正确码仍返回 422，证明错误上限不能被绕过。真实 Redis 验收新增 5ms TTL 挑战并确认过期后消费失败；Gateway 还在高频注册重放时返回 429，限流与 IAM 一次消费职责均有效。
+- 文案修复：`SmtpVerificationDelivery` 现在按注册、重置密码、验证码登录、身份绑定/换绑生成自然主题和正文，并从 `platform.iam.verification.ttl` 写入有效期；SMTP 专项测试 4/4 通过，IAM 全量 28 项中 27 项通过、真实环境用例按默认开关跳过。显式开启的真实 MySQL/Redis 验收 1/1 通过，包含新增过期断言。
+- 数据与清理：本轮只在既有 `edu_platform_iam_dev` 创建 1 个临时学生账号、1 个已验证邮箱身份、2 条协议同意、1 条注册幂等事实、1 条安全审计和 2 条临时当前协议；未创建 Refresh Session。按精确 user ID/协议 ID 事务删除后，账号、身份、协议、安全审计和 Refresh Session 复查均为 0。7 个 IAM 精确 Redis Key 与 12 个本机 Gateway 候选限流 Key均已自然过期且复查剩余 0；未清表、未扫描删除、未修改或删除既有 Seed，未创建其他 Schema、表、媒体、MQ、OSS 或短信数据。

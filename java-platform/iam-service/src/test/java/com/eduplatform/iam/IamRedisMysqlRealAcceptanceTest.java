@@ -12,6 +12,7 @@ import com.eduplatform.iam.service.RegistrationService;
 import com.eduplatform.iam.service.VerificationChallengeService;
 import com.eduplatform.iam.service.ProtocolDocumentService;
 import com.eduplatform.iam.web.AccountLifecycleDtos;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -55,8 +56,8 @@ class IamRedisMysqlRealAcceptanceTest {
     }
 
     @Test
-    /** 创建单个随机测试账号，验证 Redis 挑战/锁定/会话缓存与 MySQL 事实后精确清理。 */
-    void realMysqlAndRedisPreserveAuthorityAndEphemeralSecurityState() {
+    /** 创建单个随机测试账号，验证 Redis 一次消费、错误上限、过期、锁定和会话缓存后精确清理。 */
+    void realMysqlAndRedisPreserveAuthorityAndEphemeralSecurityState() throws InterruptedException {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_iam_dev");
         assertThat(redis.getConnectionFactory().getConnection().ping()).isEqualTo("PONG");
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -68,6 +69,8 @@ class IamRedisMysqlRealAcceptanceTest {
         String accountDigest = null;
         String addressDigest = digests.digest("login-address", "127.0.0.77");
         String targetDigest = digests.digest("target", email);
+        String expiredChallengeId = UUID.randomUUID().toString();
+        String expiredTargetDigest = digests.digest("target", "t12d1-expired-" + suffix);
         java.util.ArrayList<String> captchaIds = new java.util.ArrayList<>();
         java.util.ArrayList<String> protocolIds = new java.util.ArrayList<>();
         try {
@@ -83,6 +86,13 @@ class IamRedisMysqlRealAcceptanceTest {
             assertThat(securityStore.consumeCaptcha(errorLimitedCaptcha, "wrong", 2)).isFalse();
             assertThat(securityStore.consumeCaptcha(errorLimitedCaptcha, "wrong", 2)).isFalse();
             assertThat(securityStore.consumeCaptcha(errorLimitedCaptcha, "answer-two", 2)).isFalse();
+
+            var expiring = securityStore.createChallenge(expiredChallengeId, "REGISTRATION", "EMAIL",
+                    expiredTargetDigest, "expired-code", Duration.ofMillis(5), Duration.ofMillis(5));
+            assertThat(expiring.created()).isTrue();
+            Thread.sleep(40L);
+            assertThat(securityStore.consumeChallenge(expiredChallengeId, "REGISTRATION", "EMAIL",
+                    expiredTargetDigest, "expired-code", properties.verification().maxAttempts())).isFalse();
 
             String refreshRoot = UUID.randomUUID().toString();
             String refreshSecond = UUID.randomUUID().toString();
@@ -149,6 +159,8 @@ class IamRedisMysqlRealAcceptanceTest {
             java.util.ArrayList<String> redisKeys = new java.util.ArrayList<>(List.of(
                     prefix + ":challenge:" + (challengeId == null ? "none" : challengeId),
                     prefix + ":challenge-cooldown:REGISTRATION:" + targetDigest,
+                    prefix + ":challenge:" + expiredChallengeId,
+                    prefix + ":challenge-cooldown:REGISTRATION:" + expiredTargetDigest,
                     prefix + ":login-failure:ip:" + addressDigest,
                     prefix + ":login-lock:ip:" + addressDigest,
                     prefix + ":session-version:" + (userId == null ? "none" : userId)));

@@ -18,6 +18,7 @@ import com.eduplatform.iam.verification.VerificationDeliveryPort;
 import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 
@@ -74,12 +75,19 @@ class VerificationDeliveryTest {
     }
 
     @Test
-    /** 标准 SMTP 适配器正常委托 JavaMailSender，并硬拒绝 example.invalid Seed 域。 */
+    /** 标准 SMTP 邮件以自然语言写明操作、有效期和一次性约束，并硬拒绝 example.invalid Seed 域。 */
     void smtpAdapterSendsStandardMailButRejectsReservedSeedDomain() {
         JavaMailSender sender = mock(JavaMailSender.class);
         SmtpVerificationDelivery smtp = new SmtpVerificationDelivery(sender, properties);
         smtp.deliver(new VerificationDeliveryPort.Message("EMAIL", "known@example.com", "REGISTRATION", "123456"));
-        verify(sender).send(any(SimpleMailMessage.class));
+        ArgumentCaptor<SimpleMailMessage> mail = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(sender).send(mail.capture());
+        assertThat(mail.getValue().getSubject()).isEqualTo("Edu Lion 注册验证码");
+        assertThat(mail.getValue().getText())
+                .contains("你正在注册 Edu Lion")
+                .contains("请在 10 分钟内输入验证码完成注册")
+                .contains("验证码只能使用一次")
+                .doesNotContain("用途：");
 
         assertThatThrownBy(() -> smtp.deliver(new VerificationDeliveryPort.Message(
                 "EMAIL", "student1@example.invalid", "REGISTRATION", "123456")))
