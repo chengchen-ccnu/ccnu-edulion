@@ -64,6 +64,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/registration-challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a student-registration verification challenge
+         * @description Creates a short-lived one-time challenge and sending cooldown in Redis. The target is normalized and stored only as a digest in Redis; the verification code is never stored or logged in plaintext. Local/test may use an explicitly configured non-logging delivery adapter, while environments without a delivery adapter return 503 rather than pretending delivery succeeded.
+         */
+        post: operations["createRegistrationChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consume a one-time challenge and create a learning-capable account
+         * @description Atomically creates one ACTIVE account, one verified unique identity, the STUDENT role with learning:access, and versioned protocol-agreement facts in MySQL after one-time Redis challenge consumption. Public registration can never create ADMIN or teaching:access. Database unique constraints remain authoritative under concurrency.
+         */
+        post: operations["registerStudent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset-challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a non-enumerating password-reset challenge
+         * @description Existing and unknown targets receive the same 202 shape and timing-safe processing. Redis holds only short-lived digests, failure counters and cooldown state; no account-existence fact is exposed.
+         */
+        post: operations["createPasswordResetChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consume a password-reset challenge and invalidate every old session
+         * @description A successful reset replaces the password hash, increments the persistent account sessionVersion, revokes every Refresh Session, and records a security audit in one MySQL transaction. Redis is invalidated before the transaction so a cache failure cannot leave an old access token silently accepted. A correctly consumed challenge for an unknown or unavailable account returns the same 204 shape without changing any account, preventing the completion result from becoming an enumeration oracle.
+         */
+        post: operations["resetPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change the authenticated account password and invalidate every device
+         * @description Requires the current password. Success increments persistent sessionVersion, revokes all Refresh Sessions including the current one, records an audit, and clears the refresh cookie.
+         */
+        post: operations["changePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invalidate access and refresh sessions on every device
+         * @description Increments persistent sessionVersion and revokes every Refresh Session. The current refresh cookie is cleared; repeated calls create a new audited version and remain safe.
+         */
+        post: operations["logoutAllDevices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/me": {
         parameters: {
             query?: never;
@@ -78,6 +198,157 @@ export interface paths {
         get: operations["getCurrentUser"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List active Refresh Sessions for the current account
+         * @description Returns device labels and timestamps only; raw or hashed refresh tokens are never exposed. The current session is identified from the HttpOnly refresh cookie when present.
+         */
+        get: operations["listMySessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher-applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit or resubmit the current ordinary account's teacher application
+         * @description Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application fact. A rejected application may be resubmitted with expectedRevision; T12D never approves, rejects, grants TEACHER, or adds teaching:access.
+         */
+        post: operations["submitTeacherApplication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher-applications/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current account's teacher-application status fact
+         * @description Returns only the caller's own submission and current T16-owned review status. Qualification content requires a separate future domain-authorized media grant and is never projected here.
+         */
+        get: operations["getMyTeacherApplication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query accounts for administration
+         * @description Requires administration:access. Identity values are masked; password hashes, refresh-token hashes and verification secrets are never returned.
+         */
+        get: operations["listAdminUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one account administration projection */
+        get: operations["getAdminUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear a short-term login lock and persist an audited unlock fact */
+        post: operations["unlockAdminUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable an account and invalidate every session
+         * @description The MySQL transaction changes status, increments sessionVersion, revokes Refresh Sessions and records the administrator reason. An administrator cannot disable the current account through this endpoint.
+         */
+        post: operations["disableAdminUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/session-revocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Force every session of an account offline without disabling it */
+        post: operations["revokeAdminUserSessions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1456,9 +1727,168 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        IdentityType: "PHONE" | "EMAIL";
+        /** @enum {string} */
+        VerificationPurpose: "REGISTRATION" | "PASSWORD_RESET";
+        CreateVerificationChallengeRequest: {
+            identityType: components["schemas"]["IdentityType"];
+            /** @description Phone or email value normalized server-side. Responses and logs must use a masked form. */
+            target: string;
+        };
+        CreatePasswordResetChallengeRequest: components["schemas"]["CreateVerificationChallengeRequest"];
+        VerificationChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            purpose: components["schemas"]["VerificationPurpose"];
+            /** @description Remaining challenge lifetime in seconds. */
+            expiresIn: number;
+            /** @description Minimum delay before another challenge for the same target/purpose. */
+            resendAfter: number;
+            /** @description Masked target only; never a code or account-existence indicator. */
+            deliveryHint: string;
+        };
+        ProtocolAgreementInput: {
+            /** @enum {string} */
+            documentType: "TERMS" | "PRIVACY";
+            version: string;
+        };
+        RegisterStudentRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: uuid */
+            challengeId: string;
+            identityType: components["schemas"]["IdentityType"];
+            target: string;
+            verificationCode: string;
+            account: string;
+            displayName: string;
+            password: string;
+            agreements: components["schemas"]["ProtocolAgreementInput"][];
+        };
+        RegistrationResult: {
+            /** Format: uuid */
+            userId: string;
+            account: string;
+            displayName: string;
+            roles: components["schemas"]["UserRole"][];
+            permissions: string[];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ResetPasswordRequest: {
+            /** Format: uuid */
+            challengeId: string;
+            identityType: components["schemas"]["IdentityType"];
+            target: string;
+            verificationCode: string;
+            newPassword: string;
+        };
+        ChangePasswordRequest: {
+            currentPassword: string;
+            newPassword: string;
+        };
+        AccountSession: {
+            /** Format: uuid */
+            id: string;
+            deviceName: string;
+            current: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            lastUsedAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /**
+         * @description T12D creates SUBMITTED only. T16 owns every review transition and the accompanying capability grant.
+         * @enum {string}
+         */
+        TeacherApplicationStatus: "SUBMITTED" | "UNDER_REVIEW" | "APPROVED" | "REJECTED";
+        SubmitTeacherApplicationRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /**
+             * Format: int64
+             * @description Null for the first submission; required current revision for a rejected resubmission.
+             */
+            expectedRevision: number | null;
+            /**
+             * Format: uuid
+             * @description Caller-owned READY TEACHER_QUALIFICATION asset.
+             */
+            qualificationMediaId: string;
+            statement: string;
+        };
+        TeacherApplication: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            /** Format: uuid */
+            qualificationMediaId: string;
+            statement: string;
+            status: components["schemas"]["TeacherApplicationStatus"];
+            rejectionReason?: string | null;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            submittedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * @description Short-term login lock is Redis security state and is projected separately as loginLocked.
+         * @enum {string}
+         */
+        AccountStatus: "ACTIVE" | "DISABLED";
+        AdminUser: {
+            /** Format: uuid */
+            id: string;
+            account: string;
+            displayName: string;
+            maskedIdentities: string[];
+            status: components["schemas"]["AccountStatus"];
+            loginLocked: boolean;
+            roles: components["schemas"]["UserRole"][];
+            permissions: string[];
+            /** Format: int64 */
+            sessionVersion: number;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminUserPage: {
+            items: components["schemas"]["AdminUser"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        AdminAccountCommandRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            reason: string;
+        };
+        AdminAccountCommandResult: {
+            user: components["schemas"]["AdminUser"];
+            replayed: boolean;
+        };
         LoginRequest: {
             account: string;
             password: string;
+            /**
+             * Format: uuid
+             * @description Optional installation identifier used only to label Refresh Sessions; it is not trusted for authorization.
+             */
+            deviceId?: string | null;
+            /** @description User-visible device label after control-character removal. */
+            deviceName?: string | null;
         };
         LoginResponse: {
             /** @constant */
@@ -1475,6 +1905,11 @@ export interface components {
             avatarUrl?: string | null;
             roles: components["schemas"]["UserRole"][];
             permissions: string[];
+            /**
+             * Format: int64
+             * @description Persistent account session generation. Clients must not infer authorization decisions from this value.
+             */
+            sessionVersion: number;
         };
         /** @enum {string} */
         UserRole: "STUDENT" | "TEACHER" | "ADMIN";
@@ -2902,7 +3337,7 @@ export interface components {
             disposition: "INLINE" | "ATTACHMENT";
         };
         /**
-         * @description Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
+         * @description Stable business purpose. T08A enables the six course purposes; T09 enables question attachments/import sources for teachers; T12D enables TEACHER_QUALIFICATION only for ordinary STUDENT accounts before application submission. Other frozen values remain disabled until their owning domain supplies policy and authorization.
          * @enum {string}
          */
         MediaPurpose: "COURSE_COVER" | "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT" | "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "AI_QUESTION_IMAGE" | "USER_AVATAR" | "TEACHER_QUALIFICATION" | "BANNER_IMAGE" | "TOPIC_COVER" | "REPORT_EXPORT";
@@ -3455,6 +3890,101 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description Redis security state or the configured verification delivery adapter is unavailable. High-risk writes fail closed instead of silently bypassing challenges, lockouts, session-version validation or rate limits. */
+        SecurityStateUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.SECURITY_STATE_UNAVAILABLE",
+                 *       "message": "身份安全服务暂时不可用，请稍后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-29T10:00:00Z",
+                 *       "path": "/api/v1/auth/registration-challenges",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The challenge is invalid, expired, already consumed, does not match the target/purpose, or exceeded its bounded verification attempts. These cases intentionally share one response. */
+        VerificationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.VERIFICATION_FAILED",
+                 *       "message": "验证码无效或已过期",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-29T10:00:00Z",
+                 *       "path": "/api/v1/auth/register",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The normalized username or verified phone/email identity is already occupied. Database unique constraints are authoritative. */
+        IdentityConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.IDENTITY_OCCUPIED",
+                 *       "message": "账号或验证目标已被使用",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-29T10:00:00Z",
+                 *       "path": "/api/v1/auth/register",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The account or caller-owned teacher application does not exist or is not visible. */
+        AccountNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.NOT_FOUND",
+                 *       "message": "账号或申请不存在",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-29T10:00:00Z",
+                 *       "path": "/api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The account/application revision changed, the lifecycle transition is not allowed, or an idempotency key was reused for different input. */
+        AccountConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.REVISION_CONFLICT",
+                 *       "message": "账号状态已变化，请刷新后重试",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-29T10:00:00Z",
+                 *       "path": "/api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171/disable",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description One-based page number. */
@@ -3473,6 +4003,8 @@ export interface components {
         AssessmentId: string;
         AttemptId: string;
         WrongQuestionId: string;
+        /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
+        UserId: string;
     };
     requestBodies: never;
     headers: {
@@ -3566,6 +4098,162 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createRegistrationChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVerificationChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Challenge accepted for delivery without disclosing target availability. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerificationChallenge"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    registerStudent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterStudentRequest"];
+            };
+        };
+        responses: {
+            /** @description Account created. Login remains a separate explicit operation. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistrationResult"];
+                };
+            };
+            409: components["responses"]["IdentityConflict"];
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    createPasswordResetChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePasswordResetChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Request accepted regardless of whether the target maps to an account. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerificationChallenge"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    resetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Challenge consumed. When an active account matched */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    changePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Password changed and all sessions revoked. */
+            204: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ClearedRefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    logoutAllDevices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every session is invalid and the current refresh cookie is cleared. */
+            204: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ClearedRefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
     getCurrentUser: {
         parameters: {
             query?: never;
@@ -3589,6 +4277,249 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    listMySessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active, unexpired sessions ordered by most recent use. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountSession"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    submitTeacherApplication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTeacherApplicationRequest"];
+            };
+        };
+        responses: {
+            /** @description Rejected application resubmitted or identical request replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherApplication"];
+                };
+            };
+            /** @description First application submitted. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherApplication"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    getMyTeacherApplication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current application. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherApplication"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["AccountNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listAdminUsers: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                keyword?: string;
+                status?: components["schemas"]["AccountStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getAdminUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+        };
+    };
+    unlockAdminUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminAccountCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Current account projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAccountCommandResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    disableAdminUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminAccountCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Disabled account projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAccountCommandResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    revokeAdminUserSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminAccountCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Account projection with incremented sessionVersion. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAccountCommandResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
         };
     };
     listCourses: {

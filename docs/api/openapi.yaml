@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.16.0
-  description: T11B Gateway contract. Adds irreversible assessment closure with bounded recoverable draft settlement, independent grade/reference-answer publication facts, regrading after publication and server-side four-state safe learner result projections. Hidden grade or answer data is serialized as the explicit null values defined below and is never delegated to frontend CSS.
+  version: 0.17.0
+  description: T12D Gateway contract. Adds student registration and one-time verification challenges, password recovery/change, persistent account session versions, current/all-device revocation, teacher-application submission with a stable qualification media binding, administrator account controls, and explicit Redis security/rate-limit failure semantics. T16 teacher-review decisions and T12E pages are intentionally excluded.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -11,6 +11,8 @@ servers:
 tags:
   - name: Authentication
   - name: Users
+  - name: Teacher Applications
+  - name: Admin Users
   - name: Courses
   - name: Teacher Courses
   - name: Media
@@ -115,6 +117,115 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/auth/registration-challenges:
+    post:
+      tags: [Authentication]
+      operationId: createRegistrationChallenge
+      summary: Create a student-registration verification challenge
+      description: Creates a short-lived one-time challenge and sending cooldown in Redis. The target is normalized and stored only as a digest in Redis; the verification code is never stored or logged in plaintext. Local/test may use an explicitly configured non-logging delivery adapter, while environments without a delivery adapter return 503 rather than pretending delivery succeeded.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateVerificationChallengeRequest'}
+      responses:
+        '202':
+          description: Challenge accepted for delivery without disclosing target availability.
+          content: {application/json: {schema: {$ref: '#/components/schemas/VerificationChallenge'}}}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/auth/register:
+    post:
+      tags: [Authentication]
+      operationId: registerStudent
+      summary: Consume a one-time challenge and create a learning-capable account
+      description: Atomically creates one ACTIVE account, one verified unique identity, the STUDENT role with learning:access, and versioned protocol-agreement facts in MySQL after one-time Redis challenge consumption. Public registration can never create ADMIN or teaching:access. Database unique constraints remain authoritative under concurrency.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterStudentRequest'}
+      responses:
+        '201':
+          description: Account created. Login remains a separate explicit operation.
+          content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationResult'}}}
+        '409': {$ref: '#/components/responses/IdentityConflict'}
+        '422': {$ref: '#/components/responses/VerificationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/auth/password-reset-challenges:
+    post:
+      tags: [Authentication]
+      operationId: createPasswordResetChallenge
+      summary: Request a non-enumerating password-reset challenge
+      description: Existing and unknown targets receive the same 202 shape and timing-safe processing. Redis holds only short-lived digests, failure counters and cooldown state; no account-existence fact is exposed.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreatePasswordResetChallengeRequest'}
+      responses:
+        '202':
+          description: Request accepted regardless of whether the target maps to an account.
+          content: {application/json: {schema: {$ref: '#/components/schemas/VerificationChallenge'}}}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/auth/password-reset:
+    post:
+      tags: [Authentication]
+      operationId: resetPassword
+      summary: Consume a password-reset challenge and invalidate every old session
+      description: A successful reset replaces the password hash, increments the persistent account sessionVersion, revokes every Refresh Session, and records a security audit in one MySQL transaction. Redis is invalidated before the transaction so a cache failure cannot leave an old access token silently accepted. A correctly consumed challenge for an unknown or unavailable account returns the same 204 shape without changing any account, preventing the completion result from becoming an enumeration oracle.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResetPasswordRequest'}
+      responses:
+        '204': {description: Challenge consumed. When an active account matched, its password was reset and every previous access and refresh session was invalidated; account existence is not disclosed.}
+        '422': {$ref: '#/components/responses/VerificationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/auth/password/change:
+    post:
+      tags: [Authentication]
+      operationId: changePassword
+      summary: Change the authenticated account password and invalidate every device
+      description: Requires the current password. Success increments persistent sessionVersion, revokes all Refresh Sessions including the current one, records an audit, and clears the refresh cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangePasswordRequest'}
+      responses:
+        '204':
+          description: Password changed and all sessions revoked.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/ClearedRefreshCookie'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/auth/logout-all:
+    post:
+      tags: [Authentication]
+      operationId: logoutAllDevices
+      summary: Invalidate access and refresh sessions on every device
+      description: Increments persistent sessionVersion and revokes every Refresh Session. The current refresh cookie is cleared; repeated calls create a new audited version and remain safe.
+      responses:
+        '204':
+          description: Every session is invalid and the current refresh cookie is cleared.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/ClearedRefreshCookie'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
   /api/v1/users/me:
     get:
       tags: [Users]
@@ -147,6 +258,129 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/users/me/sessions:
+    get:
+      tags: [Users]
+      operationId: listMySessions
+      summary: List active Refresh Sessions for the current account
+      description: Returns device labels and timestamps only; raw or hashed refresh tokens are never exposed. The current session is identified from the HttpOnly refresh cookie when present.
+      responses:
+        '200':
+          description: Active, unexpired sessions ordered by most recent use.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/AccountSession'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/teacher-applications:
+    post:
+      tags: [Teacher Applications]
+      operationId: submitTeacherApplication
+      summary: Submit or resubmit the current ordinary account's teacher application
+      description: Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application fact. A rejected application may be resubmitted with expectedRevision; T12D never approves, rejects, grants TEACHER, or adds teaching:access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SubmitTeacherApplicationRequest'}
+      responses:
+        '201': {description: First application submitted., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherApplication'}}}}
+        '200': {description: Rejected application resubmitted or identical request replayed., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherApplication'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
+  /api/v1/teacher-applications/me:
+    get:
+      tags: [Teacher Applications]
+      operationId: getMyTeacherApplication
+      summary: Get the current account's teacher-application status fact
+      description: Returns only the caller's own submission and current T16-owned review status. Qualification content requires a separate future domain-authorized media grant and is never projected here.
+      responses:
+        '200': {description: Current application., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherApplication'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/admin/users:
+    get:
+      tags: [Admin Users]
+      operationId: listAdminUsers
+      summary: Query accounts for administration
+      description: Requires administration:access. Identity values are masked; password hashes, refresh-token hashes and verification secrets are never returned.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: keyword, in: query, schema: {type: string, maxLength: 100}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/AccountStatus'}}
+      responses:
+        '200': {description: Account page., content: {application/json: {schema: {$ref: '#/components/schemas/AdminUserPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/admin/users/{userId}:
+    get:
+      tags: [Admin Users]
+      operationId: getAdminUser
+      summary: Get one account administration projection
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      responses:
+        '200': {description: Account projection., content: {application/json: {schema: {$ref: '#/components/schemas/AdminUser'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+  /api/v1/admin/users/{userId}/unlock:
+    post:
+      tags: [Admin Users]
+      operationId: unlockAdminUser
+      summary: Clear a short-term login lock and persist an audited unlock fact
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandRequest'}}}}
+      responses:
+        '200': {description: Current account projection., content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/admin/users/{userId}/disable:
+    post:
+      tags: [Admin Users]
+      operationId: disableAdminUser
+      summary: Disable an account and invalidate every session
+      description: The MySQL transaction changes status, increments sessionVersion, revokes Refresh Sessions and records the administrator reason. An administrator cannot disable the current account through this endpoint.
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandRequest'}}}}
+      responses:
+        '200': {description: Disabled account projection., content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
+  /api/v1/admin/users/{userId}/session-revocation:
+    post:
+      tags: [Admin Users]
+      operationId: revokeAdminUserSessions
+      summary: Force every session of an account offline without disabling it
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandRequest'}}}}
+      responses:
+        '200': {description: Account projection with incremented sessionVersion., content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/SecurityStateUnavailable'}
   /api/v1/courses:
     get:
       tags: [Courses]
@@ -2353,6 +2587,12 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: Stable IAM account ID; administrator queries never accept an account name as a path identifier.
+      schema: {type: string, format: uuid}
   responses:
     Unauthorized:
       description: Authentication is missing or invalid.
@@ -2616,7 +2856,233 @@ components:
             timestamp: '2026-08-24T10:00:00Z'
             path: /api/v1/learning/enrollments
             fieldErrors: []
+    SecurityStateUnavailable:
+      description: Redis security state or the configured verification delivery adapter is unavailable. High-risk writes fail closed instead of silently bypassing challenges, lockouts, session-version validation or rate limits.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: IAM.SECURITY_STATE_UNAVAILABLE
+            message: 身份安全服务暂时不可用，请稍后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-29T10:00:00Z'
+            path: /api/v1/auth/registration-challenges
+            fieldErrors: []
+    VerificationFailed:
+      description: The challenge is invalid, expired, already consumed, does not match the target/purpose, or exceeded its bounded verification attempts. These cases intentionally share one response.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: IAM.VERIFICATION_FAILED
+            message: 验证码无效或已过期
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-29T10:00:00Z'
+            path: /api/v1/auth/register
+            fieldErrors: []
+    IdentityConflict:
+      description: The normalized username or verified phone/email identity is already occupied. Database unique constraints are authoritative.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: IAM.IDENTITY_OCCUPIED
+            message: 账号或验证目标已被使用
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-29T10:00:00Z'
+            path: /api/v1/auth/register
+            fieldErrors: []
+    AccountNotFound:
+      description: The account or caller-owned teacher application does not exist or is not visible.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: IAM.NOT_FOUND
+            message: 账号或申请不存在
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-29T10:00:00Z'
+            path: /api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171
+            fieldErrors: []
+    AccountConflict:
+      description: The account/application revision changed, the lifecycle transition is not allowed, or an idempotency key was reused for different input.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: IAM.REVISION_CONFLICT
+            message: 账号状态已变化，请刷新后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-08-29T10:00:00Z'
+            path: /api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171/disable
+            fieldErrors: []
   schemas:
+    IdentityType:
+      type: string
+      enum: [PHONE, EMAIL]
+    VerificationPurpose:
+      type: string
+      enum: [REGISTRATION, PASSWORD_RESET]
+    CreateVerificationChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [identityType, target]
+      properties:
+        identityType: {$ref: '#/components/schemas/IdentityType'}
+        target:
+          type: string
+          minLength: 3
+          maxLength: 254
+          description: Phone or email value normalized server-side. Responses and logs must use a masked form.
+    CreatePasswordResetChallengeRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateVerificationChallengeRequest'
+    VerificationChallenge:
+      type: object
+      additionalProperties: false
+      required: [challengeId, purpose, expiresIn, resendAfter, deliveryHint]
+      properties:
+        challengeId: {type: string, format: uuid}
+        purpose: {$ref: '#/components/schemas/VerificationPurpose'}
+        expiresIn: {type: integer, minimum: 1, description: Remaining challenge lifetime in seconds.}
+        resendAfter: {type: integer, minimum: 1, description: Minimum delay before another challenge for the same target/purpose.}
+        deliveryHint: {type: string, maxLength: 254, description: Masked target only; never a code or account-existence indicator.}
+    ProtocolAgreementInput:
+      type: object
+      additionalProperties: false
+      required: [documentType, version]
+      properties:
+        documentType: {type: string, enum: [TERMS, PRIVACY]}
+        version: {type: string, pattern: '^[A-Za-z0-9._-]{1,40}$'}
+    RegisterStudentRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, challengeId, identityType, target, verificationCode, account, displayName, password, agreements]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        challengeId: {type: string, format: uuid}
+        identityType: {$ref: '#/components/schemas/IdentityType'}
+        target: {type: string, minLength: 3, maxLength: 254}
+        verificationCode: {type: string, pattern: '^[0-9]{6}$', writeOnly: true}
+        account: {type: string, pattern: '^[a-zA-Z][a-zA-Z0-9_]{4,31}$'}
+        displayName: {type: string, minLength: 1, maxLength: 80}
+        password: {type: string, minLength: 12, maxLength: 128, writeOnly: true}
+        agreements:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: {$ref: '#/components/schemas/ProtocolAgreementInput'}
+    RegistrationResult:
+      type: object
+      additionalProperties: false
+      required: [userId, account, displayName, roles, permissions, createdAt]
+      properties:
+        userId: {type: string, format: uuid}
+        account: {type: string}
+        displayName: {type: string}
+        roles: {type: array, items: {$ref: '#/components/schemas/UserRole'}}
+        permissions: {type: array, items: {type: string}}
+        createdAt: {type: string, format: date-time}
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, identityType, target, verificationCode, newPassword]
+      properties:
+        challengeId: {type: string, format: uuid}
+        identityType: {$ref: '#/components/schemas/IdentityType'}
+        target: {type: string, minLength: 3, maxLength: 254}
+        verificationCode: {type: string, pattern: '^[0-9]{6}$', writeOnly: true}
+        newPassword: {type: string, minLength: 12, maxLength: 128, writeOnly: true}
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: {type: string, minLength: 8, maxLength: 128, writeOnly: true}
+        newPassword: {type: string, minLength: 12, maxLength: 128, writeOnly: true}
+    AccountSession:
+      type: object
+      additionalProperties: false
+      required: [id, deviceName, current, createdAt, lastUsedAt, expiresAt]
+      properties:
+        id: {type: string, format: uuid}
+        deviceName: {type: string, maxLength: 120}
+        current: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        lastUsedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+    TeacherApplicationStatus:
+      type: string
+      enum: [SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED]
+      description: T12D creates SUBMITTED only. T16 owns every review transition and the accompanying capability grant.
+    SubmitTeacherApplicationRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, qualificationMediaId, statement]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: [integer, 'null'], format: int64, minimum: 0, description: Null for the first submission; required current revision for a rejected resubmission.}
+        qualificationMediaId: {type: string, format: uuid, description: Caller-owned READY TEACHER_QUALIFICATION asset.}
+        statement: {type: string, minLength: 20, maxLength: 2000}
+    TeacherApplication:
+      type: object
+      additionalProperties: false
+      required: [id, userId, qualificationMediaId, statement, status, revision, submittedAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        qualificationMediaId: {type: string, format: uuid}
+        statement: {type: string}
+        status: {$ref: '#/components/schemas/TeacherApplicationStatus'}
+        rejectionReason: {type: [string, 'null'], maxLength: 1000}
+        revision: {type: integer, format: int64, minimum: 0}
+        submittedAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    AccountStatus:
+      type: string
+      enum: [ACTIVE, DISABLED]
+      description: Short-term login lock is Redis security state and is projected separately as loginLocked.
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, account, displayName, maskedIdentities, status, loginLocked, roles, permissions, sessionVersion, revision, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        account: {type: string}
+        displayName: {type: string}
+        maskedIdentities: {type: array, items: {type: string}}
+        status: {$ref: '#/components/schemas/AccountStatus'}
+        loginLocked: {type: boolean}
+        roles: {type: array, items: {$ref: '#/components/schemas/UserRole'}}
+        permissions: {type: array, items: {type: string}}
+        sessionVersion: {type: integer, format: int64, minimum: 0}
+        revision: {type: integer, format: int64, minimum: 0}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    AdminUserPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AdminUser'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+    AdminAccountCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, reason]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        reason: {type: string, minLength: 10, maxLength: 500}
+    AdminAccountCommandResult:
+      type: object
+      additionalProperties: false
+      required: [user, replayed]
+      properties:
+        user: {$ref: '#/components/schemas/AdminUser'}
+        replayed: {type: boolean}
     LoginRequest:
       type: object
       additionalProperties: false
@@ -2631,6 +3097,14 @@ components:
           minLength: 8
           maxLength: 128
           writeOnly: true
+        deviceId:
+          type: [string, 'null']
+          format: uuid
+          description: Optional installation identifier used only to label Refresh Sessions; it is not trusted for authorization.
+        deviceName:
+          type: [string, 'null']
+          maxLength: 120
+          description: User-visible device label after control-character removal.
     LoginResponse:
       type: object
       additionalProperties: false
@@ -2648,7 +3122,7 @@ components:
     CurrentUser:
       type: object
       additionalProperties: false
-      required: [id, displayName, roles, permissions]
+      required: [id, displayName, roles, permissions, sessionVersion]
       properties:
         id:
           type: string
@@ -2670,6 +3144,11 @@ components:
           uniqueItems: true
           items:
             type: string
+        sessionVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Persistent account session generation. Clients must not infer authorization decisions from this value.
     UserRole:
       type: string
       enum: [STUDENT, TEACHER, ADMIN]
@@ -4822,7 +5301,7 @@ components:
           description: QUESTION_IMAGE and QUESTION_AUDIO require INLINE; QUESTION_ATTACHMENT requires ATTACHMENT. The service derives and validates the exact purpose from the assessment snapshot.
     MediaPurpose:
       type: string
-      description: Stable business purpose. T08A enables the six course purposes; T09 additionally enables QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT and QUESTION_IMPORT_SOURCE through reviewed teacher-only policies. Other frozen values remain disabled until their owning domain supplies policy and authorization.
+      description: Stable business purpose. T08A enables the six course purposes; T09 enables question attachments/import sources for teachers; T12D enables TEACHER_QUALIFICATION only for ordinary STUDENT accounts before application submission. Other frozen values remain disabled until their owning domain supplies policy and authorization.
       enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
     MediaUploadMode:
       type: string

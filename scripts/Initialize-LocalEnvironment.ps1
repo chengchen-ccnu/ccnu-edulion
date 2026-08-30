@@ -18,6 +18,7 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
+$iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 
 function New-ServiceAuthorizationCredential {
     $bytes = New-Object byte[] 32
@@ -34,6 +35,31 @@ function New-ServiceAuthorizationCredential {
         $generator.Dispose()
         [Array]::Clear($bytes, 0, $bytes.Length)
         $secret = $null
+    }
+}
+
+function New-IamSecurityCredential {
+    $jwtBytes = New-Object byte[] 32
+    $verificationBytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($jwtBytes)
+        $generator.GetBytes($verificationBytes)
+        $payload = @{
+            jwtSecret = [Convert]::ToBase64String($jwtBytes)
+            verificationHmacSecret = [Convert]::ToBase64String($verificationBytes)
+            localVerificationCode = "246810"
+        } | ConvertTo-Json -Compress
+        return [PSCredential]::new(
+            "iam-security",
+            (ConvertTo-SecureString $payload -AsPlainText -Force)
+        )
+    }
+    finally {
+        $generator.Dispose()
+        [Array]::Clear($jwtBytes, 0, $jwtBytes.Length)
+        [Array]::Clear($verificationBytes, 0, $verificationBytes.Length)
+        $payload = $null
     }
 }
 
@@ -58,10 +84,35 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             $existingServiceCredential = $null
         }
     }
-    if ($existingBaseConfiguration -and -not $serviceCredentialValid) {
+    $iamSecurityCredentialValid = $false
+    if (Test-Path -LiteralPath $iamSecurityCredentialPath -PathType Leaf) {
+        try {
+            $existingIamCredential = Import-Clixml -LiteralPath $iamSecurityCredentialPath
+            if ($existingIamCredential -is [PSCredential] -and $existingIamCredential.UserName -eq "iam-security") {
+                $existingIamPayload = $existingIamCredential.GetNetworkCredential().Password | ConvertFrom-Json
+                $iamSecurityCredentialValid = $existingIamPayload.jwtSecret.Length -ge 32 `
+                    -and $existingIamPayload.verificationHmacSecret.Length -ge 32 `
+                    -and $existingIamPayload.localVerificationCode -match "^[0-9]{6}$"
+            }
+        }
+        catch {
+            $iamSecurityCredentialValid = $false
+        }
+        finally {
+            $existingIamPayload = $null
+            $existingIamCredential = $null
+        }
+    }
+    if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid)) {
         New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
-        New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
-        Write-Host "Added the DPAPI-encrypted course/media service authorization secret."
+        if (-not $serviceCredentialValid) {
+            New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
+            Write-Host "Added the DPAPI-encrypted course/media service authorization secret."
+        }
+        if (-not $iamSecurityCredentialValid) {
+            New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
+            Write-Host "Added the DPAPI-encrypted IAM security secrets."
+        }
         return
     }
     throw "Local configuration already exists. Re-run with -Force only when you intend to replace it."
@@ -172,6 +223,7 @@ New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
 
 $credential | Export-Clixml -LiteralPath $credentialPath -Force
 New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
+New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
 
 @(
     "# Non-secret local configuration for ccnu-edulion."
@@ -197,6 +249,7 @@ New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredenti
     "LEARNING_REDIS_DATABASE=4"
     "OPERATION_REDIS_DATABASE=5"
     "IAM_SEED_ENABLED=false"
+    "IAM_VERIFICATION_DELIVERY_MODE=fixed-local"
     "COURSE_SEED_ENABLED=false"
 ) | Set-Content -LiteralPath $configPath -Encoding UTF8
 

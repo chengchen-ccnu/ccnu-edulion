@@ -42,8 +42,12 @@ public class AuthController {
     /** 校验登录请求并设置刷新 Cookie；认证失败由统一异常处理器返回错误信封。 */
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest body,
             HttpServletRequest request) {
-        TokenPair tokens = authService.login(body.account(), body.password(), request.getRemoteAddr(),
-                (String) request.getAttribute(TraceFilter.ATTRIBUTE));
+        TokenPair tokens = body.deviceId() == null && body.deviceName() == null
+                ? authService.login(body.account(), body.password(), request.getRemoteAddr(),
+                        (String) request.getAttribute(TraceFilter.ATTRIBUTE))
+                : authService.login(body.account(), body.password(), request.getRemoteAddr(),
+                        (String) request.getAttribute(TraceFilter.ATTRIBUTE),
+                        body.deviceId() == null ? null : body.deviceId().toString(), body.deviceName());
         return withRefreshCookie(tokens);
     }
 
@@ -66,9 +70,13 @@ public class AuthController {
     @GetMapping("/users/me")
     /** 返回 JWT subject 对应用户的实时角色和权限，用于前端恢复登录态。 */
     public CurrentUserResponse currentUser(JwtAuthenticationToken authentication) {
-        AuthenticatedUser user = authService.currentUser(authentication.getToken().getSubject());
+        Number sessionVersion = authentication.getToken().getClaim("sessionVersion");
+        if (sessionVersion == null) throw new com.eduplatform.iam.service.AuthException(
+                HttpStatus.UNAUTHORIZED, "IAM.SESSION_INVALID", "登录会话已失效，请重新登录");
+        AuthenticatedUser user = authService.currentUser(authentication.getToken().getSubject(),
+                sessionVersion.longValue());
         return new CurrentUserResponse(user.id(), user.displayName(), user.avatarUrl(),
-                user.roles(), user.permissions());
+                user.roles(), user.permissions(), user.sessionVersion());
     }
 
     private ResponseEntity<LoginResponse> withRefreshCookie(TokenPair tokens) {

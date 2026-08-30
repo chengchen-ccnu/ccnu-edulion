@@ -80,7 +80,9 @@ public class GatewaySecurityConfig {
         return http.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(auth -> auth
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout",
+                                "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
+                                "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/api/v1/teacher/courses", "/api/v1/teacher/courses/**").hasRole("TEACHER")
                         .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")
@@ -94,6 +96,7 @@ public class GatewaySecurityConfig {
                                 "/api/v1/teacher/attempts/**", "/api/v1/teacher/learning/**")
                         .hasAuthority("teaching:access")
                         .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
+                        .pathMatchers("/api/v1/admin/users", "/api/v1/admin/users/**").hasAuthority("administration:access")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))

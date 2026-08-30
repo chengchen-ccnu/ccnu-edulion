@@ -2,6 +2,7 @@ package com.eduplatform.iam.seed;
 
 import com.eduplatform.iam.config.IamProperties;
 import com.eduplatform.iam.persistence.IamMapper;
+import java.time.Instant;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -51,6 +52,17 @@ public class IamSeedInitializer implements ApplicationRunner {
             mapper.assignRole(user.id(), user.role());
             mapper.assignPermission(user.role(), user.permission());
         }
+        Instant now = Instant.now();
+        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001101", USERS[0].id(), "EMAIL",
+                "student_test_01@example.invalid", now);
+        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001102", USERS[1].id(), "EMAIL",
+                "teacher_test_01@example.invalid", now);
+        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001103", USERS[2].id(), "EMAIL",
+                "admin_test_01@example.invalid", now);
+        mapper.upsertSeedAgreement("00000000-0000-4000-8000-000000001201", USERS[0].id(),
+                "TERMS", "local-v1", now);
+        mapper.upsertSeedAgreement("00000000-0000-4000-8000-000000001202", USERS[0].id(),
+                "PRIVACY", "local-v1", now);
     }
 
     private record SeedUser(String id, String account, String displayName, String role, String permission) {}

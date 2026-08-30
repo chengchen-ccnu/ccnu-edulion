@@ -13,42 +13,46 @@ import org.springframework.stereotype.Component;
 /**
  * 媒体用途白名单，统一校验上传角色、MIME、扩展名、大小与直传模式。
  *
- * <p>T08A 显式启用课程用途；T09 追加题目图片、音频、附件与 CSV/XLSX 导入源；其余冻结枚举仍返回未启用，
+ * <p>T08A 显式启用课程用途；T09 追加题目附件和导入源；T12D 仅向普通 STUDENT 账号开放教师资质材料；
+ * 其余冻结枚举仍返回未启用，
  * 避免仅因枚举存在就绕过所属领域的权限和文件策略评审。</p>
  */
 @Component
 public class MediaPurposePolicy {
-    private static final Map<MediaPurpose, Policy> ENABLED = Map.of(
-            MediaPurpose.COURSE_COVER, new Policy(Set.of("TEACHER"),
+    private static final Map<MediaPurpose, Policy> ENABLED = Map.ofEntries(
+            Map.entry(MediaPurpose.COURSE_COVER, new Policy(Set.of("TEACHER"),
                     Set.of("image/jpeg", "image/png", "image/webp"),
-                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
-            MediaPurpose.LESSON_VIDEO, new Policy(Set.of("TEACHER"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false)),
+            Map.entry(MediaPurpose.LESSON_VIDEO, new Policy(Set.of("TEACHER"),
                     Set.of("video/mp4", "video/quicktime", "video/webm"),
-                    Set.of("mp4", "mov", "webm"), 10L * 1024 * 1024 * 1024, true),
-            MediaPurpose.VIDEO_POSTER, new Policy(Set.of("TEACHER"),
+                    Set.of("mp4", "mov", "webm"), 10L * 1024 * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.VIDEO_POSTER, new Policy(Set.of("TEACHER"),
                     Set.of("image/jpeg", "image/png", "image/webp"),
-                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
-            MediaPurpose.SUBTITLE, new Policy(Set.of("TEACHER"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false)),
+            Map.entry(MediaPurpose.SUBTITLE, new Policy(Set.of("TEACHER"),
                     Set.of("text/vtt", "application/x-subrip", "text/plain"),
-                    Set.of("vtt", "srt"), 5L * 1024 * 1024, false),
-            MediaPurpose.COURSEWARE, new Policy(Set.of("TEACHER"),
+                    Set.of("vtt", "srt"), 5L * 1024 * 1024, false)),
+            Map.entry(MediaPurpose.COURSEWARE, new Policy(Set.of("TEACHER"),
                     Set.of("application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-                    Set.of("pdf", "pptx"), 200L * 1024 * 1024, true),
-            MediaPurpose.ARTICLE_ATTACHMENT, new Policy(Set.of("TEACHER"),
+                    Set.of("pdf", "pptx"), 200L * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.ARTICLE_ATTACHMENT, new Policy(Set.of("TEACHER"),
                     Set.of("application/pdf", "text/plain", "image/jpeg", "image/png", "image/webp"),
-                    Set.of("pdf", "txt", "jpg", "jpeg", "png", "webp"), 50L * 1024 * 1024, true),
-            MediaPurpose.QUESTION_IMAGE, new Policy(Set.of("TEACHER"),
+                    Set.of("pdf", "txt", "jpg", "jpeg", "png", "webp"), 50L * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.QUESTION_IMAGE, new Policy(Set.of("TEACHER"),
                     Set.of("image/jpeg", "image/png", "image/webp"),
-                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false),
-            MediaPurpose.QUESTION_AUDIO, new Policy(Set.of("TEACHER"),
+                    Set.of("jpg", "jpeg", "png", "webp"), 10L * 1024 * 1024, false)),
+            Map.entry(MediaPurpose.QUESTION_AUDIO, new Policy(Set.of("TEACHER"),
                     Set.of("audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/ogg"),
-                    Set.of("mp3", "m4a", "wav", "ogg"), 50L * 1024 * 1024, true),
-            MediaPurpose.QUESTION_ATTACHMENT, new Policy(Set.of("TEACHER"),
+                    Set.of("mp3", "m4a", "wav", "ogg"), 50L * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.QUESTION_ATTACHMENT, new Policy(Set.of("TEACHER"),
                     Set.of("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-                    Set.of("pdf", "docx"), 50L * 1024 * 1024, true),
-            MediaPurpose.QUESTION_IMPORT_SOURCE, new Policy(Set.of("TEACHER"),
+                    Set.of("pdf", "docx"), 50L * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.QUESTION_IMPORT_SOURCE, new Policy(Set.of("TEACHER"),
                     Set.of("text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-                    Set.of("csv", "xlsx"), 100L * 1024 * 1024, true));
+                    Set.of("csv", "xlsx"), 100L * 1024 * 1024, true)),
+            Map.entry(MediaPurpose.TEACHER_QUALIFICATION, new Policy(Set.of("STUDENT"),
+                    Set.of("application/pdf", "image/jpeg", "image/png", "image/webp"),
+                    Set.of("pdf", "jpg", "jpeg", "png", "webp"), 20L * 1024 * 1024, true)));
 
     /**
      * 校验客户端声明并选择上传模式。

@@ -41,6 +41,10 @@ management:
 
 platform:
   iam:
+    security-store: redis
+    verification:
+      delivery-mode: ${IAM_VERIFICATION_DELIVERY_MODE:fixed-local}
+      fixed-code: ${IAM_VERIFICATION_FIXED_CODE:}
     seed:
       enabled: ${IAM_SEED_ENABLED:false}
       password: ${IAM_SEED_PASSWORD:}

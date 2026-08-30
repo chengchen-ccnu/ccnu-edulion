@@ -30,6 +30,8 @@ class IamSeedIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user` WHERE account LIKE '%_test_01'", Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `role`", Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM permission", Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_identity", Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM protocol_agreement", Integer.class)).isEqualTo(2);
 
         try (var connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/seed/cleanup-iam-seed.sql"));
@@ -37,5 +39,7 @@ class IamSeedIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user`", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `role`", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM permission", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_identity", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM protocol_agreement", Integer.class)).isZero();
     }
 }

@@ -260,7 +260,8 @@ public class MediaAssetService {
     }
 
     /**
-     * 绑定前验证资产的 owner、精确用途和 READY 状态，不返回 Object Key 或签名 URL。
+     * 绑定前验证资产的 owner、精确用途和 READY 状态，可服务于教师或普通账号的领域绑定，
+     * 且不返回 Object Key 或签名 URL。
      *
      * @throws MediaException 他人/不存在资产按 404，错用途按 422，未就绪按 409
      */

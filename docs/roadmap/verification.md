@@ -501,3 +501,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Redis 收口：T12D 负责 Gateway 多实例身份/高风险接口限流、验证码、短期锁定和会话版本缓存；T12G 负责普通播放心跳缓冲及可靠批量落库；T14 复用用户额度、并发和会话预算；T16A 负责热点 Sorted Set、课程/教师/首页缓存、通知未读计数、事件失效和重建。MySQL 继续保存账号、Refresh Session、申请、发布、进度完成、作答和成绩事实；Redis 锁不替代数据库事务、唯一约束或正式提交幂等。
 - 任务顺序：新增 T11C、T12D～T12G、T16A，并把 T12D 设为当前下一实施任务；T12C 优先级后移。T12D 的 T02 Redis 基础、T04 IAM/Gateway/统一登录、T07 `TEACHER_QUALIFICATION` 媒体能力均已合并，OpenAPI/页面/backlog 缺口已由本次文档任务冻结，因此其前置条件满足。T12D 只做契约和后端，不提前实现 T12E 页面、T16 审核决定或绑定短信供应商。
 - 验证与数据：本任务只修改总体架构、页面规格、backlog 和本验证记录；`git diff --check` 通过。未修改 OpenAPI、Java、Python、Vue、数据库迁移或配置，未连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg、外部模型或短信/邮件服务，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
+## 2026-08-29 T12D 账号生命周期与 Redis 身份安全后端验证记录
+
+- 门禁与契约：开始时分支为 `codex/t12d-account-lifecycle-security` 且工作区干净；完整阅读仓库规则、页面规格、backlog、OpenAPI、工业架构设计及 IAM/Gateway/Media 既有实现。先将 OpenAPI 向前演进至 0.17.0，再实现生产者、消费者和生成客户端，没有手写第二套前端 DTO。
+- IAM：实现学生注册与协议事实、一次性验证码挑战、不可枚举密码找回/重置、修改密码、当前/全部设备退出、持久 `sessionVersion`、设备 Refresh Session、教师申请提交及管理员查询/解锁/禁用/强制下线。教师申请只绑定本人 READY 的 `TEACHER_QUALIFICATION mediaId` 并保持 `SUBMITTED`，不授予教学能力、不实现 T16 审核。
+- Redis 与 Gateway：验证码/发送冷却、登录失败计数与 TTL 锁定、会话版本缓存和多实例 Lua 限流均使用 Redis；MySQL 保持唯一身份、会话、协议、申请、版本和审计权威事实。登录、注册、验证码、密码重置、上传、题库导入和答题提交超限统一 429/`Retry-After`；Redis 缺失或执行失败明确返回 503，不静默放行。
+- 真实基础设施：通过本地安全凭据包装脚本在真实 MySQL 8 `edu_platform_iam_dev` 完成 Flyway V1→V2、身份/协议/会话/审计和真实 Redis DB 1 的挑战一次消费、锁定与会话版本验收；随机 Fixture 和精确 Redis Key 均在 `finally` 清理并断言为零，只保留 V2 Schema 与 Flyway 历史。真实随机端口 Gateway 经 Redis Lua 验证前 10 次登录转发成功、第 11 次返回 429 和 `Retry-After`，精确限流 Key 已删除。
+- 数据：V2 新增 `user_identity`、`registration_request`、`protocol_agreement`、`teacher_application`、`teacher_application_command`、`account_security_audit`、`admin_account_command`，并扩展用户与 Refresh Session。local/test Seed 仅为三个既有合成账号增加 `example.invalid` 身份及学生 `local-v1` 协议同意；专用清理脚本支持按固定 ID 清理和幂等重建。未创建 Media 资产、OSS 对象、RabbitMQ 消息或其他领域数据。
+- 安全边界：生产环境没有真实短信/邮件供应商时挑战接口明确 503；验证目标/验证码和登录维度使用 HMAC 摘要，不记录明文验证码。Redis 不作为唯一事实源、不替代数据库事务/唯一约束；没有第二套登录入口、T12E 页面、T16 审核决定或跨服务数据库访问。
+- 自动化：Java `clean verify` 的 8 个 Reactor 模块全部通过，共 134 项测试、122 项通过、12 项真实外部环境用例按开关跳过；前端 OpenAPI 生成、全 workspace 类型检查、29 个 Vitest 文件 191 项测试及三端生产构建通过；Python 字节码、8 项单元测试和 wheel 构建通过；两个 PowerShell 脚本通过 AST 语法解析。Vitest/Vite 因 esbuild `spawn EPERM`、pip 因构建隔离下载限制分别经批准在沙箱外复跑后成功。
+- 本机初始化限制：自动为存量用户目录补建新增 DPAPI IAM 安全文件的操作被当前沙箱策略拒绝，未绕过；现有开发机需由当前 Windows 用户重跑 `scripts/Initialize-LocalEnvironment.ps1`。仓库实现、真实 MySQL/Redis/Gateway 验收及自动化不依赖提交任何凭据文件。
+- 发布：关键实现提交 `e888c8f7308b458bb7632eab353557a84f413849` 已按规则使用 `git push origin HEAD` 推送；Ready [PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 已创建，目标为 `main`，核对为 OPEN 且 `isDraft=false`。创建时 CI 正在执行，本任务不自行合并。

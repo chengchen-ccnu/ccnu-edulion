@@ -14,6 +14,7 @@ spring:
 
 platform:
   iam:
+    security-store: memory
     jwt:
       issuer: edu-platform-iam-test
       audience: edu-platform-gateway-test
@@ -25,6 +26,19 @@ platform:
     login-rate-limit:
       attempts: 5
       window: 15m
+    verification:
+      ttl: 10m
+      cooldown: 1ms
+      max-attempts: 5
+      delivery-mode: fixed-local
+      fixed-code: "246810"
+      hmac-secret: test-only-verification-hmac-secret-32-bytes
+    session-cache:
+      key-prefix: edu:iam:session-version
+      ttl: 20m
+    media:
+      base-url: http://127.0.0.1:9
+      request-timeout: 100ms
     seed:
       enabled: false
       password: ""

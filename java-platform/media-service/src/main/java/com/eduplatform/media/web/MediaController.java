@@ -140,7 +140,7 @@ public class MediaController {
     }
 
     @PostMapping("/{mediaId}/binding-validations")
-    /** 供领域服务绑定前验证当前教师拥有、用途匹配且 READY；成功不直接创建引用。 */
+    /** 供领域服务绑定前验证当前账号拥有、用途匹配且 READY；成功不直接创建引用。 */
     MediaDtos.BindingValidation validateBinding(@PathVariable String mediaId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,

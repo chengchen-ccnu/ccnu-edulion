@@ -65,6 +65,6 @@ describe("teacher navigation", () => {
 });
 
 function user(roles: CurrentUser["roles"], permissions: string[]): CurrentUser {
-  return { id: "00000000-0000-4000-8000-000000000001", displayName: "测试用户", avatarUrl: null,
+  return { id: "00000000-0000-4000-8000-000000000001", displayName: "测试用户", avatarUrl: null, sessionVersion: 1,
     roles, permissions };
 }
