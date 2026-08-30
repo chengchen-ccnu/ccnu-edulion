@@ -102,6 +102,20 @@ class GatewayRouteSecurityTest {
     }
 
     @Test
+    /** T12D.1 的 CAPTCHA、验证码登录和公开协议端点必须匿名转发到 IAM。 */
+    void t12d1AuthenticationRoutesArePublicAndReachIam() {
+        client.post().uri("/api/v1/auth/captchas").exchange().expectStatus().isOk();
+        client.post().uri("/api/v1/auth/captchas/00000000-0000-4000-8000-000000000001/refresh")
+                .exchange().expectStatus().isOk();
+        client.post().uri("/api/v1/auth/verification-login-challenges").bodyValue("{}")
+                .header("Content-Type", "application/json").exchange().expectStatus().isOk();
+        client.post().uri("/api/v1/auth/verification-login").bodyValue("{}")
+                .header("Content-Type", "application/json").exchange().expectStatus().isOk();
+        client.get().uri("/api/v1/auth/channel-capabilities").exchange().expectStatus().isOk();
+        client.get().uri("/api/v1/protocols/current").exchange().expectStatus().isOk();
+    }
+
+    @Test
     void browserPreflightIsPublicAndReturnsCredentialedCorsHeaders() {
         client.options().uri("/api/v1/auth/login")
                 .header("Origin", "http://localhost:5173")
@@ -340,7 +354,7 @@ class GatewayRouteSecurityTest {
             String permissions = exchange.getRequestHeaders().getFirst("X-User-Permissions");
             body = "{\"id\":\"" + userId + "\",\"displayName\":\"测试学生\",\"avatarUrl\":null,"
                     + "\"roles\":[\"" + roles + "\"],\"permissions\":[\"" + permissions + "\"]}";
-        } else if (path.startsWith("/api/v1/auth/")) {
+        } else if (path.startsWith("/api/v1/auth/") || "/api/v1/protocols/current".equals(path)) {
             exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=opaque; Path=/api/v1/auth; HttpOnly; SameSite=Strict");
             body = "{\"tokenType\":\"Bearer\",\"accessToken\":\"downstream-token\",\"expiresIn\":900}";
         } else {

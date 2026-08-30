@@ -545,3 +545,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实基础设施：全部命令只经 `scripts/Invoke-WithLocalEnvironment.ps1` 注入秘密。真实 MySQL 8 `edu_platform_iam_dev` 已从 Flyway V2 正常迁移到 V3；IAM+Redis 验收 1/1 通过，覆盖挑战/CAPTCHA 一次消费、错误上限、有限刷新、密码阈值/锁定、sessionVersion 与 Refresh 撤销。真实随机端口 Gateway+Redis 验收 1/1 通过，覆盖第 11 次限流 429/`Retry-After`。随机账号、身份、协议、审计、会话和全部本轮 Redis Key 均在 `finally` 中按精确 ID/Key 清理；只保留 V3 Schema/Flyway 迁移事实。
 - 边界：未实现 T12E Vue 页面、真实短信、账号注销、人工申诉、反馈提交、“记住我”、完整 JWT 黑名单、完整 Redis Session 或跨服务数据库访问。没有创建 Media/课程/学习/运营伪数据、OSS 对象、RabbitMQ 消息或外部模型数据。
 - 发布：实现检查点为 `682fd9e`、`26ed7d0`，最终验证记录为 `23d740d`；已按规定执行 `git push origin HEAD`，并创建指向 `main` 的 Ready PR [#40](https://github.com/chengchen-ccnu/ccnu-edulion/pull/40)。已核验 PR 为 `OPEN`、`isDraft=false`；本任务不自行合并。
+
+## 2026-08-30 T12D.1 真实 SMTP 续验与 Gateway 白名单修复
+
+- 门禁与启动：续验前再次确认分支为 `codex/t12d1-identity-security-contract`、工作区干净、PR #40 为 Open/Ready。IAM 与 Gateway 均通过 `scripts/Invoke-WithLocalEnvironment.ps1` 启动；IAM 使用专用 `edu_platform_iam_dev`，Flyway 版本为 V3，Gateway 监听 8080，IAM 监听 8081。SMTP 模式、DPAPI 凭据文件和非敏感连接配置存在；未读取、打印或复制 SMTP 用户名、密码、授权码、验证码或完整收件地址。
+- 发现与修复：首次匿名 CAPTCHA 请求被 Gateway 误判为 401。原因是 Gateway 白名单及会话版本豁免遗漏 T12D.1 的 CAPTCHA、验证码登录挑战/提交、CAPTCHA 刷新、渠道能力和当前协议端点。已在现有分支最小修复 `GatewaySecurityConfig` 与 `SessionVersionGlobalFilter`，并扩展 Gateway 路由测试；未新增分支/PR，未触及 T12E 或短信供应商。
+- 自动化结果：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 执行 Gateway 受影响测试，`GatewayRouteSecurityTest` 12/12、`DistributedSecurityFilterTest` 4/4，共 16/16 通过。
+- 真实 SMTP 结果：算式 CAPTCHA 图片为 `8 - 7 = ?`，答案只用于本次请求并未写入日志；挑战请求已到达 IAM，但 SMTP 主机 DNS 解析和 587 端口连通，投递仍返回 `IAM.VERIFICATION_DELIVERY_UNAVAILABLE`（HTTP 503）。因此没有确认真实邮件的发件人、注册用途、有效期或正文，也没有向 `.invalid` Seed 地址发信；没有继续注册或消费邮箱验证码，不能宣称真实 SMTP 成功。
+- 清理：发送失败触发应用补偿删除挑战/冷却；本轮没有创建账号、身份、协议、Refresh Session 或安全审计。停止服务后按本轮已知 CAPTCHA ID 和 Gateway 限流哈希精确清理，Redis 已知临时 Key 余量为 0；没有执行扫描删除、清表、Seed 清理或修改既有 Seed。未创建任何数据库、表、伪数据、媒体对象、RabbitMQ 消息或 OSS 对象。
+- 后续阻塞：若要补齐真实 SMTP 成功与验证码错误/过期/重放验收，需要当前 Windows 用户重新运行 `scripts/Initialize-LocalSmtp.ps1` 检查/更新本机 DPAPI SMTP 配置后再重试；凭据不得发到对话。当前真实 SMTP 投递失败结果保留为未通过，不阻塞已完成的自动化 Gateway 修复验证。

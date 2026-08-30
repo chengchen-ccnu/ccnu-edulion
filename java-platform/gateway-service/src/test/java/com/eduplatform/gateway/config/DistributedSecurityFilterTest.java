@@ -66,6 +66,13 @@ class DistributedSecurityFilterTest {
         assertThat(DistributedRateLimitGlobalFilter.policy(HttpMethod.GET, "/api/v1/auth/login")).isNull();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/logout")).isFalse();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/refresh")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/verification-login-challenges")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/verification-login")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/captchas")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation(
+                "/api/v1/auth/captchas/00000000-0000-4000-8000-000000000001/refresh")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/channel-capabilities")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/protocols/current")).isFalse();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/users/me")).isTrue();
     }
 
