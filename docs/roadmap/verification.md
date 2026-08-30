@@ -520,3 +520,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 实施边界：T12E 只在 `student-web` 交付 `/register`、`/forgot-password`、`/reset-password`、`/profile`、`/profile/security`、`/apply-teacher`、`/terms`、`/privacy`、`/help`，只消费生成客户端；不得复制教师/管理端登录注册表单，不实现 T16 审核决定、T17A 完整个人资料或真实短信/邮件供应商。
 - 本地验收准备：旧本地环境在启动真实 IAM/浏览器验收前必须由当前 Windows 用户重新执行 `scripts/Initialize-LocalEnvironment.ps1`，补齐 DPAPI 加密的 IAM 安全文件；不得把验证码、JWT 或其他秘密写入仓库或 `local.env`。
 - 数据：本次总控只执行 Git 合并、文档状态更新和只读前置审计，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。
+
+## 2026-08-30 T12D.1 身份安全补口产品审计
+
+- 审计方式：用户通过 `grill-me` 分轮确认协议、身份、验证码、SMTP、登录、会话和账号注销边界；总控同时只读核对 OpenAPI 0.17.0、IAM/Gateway、共享认证包、ADR-0003、T12D 交付和页面规格。事实缺口是当前注册仍强制 `account/displayName`、登录仅查 `account`、没有 CAPTCHA/SMTP/协议查询/身份绑定/验证码登录，T12E 不能在前端自行补假状态。
+- 唯一身份：正式与测试环境都只允许已验证邮箱或手机号登录，昵称 1～30 个可见字符、允许中文和重名且不参与鉴权；内部 `account` 由服务端生成。local/test Seed 固定使用 `student1@example.invalid`、`teacher1@example.invalid`、`teacher2@example.invalid`、`admin1@example.invalid` 并禁止 SMTP 发送；真实邮件验收使用操作者控制的临时邮箱并精确清理。
+- 规范化与绑定：邮箱去首尾空格并按不区分大小写唯一；首期中国大陆 11 位手机号规范为 `+86` E.164。每账号最多一个邮箱和一个手机号；绑定验证当前密码和新身份，换绑先验证后原子替换，解绑不得删除最后身份。新增第二身份撤销其他设备，换绑/解绑撤销全部设备；revision/`409`、安全审计和 sessionVersion 不得省略。
+- 登录与验证：默认邮箱/手机号密码登录，可切换验证码登录；未知身份不自动注册且保持不可枚举。注册/找回发送前必须通过 Redis 算式验证码；密码第 4～5 次尝试需要算式验证码，第 5 次仍失败后锁定 15 分钟。邮箱先接供应商无关标准 SMTP，手机只保留 local/test 固定码，生产通过能力查询隐藏未配置渠道。
+- 页面交互：`/login` 与 `/register` 使用同一背景和身份壳但保留真实路由；注册默认邮箱、可切手机，包含昵称、算式/一次性验证码、密码/确认和协议同意。注册成功后自动尝试既有登录，失败只回登录而不重复注册。协议在注册卡片弹窗展示，`/terms`、`/privacy` 展示同一服务端正文；`/help` 只做静态说明，不展示反馈按钮。
+- 协议与会话：协议版本不可修改，只能发布包含正文、生效时间、当前状态和重新同意标记的新版本；注册只接受当前版本，测试正文禁止正式发布，T17A 再实现正式重新同意。保持 15 分钟内存 Access JWT＋7 天 HttpOnly Refresh Cookie且不增加“记住我”；MySQL 保存 Refresh Session/设备/撤销/审计事实，Redis 保存验证码、冷却、失败计数、锁定、限流和 sessionVersion，不保存完整 JWT 或完整 Session。
+- 安全收口：验证码、完整身份和 Token 不进入 URL/历史/日志；退出网络失败不能伪装成服务端已撤销。账号注销不塞入 T12D.1/T12E，新增 T12H 独立设计冷静期、恢复、跨域数据保留和审计，冻结前安全页不展示注销按钮。
+- 编排：尚未开发且未推送的 `codex/t12e-account-security-web` 仅含上一轮总控状态提交，已直接重命名为 `codex/t12d1-identity-security-contract` 以保留历史并撤销错误实施顺序。T12D.1 只做契约与后端补口；合并后重新准备 T12E，只消费生成客户端。
+- 数据与验证：本轮只修改 Markdown 总控文档并执行 Git 分支整理，不修改 OpenAPI、Java、Python、Vue、Flyway、生成代码或配置；没有连接 MySQL、Redis、RabbitMQ、OSS、FFmpeg、SMTP 或外部模型，没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、验证码或会话。
