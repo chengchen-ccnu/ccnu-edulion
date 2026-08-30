@@ -26,6 +26,7 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
 }
 
 # 用户名和密码只进入当前 Windows 用户可解密的 DPAPI 文件；脚本不打印这两个值。
+$credential = $null
 $credential = Get-Credential -Message "Enter the SMTP username and password for IAM verification email."
 if ($null -eq $credential -or [string]::IsNullOrWhiteSpace($credential.UserName)) {
     throw "SMTP credential initialization was cancelled or the username is empty."
@@ -33,8 +34,11 @@ if ($null -eq $credential -or [string]::IsNullOrWhiteSpace($credential.UserName)
 $credential | Export-Clixml -LiteralPath $smtpCredentialPath -Force
 
 # host、port、from 和模式不是秘密，可进入 local.env；既有对应项被精确替换。
-$retained = Get-Content -LiteralPath $configPath -Encoding UTF8 | Where-Object {
-    $_ -notmatch "^(IAM_VERIFICATION_DELIVERY_MODE|IAM_SMTP_HOST|IAM_SMTP_PORT|IAM_SMTP_FROM)="
+$retained = @()
+foreach ($line in (Get-Content -LiteralPath $configPath -Encoding UTF8)) {
+    if ($line -notmatch "^(IAM_VERIFICATION_DELIVERY_MODE|IAM_SMTP_HOST|IAM_SMTP_PORT|IAM_SMTP_FROM)=") {
+        $retained += $line
+    }
 }
 @($retained) + @(
     "IAM_VERIFICATION_DELIVERY_MODE=smtp"
