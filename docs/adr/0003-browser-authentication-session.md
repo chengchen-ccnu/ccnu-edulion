@@ -2,6 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-07-17
+- 前向补充：2026-08-30（T12D.1 已实现，合并后成为主线事实）
 
 ## 背景
 
@@ -10,7 +11,7 @@
 ## 决策
 
 - IAM 签发 15 分钟有效的 JWT Access Token，前端只保存在内存中，不写入 `localStorage`、`sessionStorage` 或持久化状态。
-- IAM 签发 7 天有效的不可预测随机 Refresh Token。浏览器只通过名为 `EDU_REFRESH` 的 `HttpOnly`、`SameSite=Strict` Cookie 持有它；Cookie 路径限制为 `/api/v1/auth`，非 local 环境必须启用 `Secure`。
+- IAM 签发 7 天有效的不可预测随机 Refresh Token。浏览器只通过名为 `EDU_REFRESH` 的 `HttpOnly`、`SameSite=Strict` Cookie 持有它；Cookie 路径限制为 `/api/v1`，让身份变更端点能够识别当前 Refresh Session。Gateway 在转发非 IAM 路由前精确移除该 Cookie，避免把刷新凭据扩散给其他领域服务；非 local 环境必须启用 `Secure`。
 - 数据库只保存 Refresh Token 的 SHA-256 哈希。刷新时在同一事务内将旧会话标记为已轮换并创建新会话；再次使用旧 Token 返回 `409 IAM.REFRESH_REUSED` 并撤销该 Token family。
 - 登录与刷新响应体只返回 Access Token 及其有效期。刷新 Cookie 通过 `Set-Cookie` 返回，前端 JavaScript 不可读取。
 - 前端收到受保护请求的 `401` 时最多刷新一次，然后只重放原请求一次；刷新失败则清空内存状态并跳转登录页，避免无限循环。
@@ -23,9 +24,23 @@
 - Gateway 验证 JWT 的签名、发行者、受众和有效期，并在转发前移除所有外部传入的用户上下文头，再写入可信的 `X-User-Id`、`X-User-Roles`、`X-User-Permissions`。IAM 仍按认证主体查询当前用户，不信任浏览器提供的身份头。
 - 退出撤销当前 Refresh Session、清除 Cookie。Access Token 保持短期自然过期；本轮不维护 Access Token 黑名单。
 
+## T12D.1 前向补充决策
+
+以下规则已经由总控产品与安全审计确认，并由 T12D.1 在功能分支实现；合并前仍不得把它描述成主线已发布能力：
+
+- 正式和测试环境统一只允许已验证邮箱或手机号登录；昵称允许重名且不参与鉴权。既有 `account` 仅保留为兼容内部技术标识，新注册由服务端生成，不提供用户名登录后门。
+- 密码登录接受邮箱或手机号；验证码登录使用邮箱或手机号、Redis 算式验证码和一次性验证码，只登录已有账号且保持未知身份不可枚举。密码第 4～5 次尝试需要算式验证码，第 5 次仍失败后锁定 15 分钟。
+- 邮箱通过供应商无关端口接入标准 SMTP；手机在 local/test 使用固定码，生产未配置短信供应商时由服务端渠道能力隐藏手机注册和验证码登录。Seed 使用 `example.invalid` 已验证身份，绝不向其发送邮件。
+- 每个账号最多绑定一个邮箱和一个手机号。新增第二身份撤销其他设备，换绑或解绑撤销全部设备；至少保留一个已验证身份，所有变更使用 revision、审计和持久 sessionVersion。
+- 用户协议和隐私政策按不可变版本保存，IAM 公开当前正文、版本、生效时间和重新同意标记，注册只接受当前有效版本；旧正文和历史同意不可覆盖。
+- 不增加“记住我”，继续使用 15 分钟内存 Access JWT 和 7 天 HttpOnly Refresh Cookie。注册成功后前端使用仍在组件内存中的邮箱/手机号与密码调用既有登录接口；若登录失败，账号创建结果仍然有效且不得重复注册。
+- 完整 JWT 不写 Redis。MySQL 保存 Refresh Session、设备、Token 摘要、撤销和审计权威事实；Redis 只保存或缓存验证码、冷却、失败计数、短期锁定、限流和当前 sessionVersion。只有在压测证明 Refresh Session 查询成为具体瓶颈后，才允许以 MySQL 为事实源增加 Cache Aside 活跃会话缓存。
+- 退出网络失败时，前端不得把“本地清空内存”描述成“服务端会话已安全撤销”；应锁定本地界面、显示未确认状态并提供有限重试。
+
 ## 后果
 
 - 受保护页面硬刷新后需要先调用刷新接口恢复内存中的 Access Token，再查询当前用户；公共课程页不等待该过程。
 - Cookie 模式要求前端请求使用同源 Gateway 或显式 `credentials: include`；生产环境需要 TLS。
 - 本地开发固定 student、teacher、admin 的端口为 5173、5174、5175，并通过 `VITE_*_WEB_URL` 显式配置跨应用地址；端口被占用时启动失败，避免静默换端口后产生错误回跳或 CORS 问题。
 - Access Token 在退出后最多仍可使用 15 分钟，因此高风险操作后续应增加更强的即时撤销或二次认证机制。
+- Redis 集中式 Session 与本 ADR 的混合方案都是有效工业架构。本平台选择混合方案是因为普通请求可由任意 Gateway 实例验证 JWT，Refresh Session 仅在登录、刷新、退出和设备管理时访问；MySQL 提供设备与撤销审计的可靠事实，Redis 承担高频短期安全状态。不得把“多实例”误解为必须在 Redis 保存完整用户 Session。

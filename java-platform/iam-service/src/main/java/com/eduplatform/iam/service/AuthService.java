@@ -20,13 +20,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Service
 /**
  * 处理账号登录、Refresh Token 轮换、退出和当前用户读取。
  *
  * <p>登录会写登录审计与刷新会话；刷新令牌只以 SHA-256 摘要入库。刷新采用令牌族轮换，
  * 已轮换令牌被再次使用时会撤销整个族，阻止重放。服务不保存课程或学习数据。</p>
  */
+@Service
 public class AuthService {
     private final IamMapper mapper;
     private final PasswordEncoder passwordEncoder;
@@ -34,83 +34,113 @@ public class AuthService {
     private final IamProperties properties;
     private final IdentitySecurityStore securityStore;
     private final SecurityDigests digests;
+    private final ArithmeticCaptchaService captchaService;
+    private final VerificationChallengeService challenges;
     private final SecureRandom secureRandom = new SecureRandom();
     private final String dummyHash;
 
     public AuthService(IamMapper mapper, PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService, IamProperties properties,
-            IdentitySecurityStore securityStore, SecurityDigests digests) {
+            IdentitySecurityStore securityStore, SecurityDigests digests,
+            ArithmeticCaptchaService captchaService, VerificationChallengeService challenges) {
         this.mapper = mapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.properties = properties;
         this.securityStore = securityStore;
         this.digests = digests;
+        this.captchaService = captchaService;
+        this.challenges = challenges;
         this.dummyHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
-    @Transactional(noRollbackFor = AuthException.class)
     /**
-     * 校验账号密码及账号/IP 时间窗限流，成功后签发访问令牌并创建刷新会话。
+     * 校验已验证邮箱/手机号、密码及身份/IP 时间窗限流，成功后创建刷新会话。
      *
-     * @param account 登录账号，按去空格和小写规则归一化
+     * @param identity 已验证邮箱或中国大陆手机号；昵称和内部 account 不参与查询
      * @param password 明文仅用于本次哈希比对，不会持久化
      * @param remoteAddress 登录来源地址，用于限流和审计
      * @param traceId Gateway 传入的请求追踪 ID
      * @return 访问令牌、有效秒数和仅返回一次的刷新令牌
      * @throws AuthException 凭据错误、账号不可用或限流时抛出；失败审计仍提交
      */
-    public TokenPair login(String account, String password, String remoteAddress, String traceId,
-            String deviceId, String deviceName) {
-        String normalized = account.trim().toLowerCase();
+    @Transactional(noRollbackFor = AuthException.class)
+    public TokenPair login(String identity, String password, String remoteAddress, String traceId,
+            String deviceId, String deviceName, String captchaId, String captchaAnswer) {
+        NormalizedIdentity loginIdentity = normalizeLoginIdentity(identity);
+        String normalized = loginIdentity.value();
         Instant now = Instant.now();
-        String accountDigest = digests.digest("login-account", normalized);
+        UserAccount user = mapper.findUserByIdentity(loginIdentity.type(), normalized);
+        String accountDigest = user == null
+                ? digests.digest("login-unknown-identity", loginIdentity.type() + ":" + normalized)
+                : digests.digest("login-user", user.getId());
         String addressDigest = digests.digest("login-address", safeAddress(remoteAddress));
         long retryAfter = security(() -> securityStore.loginLockRetrySeconds(accountDigest, addressDigest));
         if (retryAfter > 0) {
-            audit(normalized, null, "RATE_LIMITED", remoteAddress, traceId, now);
-            throw new AuthException(HttpStatus.TOO_MANY_REQUESTS, "IAM.LOGIN_RATE_LIMITED",
-                    "登录尝试过于频繁，请稍后再试", retryAfter);
+            audit(loginIdentity, null, "RATE_LIMITED", remoteAddress, traceId, now);
+            throw locked(retryAfter);
         }
 
-        UserAccount user = mapper.findUserByAccount(normalized);
-        if (user == null) {
-            passwordEncoder.matches(password, dummyHash);
-            security(() -> securityStore.recordLoginFailure(accountDigest, addressDigest,
-                    properties.loginRateLimit().attempts(), properties.loginRateLimit().window()));
-            audit(normalized, null, "BAD_CREDENTIALS", remoteAddress, traceId, now);
-            throw new AuthException(HttpStatus.UNAUTHORIZED, "IAM.BAD_CREDENTIALS", "账号或密码错误");
+        long previousFailures = security(() -> securityStore.loginFailureCount(accountDigest));
+        if (previousFailures >= 3) {
+            if (captchaId == null || captchaAnswer == null) {
+                throw new AuthException(HttpStatus.UNPROCESSABLE_CONTENT, "IAM.CAPTCHA_REQUIRED",
+                        "请先完成算式验证码");
+            }
+            captchaService.consume(captchaId, captchaAnswer);
         }
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-            security(() -> securityStore.recordLoginFailure(accountDigest, addressDigest,
+
+        boolean passwordMatches = passwordEncoder.matches(password, user == null ? dummyHash : user.getPasswordHash());
+        if (!passwordMatches || user == null) {
+            IdentitySecurityStore.LoginFailure failure = security(() -> securityStore.recordLoginFailure(
+                    accountDigest, addressDigest,
                     properties.loginRateLimit().attempts(), properties.loginRateLimit().window()));
-            audit(normalized, user.getId(), "BAD_CREDENTIALS", remoteAddress, traceId, now);
-            throw new AuthException(HttpStatus.UNAUTHORIZED, "IAM.BAD_CREDENTIALS", "账号或密码错误");
+            audit(loginIdentity, user == null ? null : user.getId(), "BAD_CREDENTIALS", remoteAddress, traceId, now);
+            if (failure.retryAfterSeconds() > 0) throw locked(failure.retryAfterSeconds());
+            throw badCredentials();
         }
         if (!"ACTIVE".equals(user.getStatus())) {
-            audit(normalized, user.getId(), user.getStatus(), remoteAddress, traceId, now);
+            audit(loginIdentity, user.getId(), user.getStatus(), remoteAddress, traceId, now);
             throw new AuthException(HttpStatus.FORBIDDEN, "IAM.ACCOUNT_" + user.getStatus(), "账号当前不可用");
         }
 
         security(() -> { securityStore.clearLoginFailures(accountDigest, addressDigest); return null; });
-        cacheVersion(user);
-
-        AuthenticatedUser current = toAuthenticatedUser(user);
-        String refreshToken = randomToken();
-        String familyId = UUID.randomUUID().toString();
-        mapper.insertRefreshSession(UUID.randomUUID().toString(), familyId, user.getId(), null,
-                hash(refreshToken), now.plus(properties.refresh().ttl()), user.getSessionVersion(),
-                deviceId, normalizeDeviceName(deviceName), now);
-        audit(normalized, user.getId(), "SUCCESS", remoteAddress, traceId, now);
-        return new TokenPair(jwtTokenService.issue(current), jwtTokenService.expiresInSeconds(), refreshToken);
+        TokenPair tokens = issueSession(user, deviceId, deviceName, now);
+        audit(loginIdentity, user.getId(), "SUCCESS", remoteAddress, traceId, now);
+        return tokens;
     }
 
     /** 兼容既有调用方；未提供设备标签时使用安全默认值。 */
-    public TokenPair login(String account, String password, String remoteAddress, String traceId) {
-        return login(account, password, remoteAddress, traceId, null, null);
+    public TokenPair login(String identity, String password, String remoteAddress, String traceId) {
+        return login(identity, password, remoteAddress, traceId, null, null, null, null);
     }
 
+    /** 兼容带设备标签的调用方；CAPTCHA 阈值未到时可不提供答案。 */
+    public TokenPair login(String identity, String password, String remoteAddress, String traceId,
+            String deviceId, String deviceName) {
+        return login(identity, password, remoteAddress, traceId, deviceId, deviceName, null, null);
+    }
+
+    /**
+     * 一次消费验证码并只登录已有 ACTIVE 账号；未知身份、错误码和已消费挑战统一返回 422，
+     * 绝不在登录路径创建账号。
+     */
     @Transactional(noRollbackFor = AuthException.class)
+    public TokenPair loginWithVerificationCode(String challengeId, String identityType, String target,
+            String verificationCode, String remoteAddress, String traceId, String deviceId, String deviceName) {
+        String normalized = challengesConsume(challengeId, identityType, target, verificationCode);
+        UserAccount user = mapper.findUserByIdentity(identityType, normalized);
+        NormalizedIdentity identity = new NormalizedIdentity(identityType, normalized);
+        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+            audit(identity, user == null ? null : user.getId(), "VERIFICATION_FAILED",
+                    remoteAddress, traceId, Instant.now());
+            throw verificationFailed();
+        }
+        TokenPair tokens = issueSession(user, deviceId, deviceName, Instant.now());
+        audit(identity, user.getId(), "SUCCESS", remoteAddress, traceId, Instant.now());
+        return tokens;
+    }
+
     /**
      * 原子轮换有效刷新令牌并签发新的令牌对。
      *
@@ -118,6 +148,7 @@ public class AuthService {
      * @return 新访问令牌和替换后的刷新令牌
      * @throws AuthException 令牌缺失、过期或重放时抛出；可疑重放会撤销同族全部会话
      */
+    @Transactional(noRollbackFor = AuthException.class)
     public TokenPair refresh(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw unauthorizedRefresh();
@@ -154,10 +185,10 @@ public class AuthService {
                 jwtTokenService.expiresInSeconds(), replacement);
     }
 
-    @Transactional
     /**
      * 撤销当前刷新令牌；空令牌视为幂等成功，重复退出不会产生额外状态变化。
      */
+    @Transactional
     public void logout(String refreshToken) {
         if (refreshToken != null && !refreshToken.isBlank()) {
             mapper.revokeByTokenHash(hash(refreshToken));
@@ -226,9 +257,56 @@ public class AuthService {
         securityAudit(userId, userId, "ALL_SESSIONS_REVOKED", "用户退出全部设备", remoteAddress, traceId);
     }
 
-    private void audit(String account, String userId, String outcome, String remoteAddress,
+    private void audit(NormalizedIdentity identity, String userId, String outcome, String remoteAddress,
             String traceId, Instant occurredAt) {
-        mapper.insertLoginAudit(account, userId, outcome, remoteAddress, traceId, occurredAt);
+        mapper.insertLoginAudit(IdentityNormalizer.mask(identity.type(), identity.value()), userId,
+                outcome, safeAddress(remoteAddress), traceId == null ? "unknown" : traceId, occurredAt);
+    }
+
+    private String challengesConsume(String challengeId, String identityType, String target,
+            String verificationCode) {
+        return challenges.consume(challengeId, "VERIFICATION_LOGIN", identityType, target, verificationCode);
+    }
+
+    private TokenPair issueSession(UserAccount user, String deviceId, String deviceName, Instant now) {
+        cacheVersion(user);
+        AuthenticatedUser current = toAuthenticatedUser(user);
+        String refreshToken = randomToken();
+        mapper.insertRefreshSession(UUID.randomUUID().toString(), UUID.randomUUID().toString(), user.getId(), null,
+                hash(refreshToken), now.plus(properties.refresh().ttl()), user.getSessionVersion(),
+                deviceId, normalizeDeviceName(deviceName), now);
+        return new TokenPair(jwtTokenService.issue(current), jwtTokenService.expiresInSeconds(), refreshToken);
+    }
+
+    /** @return 规范化身份是否对应 ACTIVE 用户；挑战接口只用布尔值决定是否发送，响应保持同形。 */
+    public boolean activeIdentityExists(String identityType, String target) {
+        String normalized = IdentityNormalizer.normalize(identityType, target);
+        UserAccount user = mapper.findUserByIdentity(identityType, normalized);
+        return user != null && "ACTIVE".equals(user.getStatus());
+    }
+
+    /** @return 规范化身份是否已被任何账号占用；注册挑战用它避免向已占用目标发送。 */
+    public boolean identityExists(String identityType, String target) {
+        return mapper.findUserByIdentity(identityType, IdentityNormalizer.normalize(identityType, target)) != null;
+    }
+
+    private static NormalizedIdentity normalizeLoginIdentity(String value) {
+        String type = value != null && value.contains("@") ? "EMAIL" : "PHONE";
+        return new NormalizedIdentity(type, IdentityNormalizer.normalize(type, value));
+    }
+
+    private static AuthException badCredentials() {
+        return new AuthException(HttpStatus.UNAUTHORIZED, "IAM.BAD_CREDENTIALS", "邮箱、手机号或密码错误");
+    }
+
+    private static AuthException verificationFailed() {
+        return new AuthException(HttpStatus.UNPROCESSABLE_CONTENT, "IAM.VERIFICATION_FAILED",
+                "验证码无效或已过期");
+    }
+
+    private static AuthException locked(long retryAfter) {
+        return new AuthException(HttpStatus.TOO_MANY_REQUESTS, "IAM.LOGIN_LOCKED",
+                "登录失败次数过多，请稍后再试", retryAfter);
     }
 
     private String randomToken() {
@@ -288,4 +366,5 @@ public class AuthService {
 
     public record AccountSession(String id, String deviceName, boolean current,
             Instant createdAt, Instant lastUsedAt, Instant expiresAt) {}
+    private record NormalizedIdentity(String type, String value) {}
 }

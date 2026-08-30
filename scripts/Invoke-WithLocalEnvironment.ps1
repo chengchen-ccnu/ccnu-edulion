@@ -14,7 +14,10 @@ $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
+$iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
 $commandExitCode = 0
+$iamSmtpCredential = $null
+$iamSmtpNetworkCredential = $null
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "Missing local environment file. Run scripts/Initialize-LocalEnvironment.ps1 first."
@@ -106,6 +109,19 @@ try {
     Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_HMAC_SECRET" -Value $iamSecurityPayload.verificationHmacSecret
     Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_FIXED_CODE" -Value $iamSecurityPayload.localVerificationCode
 
+    if ($env:IAM_VERIFICATION_DELIVERY_MODE -eq "smtp") {
+        if (-not (Test-Path -LiteralPath $iamSmtpCredentialPath -PathType Leaf)) {
+            throw "SMTP mode requires the DPAPI-encrypted IAM SMTP credential. Run scripts/Initialize-LocalSmtp.ps1."
+        }
+        $iamSmtpCredential = Import-Clixml -LiteralPath $iamSmtpCredentialPath
+        if ($iamSmtpCredential -isnot [PSCredential]) {
+            throw "The encrypted IAM SMTP credential has an unexpected format."
+        }
+        $iamSmtpNetworkCredential = $iamSmtpCredential.GetNetworkCredential()
+        Set-ScopedEnvironmentVariable -Name "IAM_SMTP_USERNAME" -Value $iamSmtpNetworkCredential.UserName
+        Set-ScopedEnvironmentVariable -Name "IAM_SMTP_PASSWORD" -Value $iamSmtpNetworkCredential.Password
+    }
+
     & $ScriptBlock
     if (Test-Path Variable:LASTEXITCODE) {
         $commandExitCode = $LASTEXITCODE
@@ -129,6 +145,8 @@ finally {
     $iamSecurityPayload = $null
     $iamSecurityNetworkCredential = $null
     $iamSecurityCredential = $null
+    $iamSmtpNetworkCredential = $null
+    $iamSmtpCredential = $null
 }
 
 if ($null -ne $commandExitCode -and $commandExitCode -ne 0) {

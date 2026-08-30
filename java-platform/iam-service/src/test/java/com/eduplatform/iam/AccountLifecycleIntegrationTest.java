@@ -14,6 +14,9 @@ import com.eduplatform.iam.service.RegistrationService;
 import com.eduplatform.iam.service.TeacherApplicationService;
 import com.eduplatform.iam.service.TokenPair;
 import com.eduplatform.iam.service.VerificationChallengeService;
+import com.eduplatform.iam.config.IamProperties;
+import com.eduplatform.iam.security.IdentitySecurityStore;
+import com.eduplatform.iam.security.SecurityDigests;
 import com.eduplatform.iam.web.AccountLifecycleDtos;
 import java.util.List;
 import java.util.UUID;
@@ -43,6 +46,9 @@ class AccountLifecycleIntegrationTest {
     @Autowired AdminUserService admins;
     @Autowired JdbcTemplate jdbc;
     @Autowired PasswordEncoder encoder;
+    @Autowired IdentitySecurityStore securityStore;
+    @Autowired SecurityDigests digests;
+    @Autowired IamProperties properties;
     @MockitoBean TeacherQualificationMediaClient media;
 
     @BeforeEach
@@ -50,6 +56,7 @@ class AccountLifecycleIntegrationTest {
         jdbc.update("DELETE FROM teacher_application_command");
         jdbc.update("DELETE FROM teacher_application");
         jdbc.update("DELETE FROM admin_account_command");
+        jdbc.update("DELETE FROM identity_change_command");
         jdbc.update("DELETE FROM account_security_audit");
         jdbc.update("DELETE FROM protocol_agreement");
         jdbc.update("DELETE FROM registration_request");
@@ -61,6 +68,9 @@ class AccountLifecycleIntegrationTest {
         jdbc.update("DELETE FROM `user`");
         jdbc.update("DELETE FROM `role`");
         jdbc.update("DELETE FROM permission");
+        jdbc.update("DELETE FROM protocol_document");
+        insertCurrentProtocol("00000000-0000-4000-8000-000000009801", "TERMS");
+        insertCurrentProtocol("00000000-0000-4000-8000-000000009802", "PRIVACY");
     }
 
     @Test
@@ -74,18 +84,18 @@ class AccountLifecycleIntegrationTest {
 
         AccountLifecycleDtos.RegisterRequest replay = new AccountLifecycleDtos.RegisterRequest(
                 registered.requestId(), registered.challengeId(), AccountLifecycleDtos.IdentityType.EMAIL,
-                registered.email(), CODE, "lifecycle_student", "生命周期学生", "Initial-password-01",
+                registered.email(), CODE, "生命周期测试学生", "Initial-password-01",
                 agreements());
         assertThat(registrations.register(replay, "127.0.0.1", "trace-replay").userId().toString())
                 .isEqualTo(registered.userId());
         AccountLifecycleDtos.RegisterRequest reusedChallenge = new AccountLifecycleDtos.RegisterRequest(
                 UUID.randomUUID(), registered.challengeId(), AccountLifecycleDtos.IdentityType.EMAIL,
-                registered.email(), CODE, "lifecycle_other", "重放学生", "Initial-password-01", agreements());
+                registered.email(), CODE, "重放学生", "Initial-password-01", agreements());
         assertThatThrownBy(() -> registrations.register(reusedChallenge, "127.0.0.1", "trace-reuse"))
                 .isInstanceOfSatisfying(AuthException.class,
                         error -> assertThat(error.code()).isEqualTo("IAM.VERIFICATION_FAILED"));
 
-        TokenPair first = auth.login("lifecycle_student", "Initial-password-01", "127.0.0.1", "trace-login",
+        TokenPair first = auth.login(registered.email(), "Initial-password-01", "127.0.0.1", "trace-login",
                 UUID.randomUUID().toString(), "Chrome 测试设备");
         assertThat(auth.sessions(registered.userId(), first.refreshToken())).singleElement()
                 .satisfies(session -> assertThat(session.current()).isTrue());
@@ -97,13 +107,13 @@ class AccountLifecycleIntegrationTest {
         assertVersionAndNoActiveSessions(registered.userId(), 1L);
         assertInvalidRefresh(first.refreshToken());
 
-        TokenPair second = auth.login("lifecycle_student", "Reset-password-02", "127.0.0.1", "trace-login-2");
+        TokenPair second = auth.login(registered.email(), "Reset-password-02", "127.0.0.1", "trace-login-2");
         auth.changePassword(registered.userId(), 1L, "Reset-password-02", "Changed-password-03",
                 "127.0.0.1", "trace-change");
         assertVersionAndNoActiveSessions(registered.userId(), 2L);
         assertInvalidRefresh(second.refreshToken());
 
-        TokenPair third = auth.login("lifecycle_student", "Changed-password-03", "127.0.0.1", "trace-login-3");
+        TokenPair third = auth.login(registered.email(), "Changed-password-03", "127.0.0.1", "trace-login-3");
         auth.logoutAll(registered.userId(), 2L, "127.0.0.1", "trace-all");
         assertVersionAndNoActiveSessions(registered.userId(), 3L);
         assertInvalidRefresh(third.refreshToken());
@@ -122,6 +132,62 @@ class AccountLifecycleIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user`", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT action FROM account_security_audit", String.class))
                 .isEqualTo("PASSWORD_RESET_NO_CHANGE");
+    }
+
+    @Test
+    /** 注册只接受当前协议版本；内部 account 由服务端生成，中文重名昵称允许而邮箱大小写唯一。 */
+    void registrationUsesCurrentProtocolsServerAccountAndNormalizedUniqueIdentity() {
+        String staleEmail = "stale_protocol@example.invalid";
+        VerificationChallengeService.Challenge staleChallenge = challenges.create("REGISTRATION", "EMAIL", staleEmail);
+        var stale = new AccountLifecycleDtos.RegisterRequest(UUID.randomUUID(),
+                UUID.fromString(staleChallenge.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL, staleEmail,
+                CODE, "同名中文昵称", "Initial-password-01", List.of(
+                        new AccountLifecycleDtos.Agreement("TERMS", "old-v1"),
+                        new AccountLifecycleDtos.Agreement("PRIVACY", "test-v1")));
+        assertThatThrownBy(() -> registrations.register(stale, "127.0.0.1", "trace-stale"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        error -> assertThat(error.code()).isEqualTo("IAM.PROTOCOL_VERSION_INVALID"));
+        var corrected = new AccountLifecycleDtos.RegisterRequest(stale.clientRequestId(), stale.challengeId(),
+                stale.identityType(), stale.target(), stale.verificationCode(), stale.nickname(), stale.password(),
+                agreements());
+        var first = registrations.register(corrected, "127.0.0.1", "trace-current");
+        assertThat(first.nickname()).isEqualTo("同名中文昵称");
+        String internal = jdbc.queryForObject("SELECT account FROM `user` WHERE id=?", String.class,
+                first.userId().toString());
+        assertThat(internal).startsWith("usr_").hasSize(36);
+
+        VerificationChallengeService.Challenge secondChallenge = challenges.create("REGISTRATION", "EMAIL",
+                "second_nickname@example.invalid");
+        var second = registrations.register(new AccountLifecycleDtos.RegisterRequest(UUID.randomUUID(),
+                UUID.fromString(secondChallenge.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL,
+                "second_nickname@example.invalid", CODE, "同名中文昵称", "Initial-password-01", agreements()),
+                "127.0.0.1", "trace-second");
+        assertThat(second.nickname()).isEqualTo(first.nickname());
+
+        String thirtyVisibleCharacters = "😀".repeat(30);
+        VerificationChallengeService.Challenge unicodeChallenge = challenges.create("REGISTRATION", "EMAIL",
+                "unicode_nickname@example.invalid");
+        var unicode = registrations.register(new AccountLifecycleDtos.RegisterRequest(UUID.randomUUID(),
+                UUID.fromString(unicodeChallenge.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL,
+                "unicode_nickname@example.invalid", CODE, thirtyVisibleCharacters,
+                "Initial-password-01", agreements()), "127.0.0.1", "trace-unicode");
+        assertThat(unicode.nickname()).isEqualTo(thirtyVisibleCharacters);
+        assertThatThrownBy(() -> registrations.register(new AccountLifecycleDtos.RegisterRequest(UUID.randomUUID(),
+                UUID.randomUUID(), AccountLifecycleDtos.IdentityType.EMAIL, "too_long@example.invalid", CODE,
+                "😀".repeat(31), "Initial-password-01", agreements()), "127.0.0.1", "trace-too-long"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
+
+        VerificationChallengeService.Challenge duplicate = challenges.create("REGISTRATION", "EMAIL",
+                " STALE_PROTOCOL@EXAMPLE.INVALID ", false);
+        assertThatThrownBy(() -> registrations.register(new AccountLifecycleDtos.RegisterRequest(UUID.randomUUID(),
+                UUID.fromString(duplicate.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL,
+                " STALE_PROTOCOL@EXAMPLE.INVALID ", CODE, "另一昵称", "Initial-password-01", agreements()),
+                "127.0.0.1", "trace-duplicate"))
+                .isInstanceOfSatisfying(AuthException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("IAM.IDENTITY_OCCUPIED");
+                });
     }
 
     @Test
@@ -152,9 +218,11 @@ class AccountLifecycleIntegrationTest {
     void adminCommandsUnlockRevokeDisableAndReplaySafely() {
         Registered registered = register("admin_target", "admin_target@example.invalid");
         insertAdmin();
-        TokenPair active = auth.login("admin_target", "Initial-password-01", "127.0.0.9", "trace-login");
-        for (int attempt = 0; attempt < 5; attempt++) {
-            try { auth.login("admin_target", "wrong-password", "127.0.0.9", "trace-failure"); }
+        TokenPair active = auth.login(registered.email(), "Initial-password-01", "127.0.0.9", "trace-login");
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            String captchaId = attempt >= 4 ? captcha("7") : null;
+            try { auth.login(registered.email(), "wrong-password", "127.0.0.9", "trace-failure",
+                    null, null, captchaId, captchaId == null ? null : "7"); }
             catch (AuthException ignored) { }
         }
         assertThat(admins.get(registered.userId()).loginLocked()).isTrue();
@@ -186,7 +254,7 @@ class AccountLifecycleIntegrationTest {
         UUID requestId = UUID.randomUUID();
         AccountLifecycleDtos.RegisterRequest request = new AccountLifecycleDtos.RegisterRequest(requestId,
                 UUID.fromString(challenge.challengeId()), AccountLifecycleDtos.IdentityType.EMAIL, email, CODE,
-                account, "生命周期测试学生", "Initial-password-01", agreements());
+                "生命周期测试学生", "Initial-password-01", agreements());
         String userId = registrations.register(request, "127.0.0.1", "trace-register").userId().toString();
         return new Registered(userId, email, requestId, UUID.fromString(challenge.challengeId()));
     }
@@ -204,6 +272,19 @@ class AccountLifecycleIntegrationTest {
         jdbc.update("INSERT INTO `user` (id, account, display_name, password_hash, status) VALUES (?,?,?,?, 'ACTIVE')",
                 ADMIN_ID, "admin_t12d", "T12D 测试管理员", encoder.encode("Admin-password-01"));
         jdbc.update("INSERT INTO user_role (user_id, role_id) SELECT ?,id FROM `role` WHERE code='ADMIN'", ADMIN_ID);
+    }
+
+    private void insertCurrentProtocol(String id, String type) {
+        jdbc.update("INSERT INTO protocol_document (id,document_type,document_version,body,effective_at,is_current,"
+                + "requires_reconsent,created_at) VALUES (?,?,?,'仅用于自动化测试，不可用于正式发布',"
+                + "CURRENT_TIMESTAMP,TRUE,FALSE,CURRENT_TIMESTAMP)", id, type, "test-v1");
+    }
+
+    private String captcha(String answer) {
+        String id = UUID.randomUUID().toString();
+        securityStore.createCaptcha(id, digests.digest("captcha:" + id, answer), properties.captcha().ttl(),
+                properties.captcha().maxRefreshes());
+        return id;
     }
 
     private static AccountLifecycleDtos.AdminCommandRequest command(long revision, String reason) {

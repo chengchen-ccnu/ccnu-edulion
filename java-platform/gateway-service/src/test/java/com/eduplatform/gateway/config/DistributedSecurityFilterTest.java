@@ -42,6 +42,18 @@ class DistributedSecurityFilterTest {
         assertPolicy("/api/v1/auth/login", "login");
         assertPolicy("/api/v1/auth/registration-challenges", "verification");
         assertPolicy("/api/v1/auth/password-reset-challenges", "verification");
+        assertPolicy("/api/v1/auth/verification-login-challenges", "verification");
+        assertPolicy("/api/v1/auth/verification-login", "verification-login");
+        assertPolicy("/api/v1/auth/captchas", "captcha");
+        assertPolicy("/api/v1/auth/captchas/00000000-0000-4000-8000-000000000001/refresh", "captcha");
+        assertPolicy("/api/v1/users/me/identity-verification-challenges", "identity-verification");
+        assertPolicy("/api/v1/users/me/identities", "identity-mutation");
+        assertThat(DistributedRateLimitGlobalFilter.policy(HttpMethod.PUT,
+                "/api/v1/users/me/identities/EMAIL")).extracting(
+                        DistributedRateLimitGlobalFilter.Policy::name).isEqualTo("identity-mutation");
+        assertThat(DistributedRateLimitGlobalFilter.policy(HttpMethod.DELETE,
+                "/api/v1/users/me/identities/PHONE")).extracting(
+                        DistributedRateLimitGlobalFilter.Policy::name).isEqualTo("identity-mutation");
         assertPolicy("/api/v1/auth/register", "registration");
         assertPolicy("/api/v1/auth/password-reset", "password-reset");
         assertPolicy("/api/v1/media/uploads", "upload-credential");
@@ -54,6 +66,13 @@ class DistributedSecurityFilterTest {
         assertThat(DistributedRateLimitGlobalFilter.policy(HttpMethod.GET, "/api/v1/auth/login")).isNull();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/logout")).isFalse();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/refresh")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/verification-login-challenges")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/verification-login")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/captchas")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation(
+                "/api/v1/auth/captchas/00000000-0000-4000-8000-000000000001/refresh")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/auth/channel-capabilities")).isFalse();
+        assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/protocols/current")).isFalse();
         assertThat(SessionVersionGlobalFilter.requiresValidation("/api/v1/users/me")).isTrue();
     }
 

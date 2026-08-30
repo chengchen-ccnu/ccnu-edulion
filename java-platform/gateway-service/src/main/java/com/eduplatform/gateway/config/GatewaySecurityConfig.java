@@ -82,7 +82,11 @@ public class GatewaySecurityConfig {
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout",
                                 "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
-                                "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset").permitAll()
+                                "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
+                                "/api/v1/auth/verification-login-challenges", "/api/v1/auth/verification-login",
+                                "/api/v1/auth/captchas", "/api/v1/auth/captchas/*/refresh").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/auth/channel-capabilities",
+                                "/api/v1/protocols/current").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/api/v1/teacher/courses", "/api/v1/teacher/courses/**").hasRole("TEACHER")
                         .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")

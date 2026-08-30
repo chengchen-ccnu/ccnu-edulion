@@ -5,9 +5,8 @@ import com.eduplatform.iam.persistence.IamMapper;
 import com.eduplatform.iam.security.SecurityDigests;
 import com.eduplatform.iam.web.AccountLifecycleDtos;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.dao.DuplicateKeyException;
@@ -23,10 +22,16 @@ public class RegistrationService {
     private final PasswordEncoder encoder;
     private final VerificationChallengeService challenges;
     private final SecurityDigests digests;
+    private final ProtocolDocumentService protocols;
 
     public RegistrationService(IamMapper mapper, PasswordEncoder encoder,
-            VerificationChallengeService challenges, SecurityDigests digests) {
-        this.mapper = mapper; this.encoder = encoder; this.challenges = challenges; this.digests = digests;
+            VerificationChallengeService challenges, SecurityDigests digests,
+            ProtocolDocumentService protocols) {
+        this.mapper = mapper;
+        this.encoder = encoder;
+        this.challenges = challenges;
+        this.digests = digests;
+        this.protocols = protocols;
     }
 
     /**
@@ -38,22 +43,24 @@ public class RegistrationService {
             String remoteAddress, String traceId) {
         String type = request.identityType().name();
         String normalizedIdentity = IdentityNormalizer.normalize(type, request.target());
-        String normalizedAccount = request.account().trim().toLowerCase(Locale.ROOT);
+        String nickname = normalizeNickname(request.nickname());
         String identityDigest = digests.digest("registration-identity", normalizedIdentity);
+        String fingerprint = fingerprint(request, identityDigest, nickname);
         String replayUserId = mapper.findRegistrationReplay(request.clientRequestId().toString(),
-                normalizedAccount, type, identityDigest);
+                type, identityDigest, fingerprint);
         if (replayUserId != null) return result(mapper.findUserById(replayUserId));
-        validateAgreements(request.agreements());
+        protocols.requireCurrentAgreements(request.agreements());
         challenges.consume(request.challengeId().toString(), "REGISTRATION", type,
                 request.target(), request.verificationCode());
 
         Instant now = Instant.now();
         String userId = UUID.randomUUID().toString();
+        String internalAccount = "usr_" + userId.replace("-", "");
         try {
             mapper.upsertRole("STUDENT", "STUDENT");
             mapper.upsertPermission("learning:access", "learning:access");
             mapper.assignPermission("STUDENT", "learning:access");
-            mapper.insertUser(userId, normalizedAccount, request.displayName().trim(), encoder.encode(request.password()));
+            mapper.insertUser(userId, internalAccount, nickname, encoder.encode(request.password()));
             mapper.insertIdentity(UUID.randomUUID().toString(), userId, type, normalizedIdentity, now);
             mapper.assignRole(userId, "STUDENT");
             for (AccountLifecycleDtos.Agreement agreement : request.agreements()) {
@@ -61,27 +68,43 @@ public class RegistrationService {
                         agreement.documentType().toUpperCase(Locale.ROOT), agreement.version(), now,
                         safe(remoteAddress));
             }
-            mapper.insertRegistrationRequest(request.clientRequestId().toString(), userId, normalizedAccount,
-                    type, identityDigest, now);
+            mapper.insertRegistrationRequest(request.clientRequestId().toString(), userId, internalAccount,
+                    type, identityDigest, fingerprint, now);
             mapper.insertSecurityAudit(UUID.randomUUID().toString(), userId, userId, "ACCOUNT_REGISTERED",
                     "学生自主注册", safe(remoteAddress), safeTrace(traceId), now);
             return result(mapper.findUserById(userId));
         } catch (DuplicateKeyException duplicate) {
-            throw new AuthException(HttpStatus.CONFLICT, "IAM.IDENTITY_OCCUPIED", "账号或验证目标已被使用");
+            throw new AuthException(HttpStatus.CONFLICT, "IAM.IDENTITY_OCCUPIED", "邮箱或手机号已被使用");
         }
     }
 
-    private static void validateAgreements(java.util.List<AccountLifecycleDtos.Agreement> agreements) {
-        Map<String, Long> counts = agreements.stream().collect(Collectors.groupingBy(
-                value -> value.documentType().toUpperCase(Locale.ROOT), Collectors.counting()));
-        if (!counts.keySet().equals(Set.of("TERMS", "PRIVACY")) || counts.values().stream().anyMatch(v -> v != 1L)) {
+    private static String normalizeNickname(String value) {
+        String nickname = value == null ? "" : value.trim();
+        int characters = nickname.codePointCount(0, nickname.length());
+        boolean invisible = nickname.codePoints().anyMatch(codePoint -> Character.isISOControl(codePoint)
+                || Character.getType(codePoint) == Character.FORMAT
+                || Character.getType(codePoint) == Character.LINE_SEPARATOR
+                || Character.getType(codePoint) == Character.PARAGRAPH_SEPARATOR);
+        if (characters < 1 || characters > 30 || invisible) {
             throw new AuthException(HttpStatus.UNPROCESSABLE_CONTENT, "COMMON.VALIDATION_FAILED",
-                    "必须分别同意当前版本的用户协议和隐私政策");
+                    "昵称必须包含 1 至 30 个可见字符");
         }
+        return nickname;
+    }
+
+    private String fingerprint(AccountLifecycleDtos.RegisterRequest request,
+            String identityDigest, String nickname) {
+        String agreements = request.agreements().stream()
+                .sorted(Comparator.comparing(value -> value.documentType().toUpperCase(Locale.ROOT)))
+                .map(value -> value.documentType().toUpperCase(Locale.ROOT) + "=" + value.version())
+                .collect(Collectors.joining("&"));
+        String passwordDigest = digests.digest("registration-password", request.password());
+        return digests.digest("registration-request", request.identityType().name() + "|" + identityDigest
+                + "|" + nickname + "|" + passwordDigest + "|" + agreements);
     }
 
     private AccountLifecycleDtos.RegistrationResult result(UserAccount user) {
-        return new AccountLifecycleDtos.RegistrationResult(UUID.fromString(user.getId()), user.getAccount(),
+        return new AccountLifecycleDtos.RegistrationResult(UUID.fromString(user.getId()),
                 user.getDisplayName(), java.util.List.of("STUDENT"), java.util.List.of("learning:access"),
                 user.getCreatedAt());
     }

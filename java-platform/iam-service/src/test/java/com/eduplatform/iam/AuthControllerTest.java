@@ -24,7 +24,8 @@ class AuthControllerTest {
             new IamProperties.Refresh(Duration.ofDays(7), false),
             new IamProperties.LoginRateLimit(5, Duration.ofMinutes(15)),
             new IamProperties.Verification(Duration.ofMinutes(10), Duration.ofMinutes(1), 5,
-                    "fixed-local", "246810", "test-only-verification-hmac-secret-32-bytes"),
+                    "fixed-local", "246810", "test-only-verification-hmac-secret-32-bytes", ""),
+            new IamProperties.Captcha(Duration.ofMinutes(2), 5, 3),
             new IamProperties.SessionCache("edu:iam:session-version", Duration.ofMinutes(20)),
             new IamProperties.Media("http://127.0.0.1:8083", Duration.ofSeconds(5)),
             new IamProperties.Seed(false, ""));
@@ -32,18 +33,19 @@ class AuthControllerTest {
 
     @Test
     void loginReturnsAccessTokenAndHttpOnlyRefreshCookie() {
-        when(authService.login("student_test_01", "correct-password", "127.0.0.1", null))
+        when(authService.login("student1@example.invalid", "correct-password", "127.0.0.1", null,
+                null, null, null, null))
                 .thenReturn(new TokenPair("access-token", 900, "opaque-refresh"));
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("127.0.0.1");
 
         ResponseEntity<LoginResponse> response = controller.login(
-                new LoginRequest("student_test_01", "correct-password"), request);
+                new LoginRequest("student1@example.invalid", "correct-password"), request);
 
         assertThat(response.getBody()).extracting(LoginResponse::accessToken, LoginResponse::expiresIn)
                 .containsExactly("access-token", 900L);
         assertThat(response.getHeaders().getFirst(HttpHeaders.SET_COOKIE))
-                .contains("EDU_REFRESH=opaque-refresh", "HttpOnly", "SameSite=Strict", "Path=/api/v1/auth")
+                .contains("EDU_REFRESH=opaque-refresh", "HttpOnly", "SameSite=Strict", "Path=/api/v1")
                 .doesNotContain("Secure");
     }
 

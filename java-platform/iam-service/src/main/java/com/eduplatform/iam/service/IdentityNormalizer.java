@@ -6,16 +6,27 @@ import org.springframework.http.HttpStatus;
 
 /** 统一规范化手机号/邮箱；数据库唯一键和 Redis 摘要必须使用同一结果。 */
 public final class IdentityNormalizer {
-    private static final Pattern PHONE = Pattern.compile("^\\+[1-9][0-9]{7,14}$");
+    private static final Pattern MAINLAND_PHONE = Pattern.compile("^1[3-9][0-9]{9}$");
+    private static final Pattern MAINLAND_E164 = Pattern.compile("^\\+861[3-9][0-9]{9}$");
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]{1,64}@[^@\\s]{1,180}$");
 
     private IdentityNormalizer() {}
 
-    /** @return E.164 手机号或小写邮箱。 */
+    /**
+     * 统一用户输入，邮箱去首尾空格并转小写；首期手机号只接受中国大陆 11 位，保存为 +86 E.164。
+     * 已规范化的 +86 值也允许内部查询复用，其他国家区号和历史 account 均不接受。
+     *
+     * @param type EMAIL 或 PHONE
+     * @param target 用户输入或数据库中的身份值
+     * @return +86 E.164 手机号或小写邮箱
+     */
     public static String normalize(String type, String target) {
         String value = target == null ? "" : target.trim();
         boolean valid;
-        if ("PHONE".equals(type)) valid = PHONE.matcher(value).matches();
+        if ("PHONE".equals(type)) {
+            if (MAINLAND_PHONE.matcher(value).matches()) value = "+86" + value;
+            valid = MAINLAND_E164.matcher(value).matches();
+        }
         else if ("EMAIL".equals(type)) { value = value.toLowerCase(Locale.ROOT); valid = EMAIL.matcher(value).matches(); }
         else valid = false;
         if (!valid) throw new AuthException(HttpStatus.UNPROCESSABLE_CONTENT, "COMMON.VALIDATION_FAILED",

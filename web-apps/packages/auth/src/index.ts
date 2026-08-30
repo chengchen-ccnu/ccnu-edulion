@@ -32,7 +32,8 @@ export interface AuthState {
 export interface AuthStore {
   /** 只读认证快照；访问令牌不会暴露给组件或持久化存储。 */
   state: Readonly<AuthState>;
-  login(account: string, password: string): Promise<boolean>;
+  /** 使用已验证邮箱或中国大陆手机号登录；昵称和内部 account 都不会发送为登录标识。 */
+  login(identity: string, password: string): Promise<boolean>;
   restore(): Promise<boolean>;
   ensureCurrentUser(): Promise<boolean>;
   logout(): Promise<void>;
@@ -227,11 +228,11 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
   let accessToken: string | null = null;
   let refreshInFlight: Promise<boolean> | null = null;
 
-  async function login(account: string, password: string): Promise<boolean> {
+  async function login(identity: string, password: string): Promise<boolean> {
     state.loading = true;
     state.failure = null;
     try {
-      const result = await client.POST("/api/v1/auth/login", { body: { account, password } });
+      const result = await client.POST("/api/v1/auth/login", { body: { identity, password } });
       if (result.error || !result.data) {
         failFromResponse(result.response.status, result.error, result.response.headers);
         return false;

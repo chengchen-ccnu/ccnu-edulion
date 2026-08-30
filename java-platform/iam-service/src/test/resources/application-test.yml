@@ -33,6 +33,11 @@ platform:
       delivery-mode: fixed-local
       fixed-code: "246810"
       hmac-secret: test-only-verification-hmac-secret-32-bytes
+      smtp-from: ""
+    captcha:
+      ttl: 2m
+      max-attempts: 3
+      max-refreshes: 2
     session-cache:
       key-prefix: edu:iam:session-version
       ttl: 20m

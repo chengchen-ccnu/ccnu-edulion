@@ -80,7 +80,13 @@ public class SessionVersionGlobalFilter implements GlobalFilter, Ordered {
                 && !path.equals("/api/v1/auth/registration-challenges")
                 && !path.equals("/api/v1/auth/register")
                 && !path.equals("/api/v1/auth/password-reset-challenges")
-                && !path.equals("/api/v1/auth/password-reset");
+                && !path.equals("/api/v1/auth/password-reset")
+                && !path.equals("/api/v1/auth/verification-login-challenges")
+                && !path.equals("/api/v1/auth/verification-login")
+                && !path.equals("/api/v1/auth/captchas")
+                && !path.matches("/api/v1/auth/captchas/[^/]+/refresh")
+                && !path.equals("/api/v1/auth/channel-capabilities")
+                && !path.equals("/api/v1/protocols/current");
     }
 
     @Override public int getOrder() { return -2; }

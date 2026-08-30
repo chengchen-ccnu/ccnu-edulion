@@ -14,10 +14,110 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Log in with a platform account
-         * @description Validates credentials with account/IP rate limiting, records a login audit, returns a short-lived access token and sets a rotating HttpOnly refresh cookie. Failed credentials never reveal whether the account exists.
+         * Log in with a verified email or mainland-China phone and password
+         * @description Accepts only a normalized verified email or +86 mainland-China phone identity; nickname and the internal compatibility account are never login identifiers. Password failures one through three do not require arithmetic CAPTCHA. Attempts four and five require a valid one-time CAPTCHA before password verification; a CAPTCHA error does not verify the password or increment the password-failure counter. The fifth wrong password locks the account for 15 minutes. Unknown identities follow the same external error and timing policy. Success returns a 15-minute access token and sets the existing seven-day rotating HttpOnly refresh cookie.
          */
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/verification-login-challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a verification code for an existing account login
+         * @description Requires a successfully consumed arithmetic CAPTCHA before any delivery attempt. Only an existing ACTIVE account with the requested verified identity can receive a code; unknown identities receive the same 202 response shape and comparable processing but are never registered automatically. Email uses the configured provider-neutral delivery port; phone is available only when the channel-capabilities response enables it.
+         */
+        post: operations["createVerificationLoginChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/verification-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log an existing account in with a one-time verification code
+         * @description Atomically consumes the short-lived verification challenge and logs in only an existing ACTIVE account whose normalized verified identity matches it. Unknown identities, mismatched codes and expired/consumed challenges share the same failure response and never create an account. Success sets the same seven-day rotating HttpOnly refresh cookie as password login.
+         */
+        post: operations["loginWithVerificationCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/captchas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a short-lived arithmetic image CAPTCHA
+         * @description Creates an approximately two-minute Redis challenge with bounded answer attempts. The answer never appears in the response, logs or a persistent database. A correct answer is consumed once by the protected operation; errors are separately rate-limited and never increment password-failure counters.
+         */
+        post: operations["createArithmeticCaptcha"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/captchas/{captchaId}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace an arithmetic CAPTCHA within its bounded refresh allowance
+         * @description Invalidates the previous challenge and returns a new image in the same bounded refresh chain. Refresh is rate-limited; exceeding the chain allowance requires creating a fresh CAPTCHA.
+         */
+        post: operations["refreshArithmeticCaptcha"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/channel-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get environment-safe registration and verification-login channel capabilities
+         * @description Allows clients to hide phone registration and phone verification-code login when production has no SMS provider. Password login remains available for any already verified identity. The response contains no provider credentials or account-existence facts.
+         */
+        get: operations["getAuthenticationChannelCapabilities"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -75,7 +175,7 @@ export interface paths {
         put?: never;
         /**
          * Create a student-registration verification challenge
-         * @description Creates a short-lived one-time challenge and sending cooldown in Redis. The target is normalized and stored only as a digest in Redis; the verification code is never stored or logged in plaintext. Local/test may use an explicitly configured non-logging delivery adapter, while environments without a delivery adapter return 503 rather than pretending delivery succeeded.
+         * @description Consumes a valid arithmetic CAPTCHA before creating a short-lived one-time delivery challenge and cooldown in Redis. Email is trimmed and matched case-insensitively; mainland-China phone input is normalized to +86 E.164. Local/test may use an explicitly configured non-logging fixed-code adapter, while production without the requested delivery channel returns 503 rather than pretending delivery succeeded. example.invalid Seed identities are never sent through SMTP.
          */
         post: operations["createRegistrationChallenge"];
         delete?: never;
@@ -95,7 +195,7 @@ export interface paths {
         put?: never;
         /**
          * Consume a one-time challenge and create a learning-capable account
-         * @description Atomically creates one ACTIVE account, one verified unique identity, the STUDENT role with learning:access, and versioned protocol-agreement facts in MySQL after one-time Redis challenge consumption. Public registration can never create ADMIN or teaching:access. Database unique constraints remain authoritative under concurrency.
+         * @description Atomically creates one ACTIVE account with a server-generated internal compatibility account, one verified unique identity, the required 1-30 visible-character nickname, the STUDENT role with learning:access, and current TERMS/PRIVACY agreement facts in MySQL after one-time Redis verification-code consumption. Nicknames may contain Chinese characters and may be duplicated; blank/control-character nicknames are rejected and never participate in authentication. Public registration can never create ADMIN or teaching:access. Database unique constraints remain authoritative under concurrency.
          */
         post: operations["registerStudent"];
         delete?: never;
@@ -115,7 +215,7 @@ export interface paths {
         put?: never;
         /**
          * Request a non-enumerating password-reset challenge
-         * @description Existing and unknown targets receive the same 202 shape and timing-safe processing. Redis holds only short-lived digests, failure counters and cooldown state; no account-existence fact is exposed.
+         * @description Consumes a valid arithmetic CAPTCHA before processing any one-time-code delivery. Existing and unknown targets receive the same 202 shape and comparable processing. Redis holds only short-lived digests, failure counters and cooldown state; no account-existence fact is exposed.
          */
         post: operations["createPasswordResetChallenge"];
         delete?: never;
@@ -216,6 +316,94 @@ export interface paths {
          * @description Returns device labels and timestamps only; raw or hashed refresh tokens are never exposed. The current session is identified from the HttpOnly refresh cookie when present.
          */
         get: operations["listMySessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current account's masked verified identities
+         * @description Returns at most one verified email and one verified phone plus the account identity revision. Full normalized identity values are never returned.
+         */
+        get: operations["listMyVerifiedIdentities"];
+        put?: never;
+        /**
+         * Bind the missing second identity type
+         * @description Requires the current password, current HttpOnly refresh cookie, a verified one-time challenge for the new normalized identity and the current identity revision. Success atomically adds the other identity type, increments revision and sessionVersion, upgrades the current Refresh Session to the new version, records a security audit and revokes all other devices. The response includes a replacement 15-minute Access Token because the caller's previous token is invalidated with every other device. Binding an already-present identity type is a 409 conflict.
+         */
+        post: operations["bindSecondIdentity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/identity-verification-challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a one-time code for binding or replacing a verified identity
+         * @description Requires the current password and current identity revision before sending to the new normalized identity. The requested operation and identity type are bound into the Redis challenge so a bind challenge cannot be replayed for replacement or another target. SMTP/SMS failure leaves no consumable challenge and releases the delivery reservation for a bounded retry.
+         */
+        post: operations["createIdentityVerificationChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/identities/{identityType}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Atomically replace the verified identity of one type
+         * @description Requires current password, a verification challenge bound to REPLACE and the new identity, and the current revision. The new identity is verified before one MySQL transaction replaces the old row, increments revision/sessionVersion, revokes every Refresh Session and writes a security audit. The refresh cookie is cleared and the caller must log in again.
+         */
+        put: operations["replaceVerifiedIdentity"];
+        post?: never;
+        /**
+         * Unbind one verified identity while preserving at least one
+         * @description Requires current password and the current identity revision. The last verified identity can never be removed. Success atomically deletes the selected identity, increments revision/sessionVersion, revokes every Refresh Session, writes a security audit and clears the refresh cookie so the caller must log in again.
+         */
+        delete: operations["unbindVerifiedIdentity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/protocols/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current user agreement and privacy policy
+         * @description Returns the current effective immutable TERMS and PRIVACY documents, including full body, effective time, current flag and whether existing users must consent again. Historical documents and agreements are never overwritten. Local/test documents explicitly state that they are development test versions and cannot be released to production.
+         */
+        get: operations["listCurrentProtocolDocuments"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1730,13 +1918,32 @@ export interface components {
         /** @enum {string} */
         IdentityType: "PHONE" | "EMAIL";
         /** @enum {string} */
-        VerificationPurpose: "REGISTRATION" | "PASSWORD_RESET";
-        CreateVerificationChallengeRequest: {
-            identityType: components["schemas"]["IdentityType"];
-            /** @description Phone or email value normalized server-side. Responses and logs must use a masked form. */
-            target: string;
+        VerificationPurpose: "REGISTRATION" | "PASSWORD_RESET" | "VERIFICATION_LOGIN" | "IDENTITY_BIND" | "IDENTITY_REPLACE";
+        /** @enum {string} */
+        IdentityChangeOperation: "BIND" | "REPLACE";
+        ArithmeticCaptchaAnswer: {
+            /** Format: uuid */
+            captchaId: string;
+            /** @description Arithmetic result entered by the user. It is never logged or persisted in MySQL. */
+            answer: string;
         };
-        CreatePasswordResetChallengeRequest: components["schemas"]["CreateVerificationChallengeRequest"];
+        ArithmeticCaptcha: {
+            /** Format: uuid */
+            captchaId: string;
+            /** @constant */
+            imageMimeType: "image/png";
+            /** @description PNG bytes only. The response, accessible labels and logs never contain the answer as text or metadata. */
+            imageBase64: string;
+            /** @description Remaining lifetime in seconds; the configured target is approximately two minutes. */
+            expiresIn: number;
+            refreshesRemaining: number;
+        };
+        CreateProtectedVerificationChallengeRequest: {
+            identityType: components["schemas"]["IdentityType"];
+            /** @description Server-normalized email or mainland-China phone input. */
+            target: string;
+            captcha: components["schemas"]["ArithmeticCaptchaAnswer"];
+        };
         VerificationChallenge: {
             /** Format: uuid */
             challengeId: string;
@@ -1748,9 +1955,36 @@ export interface components {
             /** @description Masked target only; never a code or account-existence indicator. */
             deliveryHint: string;
         };
+        AuthenticationChannelCapability: {
+            identityType: components["schemas"]["IdentityType"];
+            /** @description True for already verified identities even when no delivery provider is configured. */
+            passwordLoginAvailable: boolean;
+            verificationLoginAvailable: boolean;
+            registrationAvailable: boolean;
+            verificationDeliveryAvailable: boolean;
+        };
+        AuthenticationChannelCapabilities: {
+            channels: components["schemas"]["AuthenticationChannelCapability"][];
+        };
+        /** @enum {string} */
+        ProtocolDocumentType: "TERMS" | "PRIVACY";
+        ProtocolDocument: {
+            documentType: components["schemas"]["ProtocolDocumentType"];
+            /** @description Immutable version identifier. */
+            version: string;
+            /** @description Immutable plain Markdown body. Local/test content explicitly states that it cannot be used for a production release. */
+            body: string;
+            /** Format: date-time */
+            effectiveAt: string;
+            /** @constant */
+            current: true;
+            requiresReconsent: boolean;
+        };
+        CurrentProtocolDocuments: {
+            documents: components["schemas"]["ProtocolDocument"][];
+        };
         ProtocolAgreementInput: {
-            /** @enum {string} */
-            documentType: "TERMS" | "PRIVACY";
+            documentType: components["schemas"]["ProtocolDocumentType"];
             version: string;
         };
         RegisterStudentRequest: {
@@ -1761,16 +1995,15 @@ export interface components {
             identityType: components["schemas"]["IdentityType"];
             target: string;
             verificationCode: string;
-            account: string;
-            displayName: string;
+            /** @description Required display nickname containing 1-30 visible characters after trimming. Chinese and duplicate nicknames are allowed; blank text and control characters are rejected. It never participates in authentication. */
+            nickname: string;
             password: string;
             agreements: components["schemas"]["ProtocolAgreementInput"][];
         };
         RegistrationResult: {
             /** Format: uuid */
             userId: string;
-            account: string;
-            displayName: string;
+            nickname: string;
             roles: components["schemas"]["UserRole"][];
             permissions: string[];
             /** Format: date-time */
@@ -1799,6 +2032,62 @@ export interface components {
             lastUsedAt: string;
             /** Format: date-time */
             expiresAt: string;
+        };
+        VerifiedIdentity: {
+            identityType: components["schemas"]["IdentityType"];
+            /** @description Masked normalized identity; the full email or phone is never returned. */
+            maskedValue: string;
+            /** Format: date-time */
+            verifiedAt: string;
+        };
+        VerifiedIdentityCollection: {
+            identities: components["schemas"]["VerifiedIdentity"][];
+            /**
+             * Format: int64
+             * @description Optimistic identity revision required by every bind
+             */
+            revision: number;
+        };
+        CreateIdentityVerificationChallengeRequest: {
+            operation: components["schemas"]["IdentityChangeOperation"];
+            identityType: components["schemas"]["IdentityType"];
+            target: string;
+            currentPassword: string;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        BindIdentityRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            /** Format: uuid */
+            challengeId: string;
+            identityType: components["schemas"]["IdentityType"];
+            target: string;
+            verificationCode: string;
+            currentPassword: string;
+        };
+        /** @description identityType must match the path and the consumed challenge must be bound to IDENTITY_REPLACE. */
+        ReplaceIdentityRequest: components["schemas"]["BindIdentityRequest"];
+        UnbindIdentityRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            currentPassword: string;
+        };
+        IdentityMutationResult: {
+            identities: components["schemas"]["VerifiedIdentity"][];
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            sessionVersion: number;
+            /** @enum {string} */
+            revokedSessionScope: "OTHER_DEVICES" | "ALL_DEVICES";
+            reauthenticationRequired: boolean;
+            /** @description Non-null only after binding a second identity; clients replace their in-memory Access Token. Replace/unbind return null and require login. */
+            session: components["schemas"]["LoginResponse"] | null;
         };
         /**
          * @description T12D creates SUBMITTED only. T16 owns every review transition and the accompanying capability grant.
@@ -1846,6 +2135,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             account: string;
+            /** @description Non-unique nickname; never a login identifier. */
             displayName: string;
             maskedIdentities: string[];
             status: components["schemas"]["AccountStatus"];
@@ -1880,8 +2170,25 @@ export interface components {
             replayed: boolean;
         };
         LoginRequest: {
-            account: string;
+            /** @description Verified email or mainland-China phone only. The server normalizes it before lookup; nickname and internal account are rejected as login identifiers. */
+            identity: string;
             password: string;
+            /** @description Omitted for password attempts one through three; required before password verification on attempts four and five. */
+            captcha?: components["schemas"]["ArithmeticCaptchaAnswer"] | null;
+            /**
+             * Format: uuid
+             * @description Optional installation identifier used only to label Refresh Sessions; it is not trusted for authorization.
+             */
+            deviceId?: string | null;
+            /** @description User-visible device label after control-character removal. */
+            deviceName?: string | null;
+        };
+        VerificationCodeLoginRequest: {
+            /** Format: uuid */
+            challengeId: string;
+            identityType: components["schemas"]["IdentityType"];
+            target: string;
+            verificationCode: string;
             /**
              * Format: uuid
              * @description Optional installation identifier used only to label Refresh Sessions; it is not trusted for authorization.
@@ -1900,6 +2207,7 @@ export interface components {
         CurrentUser: {
             /** Format: uuid */
             id: string;
+            /** @description User nickname. It may contain Chinese characters and duplicate another user's nickname, and it is never accepted as a login identity. */
             displayName: string;
             /** Format: uri */
             avatarUrl?: string | null;
@@ -3643,8 +3951,8 @@ export interface components {
                  *       "path": "/api/v1/auth/login",
                  *       "fieldErrors": [
                  *         {
-                 *           "field": "account",
-                 *           "reason": "账号不能为空"
+                 *           "field": "identity",
+                 *           "reason": "请输入已验证邮箱或手机号"
                  *         }
                  *       ]
                  *     }
@@ -3928,7 +4236,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description The normalized username or verified phone/email identity is already occupied. Database unique constraints are authoritative. */
+        /** @description The normalized verified phone/email identity is already occupied. Nicknames are intentionally non-unique and the server-generated internal account is not client-selectable. Database unique constraints are authoritative. */
         IdentityConflict: {
             headers: {
                 [name: string]: unknown;
@@ -3941,6 +4249,25 @@ export interface components {
                  *       "traceId": "2f6c8c3b98f14a9c",
                  *       "timestamp": "2026-08-29T10:00:00Z",
                  *       "path": "/api/v1/auth/register",
+                 *       "fieldErrors": []
+                 *     }
+                 */
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The arithmetic CAPTCHA is expired, exhausted or no longer refreshable. The answer and previous failure count are not disclosed. */
+        CaptchaNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "IAM.CAPTCHA_NOT_FOUND",
+                 *       "message": "算式验证码已失效，请重新获取",
+                 *       "traceId": "2f6c8c3b98f14a9c",
+                 *       "timestamp": "2026-08-30T10:00:00Z",
+                 *       "path": "/api/v1/auth/captchas/0195d9c2-1c3f-7b6e-a9dd-7367730a6171/refresh",
                  *       "fieldErrors": []
                  *     }
                  */
@@ -4005,12 +4332,16 @@ export interface components {
         WrongQuestionId: string;
         /** @description Stable IAM account ID; administrator queries never accept an account name as a path identifier. */
         UserId: string;
+        /** @description Opaque arithmetic CAPTCHA identifier. It carries no answer or account fact. */
+        CaptchaId: string;
+        /** @description Verified identity type to replace or remove. */
+        IdentityTypePath: components["schemas"]["IdentityType"];
     };
     requestBodies: never;
     headers: {
         /** @description Correlation identifier propagated through Gateway and services. */
         TraceId: string;
-        /** @description Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1/auth and Secure outside local development. */
+        /** @description Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1 and Secure outside local development. Gateway removes this cookie before forwarding non-IAM routes. */
         RefreshCookie: string;
         /** @description Expired refresh cookie returned by logout. */
         ClearedRefreshCookie: string;
@@ -4048,6 +4379,133 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    createVerificationLoginChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProtectedVerificationChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Request accepted without disclosing whether the identity exists. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerificationChallenge"];
+                };
+            };
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    loginWithVerificationCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerificationCodeLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login succeeded. */
+            200: {
+                headers: {
+                    "X-Trace-Id": components["headers"]["TraceId"];
+                    "Set-Cookie": components["headers"]["RefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    createArithmeticCaptcha: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CAPTCHA created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArithmeticCaptcha"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    refreshArithmeticCaptcha: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque arithmetic CAPTCHA identifier. It carries no answer or account fact. */
+                captchaId: components["parameters"]["CaptchaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previous CAPTCHA invalidated and replacement created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArithmeticCaptcha"];
+                };
+            };
+            404: components["responses"]["CaptchaNotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    getAuthenticationChannelCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current channel capabilities. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthenticationChannelCapabilities"];
+                };
+            };
+            503: components["responses"]["SecurityStateUnavailable"];
         };
     };
     refreshAccessToken: {
@@ -4107,7 +4565,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateVerificationChallengeRequest"];
+                "application/json": components["schemas"]["CreateProtectedVerificationChallengeRequest"];
             };
         };
         responses: {
@@ -4162,7 +4620,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreatePasswordResetChallengeRequest"];
+                "application/json": components["schemas"]["CreateProtectedVerificationChallengeRequest"];
             };
         };
         responses: {
@@ -4300,6 +4758,173 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    listMyVerifiedIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current masked identities and revision. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifiedIdentityCollection"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    bindSecondIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindIdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description Second identity bound and other devices revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMutationResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    createIdentityVerificationChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateIdentityVerificationChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Challenge accepted for delivery. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerificationChallenge"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    replaceVerifiedIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Verified identity type to replace or remove. */
+                identityType: components["parameters"]["IdentityTypePath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceIdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description Identity replaced and every device revoked. */
+            200: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ClearedRefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMutationResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["VerificationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    unbindVerifiedIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Verified identity type to replace or remove. */
+                identityType: components["parameters"]["IdentityTypePath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnbindIdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description Identity unbound and every device revoked. */
+            200: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ClearedRefreshCookie"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMutationResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["SecurityStateUnavailable"];
+        };
+    };
+    listCurrentProtocolDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exactly one current TERMS and one current PRIVACY document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentProtocolDocuments"];
+                };
+            };
+            500: components["responses"]["InternalError"];
         };
     };
     submitTeacherApplication: {

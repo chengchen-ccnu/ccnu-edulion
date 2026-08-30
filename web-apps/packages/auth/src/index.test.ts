@@ -32,7 +32,7 @@ describe("shared authentication store", () => {
     }));
     const store = createAuthStore(createGatewayClient("http://gateway.test"));
 
-    expect(await store.login("teacher_test_01", "correct-password")).toBe(true);
+    expect(await store.login("teacher1@example.invalid", "correct-password")).toBe(true);
     expect(store.state.status).toBe("authenticated");
     expect(store.canAccess("TEACHER")).toBe(true);
     expect(store.canAccess("STUDENT")).toBe(false);
@@ -69,7 +69,7 @@ describe("shared authentication store", () => {
       throw new Error(`unexpected request: ${path}`);
     }));
     const store = createAuthStore(createGatewayClient("http://gateway.test"));
-    expect(await store.login("student_test_01", "correct-password")).toBe(true);
+    expect(await store.login("student1@example.invalid", "correct-password")).toBe(true);
 
     expect(await store.ensureCurrentUser()).toBe(true);
     expect(refreshCalls).toBe(1);
@@ -92,7 +92,7 @@ describe("shared authentication store", () => {
     }));
     const client = createGatewayClient("http://gateway.test");
     const store = createAuthStore(client);
-    expect(await store.login("teacher_test_01", "correct-password")).toBe(true);
+    expect(await store.login("teacher1@example.invalid", "correct-password")).toBe(true);
 
     const result = await store.authorizedRequest(authorization => client.GET("/api/v1/teacher/courses", {
       headers: { Authorization: authorization }, params: { query: { page: 1, size: 20 } }
@@ -110,14 +110,14 @@ describe("shared authentication store", () => {
       if (!path.endsWith("/auth/login")) throw new Error(`unexpected request: ${path}`);
       if (limited) return json(apiError("IAM.LOGIN_RATE_LIMITED"), 429, { "Retry-After": "30" });
       return json({ ...apiError("COMMON.VALIDATION_FAILED"),
-        fieldErrors: [{ field: "account", reason: "账号不能为空" }] }, 422);
+        fieldErrors: [{ field: "identity", reason: "邮箱或手机号不能为空" }] }, 422);
     }));
     const store = createAuthStore(createGatewayClient("http://gateway.test"));
 
     expect(await store.login("", "correct-password")).toBe(false);
-    expect(store.state.failure?.fieldErrors.account).toBe("账号不能为空");
+    expect(store.state.failure?.fieldErrors.identity).toBe("邮箱或手机号不能为空");
     limited = true;
-    expect(await store.login("student_test_01", "correct-password")).toBe(false);
+    expect(await store.login("student1@example.invalid", "correct-password")).toBe(false);
     expect(store.state.failure).toMatchObject({ kind: "rate-limited", retryAfter: "30" });
   });
 });

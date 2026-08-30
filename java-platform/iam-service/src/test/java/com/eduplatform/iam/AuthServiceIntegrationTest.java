@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.eduplatform.iam.service.AuthException;
 import com.eduplatform.iam.service.AuthService;
 import com.eduplatform.iam.service.TokenPair;
+import com.eduplatform.iam.service.VerificationChallengeService;
+import com.eduplatform.iam.config.IamProperties;
+import com.eduplatform.iam.security.IdentitySecurityStore;
+import com.eduplatform.iam.security.SecurityDigests;
 import java.sql.Timestamp;
 import java.time.Instant;
 import org.flywaydb.core.Flyway;
@@ -21,17 +25,23 @@ import org.springframework.test.context.ActiveProfiles;
 @ActiveProfiles("test")
 class AuthServiceIntegrationTest {
     private static final String USER_ID = "00000000-0000-4000-8000-000000009001";
+    private static final String EMAIL = "student_login@example.invalid";
 
     @Autowired AuthService authService;
     @Autowired JdbcTemplate jdbc;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired Flyway flyway;
+    @Autowired IdentitySecurityStore securityStore;
+    @Autowired SecurityDigests digests;
+    @Autowired IamProperties properties;
+    @Autowired VerificationChallengeService challenges;
 
     @BeforeEach
     void resetData() {
         jdbc.update("DELETE FROM teacher_application_command");
         jdbc.update("DELETE FROM teacher_application");
         jdbc.update("DELETE FROM admin_account_command");
+        jdbc.update("DELETE FROM identity_change_command");
         jdbc.update("DELETE FROM account_security_audit");
         jdbc.update("DELETE FROM protocol_agreement");
         jdbc.update("DELETE FROM registration_request");
@@ -47,13 +57,17 @@ class AuthServiceIntegrationTest {
         jdbc.update("INSERT INTO permission (id, code, name) VALUES (1, 'learning:access', 'learning:access')");
         jdbc.update("INSERT INTO role_permission (role_id, permission_id) VALUES (1, 1)");
         insertUser("ACTIVE");
+        jdbc.update("INSERT INTO user_identity (id,user_id,identity_type,normalized_value,verified_at,created_at) "
+                + "VALUES (?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+                "00000000-0000-4000-8000-000000009101", USER_ID, "EMAIL", EMAIL);
         jdbc.update("INSERT INTO user_role (user_id, role_id) VALUES (?, 1)", USER_ID);
+        securityStore.unlockAccount(loginDigest());
     }
 
     @Test
     void flywayAndMyBatisSupportSuccessfulLoginWithoutPersistingRawRefreshToken() {
         flyway.validate();
-        TokenPair tokens = authService.login("student_test_01", "correct-password", "127.0.0.1", "trace1234");
+        TokenPair tokens = authService.login(EMAIL.toUpperCase(), "correct-password", "127.0.0.1", "trace1234");
 
         assertThat(tokens.accessToken()).isNotBlank();
         assertThat(authService.currentUser(USER_ID).roles()).containsExactly("STUDENT");
@@ -64,18 +78,19 @@ class AuthServiceIntegrationTest {
 
     @Test
     void rejectsWrongPasswordAndAuditsFailure() {
-        assertThatThrownBy(() -> authService.login("student_test_01", "wrong-password", "127.0.0.1", "trace1234"))
+        assertThatThrownBy(() -> authService.login(EMAIL, "wrong-password", "127.0.0.1", "trace1234"))
                 .isInstanceOfSatisfying(AuthException.class, error -> {
                     assertThat(error.status().value()).isEqualTo(401);
                     assertThat(error.code()).isEqualTo("IAM.BAD_CREDENTIALS");
                 });
         assertThat(jdbc.queryForObject("SELECT outcome FROM login_audit", String.class)).isEqualTo("BAD_CREDENTIALS");
+        assertThat(jdbc.queryForObject("SELECT account FROM login_audit", String.class)).isNotEqualTo(EMAIL);
     }
 
     @Test
     void rejectsDisabledAccount() {
         jdbc.update("UPDATE `user` SET status = 'DISABLED' WHERE id = ?", USER_ID);
-        assertThatThrownBy(() -> authService.login("student_test_01", "correct-password", "127.0.0.1", "trace1234"))
+        assertThatThrownBy(() -> authService.login(EMAIL, "correct-password", "127.0.0.1", "trace1234"))
                 .isInstanceOfSatisfying(AuthException.class, error -> {
                     assertThat(error.status().value()).isEqualTo(403);
                     assertThat(error.code()).isEqualTo("IAM.ACCOUNT_DISABLED");
@@ -85,7 +100,7 @@ class AuthServiceIntegrationTest {
     @Test
     /** Given 一个有效会话，轮换后重放旧令牌；Then 整个令牌族被撤销且新令牌也不能继续使用。 */
     void rotatesRefreshTokenAndRejectsReuse() {
-        TokenPair login = authService.login("student_test_01", "correct-password", "127.0.0.1", "trace1234");
+        TokenPair login = authService.login(EMAIL, "correct-password", "127.0.0.1", "trace1234");
         TokenPair rotated = authService.refresh(login.refreshToken());
         assertThat(rotated.refreshToken()).isNotEqualTo(login.refreshToken());
 
@@ -99,13 +114,13 @@ class AuthServiceIntegrationTest {
 
     @Test
     void rejectsExpiredRefreshTokenAndLogoutRevokesActiveSession() {
-        TokenPair expired = authService.login("student_test_01", "correct-password", "127.0.0.1", "trace1234");
+        TokenPair expired = authService.login(EMAIL, "correct-password", "127.0.0.1", "trace1234");
         jdbc.update("UPDATE refresh_session SET expires_at = ? WHERE token_hash = ?",
                 Timestamp.from(Instant.now().minusSeconds(1)), AuthService.hash(expired.refreshToken()));
         assertThatThrownBy(() -> authService.refresh(expired.refreshToken()))
                 .isInstanceOfSatisfying(AuthException.class, error -> assertThat(error.status().value()).isEqualTo(401));
 
-        TokenPair active = authService.login("student_test_01", "correct-password", "127.0.0.2", "trace5678");
+        TokenPair active = authService.login(EMAIL, "correct-password", "127.0.0.2", "trace5678");
         authService.logout(active.refreshToken());
         assertThat(jdbc.queryForObject("SELECT status FROM refresh_session WHERE token_hash = ?", String.class,
                 AuthService.hash(active.refreshToken()))).isEqualTo("REVOKED");
@@ -114,16 +129,86 @@ class AuthServiceIntegrationTest {
     @Test
     /** Given 同账号/IP 连续密码失败；When 超过时间窗阈值；Then 后续登录被限流并保留审计。 */
     void rateLimitsRepeatedFailures() {
-        for (int attempt = 0; attempt < 5; attempt++) {
-            try { authService.login("student_test_01", "wrong-password", "127.0.0.3", "trace1234"); }
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            String captchaId = attempt >= 4 ? captcha("7") : null;
+            try { authService.login(EMAIL, "wrong-password", "127.0.0.3", "trace1234",
+                    null, null, captchaId, captchaId == null ? null : "7"); }
             catch (AuthException ignored) { }
         }
-        assertThatThrownBy(() -> authService.login("student_test_01", "correct-password", "127.0.0.3", "trace1234"))
-                .isInstanceOfSatisfying(AuthException.class, error -> assertThat(error.status().value()).isEqualTo(429));
+        assertThatThrownBy(() -> authService.login(EMAIL, "correct-password", "127.0.0.3", "trace1234"))
+                .isInstanceOfSatisfying(AuthException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(429);
+                    assertThat(error.retryAfterSeconds()).isPositive();
+                });
+    }
+
+    @Test
+    /** 第四次缺少/错误 CAPTCHA 时不校验密码且不增加密码失败计数，正确 CAPTCHA 只能消费一次。 */
+    void captchaIsRequiredBeforeFourthPasswordCheckAndConsumedOnce() {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            assertThatThrownBy(() -> authService.login(EMAIL, "wrong-password", "127.0.0.8", "trace"))
+                    .isInstanceOf(AuthException.class);
+        }
+        assertThatThrownBy(() -> authService.login(EMAIL, "correct-password", "127.0.0.8", "trace"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        error -> assertThat(error.code()).isEqualTo("IAM.CAPTCHA_REQUIRED"));
+        assertThat(securityStore.loginFailureCount(loginDigest())).isEqualTo(3);
+        String id = captcha("7");
+        TokenPair success = authService.login(EMAIL, "correct-password", "127.0.0.8", "trace",
+                null, null, id, "7");
+        assertThat(success.accessToken()).isNotBlank();
+        assertThat(securityStore.consumeCaptcha(id, digests.digest("captcha:" + id, "7"),
+                properties.captcha().maxAttempts())).isFalse();
+    }
+
+    @Test
+    /** 昵称和历史 account 均不是登录身份；合法但未知邮箱保持统一 401 且不会创建账号。 */
+    void unknownIdentityDoesNotEnumerateOrAutoRegister() {
+        assertThatThrownBy(() -> authService.login("unknown@example.invalid", "wrong-password",
+                "127.0.0.10", "trace"))
+                .isInstanceOfSatisfying(AuthException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(401);
+                    assertThat(error.code()).isEqualTo("IAM.BAD_CREDENTIALS");
+                });
+        assertThatThrownBy(() -> authService.login("student_test_01", "correct-password",
+                "127.0.0.10", "trace"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(422));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user`", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 验证码登录只登录已有身份；未知身份即使持有 local 固定码也不会自动注册。 */
+    void verificationCodeLoginOnlyAcceptsExistingAccount() {
+        var known = challenges.create("VERIFICATION_LOGIN", "EMAIL", EMAIL, true);
+        TokenPair tokens = authService.loginWithVerificationCode(known.challengeId(), "EMAIL", EMAIL, "246810",
+                "127.0.0.11", "trace-known", null, "验证码设备");
+        assertThat(tokens.accessToken()).isNotBlank();
+
+        String unknown = "verification_unknown@example.invalid";
+        var absent = challenges.create("VERIFICATION_LOGIN", "EMAIL", unknown, false);
+        assertThatThrownBy(() -> authService.loginWithVerificationCode(absent.challengeId(), "EMAIL", unknown,
+                "246810", "127.0.0.12", "trace-unknown", null, null))
+                .isInstanceOfSatisfying(AuthException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(422);
+                    assertThat(error.code()).isEqualTo("IAM.VERIFICATION_FAILED");
+                });
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user`", Integer.class)).isEqualTo(1);
     }
 
     private void insertUser(String status) {
         jdbc.update("INSERT INTO `user` (id, account, display_name, password_hash, status) VALUES (?, ?, ?, ?, ?)",
                 USER_ID, "student_test_01", "测试学生", passwordEncoder.encode("correct-password"), status);
+    }
+
+    private String captcha(String answer) {
+        String id = java.util.UUID.randomUUID().toString();
+        securityStore.createCaptcha(id, digests.digest("captcha:" + id, answer), properties.captcha().ttl(),
+                properties.captcha().maxRefreshes());
+        return id;
+    }
+
+    private String loginDigest() {
+        return digests.digest("login-user", USER_ID);
     }
 }

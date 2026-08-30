@@ -46,7 +46,7 @@ public class AdminUserService {
         if (replay.replayed()) return new AccountLifecycleDtos.AdminCommandResult(response(requireUser(targetId)), true);
         UserAccount target = requireUser(targetId);
         if (mapper.touchUserRevision(targetId, request.expectedRevision()) != 1) conflict();
-        security(() -> { securityStore.unlockAccount(digests.digest("login-account", target.getAccount())); return null; });
+        security(() -> { securityStore.unlockAccount(digests.digest("login-user", target.getId())); return null; });
         finish(actorId, targetId, "UNLOCK", request, request.expectedRevision() + 1,
                 remoteAddress, traceId);
         return new AccountLifecycleDtos.AdminCommandResult(response(requireUser(targetId)), false);
@@ -105,7 +105,7 @@ public class AdminUserService {
             return parts[0] + ":" + IdentityNormalizer.mask(parts[0], parts[1]);
         }).toList();
         boolean locked = security(() -> securityStore.loginLockRetrySeconds(
-                digests.digest("login-account", user.getAccount()), digests.digest("login-address", "admin-query"))) > 0;
+                digests.digest("login-user", user.getId()), digests.digest("login-address", "admin-query"))) > 0;
         return new AccountLifecycleDtos.AdminUserResponse(UUID.fromString(user.getId()), user.getAccount(),
                 user.getDisplayName(), identities, user.getStatus(), locked, mapper.findRoles(user.getId()),
                 mapper.findPermissions(user.getId()), user.getSessionVersion(), user.getRevision(),
