@@ -41,20 +41,17 @@ if ($null -eq $credential -or [string]::IsNullOrWhiteSpace($credential.UserName)
 }
 $credential | Export-Clixml -LiteralPath $smtpCredentialPath -Force
 
-# host、port、from 和模式不是秘密，可进入 local.env；既有对应项被精确替换。
-$linesToWrite = @()
-foreach ($line in (Get-Content -LiteralPath $configPath -Encoding UTF8)) {
-    if ($line -notmatch "^(IAM_VERIFICATION_DELIVERY_MODE|IAM_SMTP_HOST|IAM_SMTP_PORT|IAM_SMTP_FROM)=") {
-        $linesToWrite += $line
-    }
-}
-$linesToWrite += @(
+# host、port、from 和模式不是秘密，可进入 local.env；先写临时文件再原子替换，避免中途失败破坏配置。
+Select-String -LiteralPath $configPath -Pattern "^(IAM_VERIFICATION_DELIVERY_MODE|IAM_SMTP_HOST|IAM_SMTP_PORT|IAM_SMTP_FROM)=" -NotMatch |
+    Select-Object -ExpandProperty Line |
+    Set-Content -LiteralPath ($configPath + ".t12d1.tmp") -Encoding UTF8
+Add-Content -LiteralPath ($configPath + ".t12d1.tmp") -Value @(
     "IAM_VERIFICATION_DELIVERY_MODE=smtp"
     "IAM_SMTP_HOST=$HostName"
     "IAM_SMTP_PORT=$Port"
     "IAM_SMTP_FROM=$FromAddress"
 )
-$linesToWrite | Set-Content -LiteralPath $configPath -Encoding UTF8
+Move-Item -LiteralPath ($configPath + ".t12d1.tmp") -Destination $configPath -Force
 
 $credential = $null
 Write-Host "SMTP configuration saved. Username and password are DPAPI-encrypted for the current Windows user."
