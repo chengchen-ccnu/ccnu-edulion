@@ -512,3 +512,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：Java `clean verify` 的 8 个 Reactor 模块全部通过，共 134 项测试、122 项通过、12 项真实外部环境用例按开关跳过；前端 OpenAPI 生成、全 workspace 类型检查、29 个 Vitest 文件 191 项测试及三端生产构建通过；Python 字节码、8 项单元测试和 wheel 构建通过；两个 PowerShell 脚本通过 AST 语法解析。Vitest/Vite 因 esbuild `spawn EPERM`、pip 因构建隔离下载限制分别经批准在沙箱外复跑后成功。
 - 本机初始化限制：自动为存量用户目录补建新增 DPAPI IAM 安全文件的操作被当前沙箱策略拒绝，未绕过；现有开发机需由当前 Windows 用户重跑 `scripts/Initialize-LocalEnvironment.ps1`。仓库实现、真实 MySQL/Redis/Gateway 验收及自动化不依赖提交任何凭据文件。
 - 发布：关键实现提交 `e888c8f7308b458bb7632eab353557a84f413849` 已按规则使用 `git push origin HEAD` 推送；Ready [PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 已创建，目标为 `main`，核对为 OPEN 且 `isDraft=false`。创建时 CI 正在执行，本任务不自行合并。
+
+## 2026-08-30 T12D 合并与 T12E 前置审计
+
+- 合并与清理：[PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@0dd0188`；本地 `main` 已同步，`codex/t12d-account-lifecycle-security` 本地和远端功能分支均已清理。
+- 前置结论：T12D 已冻结 OpenAPI 0.17.0、IAM V2、角色中立注册/验证/密码/会话/教师申请契约及 Redis/Gateway 身份安全边界；`page-specs.md` 已冻结唯一身份区域路由、权限和跨应用边界，生成客户端由合并 CI 验证为最新。因此 T12E 的 Git、代码基线、既有接口、路由和权限工程前置满足，分支可以准备；协议文本与当前版本的权威来源、手机/邮箱绑定范围以及 `/help` 是否提交真实反馈仍缺契约或产品决定，确认前不得开始业务实现。
+- 实施边界：T12E 只在 `student-web` 交付 `/register`、`/forgot-password`、`/reset-password`、`/profile`、`/profile/security`、`/apply-teacher`、`/terms`、`/privacy`、`/help`，只消费生成客户端；不得复制教师/管理端登录注册表单，不实现 T16 审核决定、T17A 完整个人资料或真实短信/邮件供应商。
+- 本地验收准备：旧本地环境在启动真实 IAM/浏览器验收前必须由当前 Windows 用户重新执行 `scripts/Initialize-LocalEnvironment.ps1`，补齐 DPAPI 加密的 IAM 安全文件；不得把验证码、JWT 或其他秘密写入仓库或 `local.env`。
+- 数据：本次总控只执行 Git 合并、文档状态更新和只读前置审计，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部模型，没有创建、修改或清理 Schema、表、消息、对象、Seed、伪数据及迁移检查点。

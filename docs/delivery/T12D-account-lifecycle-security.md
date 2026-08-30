@@ -98,4 +98,4 @@ local/test Seed 继续使用固定用户 `student_test_01`、`teacher_test_01`�
 
 OpenAPI、V2 SQL、Redis Lua 端口、会话版本、验证挑战、密码生命周期、媒体绑定、管理命令、故障关闭、Seed 和真实验收均补充了中文 Javadoc/注释，说明输入、结果、状态变化、幂等/重试和外部副作用。生成的 TypeScript 文件未手工修改。
 
-分支为 `codex/t12d-account-lifecycle-security`，关键实现提交为 `e888c8f7308b458bb7632eab353557a84f413849`。Ready [PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 已创建，目标为 `main`，核对结果为 OPEN 且 `isDraft=false`；创建时 CI 正在执行，本任务不自行合并。
+分支为 `codex/t12d-account-lifecycle-security`，关键实现提交为 `e888c8f7308b458bb7632eab353557a84f413849`，交付记录提交为 `3dfddc7`。[PR #39](https://github.com/chengchen-ccnu/ccnu-edulion/pull/39) 在两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后已合并到 `main@0dd0188`；本地和远端功能分支均已清理。
