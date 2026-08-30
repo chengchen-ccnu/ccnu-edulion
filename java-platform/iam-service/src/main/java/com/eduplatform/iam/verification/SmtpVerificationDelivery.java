@@ -23,6 +23,9 @@ public class SmtpVerificationDelivery implements VerificationDeliveryPort {
 
     @Override
     public void deliver(Message message) {
+        if (message.target().toLowerCase(java.util.Locale.ROOT).endsWith(".invalid")) {
+            throw new IllegalArgumentException("保留测试域不得进入 SMTP");
+        }
         SimpleMailMessage mail = new SimpleMailMessage();
         mail.setFrom(from);
         mail.setTo(message.target());

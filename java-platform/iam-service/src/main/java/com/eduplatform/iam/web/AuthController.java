@@ -38,28 +38,39 @@ public class AuthController {
         this.properties = properties;
     }
 
-    @PostMapping("/auth/login")
     /** 校验登录请求并设置刷新 Cookie；认证失败由统一异常处理器返回错误信封。 */
+    @PostMapping("/auth/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest body,
             HttpServletRequest request) {
-        TokenPair tokens = body.deviceId() == null && body.deviceName() == null
-                ? authService.login(body.account(), body.password(), request.getRemoteAddr(),
-                        (String) request.getAttribute(TraceFilter.ATTRIBUTE))
-                : authService.login(body.account(), body.password(), request.getRemoteAddr(),
-                        (String) request.getAttribute(TraceFilter.ATTRIBUTE),
-                        body.deviceId() == null ? null : body.deviceId().toString(), body.deviceName());
+        AccountLifecycleDtos.ArithmeticCaptchaAnswer captcha = body.captcha();
+        TokenPair tokens = authService.login(body.identity(), body.password(), request.getRemoteAddr(),
+                (String) request.getAttribute(TraceFilter.ATTRIBUTE),
+                body.deviceId() == null ? null : body.deviceId().toString(), body.deviceName(),
+                captcha == null ? null : captcha.captchaId().toString(), captcha == null ? null : captcha.answer());
         return withRefreshCookie(tokens);
     }
 
-    @PostMapping("/auth/refresh")
+    /** 一次消费验证码并登录既有账号；未知身份不会自动注册。 */
+    @PostMapping("/auth/verification-login")
+    public ResponseEntity<LoginResponse> verificationLogin(
+            @Valid @RequestBody AccountLifecycleDtos.VerificationCodeLoginRequest body,
+            HttpServletRequest request) {
+        TokenPair tokens = authService.loginWithVerificationCode(body.challengeId().toString(),
+                body.identityType().name(), body.target(), body.verificationCode(), request.getRemoteAddr(),
+                (String) request.getAttribute(TraceFilter.ATTRIBUTE),
+                body.deviceId() == null ? null : body.deviceId().toString(), body.deviceName());
+        return withRefreshCookie(tokens);
+    }
+
     /** 轮换 Cookie 中的刷新令牌，并用新 Cookie 覆盖旧值。 */
+    @PostMapping("/auth/refresh")
     public ResponseEntity<LoginResponse> refresh(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
         return withRefreshCookie(authService.refresh(refreshToken));
     }
 
-    @PostMapping("/auth/logout")
     /** 撤销当前刷新会话并立即清除浏览器 Cookie；缺少 Cookie 仍返回成功。 */
+    @PostMapping("/auth/logout")
     public ResponseEntity<Void> logout(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
         authService.logout(refreshToken);
@@ -67,8 +78,8 @@ public class AuthController {
         return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, cleared.toString()).build();
     }
 
-    @GetMapping("/users/me")
     /** 返回 JWT subject 对应用户的实时角色和权限，用于前端恢复登录态。 */
+    @GetMapping("/users/me")
     public CurrentUserResponse currentUser(JwtAuthenticationToken authentication) {
         Number sessionVersion = authentication.getToken().getClaim("sessionVersion");
         if (sessionVersion == null) throw new com.eduplatform.iam.service.AuthException(
@@ -90,6 +101,6 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(properties.refresh().cookieSecure())
                 .sameSite("Strict")
-                .path("/api/v1/auth");
+                .path("/api/v1");
     }
 }

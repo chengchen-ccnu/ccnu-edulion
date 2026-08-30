@@ -8,10 +8,10 @@ import { reactive } from "vue";
 
 const props = defineProps<{ store: AuthStore }>();
 const emit = defineEmits<{ authenticated: [] }>();
-const form = reactive({ account: "", password: "" });
+const form = reactive({ identity: "", password: "" });
 
 async function submit() {
-  if (await props.store.login(form.account, form.password)) emit("authenticated");
+  if (await props.store.login(form.identity, form.password)) emit("authenticated");
 }
 </script>
 
@@ -36,16 +36,16 @@ async function submit() {
         <div class="auth-login__heading">
           <span class="badge">安全登录</span>
           <h2 id="login-heading">统一登录门户</h2>
-          <p>请输入平台账号，登录后将自动进入你有权访问的学习中心或工作台。</p>
+          <p>请输入已验证邮箱或中国大陆手机号，登录后将自动进入你有权访问的学习中心或工作台。</p>
         </div>
 
         <form @submit.prevent="submit">
           <label>
-            <span>账号</span>
-            <input v-model.trim="form.account" autocomplete="username" inputmode="text"
-              placeholder="请输入账号" :disabled="store.state.loading" />
-            <small v-if="store.state.failure?.fieldErrors.account" class="field-error">
-              {{ store.state.failure.fieldErrors.account }}
+            <span>邮箱或手机号</span>
+            <input v-model.trim="form.identity" autocomplete="username" inputmode="text"
+              placeholder="请输入已验证邮箱或手机号" :disabled="store.state.loading" />
+            <small v-if="store.state.failure?.fieldErrors.identity" class="field-error">
+              {{ store.state.failure.fieldErrors.identity }}
             </small>
           </label>
           <label>
@@ -56,7 +56,7 @@ async function submit() {
               {{ store.state.failure.fieldErrors.password }}
             </small>
           </label>
-          <button :disabled="store.state.loading || !form.account || form.password.length < 8">
+          <button :disabled="store.state.loading || !form.identity || form.password.length < 8">
             <span>{{ store.state.loading ? "正在验证身份…" : "登录平台" }}</span>
             <span v-if="!store.state.loading" aria-hidden="true">→</span>
           </button>

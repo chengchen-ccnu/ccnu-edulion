@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-07-17
-- 前向补充：2026-08-30（T12D.1 规划，合并实现后生效）
+- 前向补充：2026-08-30（T12D.1 已实现，合并后成为主线事实）
 
 ## 背景
 
@@ -11,7 +11,7 @@
 ## 决策
 
 - IAM 签发 15 分钟有效的 JWT Access Token，前端只保存在内存中，不写入 `localStorage`、`sessionStorage` 或持久化状态。
-- IAM 签发 7 天有效的不可预测随机 Refresh Token。浏览器只通过名为 `EDU_REFRESH` 的 `HttpOnly`、`SameSite=Strict` Cookie 持有它；Cookie 路径限制为 `/api/v1/auth`，非 local 环境必须启用 `Secure`。
+- IAM 签发 7 天有效的不可预测随机 Refresh Token。浏览器只通过名为 `EDU_REFRESH` 的 `HttpOnly`、`SameSite=Strict` Cookie 持有它；Cookie 路径限制为 `/api/v1`，让身份变更端点能够识别当前 Refresh Session。Gateway 在转发非 IAM 路由前精确移除该 Cookie，避免把刷新凭据扩散给其他领域服务；非 local 环境必须启用 `Secure`。
 - 数据库只保存 Refresh Token 的 SHA-256 哈希。刷新时在同一事务内将旧会话标记为已轮换并创建新会话；再次使用旧 Token 返回 `409 IAM.REFRESH_REUSED` 并撤销该 Token family。
 - 登录与刷新响应体只返回 Access Token 及其有效期。刷新 Cookie 通过 `Set-Cookie` 返回，前端 JavaScript 不可读取。
 - 前端收到受保护请求的 `401` 时最多刷新一次，然后只重放原请求一次；刷新失败则清空内存状态并跳转登录页，避免无限循环。
@@ -26,7 +26,7 @@
 
 ## T12D.1 前向补充决策
 
-以下规则已经由总控产品与安全审计确认，但在 T12D.1 合并前仍属于目标契约，不得把文档计划描述成当前实现：
+以下规则已经由总控产品与安全审计确认，并由 T12D.1 在功能分支实现；合并前仍不得把它描述成主线已发布能力：
 
 - 正式和测试环境统一只允许已验证邮箱或手机号登录；昵称允许重名且不参与鉴权。既有 `account` 仅保留为兼容内部技术标识，新注册由服务端生成，不提供用户名登录后门。
 - 密码登录接受邮箱或手机号；验证码登录使用邮箱或手机号、Redis 算式验证码和一次性验证码，只登录已有账号且保持未知身份不可枚举。密码第 4～5 次尝试需要算式验证码，第 5 次仍失败后锁定 15 分钟。

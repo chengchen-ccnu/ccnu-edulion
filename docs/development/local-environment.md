@@ -144,7 +144,7 @@ Media V3 新增 `consumed_service_authorization`，以 jti 主键拒绝服务令
 
 T04 只允许把 `IAM_MYSQL_DATABASE` 指向用途明确的 IAM 专用开发或测试 Schema，例如 `edu_platform_iam_dev` 或 `edu_platform_iam_test`。应用不会创建数据库；启用 `local` profile 后，Flyway 只在该 Schema 中创建 `user`、`role`、`permission`、`user_role`、`role_permission`、`refresh_session` 和 `login_audit`。启动前必须同时通过环境变量提供至少 32 字节的 `IAM_JWT_SECRET`，不得写入仓库或命令历史。
 
-最小验收账号默认不生成。只在确认目标是专用 IAM local/test Schema 后，显式设置 `IAM_SEED_ENABLED=true`，并通过当前进程环境或 IDE 密钥配置提供至少 12 位的 `IAM_SEED_PASSWORD`。初始化器会幂等写入 `student_test_01`、`teacher_test_01`、`admin_test_01` 及 STUDENT、TEACHER、ADMIN 三个角色和各自一项最小权限；重复启动不会增加重复记录。生产 profile 不会加载该初始化器。
+最小验收账号默认不生成。只在确认目标是专用 IAM local/test Schema 后，显式设置 `IAM_SEED_ENABLED=true`，并通过当前进程环境或 IDE 密钥配置提供至少 12 位的 `IAM_SEED_PASSWORD`。初始化器会幂等写入四个服务端内部账号及 STUDENT、TEACHER、ADMIN 三个角色和最小权限，其唯一登录身份固定为 `student1@example.invalid`、`teacher1@example.invalid`、`teacher2@example.invalid`、`admin1@example.invalid`；全部标记已验证，昵称可重名，且 `.invalid` 地址被 SMTP 适配器硬拒绝。重复启动不会增加重复记录，production profile 不会加载该初始化器。
 
 清理前需再次确认当前连接的数据库名称，然后在 MySQL 交互式客户端中选择该专用 Schema，并执行：
 
@@ -152,7 +152,7 @@ T04 只允许把 `IAM_MYSQL_DATABASE` 指向用途明确的 IAM 专用开发或�
 source java-platform/iam-service/src/main/resources/db/seed/cleanup-iam-seed.sql;
 ```
 
-清理脚本只删除上述固定测试账号、角色、权限及其会话和登录审计。重新生成时再次显式启用 Seed 并重启 IAM；完成后应清除当前进程中的 `IAM_SEED_PASSWORD` 和 `IAM_JWT_SECRET`。
+清理脚本只按四个固定 user ID 删除测试账号及其身份变更命令、协议同意、会话和安全审计，并只删除已无引用的固定角色/权限；不会按昵称、邮箱后缀或表级范围删除。重新生成时再次显式启用 Seed 并重启 IAM；完成后应清除当前进程中的 `IAM_SEED_PASSWORD` 和 `IAM_JWT_SECRET`。
 
 ### T12D 账号生命周期与 Redis 身份安全
 
@@ -179,11 +179,28 @@ IAM V2 只在明确的 `edu_platform_iam_dev`/`edu_platform_iam_test` 上向前�
 
 IAM 用例在连接前强制核对 `edu_platform_iam_dev`，仅创建一个随机 `t12d_*` 账号并在 `finally` 中按精确 ID/Key 清理；Gateway 用例启动真实随机端口、本机 Redis Lua 和内存 IAM Stub，验证第 11 次登录返回 `429` 及 `Retry-After`，最终只删除本轮唯一限流 Key。
 
+### T12D.1 唯一身份、协议、CAPTCHA 与 SMTP
+
+IAM V3 只向前增加 `(user_id, identity_type)` 唯一约束、注册指纹、不可变 `protocol_document` 和身份变更幂等命令表。Redis 保存约两分钟、一次消费的算式验证码及有限刷新/错误计数，同时继续保存一次性验证码摘要、发送冷却、密码失败/锁定、Gateway 限流和 `sessionVersion` 缓存；任何 Redis 故障均显式返回 503。注册、找回密码和验证码登录发送前必须消费算式验证码，密码登录第 4～5 次也必须先消费验证码，第 5 次密码仍错误后锁定 15 分钟。
+
+邮箱发送通过 `VerificationDeliveryPort` 接入标准 SMTP。生产或本地真实 SMTP 验收不得把用户名和密码写入命令、仓库或 `local.env`；由当前 Windows 用户交互执行以下命令，脚本只把 host/port/from 写入非敏感配置，并将凭据保存为当前用户 DPAPI 加密的 `iam-smtp.credential.clixml`：
+
+```powershell
+& .\scripts\Initialize-LocalSmtp.ps1 -HostName 'smtp.example.test' -Port 587 -FromAddress 'no-reply@example.test'
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    mvn.cmd '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl iam-service -am test
+}
+```
+
+未配置该加密文件或 `IAM_VERIFICATION_DELIVERY_MODE` 不是 `smtp` 时，不得宣称真实发信通过。local/test 固定验证码继续用于确定性测试；手机渠道在 local/test 可用，生产没有短信适配器时 `/api/v1/auth/channel-capabilities` 会关闭手机注册和手机验证码登录。Refresh Cookie 的 Path 现为 `/api/v1`，Gateway 只向 IAM 路由保留 `EDU_REFRESH`，其他服务即使收到普通 Cookie 也不会收到刷新凭据。
+
+T12D.1 的真实 IAM 验收仍使用上方安全包装命令和严格的 `edu_platform_iam_dev`；用例创建一个随机账号、已验证邮箱、临时协议（仅当库中没有对应当前版本时）及精确 Redis Key，并在 `finally` 中按 ID/Key 删除后断言账号不存在。Flyway V3 和协议表结构作为迁移事实保留。Seed 清理/重建沿用上方命令，四个 `.invalid` 身份和 local/test 协议正文均明确不可用于正式发布。
+
 ## T04 统一登录入口
 
 本地前端地址固定为 student `http://localhost:5173`、teacher `http://localhost:5174`、admin `http://localhost:5175`。统一登录入口只有 student 的 `/login`；teacher/admin 未登录时通过 `VITE_STUDENT_WEB_URL` 跳转到该入口，并携带经过白名单校验的内部 `redirect`。三个地址分别由 `VITE_STUDENT_WEB_URL`、`VITE_TEACHER_WEB_URL`、`VITE_ADMIN_WEB_URL` 配置。Vite 使用严格端口，若端口已占用应停止旧进程，不会自动改用未被 Gateway CORS 允许的其他端口。
 
-跨应用跳转后 Access Token 会随页面内存一起丢失，目标应用通过 Gateway 域下的 `EDU_REFRESH` HttpOnly Cookie 调用刷新接口恢复登录态。不要为本地调试把 Access Token 写入 `localStorage`。
+跨应用跳转后 Access Token 会随页面内存一起丢失，目标应用通过 Gateway 域下 Path 为 `/api/v1` 的 `EDU_REFRESH` HttpOnly Cookie 调用刷新接口恢复登录态。Gateway 会从非 IAM 请求精确剥离该 Cookie；不要为本地调试放宽 Cookie 或把 Access Token 写入 `localStorage`。
 
 ## T05 课程迁移与最小目录数据
 

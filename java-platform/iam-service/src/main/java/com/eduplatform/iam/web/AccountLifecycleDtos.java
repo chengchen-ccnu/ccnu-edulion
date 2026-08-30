@@ -14,11 +14,15 @@ public final class AccountLifecycleDtos {
     private AccountLifecycleDtos() {}
 
     public enum IdentityType { PHONE, EMAIL }
-    public enum VerificationPurpose { REGISTRATION, PASSWORD_RESET }
+    public enum IdentityChangeOperation { BIND, REPLACE }
+    public enum VerificationPurpose { REGISTRATION, PASSWORD_RESET, VERIFICATION_LOGIN, IDENTITY_BIND, IDENTITY_REPLACE }
     public enum AccountStatus { ACTIVE, DISABLED }
 
+    public record ArithmeticCaptchaAnswer(@NotNull UUID captchaId,
+            @NotBlank @Pattern(regexp = "^-?[0-9]{1,4}$") String answer) {}
     public record ChallengeRequest(@NotNull IdentityType identityType,
-            @NotBlank @Size(max = 254) String target) {}
+            @NotBlank @Size(max = 254) String target,
+            @NotNull @Valid ArithmeticCaptchaAnswer captcha) {}
     public record ChallengeResponse(UUID challengeId, VerificationPurpose purpose,
             long expiresIn, long resendAfter, String deliveryHint) {}
     public record Agreement(@NotBlank String documentType,
@@ -26,11 +30,40 @@ public final class AccountLifecycleDtos {
     public record RegisterRequest(@NotNull UUID clientRequestId, @NotNull UUID challengeId,
             @NotNull IdentityType identityType, @NotBlank @Size(max = 254) String target,
             @NotBlank @Pattern(regexp = "^[0-9]{6}$") String verificationCode,
-            @NotBlank @Size(max = 30) String nickname,
+            @NotBlank String nickname,
             @NotBlank @Size(min = 12, max = 128) String password,
             @NotNull @Size(min = 2, max = 2) List<@Valid Agreement> agreements) {}
     public record RegistrationResult(UUID userId, String nickname,
             List<String> roles, List<String> permissions, Instant createdAt) {}
+    public record VerificationCodeLoginRequest(@NotNull UUID challengeId, @NotNull IdentityType identityType,
+            @NotBlank @Size(max = 254) String target,
+            @NotBlank @Pattern(regexp = "^[0-9]{6}$") String verificationCode,
+            UUID deviceId, @Size(max = 120) String deviceName) {}
+    public record ArithmeticCaptchaResponse(UUID captchaId, String imageMimeType, String imageBase64,
+            long expiresIn, int refreshesRemaining) {}
+    public record AuthenticationChannelCapability(IdentityType identityType, boolean passwordLoginAvailable,
+            boolean verificationLoginAvailable, boolean registrationAvailable,
+            boolean verificationDeliveryAvailable) {}
+    public record AuthenticationChannelCapabilities(List<AuthenticationChannelCapability> channels) {}
+    public record ProtocolDocumentResponse(String documentType, String version, String body,
+            Instant effectiveAt, boolean current, boolean requiresReconsent) {}
+    public record CurrentProtocolDocuments(List<ProtocolDocumentResponse> documents) {}
+    public record VerifiedIdentity(IdentityType identityType, String maskedValue, Instant verifiedAt) {}
+    public record VerifiedIdentityCollection(List<VerifiedIdentity> identities, long revision) {}
+    public record IdentityChallengeRequest(@NotNull IdentityChangeOperation operation,
+            @NotNull IdentityType identityType, @NotBlank @Size(max = 254) String target,
+            @NotBlank @Size(min = 8, max = 128) String currentPassword,
+            long expectedRevision) {}
+    public record BindIdentityRequest(@NotNull UUID clientRequestId, long expectedRevision,
+            @NotNull UUID challengeId, @NotNull IdentityType identityType,
+            @NotBlank @Size(max = 254) String target,
+            @NotBlank @Pattern(regexp = "^[0-9]{6}$") String verificationCode,
+            @NotBlank @Size(min = 8, max = 128) String currentPassword) {}
+    public record UnbindIdentityRequest(@NotNull UUID clientRequestId, long expectedRevision,
+            @NotBlank @Size(min = 8, max = 128) String currentPassword) {}
+    public record IdentityMutationResult(List<VerifiedIdentity> identities, long revision,
+            long sessionVersion, String revokedSessionScope, boolean reauthenticationRequired,
+            LoginResponse session) {}
     public record ResetPasswordRequest(@NotNull UUID challengeId, @NotNull IdentityType identityType,
             @NotBlank @Size(max = 254) String target,
             @NotBlank @Pattern(regexp = "^[0-9]{6}$") String verificationCode,

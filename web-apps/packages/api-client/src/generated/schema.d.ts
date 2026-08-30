@@ -339,7 +339,7 @@ export interface paths {
         put?: never;
         /**
          * Bind the missing second identity type
-         * @description Requires the current password, a verified one-time challenge for the new normalized identity and the current identity revision. Success atomically adds the other identity type, increments revision and sessionVersion, records a security audit, preserves the current Refresh Session and revokes all other devices. Binding an already-present identity type is a 409 conflict.
+         * @description Requires the current password, current HttpOnly refresh cookie, a verified one-time challenge for the new normalized identity and the current identity revision. Success atomically adds the other identity type, increments revision and sessionVersion, upgrades the current Refresh Session to the new version, records a security audit and revokes all other devices. The response includes a replacement 15-minute Access Token because the caller's previous token is invalidated with every other device. Binding an already-present identity type is a 409 conflict.
          */
         post: operations["bindSecondIdentity"];
         delete?: never;
@@ -2086,6 +2086,8 @@ export interface components {
             /** @enum {string} */
             revokedSessionScope: "OTHER_DEVICES" | "ALL_DEVICES";
             reauthenticationRequired: boolean;
+            /** @description Non-null only after binding a second identity; clients replace their in-memory Access Token. Replace/unbind return null and require login. */
+            session: components["schemas"]["LoginResponse"] | null;
         };
         /**
          * @description T12D creates SUBMITTED only. T16 owns every review transition and the accompanying capability grant.
@@ -4339,7 +4341,7 @@ export interface components {
     headers: {
         /** @description Correlation identifier propagated through Gateway and services. */
         TraceId: string;
-        /** @description Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1/auth and Secure outside local development. */
+        /** @description Rotating opaque refresh token. HttpOnly, SameSite=Strict, Path=/api/v1 and Secure outside local development. Gateway removes this cookie before forwarding non-IAM routes. */
         RefreshCookie: string;
         /** @description Expired refresh cookie returned by logout. */
         ClearedRefreshCookie: string;

@@ -226,7 +226,8 @@ public interface IamMapper {
 
     @Insert("INSERT INTO user_identity (id, user_id, identity_type, normalized_value, verified_at, created_at) "
             + "VALUES (#{id}, #{userId}, #{type}, #{value}, #{now}, #{now}) "
-            + "ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), verified_at = VALUES(verified_at)")
+            + "ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), identity_type = VALUES(identity_type), "
+            + "normalized_value = VALUES(normalized_value), verified_at = VALUES(verified_at)")
     int upsertSeedIdentity(@Param("id") String id, @Param("userId") String userId,
             @Param("type") String type, @Param("value") String value, @Param("now") Instant now);
 

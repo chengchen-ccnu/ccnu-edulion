@@ -15,16 +15,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile({"local", "test"})
 @ConditionalOnProperty(prefix = "platform.iam.seed", name = "enabled", havingValue = "true")
 /**
- * 仅在 local/test 且显式开启时幂等写入三类演示身份、角色和最小权限。
+ * 仅在 local/test 且显式开启时幂等写入四个演示身份、角色、最小权限及测试协议正文。
  *
  * <p>密码来自未跟踪环境变量并在写库前哈希；配置不足会阻止启动。重复执行更新固定测试
  * 标识，不无限追加用户；生产 profile 不会装配本初始化器。</p>
  */
 public class IamSeedInitializer implements ApplicationRunner {
     private static final SeedUser[] USERS = {
-        new SeedUser("00000000-0000-4000-8000-000000000101", "student_test_01", "测试学生", "STUDENT", "learning:access"),
-        new SeedUser("00000000-0000-4000-8000-000000000102", "teacher_test_01", "测试教师", "TEACHER", "teaching:access"),
-        new SeedUser("00000000-0000-4000-8000-000000000103", "admin_test_01", "测试管理员", "ADMIN", "administration:access")
+        new SeedUser("00000000-0000-4000-8000-000000000101", "seed_student_01", "测试学生", "STUDENT", "learning:access"),
+        new SeedUser("00000000-0000-4000-8000-000000000102", "seed_teacher_01", "测试教师一", "TEACHER", "teaching:access"),
+        new SeedUser("00000000-0000-4000-8000-000000000104", "seed_teacher_02", "测试教师二", "TEACHER", "teaching:access"),
+        new SeedUser("00000000-0000-4000-8000-000000000103", "seed_admin_01", "测试管理员", "ADMIN", "administration:access")
     };
 
     private final IamMapper mapper;
@@ -38,8 +39,8 @@ public class IamSeedInitializer implements ApplicationRunner {
     }
 
     @Override
-    @Transactional
     /** 在单一事务中生成角色、权限、测试用户及关联，任一步失败则整体回滚。 */
+    @Transactional
     public void run(ApplicationArguments args) {
         String password = properties.seed().password();
         if (password == null || password.length() < 12) {
@@ -54,15 +55,28 @@ public class IamSeedInitializer implements ApplicationRunner {
         }
         Instant now = Instant.now();
         mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001101", USERS[0].id(), "EMAIL",
-                "student_test_01@example.invalid", now);
+                "student1@example.invalid", now);
         mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001102", USERS[1].id(), "EMAIL",
-                "teacher_test_01@example.invalid", now);
-        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001103", USERS[2].id(), "EMAIL",
-                "admin_test_01@example.invalid", now);
+                "teacher1@example.invalid", now);
+        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001104", USERS[2].id(), "EMAIL",
+                "teacher2@example.invalid", now);
+        mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001103", USERS[3].id(), "EMAIL",
+                "admin1@example.invalid", now);
+        seedProtocol("00000000-0000-4000-8000-000000001301", "TERMS", "local-v1",
+                "# 开发测试用户协议\n\n本正文仅用于 local/test 自动化与演示，不可用于正式发布。", now);
+        seedProtocol("00000000-0000-4000-8000-000000001302", "PRIVACY", "local-v1",
+                "# 开发测试隐私政策\n\n本正文仅用于 local/test 自动化与演示，不可用于正式发布。", now);
         mapper.upsertSeedAgreement("00000000-0000-4000-8000-000000001201", USERS[0].id(),
                 "TERMS", "local-v1", now);
         mapper.upsertSeedAgreement("00000000-0000-4000-8000-000000001202", USERS[0].id(),
                 "PRIVACY", "local-v1", now);
+    }
+
+    /** 新增不可变测试正文后将它设为本地当前版本；正文明确禁止用于正式发布。 */
+    private void seedProtocol(String id, String type, String version, String body, Instant now) {
+        mapper.insertProtocolDocumentIfAbsent(id, type, version, body, now, false, now);
+        mapper.clearCurrentProtocolDocument(type);
+        mapper.markProtocolDocumentCurrent(id);
     }
 
     private record SeedUser(String id, String account, String displayName, String role, String permission) {}

@@ -33,18 +33,19 @@ class AuthControllerTest {
 
     @Test
     void loginReturnsAccessTokenAndHttpOnlyRefreshCookie() {
-        when(authService.login("student_test_01", "correct-password", "127.0.0.1", null))
+        when(authService.login("student1@example.invalid", "correct-password", "127.0.0.1", null,
+                null, null, null, null))
                 .thenReturn(new TokenPair("access-token", 900, "opaque-refresh"));
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("127.0.0.1");
 
         ResponseEntity<LoginResponse> response = controller.login(
-                new LoginRequest("student_test_01", "correct-password"), request);
+                new LoginRequest("student1@example.invalid", "correct-password"), request);
 
         assertThat(response.getBody()).extracting(LoginResponse::accessToken, LoginResponse::expiresIn)
                 .containsExactly("access-token", 900L);
         assertThat(response.getHeaders().getFirst(HttpHeaders.SET_COOKIE))
-                .contains("EDU_REFRESH=opaque-refresh", "HttpOnly", "SameSite=Strict", "Path=/api/v1/auth")
+                .contains("EDU_REFRESH=opaque-refresh", "HttpOnly", "SameSite=Strict", "Path=/api/v1")
                 .doesNotContain("Secure");
     }
 

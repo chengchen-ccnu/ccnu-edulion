@@ -99,6 +99,11 @@ public class VerificationChallengeService {
         return deliveryPorts.stream().anyMatch(port -> port.supports(identityType));
     }
 
+    /** 请求的全局渠道未配置时统一返回 503，避免根据账号是否存在产生不同响应。 */
+    public void requireSupported(String identityType) {
+        if (!supports(identityType)) throw deliveryUnavailable();
+    }
+
     private VerificationDeliveryPort findDelivery(String identityType) {
         return deliveryPorts.stream().filter(port -> port.supports(identityType)).findFirst()
                 .orElseThrow(VerificationChallengeService::deliveryUnavailable);

@@ -42,7 +42,7 @@ public class ApiExceptionHandler {
                 && (exception.status() == HttpStatus.UNAUTHORIZED || exception.status() == HttpStatus.CONFLICT)) {
             ResponseCookie cleared = ResponseCookie.from(AuthController.REFRESH_COOKIE, "")
                     .httpOnly(true).secure(properties.refresh().cookieSecure()).sameSite("Strict")
-                    .path("/api/v1/auth").maxAge(0).build();
+                    .path("/api/v1").maxAge(0).build();
             response.header(HttpHeaders.SET_COOKIE, cleared.toString());
         }
         return response.body(error(exception.code(), exception.getMessage(), request, List.of()));

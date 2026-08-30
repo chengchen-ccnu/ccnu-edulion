@@ -89,12 +89,31 @@ public class DistributedRateLimitGlobalFilter implements GlobalFilter, Ordered {
 
     /** 根据已评审端点选择独立窗口，未匹配请求不创建 Redis Key。 */
     static Policy policy(HttpMethod method, String path) {
-        if (method != HttpMethod.POST) return null;
+        if (method != HttpMethod.POST && method != HttpMethod.PUT && method != HttpMethod.DELETE) return null;
         if (path.equals("/api/v1/auth/login")) return new Policy("login", 10, 60_000);
+        if (method == HttpMethod.POST && (path.equals("/api/v1/auth/captchas")
+                || path.matches("/api/v1/auth/captchas/[^/]+/refresh"))) {
+            return new Policy("captcha", 20, 60_000);
+        }
         if (path.equals("/api/v1/auth/registration-challenges")
-                || path.equals("/api/v1/auth/password-reset-challenges")) return new Policy("verification", 5, 60_000);
+                || path.equals("/api/v1/auth/password-reset-challenges")
+                || path.equals("/api/v1/auth/verification-login-challenges")) {
+            return new Policy("verification", 5, 60_000);
+        }
+        if (method == HttpMethod.POST && path.equals("/api/v1/auth/verification-login")) {
+            return new Policy("verification-login", 10, 60_000);
+        }
         if (path.equals("/api/v1/auth/register")) return new Policy("registration", 5, 60_000);
         if (path.equals("/api/v1/auth/password-reset")) return new Policy("password-reset", 5, 60_000);
+        if (method == HttpMethod.POST && path.equals("/api/v1/users/me/identity-verification-challenges")) {
+            return new Policy("identity-verification", 5, 60_000);
+        }
+        if ((method == HttpMethod.POST && path.equals("/api/v1/users/me/identities"))
+                || ((method == HttpMethod.PUT || method == HttpMethod.DELETE)
+                && path.matches("/api/v1/users/me/identities/[^/]+"))) {
+            return new Policy("identity-mutation", 5, 60_000);
+        }
+        if (method != HttpMethod.POST) return null;
         if (path.startsWith("/api/v1/media/uploads")) return new Policy("upload-credential", 30, 60_000);
         if ((path.contains("question-import") || path.contains("legacy-question-import"))
                 && (path.endsWith("imports") || path.endsWith("batches"))) return new Policy("question-import", 10, 60_000);
