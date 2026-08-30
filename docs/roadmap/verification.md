@@ -562,3 +562,10 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 受控验证：注册挑战前 4 次错误码均返回 `422/IAM.VERIFICATION_FAILED`，随后正确码成功创建 1 个学生账号；使用新请求 ID 重放已消费挑战仍返回相同 422。验证码登录挑战连续 5 次错误后被销毁，之后正确码仍返回 422，证明错误上限不能被绕过。真实 Redis 验收新增 5ms TTL 挑战并确认过期后消费失败；Gateway 还在高频注册重放时返回 429，限流与 IAM 一次消费职责均有效。
 - 文案修复：`SmtpVerificationDelivery` 现在按注册、重置密码、验证码登录、身份绑定/换绑生成自然主题和正文，并从 `platform.iam.verification.ttl` 写入有效期；SMTP 专项测试 4/4 通过，IAM 全量 28 项中 27 项通过、真实环境用例按默认开关跳过。显式开启的真实 MySQL/Redis 验收 1/1 通过，包含新增过期断言。
 - 数据与清理：本轮只在既有 `edu_platform_iam_dev` 创建 1 个临时学生账号、1 个已验证邮箱身份、2 条协议同意、1 条注册幂等事实、1 条安全审计和 2 条临时当前协议；未创建 Refresh Session。按精确 user ID/协议 ID 事务删除后，账号、身份、协议、安全审计和 Refresh Session 复查均为 0。7 个 IAM 精确 Redis Key 与 12 个本机 Gateway 候选限流 Key均已自然过期且复查剩余 0；未清表、未扫描删除、未修改或删除既有 Seed，未创建其他 Schema、表、媒体、MQ、OSS 或短信数据。
+
+## 2026-08-30 T12D.1 合并与 T12E 前置审计
+
+- 合并与清理：[PR #40](https://github.com/chengchen-ccnu/ccnu-edulion/pull/40) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@15184f2`；本地 `main` 已快进同步，`codex/t12d1-identity-security-contract` 本地和远端功能分支均已清理。
+- 前置结论：T12D.1 已合并 OpenAPI 0.18.0、IAM V3、Gateway 匿名路由/Cookie 隔离、Redis CAPTCHA/失败锁定、供应商无关标准 SMTP、渠道能力、当前协议、唯一邮箱/手机号身份和生成客户端；页面规格已冻结唯一身份区域路由、状态和产品边界，真实 QQ SMTP 注册与验证码登录验收已经通过。因此 T12E 的 Git、契约、生成类型、页面职责和真实邮箱环境前置均满足，已从最新 `main` 准备 `codex/t12e-account-security-web`。
+- 实施边界：T12E 只消费生成客户端，在 `student-web` 的同一身份壳交付密码/验证码登录、默认邮箱注册、找回/重置、协议弹窗与公共深链、静态帮助、账号安全、设备管理和教师申请。真实短信供应商尚未接入时必须依据渠道能力隐藏手机注册/验证码入口；不得复制教师/管理端表单，不实现 T16 审核决定、T17A 完整资料、反馈、记住我、人工申诉或 T12H 账号注销。
+- 数据与验证：本轮只执行 Git 合并、同步、分支清理、只读前置审计和 Markdown 状态更新；没有修改 OpenAPI、Java、Python、Vue、Flyway 或生成代码，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg、SMTP 或外部模型，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、验证码、会话或迁移检查点。
