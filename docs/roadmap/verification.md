@@ -579,3 +579,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 环境发现：本地默认 Gateway 与 IAM Redis logical database 不同，未对齐时 Gateway 按安全设计返回 503；真实会话验收显式共用 IAM DB。验收浏览器已有其他账号同名 Cookie，最终使用临时 `t12e.localhost` 同源代理隔离 Cookie；代理与服务均已停止，未形成仓库变更。未启动 learning-service 导致的学习页 500 与 T12E 无关。
 - 数据清理：仅创建一个临时邮箱学习账号及关联身份、注册事实、协议同意、角色、Refresh Session、登录/安全审计和两条临时当前协议；未创建教师申请、OSS 对象或其他领域数据。结束后按临时 user ID 和协议固定 ID 逆外键精确删除，Redis 按本轮 CAPTCHA ID/user ID 删除，MySQL 用户、Refresh Session、身份、临时协议和 Redis 临时键复核为 0；既有 Seed、角色权限、迁移表及预置会话键未触碰。
 - 排除项：未实现真实短信供应商、反馈提交、“记住我”、账号注销、人工申诉、教师审核决定、T17A 完整资料或真实资质上传；这些边界继续由 T12H、T16、T17A 和 media-service 后续任务承担。
+- 交付：关键实现提交为 `57b3643`，已按规定执行 `git push origin HEAD` 并创建 Ready/Open PR [#41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41)；未自行合并。
