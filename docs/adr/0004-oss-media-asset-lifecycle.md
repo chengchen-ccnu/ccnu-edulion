@@ -25,7 +25,7 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 |---|---|---|---|
 | `COURSE_COVER` | `course-service` 的课程草稿/版本 | 草稿私有，发布后可走版本化 CDN | T07 后端能力，T08 表单上传与课程绑定 |
 | `LESSON_VIDEO`、`VIDEO_POSTER`、`SUBTITLE` | `course-service` 的课时资源 | 私有，播放前鉴权 | T07 转码/授权，T08 上传、绑定与播放 |
-| `COURSEWARE`、`ARTICLE_ATTACHMENT` | `course-service` 的课时资源 | 按课程访问权限 | T07 通用附件，T08 绑定与下载 |
+| `COURSEWARE`、`ARTICLE_ATTACHMENT`、`ARTICLE_IMAGE` | `course-service` 的课时资源 | 按课程访问权限；正文图片只能通过受保护内容投影内联 | T07/T08 保留通用附件，T12F.1 增加正文图片和资源动作授权，T12F.2 交付页面 |
 | `QUESTION_IMAGE`、`QUESTION_AUDIO`、`QUESTION_ATTACHMENT` | `learning-service` 的题目版本 | 按题目/测评权限 | T09 数据与绑定，T10 编辑上传与预览 |
 | `QUESTION_IMPORT_SOURCE` | `learning-service` 的导入任务 | 教师私有、限期保留 | T09 导入任务，T10 上传与结果页 |
 | `AI_QUESTION_IMAGE` | Java Agent Access 的会话消息 | 学生本人/授权教师可见、短期保留 | T14 鉴权转交，T15 图片提问 |
@@ -51,7 +51,7 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 ### 4. 访问、替换与删除
 
 - 公开课程封面、头像和运营图片只有在对应业务版本发布/审核通过后才能通过不可变版本 Key 和 CDN 公开读取；原始上传对象始终私有。
-- 视频、字幕、课件、题目附件、AI 图片、资质材料、导入源文件和导出结果默认私有，访问时由后端签发短期 URL/Token，禁止在数据库、日志、事件或前端持久化缓存中保存签名 URL。
+- 视频、海报、正文图片、字幕、课件、题目附件、AI 图片、资质材料、导入源文件和导出结果默认私有，访问时由后端签发短期 URL/Token，禁止在数据库、日志、事件或前端持久化缓存中保存签名 URL。
 - 业务记录保存资产 ID；`media-service` 不决定课程、题目、AI 会话或审核记录是否可见，必须依赖调用方给出的可信主体和领域授权结果。
 - 替换封面或附件采用“先上传并就绪、再原子切换业务引用”。旧对象解除引用后进入延迟回收，不在请求内立即物理删除。
 - 未完成会话、未绑定资产、导入源文件、AI 临时图片和过期导出结果按用途配置保留期，由定时任务幂等清理；共享资产必须在确认无引用后再删除。
@@ -94,6 +94,28 @@ T08A.1 将课程可见性判断与媒体签发连接成服务端闭环。浏览�
 课程域批准后签发只发往 media-service 的短时 HMAC JWT，绑定 issuer/audience、访问者、mediaId、用途、访问类型、变体、处置方式、有效期、traceId 与一次性 jti。首期精确允许两组课程读取投影：`LESSON_VIDEO`/`COURSE_PLAYBACK`/`hls-v1`/`INLINE` 用于课程视频，`COURSE_COVER`/`COURSE_COVER_DISPLAY`/`ORIGINAL`/`INLINE` 用于课程列表和详情的原图封面。Gateway 不路由 `/internal/**`；media-service 校验全部字段并在 `consumed_service_authorization` 以唯一 jti 原子拒绝重放，再独立复核资产用途和 `READY` 状态。密钥只由 DPAPI/CI Secret 注入，令牌和短期 URL 均不写数据库、事件或日志。
 
 首期只完整开放 `LESSON_VIDEO` 播放；封面展示授权仅能由 course-service 在确认草稿 owner 或已发布课程可见后申请，浏览器不能凭 `mediaId` 直接调用内部接口。字幕与课件保持稳定绑定但不被播放接口当作视频授权。T08B 负责 Vue 播放器与授权刷新，T11 负责真实报名/学习权限；media-service 仍不查询课程或学习 Schema。
+
+## T12F 拆分与计划决策
+
+T12F 拆成顺序实施的两个任务：T12F.1“课程内容、资源授权与自动海报后端契约”先向前演进 OpenAPI 0.19.0、Course V4、Media V5 和 Learning V12；T12F.2“课程内容与播放器前端”只能在前者合并后消费生成客户端。T12F.1 不写 Vue 业务页面，T12F.2 不发明字段、不维护第二套 OSS 客户端，也不新建平行课程学习页。
+
+### 课程内容与资源绑定
+
+- ARTICLE 正文是课程版本事实，保存受控 Markdown；正文内图片固定写为 `![替代文字](media:UUID)`。新用途 `ARTICLE_IMAGE` 只允许 JPG/JPEG、PNG、WebP，单图最大 10 MiB，使用单对象直传，拒绝 SVG、GIF、外部图片和 `data:`。
+- 同一 `ARTICLE_IMAGE mediaId` 在一课时只绑定一次，但正文可多处引用并使用不同替代文字。上传后未插入正文的资产不建立课程引用，按未引用资产宽限期回收；删除最后一个正文引用并保存时，课程事务写 `MediaReferenceReleased` Outbox。发布时正文引用与绑定必须完全一致。
+- `COURSEWARE` 与 `ARTICLE_ATTACHMENT` 继续使用既有用途；课程版本另存媒体校验响应中的原始文件名、MIME、大小快照，以及教师 `displayName` 和 `presentation`。快照不包含 Object Key、Bucket 或 URL，已发布版本不随媒体元数据变化。
+- 浏览器只能按 `courseId + lessonId + resourceId + preview/download 动作` 申请访问。`course-service` 根据当前发布版本或教师草稿、课程访问事实和绑定行自行解析 `mediaId`、用途、变体与 disposition，再签发一次性服务授权；media-service 仍不查询课程/学习 Schema。
+- PDF/普通图片允许 `INLINE` 预览和 `ATTACHMENT` 下载，PPTX/TXT 只允许下载，`ARTICLE_IMAGE` 只允许正文内联。服务端必须拒绝用途或动作不匹配，不能只依赖前端隐藏按钮。
+
+### 自动海报与历史资产边界
+
+- T12F.1 将 `poster-v1` 定义为新 `LESSON_VIDEO` 的必需派生变体。FFmpeg 在视频前 30% 内有限检查关键帧亮度，选择第一个非纯黑/纯白候选；没有候选时回退 10% 位置。输出 WebP，保持宽高比，最长边不超过 1280，禁止上采样。
+- 新视频只有既有 HLS 和 `poster-v1` 全部成功后才进入 `READY`；截图失败走 RabbitMQ 有限重试，耗尽后视频处理为 `FAILED`。`poster-v1` 与视频共同回收。教师上传的独立 `VIDEO_POSTER` 优先展示，解除后新视频回退自动海报。
+- 不开发历史海报批处理、重处理 API、教师按钮或任务状态。旧 `READY` 视频继续播放并使用统一占位海报；T12F.2 的本地真实验收可通过课程 API 清点缺失项、正常授权取得内容、FFmpeg 截取任意可用帧、正常上传 `VIDEO_POSTER` 并发布新课程版本。该一次性整理只操作明确本地开发 Schema/OSS 前缀，记录前后版本和 `mediaId`，不枚举 Bucket、不直改媒体表。
+
+### 明确排除项
+
+本轮不实现多码率、清晰度选择、字幕访问接口或页面、历史海报生产重处理、Office 在线转换、DRM、AI 和 T12G Redis 播放心跳缓冲。既有 `SUBTITLE` 枚举、上传策略和 `READY` 绑定校验继续保留，不能为缩小范围删除安全能力；页面不展示字幕入口。自动海报不触发历史资产暗中批处理。
 
 ## T09A 历史图片转存补充
 
