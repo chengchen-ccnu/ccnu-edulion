@@ -611,3 +611,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - OSS 与 Seed：编排已实现生产禁用的固定 ID Initialize/Cleanup/Rebuild，按 Media→Course→Learning 初始化、逆序清理；媒体脚本合成视频、自动/自定义海报、正文图、有效最小 PDF/PPTX 与 TXT，不提交二进制。经凭据包装器和只读 Bucket 元数据确认项目专用开发 OSS 后，真实 Rebuild 完整通过；再次 Initialize 对 6 个固定资产、HLS/`poster-v1` 派生对象、2 个课时和 0% 图文进度做数据库与精确 OSS HEAD 复核，确认幂等。`MediaRealEnvironmentAcceptanceTest` 2/2 通过真实 MySQL/OSS/RabbitMQ/FFmpeg 的单对象/Multipart、授权下载、confirm/return、重试/DLQ/重投及精确清理。随机验收对象、消息、记录和本机文件已清理，仅明确保留固定 T12F.1 Seed 与三项迁移。
 - 可读性与边界：权限判断、Markdown 验证、处理状态机、幂等、Outbox、Seed/清理和复杂测试均增加中文 Javadoc/注释；OpenAPI/SQL 解释兼容与空值语义，生成代码未手改。本任务没有 Vue、多码率、清晰度、字幕 UI、历史海报 API、Office 转换、DRM、AI、Redis 播放缓存、第二套 OSS 客户端或跨 Schema Join/外键/事务。
 - 发布：关键实现提交 `f5e03b5` 已按规则推送到 `codex/t12f1-course-content-contract`；Ready [PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已创建，目标 `main`，本任务不自行合并。完整实现、命令、演示和清理说明见 `docs/delivery/T12F.1-course-content-contract.md`。
+
+## 2026-08-31 T12F.1 合并与 T12F.2 前置审计
+
+- 合并与清理：[PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 在 Ready、`MERGEABLE/CLEAN` 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@e53a58d`；本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12f1-course-content-contract` 本地和远端分支均已精确删除。
+- 前置结论：OpenAPI 0.19.0、Course V4、Media V5、Learning V12、生成 TypeScript 客户端、受保护课时内容/资源动作授权、`ARTICLE_IMAGE`、自动/自定义海报投影、图文完成命令和生产禁用的固定演示 Seed 均已进入 `main`。既有教师课程编排页、学生 `/learn/:courseId/:lessonId` 和共享 `HlsVideoPlayer` 是唯一实现落点；页面规格已冻结 Markdown、资料、海报、倍速、完成反馈和排除项。因此 T12F.2 的 Git、契约、生成类型、页面职责、真实数据和浏览器验收前置满足，已从最新 `main` 准备 `codex/t12f2-course-content-player`。
+- 一致性验证：重新执行 `pnpm.cmd --dir web-apps run check:api` 成功，OpenAPI 0.19.0 可重新生成且已跟踪 `schema.d.ts` 与 HEAD 无差异；`git diff --check` 通过。T12F.2 只能消费生成客户端，不得修改服务端契约来迁就页面、维护手写 DTO、搬迁播放器或创建第二套上传/学习路由。
+- 实施边界：教师在既有课程编排页完成 Markdown 工具栏/实时预览、ARTICLE_IMAGE 上传插入、资源展示名/主动作和类型切换二次确认；学生在既有学习页消费受保护内容，显示有效/占位海报、1～3 倍速、资料预览/下载，并在正文成功渲染后以同一请求 ID 最多重试三次同步 100% 完成。多码率、清晰度选择、字幕 UI、历史海报生产重处理 API、Office 转换、DRM、AI 和 T12G Redis 缓冲继续排除。
+- 数据与环境：本次总控没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 任务或外部服务，没有创建、修改或清理 Schema、表、消息、对象、迁移或伪数据；T12F.1 明确保留的固定演示 Seed 原样保留，供 T12F.2 页面和真实浏览器验收使用。没有执行 Seed Cleanup/Rebuild，也没有删除已有安全措施。
