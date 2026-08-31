@@ -7,6 +7,14 @@ import CourseDetailPage from "./views/CourseDetailPage.vue";
 import CourseLearningPage from "./views/CourseLearningPage.vue";
 import CourseListPage from "./views/CourseListPage.vue";
 import LoginPage from "./views/LoginPage.vue";
+import RegisterPage from "./views/RegisterPage.vue";
+import ForgotPasswordPage from "./views/ForgotPasswordPage.vue";
+import ResetPasswordPage from "./views/ResetPasswordPage.vue";
+import ProfilePage from "./views/ProfilePage.vue";
+import ProfileSecurityPage from "./views/ProfileSecurityPage.vue";
+import ApplyTeacherPage from "./views/ApplyTeacherPage.vue";
+import ProtocolPage from "./views/ProtocolPage.vue";
+import HelpPage from "./views/HelpPage.vue";
 import MyLearningPage from "./views/MyLearningPage.vue";
 import PlaceholderPage from "./views/PlaceholderPage.vue";
 import PracticeAttemptPage from "./views/PracticeAttemptPage.vue";
@@ -36,6 +44,15 @@ export const studentRoutes: RouteRecordRaw[] = [
   { path: "/wrong-questions", name: "wrong-questions", component: WrongQuestionsPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/login", name: "login", component: LoginPage },
+  { path: "/register", name: "register", component: RegisterPage },
+  { path: "/forgot-password", name: "forgot-password", component: ForgotPasswordPage },
+  { path: "/reset-password", name: "reset-password", component: ResetPasswordPage },
+  { path: "/terms", name: "terms", component: ProtocolPage, props: { type: "TERMS" } },
+  { path: "/privacy", name: "privacy", component: ProtocolPage, props: { type: "PRIVACY" } },
+  { path: "/help", name: "help", component: HelpPage },
+  { path: "/profile", name: "profile", component: ProfilePage, meta: { requiresAuth: true } },
+  { path: "/profile/security", name: "profile-security", component: ProfileSecurityPage, meta: { requiresAuth: true } },
+  { path: "/apply-teacher", name: "apply-teacher", component: ApplyTeacherPage, meta: { requiresAuth: true } },
   { path: "/workspaces", name: "workspaces", component: WorkspaceChooser,
     meta: { requiresAuth: true }, props: { store: authStore } },
   { path: "/forbidden", name: "forbidden", component: AccessDeniedPage,

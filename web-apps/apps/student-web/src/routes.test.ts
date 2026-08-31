@@ -4,6 +4,24 @@ import { readFileSync } from "node:fs";
 import { studentRoutes } from "./routes";
 
 describe("student application routes", () => {
+  it.each([
+    ["/login", false],
+    ["/register", false],
+    ["/forgot-password", false],
+    ["/reset-password", false],
+    ["/terms", false],
+    ["/privacy", false],
+    ["/help", false],
+    ["/profile", true],
+    ["/profile/security", true],
+    ["/apply-teacher", true]
+  ])("registers the T12E route %s with the expected access boundary", (path, requiresAuth) => {
+    const route = studentRoutes.find(item => item.path === path);
+
+    expect(route).toBeDefined();
+    expect(route?.meta?.requiresAuth).toBe(requiresAuth ? true : undefined);
+  });
+
   it.each(["/courses", "/courses/:courseId"])("keeps %s public with optional session recovery", path => {
     const route = studentRoutes.find(item => item.path === path);
 

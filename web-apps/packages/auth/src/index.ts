@@ -1,6 +1,6 @@
 /** 跨学生、教师、管理应用共享的登录恢复、工作台授权和安全跳转策略。 */
 import { createGatewayClient } from "@edu/api-client";
-import type { ApiError, CurrentUser, GatewayClient } from "@edu/api-client";
+import type { ApiError, ArithmeticCaptchaAnswer, CurrentUser, GatewayClient, IdentityType, LoginResponse } from "@edu/api-client";
 import { reactive, readonly } from "vue";
 import type { Router } from "vue-router";
 
@@ -17,6 +17,7 @@ export type AuthFailureKind = "validation" | "unauthorized" | "forbidden" | "rat
 
 export interface AuthFailure {
   kind: AuthFailureKind;
+  code?: string;
   message: string;
   fieldErrors: Record<string, string>;
   retryAfter?: string;
@@ -33,10 +34,16 @@ export interface AuthStore {
   /** 只读认证快照；访问令牌不会暴露给组件或持久化存储。 */
   state: Readonly<AuthState>;
   /** 使用已验证邮箱或中国大陆手机号登录；昵称和内部 account 都不会发送为登录标识。 */
-  login(identity: string, password: string): Promise<boolean>;
+  login(identity: string, password: string, captcha?: ArithmeticCaptchaAnswer): Promise<boolean>;
+  /** 消费服务端一次性验证码登录；未知身份不会注册账号。 */
+  loginWithVerificationCode(challengeId: string, identityType: IdentityType, target: string,
+    verificationCode: string): Promise<boolean>;
+  /** 接受身份绑定后服务端签发的新访问令牌，不把令牌暴露给页面组件。 */
+  acceptLoginResponse(response: LoginResponse): Promise<boolean>;
   restore(): Promise<boolean>;
   ensureCurrentUser(): Promise<boolean>;
-  logout(): Promise<void>;
+  /** 始终清理本地内存；返回值说明服务端是否确认撤销当前 Refresh Session。 */
+  logout(): Promise<boolean>;
   authorizedRequest<T extends { response: Response }>(request: (authorization: string) => Promise<T>): Promise<T>;
   hasRole(role: PlatformRole): boolean;
   hasPermission(permission: string): boolean;
@@ -228,23 +235,50 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
   let accessToken: string | null = null;
   let refreshInFlight: Promise<boolean> | null = null;
 
-  async function login(identity: string, password: string): Promise<boolean> {
+  async function login(identity: string, password: string, captcha?: ArithmeticCaptchaAnswer): Promise<boolean> {
     state.loading = true;
     state.failure = null;
     try {
-      const result = await client.POST("/api/v1/auth/login", { body: { identity, password } });
+      const result = await client.POST("/api/v1/auth/login", {
+        body: captcha ? { identity, password, captcha } : { identity, password }
+      });
       if (result.error || !result.data) {
         failFromResponse(result.response.status, result.error, result.response.headers);
         return false;
       }
-      accessToken = result.data.accessToken;
-      return await fetchCurrentUser(false);
+      return await acceptLoginResponse(result.data);
     } catch {
       setAnonymous(networkFailure());
       return false;
     } finally {
       state.loading = false;
     }
+  }
+
+  async function loginWithVerificationCode(challengeId: string, identityType: IdentityType, target: string,
+      verificationCode: string): Promise<boolean> {
+    state.loading = true;
+    state.failure = null;
+    try {
+      const result = await client.POST("/api/v1/auth/verification-login", {
+        body: { challengeId, identityType, target, verificationCode }
+      });
+      if (result.error || !result.data) {
+        failFromResponse(result.response.status, result.error, result.response.headers);
+        return false;
+      }
+      return await acceptLoginResponse(result.data);
+    } catch {
+      setAnonymous(networkFailure());
+      return false;
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  async function acceptLoginResponse(response: LoginResponse): Promise<boolean> {
+    accessToken = response.accessToken;
+    return await fetchCurrentUser(false);
   }
 
   async function restore(): Promise<boolean> {
@@ -315,15 +349,20 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
     return refreshInFlight;
   }
 
-  async function logout(): Promise<void> {
+  async function logout(): Promise<boolean> {
+    let confirmed = false;
     try {
-      await client.POST("/api/v1/auth/logout");
+      const result = await client.POST("/api/v1/auth/logout");
+      confirmed = !result.error && result.response.status === 204;
+    } catch {
+      confirmed = false;
     } finally {
       accessToken = null;
       state.status = "anonymous";
       state.currentUser = null;
       state.failure = null;
     }
+    return confirmed;
   }
 
   async function authorizedRequest<T extends { response: Response }>(
@@ -358,7 +397,7 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
       : status === 403 ? "forbidden"
       : status === 429 ? "rate-limited" : "unexpected";
     const fieldErrors = Object.fromEntries((error?.fieldErrors ?? []).map(item => [item.field, item.reason]));
-    setAnonymous({ kind, message: error?.message ?? "请求失败，请稍后重试", fieldErrors,
+    setAnonymous({ kind, code: error?.code, message: error?.message ?? "请求失败，请稍后重试", fieldErrors,
       retryAfter: headers.get("Retry-After") ?? undefined });
   }
 
@@ -369,8 +408,8 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
     state.failure = failure;
   }
 
-  return { state: readonly(state) as Readonly<AuthState>, login, restore, ensureCurrentUser, logout, authorizedRequest,
-    hasRole, hasPermission, canAccess };
+  return { state: readonly(state) as Readonly<AuthState>, login, loginWithVerificationCode, acceptLoginResponse,
+    restore, ensureCurrentUser, logout, authorizedRequest, hasRole, hasPermission, canAccess };
 }
 
 export interface AuthGuardOptions {
