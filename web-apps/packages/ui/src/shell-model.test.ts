@@ -33,6 +33,14 @@ describe("shared application shell contract", () => {
     expect(authenticated.menuItems?.slice(0, 2).every(item => !("href" in item))).toBe(true);
   });
 
+  it("enables the existing profile menu item without changing account-tool order", () => {
+    const account = buildAccountTools({ authenticated: true, accountLabel: "测试账号",
+      loginHref: "/login", profileHref: "/profile" })[2];
+
+    expect(account.menuItems?.[0]).toEqual({ id: "profile", label: "个人中心", kind: "link", href: "/profile" });
+    expect(account.menuItems?.map(item => item.id)).toEqual(["profile", "preferences", "logout"]);
+  });
+
   it("keeps the account popover outside the scroll container", () => {
     const styles = readFileSync(new URL("./shell.css", import.meta.url), "utf8");
 

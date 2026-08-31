@@ -23,6 +23,53 @@ const urls: PlatformUrls = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared authentication store", () => {
+  it("forwards a server-issued CAPTCHA with password login", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/auth/login")) {
+        expect(await request.json()).toEqual({
+          identity: "student1@example.invalid",
+          password: "correct-password",
+          captcha: { captchaId: "00000000-0000-4000-8000-000000000121", answer: "12" }
+        });
+        return json({ tokenType: "Bearer", accessToken: "access-captcha", expiresIn: 900 });
+      }
+      if (path.endsWith("/users/me")) return json(user(["STUDENT"], ["learning:access"]));
+      throw new Error(`unexpected request: ${path}`);
+    }));
+    const store = createAuthStore(createGatewayClient("http://gateway.test"));
+
+    expect(await store.login("student1@example.invalid", "correct-password", {
+      captchaId: "00000000-0000-4000-8000-000000000121", answer: "12"
+    })).toBe(true);
+    expect(store.state.status).toBe("authenticated");
+  });
+
+  it("accepts verification-code login without duplicating a password DTO", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/auth/verification-login")) {
+        expect(await request.json()).toEqual({
+          challengeId: "00000000-0000-4000-8000-000000000131",
+          identityType: "EMAIL",
+          target: "student1@example.invalid",
+          verificationCode: "123456"
+        });
+        return json({ tokenType: "Bearer", accessToken: "access-code", expiresIn: 900 });
+      }
+      if (path.endsWith("/users/me")) return json(user(["STUDENT"], ["learning:access"]));
+      throw new Error(`unexpected request: ${path}`);
+    }));
+    const store = createAuthStore(createGatewayClient("http://gateway.test"));
+
+    expect(await store.loginWithVerificationCode(
+      "00000000-0000-4000-8000-000000000131", "EMAIL", "student1@example.invalid", "123456"
+    )).toBe(true);
+    expect(store.state.currentUser?.displayName).toBe("测试用户");
+  });
+
   it("logs in once and loads roles and permissions from current-user", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = requestUrl(input).pathname;
@@ -119,6 +166,31 @@ describe("shared authentication store", () => {
     limited = true;
     expect(await store.login("student1@example.invalid", "correct-password")).toBe(false);
     expect(store.state.failure).toMatchObject({ kind: "rate-limited", retryAfter: "30" });
+  });
+
+  it("preserves the server error code needed to reveal password-login CAPTCHA", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({
+      ...apiError("IAM.CAPTCHA_REQUIRED"), message: "请先完成算式验证码"
+    }, 422)));
+    const store = createAuthStore(createGatewayClient("http://gateway.test"));
+
+    expect(await store.login("student1@example.invalid", "wrong-password")).toBe(false);
+    expect(store.state.failure).toMatchObject({ kind: "validation", code: "IAM.CAPTCHA_REQUIRED" });
+  });
+
+  it("clears local authentication while reporting an unconfirmed server logout", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestUrl(input).pathname;
+      if (path.endsWith("/auth/login")) return json({ tokenType: "Bearer", accessToken: "access-1", expiresIn: 900 });
+      if (path.endsWith("/users/me")) return json(user(["STUDENT"], ["learning:access"]));
+      if (path.endsWith("/auth/logout")) throw new TypeError("offline");
+      throw new Error(`unexpected request: ${path}`);
+    }));
+    const store = createAuthStore(createGatewayClient("http://gateway.test"));
+    expect(await store.login("student1@example.invalid", "correct-password")).toBe(true);
+
+    expect(await store.logout()).toBe(false);
+    expect(store.state).toMatchObject({ status: "anonymous", currentUser: null });
   });
 });
 

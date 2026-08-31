@@ -19,12 +19,13 @@ const accountTools = computed(() => buildAccountTools({
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: "/login",
   workspaceHref: workspaceLinks.value.length > 1 ? "/workspaces" : undefined,
-  workspaceLabel: authStore.state.status === "authenticated" ? "学习端" : undefined
+  workspaceLabel: authStore.state.status === "authenticated" ? "学习端" : undefined,
+  profileHref: "/profile"
 }));
 
 async function logout() {
-  await authStore.logout();
-  await router.push({ name: "login" });
+  const confirmed = await authStore.logout();
+  await router.push({ name: "login", query: confirmed ? {} : { logout: "unconfirmed" } });
 }
 </script>
 

@@ -61,6 +61,8 @@ function accountInitial(label: string) {
                       class="app-shell__account-menu-action" @click="emit('toolActivate', item.action)">
                       {{ item.label }}
                     </button>
+                    <a v-else-if="item.kind === 'link' && item.href" :href="item.href"
+                      class="app-shell__account-menu-link">{{ item.label }}</a>
                     <button v-else type="button" class="app-shell__account-menu-disabled" disabled
                       aria-disabled="true">
                       <span>{{ item.label }}</span><small>{{ item.statusLabel }}</small>

@@ -19,7 +19,8 @@ export interface ShellNavigationItem {
 export interface ShellAccountMenuItem {
   id: "profile" | "preferences" | "logout";
   label: string;
-  kind: "action" | "disabled";
+  kind: "action" | "link" | "disabled";
+  href?: string;
   action?: "logout";
   statusLabel?: string;
 }
@@ -40,6 +41,7 @@ export interface AccountToolInput {
   loginHref: string;
   workspaceHref?: string;
   workspaceLabel?: string;
+  profileHref?: string;
 }
 
 /**
@@ -58,7 +60,8 @@ export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
         kind: "menu",
         statusLabel: input.accountLabel ?? "已登录",
         menuItems: [
-          { id: "profile", label: "个人中心", kind: "disabled", statusLabel: "建设中" },
+          input.profileHref ? { id: "profile", label: "个人中心", kind: "link", href: input.profileHref }
+            : { id: "profile", label: "个人中心", kind: "disabled", statusLabel: "建设中" },
           { id: "preferences", label: "布局设置", kind: "disabled", statusLabel: "建设中" },
           { id: "logout", label: "退出登录", kind: "action", action: "logout" }
         ]
