@@ -580,3 +580,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据清理：仅创建一个临时邮箱学习账号及关联身份、注册事实、协议同意、角色、Refresh Session、登录/安全审计和两条临时当前协议；未创建教师申请、OSS 对象或其他领域数据。结束后按临时 user ID 和协议固定 ID 逆外键精确删除，Redis 按本轮 CAPTCHA ID/user ID 删除，MySQL 用户、Refresh Session、身份、临时协议和 Redis 临时键复核为 0；既有 Seed、角色权限、迁移表及预置会话键未触碰。
 - 排除项：未实现真实短信供应商、反馈提交、“记住我”、账号注销、人工申诉、教师审核决定、T17A 完整资料或真实资质上传；这些边界继续由 T12H、T16、T17A 和 media-service 后续任务承担。
 - 交付：关键实现提交为 `57b3643`，已按规定执行 `git push origin HEAD` 并创建 Ready/Open PR [#41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41)；未自行合并。
+
+## 2026-08-31 T12E 合并与 T12F 前置审计
+
+- 合并与清理：[PR #41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@319a404`；本地 `main` 已快进同步，`codex/t12e-account-security-web` 本地和远端功能分支均已清理。
+- 前置结论：T07 已提供统一 OSS 上传、私有资产、处理状态和短期授权，T08A/T08A.1/T08B 已提供五类课时媒体用途、课程版本资源绑定、领域可见性和稳定 HLS 播放页，T12A 已接通同一路由的学习访问与进度。OpenAPI 0.18.0、页面规格和 ADR-0004 均允许 T12F 向前演进；FFmpeg/ffprobe 可用、RabbitMQ 服务正在运行，仓库外共享环境和加密凭据文件存在。因此 T12F 的 Git、架构、媒体基础和本地工具前置满足，已从最新 `main` 准备 `codex/t12f-course-content-player`。
+- 待实现而非阻塞：当前课程模型只有课时类型和媒体引用，没有图文正文；课程授权只完整开放视频/封面，尚无字幕、海报、课件和附件的领域短期读取投影；现有 HLS 为单清晰度。T12F 必须先评审并向前演进 OpenAPI、Course/Media 契约和新增迁移，再实现服务端权限、派生变体、生成客户端、教师编排和既有学生学习页，不得让前端猜字段或直接凭 `mediaId` 申请通用媒体授权。
+- 实施边界：图文正文采用受控可渲染内容并由课程版本保存；字幕、海报、课件和附件继续只保存稳定 `mediaId`，由 course-service 根据课程/课时/资源行及访问事实签发短期授权。多码率沿用 media-service 派生变体与私有 OSS，播放器只消费服务端列出的可用清晰度；不得搬迁播放器、创建第二套上传客户端、自研 DRM、跨服务查表或保存签名 URL。
+- 数据与验证：本轮只执行 Git 合并、同步、分支清理、只读环境/前置审计和 Markdown 状态更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件或生成代码，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 处理任务、SMTP 或外部模型，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、变体、验证码、会话或迁移检查点。
