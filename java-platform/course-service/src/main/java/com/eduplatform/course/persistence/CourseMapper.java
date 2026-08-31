@@ -42,6 +42,10 @@ public interface CourseMapper {
             @Param("lessonId") String lessonId, @Param("resourceId") String resourceId,
             @Param("teacherId") String teacherId);
 
+    /** 查询发布版本的精确课时及其全部资源，空资源课时也返回一行。 */
+    List<CourseMediaAccessRow> listPublishedLessonContentRows(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId);
+
     List<CategoryEntity> listActiveCategories();
 
     CourseEntity findOwnedCourse(@Param("courseId") String courseId, @Param("teacherId") String teacherId);

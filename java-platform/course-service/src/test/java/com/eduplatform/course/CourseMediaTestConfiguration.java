@@ -3,6 +3,7 @@ package com.eduplatform.course;
 import com.eduplatform.course.media.MediaBindingClient;
 import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
+import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.service.CourseException;
 import com.eduplatform.course.web.CourseDtos;
 import com.eduplatform.shared.api.FieldError;
@@ -36,6 +37,15 @@ class CourseMediaTestConfiguration {
         return new FakeMediaCoverClient();
     }
 
+    @Bean
+    @Primary
+    MediaAccessClient fakeMediaAccessClient() {
+        return (mediaId, purpose, visitorId, accessType, variant, disposition, traceId) ->
+                new CourseDtos.CourseMediaAccessGrant("GET",
+                        "https://oss.example.test/temporary-content/" + mediaId,
+                        Map.of(), Instant.parse("2026-08-05T10:10:00Z"));
+    }
+
     /**
      * 模拟 media-service 的所有权、用途和 READY 校验；测试必须显式登记允许绑定的资产。
      */
@@ -47,20 +57,33 @@ class CourseMediaTestConfiguration {
         }
 
         void register(String mediaId, String ownerId, String purpose, String status) {
-            assets.put(mediaId, new Asset(ownerId, purpose, status));
+            String mime = "LESSON_VIDEO".equals(purpose) ? "video/mp4"
+                    : purpose.contains("IMAGE") || purpose.contains("POSTER") || purpose.contains("COVER")
+                            ? "image/png" : "application/pdf";
+            assets.put(mediaId, new Asset(ownerId, purpose, status, "test-resource.bin", mime, 1024));
+        }
+
+        void register(String mediaId, String ownerId, String purpose, String status,
+                String filename, String mimeType, long size) {
+            assets.put(mediaId, new Asset(ownerId, purpose, status, filename, mimeType, size));
         }
 
         @Override
-        public void requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
+        public BindingSnapshot requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
             Asset asset = assets.get(mediaId);
             if (asset == null || !teacherId.equals(asset.ownerId()) || !purpose.equals(asset.purpose())
                     || !"READY".equals(asset.status())) {
                 throw new CourseException(HttpStatus.UNPROCESSABLE_CONTENT, "COURSE.MEDIA_NOT_BINDABLE",
                         "媒体不可绑定", List.of(new FieldError("mediaId", mediaId)));
             }
+            java.util.Set<String> variants = "LESSON_VIDEO".equals(purpose)
+                    ? java.util.Set.of("hls-fmp4-v2", "poster-v1") : java.util.Set.of();
+            return new BindingSnapshot(mediaId, purpose, asset.filename(), asset.mimeType(), asset.size(),
+                    variants, "LESSON_VIDEO".equals(purpose) ? "LESSON_VIDEO_V5" : null);
         }
 
-        private record Asset(String ownerId, String purpose, String status) {}
+        private record Asset(String ownerId, String purpose, String status,
+                String filename, String mimeType, long size) {}
     }
 
     /** 返回确定性的短期封面投影，并记录访问者以验证教师/公开读取边界。 */

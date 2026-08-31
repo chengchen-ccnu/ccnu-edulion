@@ -37,4 +37,13 @@ class FakeFfmpegCommandRunner extends FfmpegCommandRunner {
             throw new IllegalStateException(exception);
         }
     }
+
+    @Override
+    public synchronized void generatePoster(Path input, Path output, MediaProperties.Worker properties) {
+        try {
+            Files.write(output, new byte[] {0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4});
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
 }

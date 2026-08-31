@@ -580,3 +580,34 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据清理：仅创建一个临时邮箱学习账号及关联身份、注册事实、协议同意、角色、Refresh Session、登录/安全审计和两条临时当前协议；未创建教师申请、OSS 对象或其他领域数据。结束后按临时 user ID 和协议固定 ID 逆外键精确删除，Redis 按本轮 CAPTCHA ID/user ID 删除，MySQL 用户、Refresh Session、身份、临时协议和 Redis 临时键复核为 0；既有 Seed、角色权限、迁移表及预置会话键未触碰。
 - 排除项：未实现真实短信供应商、反馈提交、“记住我”、账号注销、人工申诉、教师审核决定、T17A 完整资料或真实资质上传；这些边界继续由 T12H、T16、T17A 和 media-service 后续任务承担。
 - 交付：关键实现提交为 `57b3643`，已按规定执行 `git push origin HEAD` 并创建 Ready/Open PR [#41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41)；未自行合并。
+
+## 2026-08-31 T12E 合并与 T12F 前置审计
+
+- 合并与清理：[PR #41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@319a404`；本地 `main` 已快进同步，`codex/t12e-account-security-web` 本地和远端功能分支均已清理。
+- 前置结论：T07 已提供统一 OSS 上传、私有资产、处理状态和短期授权，T08A/T08A.1/T08B 已提供五类课时媒体用途、课程版本资源绑定、领域可见性和稳定 HLS 播放页，T12A 已接通同一路由的学习访问与进度。OpenAPI 0.18.0、页面规格和 ADR-0004 均允许 T12F 向前演进；FFmpeg/ffprobe 可用、RabbitMQ 服务正在运行，仓库外共享环境和加密凭据文件存在。因此 T12F 的 Git、架构、媒体基础和本地工具前置满足，已从最新 `main` 准备 `codex/t12f-course-content-player`。
+- 待实现而非阻塞：当前课程模型只有课时类型和媒体引用，没有图文正文；课程授权只完整开放视频/封面，尚无字幕、海报、课件和附件的领域短期读取投影；现有 HLS 为单清晰度。T12F 必须先评审并向前演进 OpenAPI、Course/Media 契约和新增迁移，再实现服务端权限、派生变体、生成客户端、教师编排和既有学生学习页，不得让前端猜字段或直接凭 `mediaId` 申请通用媒体授权。
+- 实施边界：图文正文采用受控可渲染内容并由课程版本保存；字幕、海报、课件和附件继续只保存稳定 `mediaId`，由 course-service 根据课程/课时/资源行及访问事实签发短期授权。多码率沿用 media-service 派生变体与私有 OSS，播放器只消费服务端列出的可用清晰度；不得搬迁播放器、创建第二套上传客户端、自研 DRM、跨服务查表或保存签名 URL。
+- 数据与验证：本轮只执行 Git 合并、同步、分支清理、只读环境/前置审计和 Markdown 状态更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件或生成代码，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 处理任务、SMTP 或外部模型，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、变体、验证码、会话或迁移检查点。
+
+## 2026-08-31 T12F 拆分规划与二次前置审计
+
+- 规划结论：经产品与工程边界审计，原 T12F 拆成顺序实施的 T12F.1“课程内容、资源授权与自动海报后端契约”和 T12F.2“课程内容与播放器前端”。T12F.1 先合并 OpenAPI 0.19.0、Course V4、Media V5、Learning V12、真实基础设施验收和跨域 local/test Seed；T12F.2 才能消费生成客户端。此前本文件 T12E 合并审计中把字幕、多码率/清晰度列为 T12F 待实现的初步判断由本节取代，这些能力明确后移。
+- 前置复核：T07 已提供唯一 OSS 媒体边界，T08A/A.1/B 已提供课程版本资源、引用 Outbox、单清晰度 HLS、领域服务授权和稳定学习页，T11/T12A 已提供报名访问与学习完成事实；OpenAPI 当前为 0.18.0，开发 Schema 最新迁移分别为 Course V3、Media V4、Learning V11。FFmpeg/ffprobe、RabbitMQ、本地开发 OSS、仓库外共享环境与加密凭据均已具备。因此 T12F.1 的 Git、契约起点、领域边界、工具和真实验收环境前置满足；当前缺少的正文模型、`ARTICLE_IMAGE`、资源动作授权、`poster-v1` 和图文完成命令是任务内容而非阻塞项。
+- 内容与安全冻结：公共课程详情只暴露目录摘要，OpenAPI 0.19.0 将 `LessonSummary.resources` 放宽为可选并 deprecated；教师草稿和学生受保护内容使用独立投影。正文为最多 100,000 可见字符的受控 Markdown，正文图片使用带必填替代文字的 `media:UUID`，引用与唯一 READY 绑定完全一致。外部图片、`data:`、原始 HTML/脚本/iframe 和危险链接禁止；发布版本不可变，类型互转在事务内释放不兼容引用。
+- 资源与海报冻结：课程版本保存原文件名/MIME/大小快照、可选 `displayName` 和 `INLINE/DOWNLOAD`，浏览器只按课程/课时/resourceId/动作申请授权。新视频以既有 HLS 与 `poster-v1` 共同成功作为 READY 条件；自动海报在前 30% 有限选择非纯黑/纯白关键帧，回退 10%，输出最长边 1280 WebP且不上采样。独立 `VIDEO_POSTER` 覆盖自动海报；历史视频不增加生产重处理 API，仅允许 T12F.2 在明确本地开发数据中按正常领域链路一次性补自定义海报。
+- 页面与进度冻结：T12F.2 只修改既有课程编排和学习页，提供 Markdown 工具栏/实时预览、资料预览/下载、海报、倍速 1/1.25/1.5/2/2.5/3 和图文完成反馈。正文成功渲染后使用稳定请求 ID 写入 0→100 单调完成，页面存活期间最多重试三次，失败不阻止阅读且离页后不无限重试；未报名试看不写进度。
+- 排除项：T12F.1 不实现 Vue，T12F.2 不猜契约。两者均不实现多码率、清晰度选择、字幕访问/UI、Office 在线转换、历史海报生产重处理、DRM、AI 或 T12G Redis 缓冲；既有 `SUBTITLE` 枚举、上传策略和 READY 校验继续保留。不得搬迁播放器、增加平行学习路由、第二套 OSS 客户端、跨服务数据库关系或永久 URL。
+- 数据与验证：本次总控只修改页面规格、backlog、verification、ADR-0004、总体架构和本地环境文档，并将未开发分支从 `codex/t12f-course-content-player` 改名为 `codex/t12f1-course-content-contract`；未修改 OpenAPI、Java、Python、Vue、Flyway、事件或生成代码，未连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 任务或外部服务，没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、变体或迁移检查点。只需执行文档差异检查和范围审计，不能把本次记录解释为 T12F.1/T12F.2 已实现。
+
+## 2026-08-31 T12F.1 课程内容、资源授权与自动海报后端契约
+
+- 契约优先：`docs/api/openapi.yaml` 从 0.18.0 向前演进到 0.19.0，新增受保护课时内容、课程域资源动作授权、ARTICLE 完成命令及安全绑定快照；公共 LessonSummary 资源改为 deprecated/optional 并实际不输出正文/资源，前端类型由 `openapi-typescript` 重生，没有手写 DTO 或新 Vue 页面。
+- Course V4：ARTICLE 保存受控 Markdown 与严格 `media:UUID` 引用集合，危险 HTML/协议、外部图片、空 alt、错占位符、重复/错用途/非 READY 绑定立即拒绝；发布校验 ARTICLE 非空和 V5 视频 HLS+poster，公共防泄漏、登录试看/报名、PDF/图片预览下载与 PPTX/TXT 下载动作由服务端决定。类型互转按最终请求释放不兼容资源并在课程事务写 Outbox，共同 COURSEWARE 不抖动；已发布版本仍复制到新草稿修改。
+- Media V5：ARTICLE_IMAGE 限 JPG/JPEG/PNG/WebP、10 MiB、单对象，拒绝 SVG/GIF/Multipart；新视频以 `LESSON_VIDEO_V5` 要求 `hls-fmp4-v2` 和 WebP `poster-v1` 同时成功。海报在前 30% 最多 12 个关键帧内跳过近黑/近白，回退 10%，最长边 1280且不上采样；失败复用既有有限重试并最终 FAILED，派生对象随视频回收，历史空契约不重处理。
+- Learning V12：ARTICLE 完成使用独立事实与请求表，稳定 `clientRequestId` 重放不新增事实或 revision，不伪造视频 position/watched 事件；PUBLIC 或 ACTIVE 报名可写，未报名付费试看只读不写，普通客户端没有回退命令。
+- 自动化：Java `clean verify` 8 个 Reactor 模块全部成功，Gateway 21 项/1 跳过、IAM 28/1、Course 24/2、Learning 62/6、Media 29/6，无失败。受影响定向测试中 Course Markdown/绑定 17/17、Media HTTP/策略/命令 20/20、Learning+Gateway 27/27 通过。前端 `generate:api`、`typecheck`、31 文件 212 项 Vitest 和三端 build 通过，仅有既有 chunk 警告；实现提交后 `check:api` 重跑通过，生成客户端与 OpenAPI 0.19.0 一致。
+- 真实 FFmpeg：显式运行 `T12F1FfmpegPosterRealAcceptanceTest` 1/1 通过。用例在 JUnit 临时目录生成一秒黑场加四秒测试画面，真实 ffprobe/FFmpeg 先拒绝黑场再选择彩色关键帧，输出 640×360 WebP。首轮真实运行发现 filtergraph 逗号转义错误，修正后通过；临时视频、候选 PNG、WebP 与日志由 JUnit 精确清理。
+- 真实 MySQL/RabbitMQ：三个现有专用开发 Schema 已正常向前保留 Course V4、Media V5、Learning V12 和 Flyway 历史，没有创建数据库或跨域关系。`CourseEnrollmentRealEnvironmentAcceptanceTest` 在真实 `edu_platform_course_dev` + RabbitMQ 1/1 通过，验证真实队列、eventId 幂等、changedAt 乱序和 ACTIVE/CANCELED 投影；随机 enrollment/learner/course/event ID 在 finally 中精确删除。第一次因本地 Rabbit 密码环境值为空被 broker 拒绝，未创建 Fixture；使用正确的本机运行配置后通过，未修改 broker 用户或服务。
+- OSS 与 Seed：编排已实现生产禁用的固定 ID Initialize/Cleanup/Rebuild，按 Media→Course→Learning 初始化、逆序清理；媒体脚本合成视频、自动/自定义海报、正文图、有效最小 PDF/PPTX 与 TXT，不提交二进制。经凭据包装器和只读 Bucket 元数据确认项目专用开发 OSS 后，真实 Rebuild 完整通过；再次 Initialize 对 6 个固定资产、HLS/`poster-v1` 派生对象、2 个课时和 0% 图文进度做数据库与精确 OSS HEAD 复核，确认幂等。`MediaRealEnvironmentAcceptanceTest` 2/2 通过真实 MySQL/OSS/RabbitMQ/FFmpeg 的单对象/Multipart、授权下载、confirm/return、重试/DLQ/重投及精确清理。随机验收对象、消息、记录和本机文件已清理，仅明确保留固定 T12F.1 Seed 与三项迁移。
+- 可读性与边界：权限判断、Markdown 验证、处理状态机、幂等、Outbox、Seed/清理和复杂测试均增加中文 Javadoc/注释；OpenAPI/SQL 解释兼容与空值语义，生成代码未手改。本任务没有 Vue、多码率、清晰度、字幕 UI、历史海报 API、Office 转换、DRM、AI、Redis 播放缓存、第二套 OSS 客户端或跨 Schema Join/外键/事务。
+- 发布：关键实现提交 `f5e03b5` 已按规则推送到 `codex/t12f1-course-content-contract`；Ready [PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已创建，目标 `main`，本任务不自行合并。完整实现、命令、演示和清理说明见 `docs/delivery/T12F.1-course-content-contract.md`。

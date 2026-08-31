@@ -28,6 +28,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
     public static final String HLS_VARIANT = "hls-fmp4-v2";
+    public static final String POSTER_VARIANT = "poster-v1";
     private final ObjectStorage storage;
     private final ObjectKeyFactory keys;
     private final MediaProperties properties;
@@ -63,6 +64,8 @@ public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
             Path segmentPattern = scratch.resolve("segment-%05d.m4s");
             storage.download(asset.objectKey(), input);
             runner.run(input, playlist, segmentPattern, properties.worker());
+            Path poster = scratch.resolve("poster-v1.webp");
+            runner.generatePoster(input, poster, properties.worker());
             List<Path> componentFiles;
             try (var files = Files.list(scratch)) {
                 componentFiles = files.filter(path -> path.getFileName().toString().equals("init.mp4")
@@ -88,8 +91,14 @@ public class FfmpegMediaProcessingWorker implements MediaProcessingWorker {
             StorageObjectMetadata storedPlaylist = storage.put(
                     playlistKey, playlist, "application/vnd.apple.mpegurl");
             uploadedKeys.add(playlistKey);
-            return new ProcessingResult(List.of(new ProcessingResult.VariantResult(HLS_VARIANT, playlistKey,
-                    "application/vnd.apple.mpegurl", storedPlaylist.size(), storedPlaylist.etag(), components)));
+            String posterKey = keys.derived(asset.mediaId(), POSTER_VARIANT, "webp");
+            StorageObjectMetadata storedPoster = storage.put(posterKey, poster, "image/webp");
+            uploadedKeys.add(posterKey);
+            return new ProcessingResult(List.of(
+                    new ProcessingResult.VariantResult(HLS_VARIANT, playlistKey,
+                            "application/vnd.apple.mpegurl", storedPlaylist.size(), storedPlaylist.etag(), components),
+                    new ProcessingResult.VariantResult(POSTER_VARIANT, posterKey,
+                            "image/webp", storedPoster.size(), storedPoster.etag(), List.of())));
         } catch (RuntimeException | IOException failure) {
             for (String objectKey : uploadedKeys) {
                 try { storage.delete(objectKey); } catch (RuntimeException ignored) { }

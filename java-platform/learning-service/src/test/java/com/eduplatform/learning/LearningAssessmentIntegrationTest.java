@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +57,8 @@ class LearningAssessmentIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM article_completion_request");
+        jdbc.update("DELETE FROM article_lesson_completion");
         jdbc.update("DELETE FROM manual_grading_record");
         jdbc.update("DELETE FROM wrong_question_redo");
         jdbc.update("DELETE FROM wrong_question_occurrence");
@@ -77,9 +80,54 @@ class LearningAssessmentIntegrationTest {
         jdbc.update("DELETE FROM question_version");
         jdbc.update("DELETE FROM question_aggregate");
         var fact = new CourseFactsClient.CourseFact(COURSE, "v8", "ENROLLMENT_REQUIRED", TEACHER_AS_LEARNER,
-                Set.of(LESSON));
+                Set.of(LESSON), Map.of(LESSON, "ARTICLE"));
         when(courses.requirePublished(anyString(), anyString())).thenReturn(fact);
         when(courses.requireOwnedPublished(anyString(), anyString(), anyString())).thenReturn(fact);
+    }
+
+    @Test
+    /** PUBLIC ARTICLE 可 0→100；同一请求重放不增事实，新请求也不能使通用进度 revision 再增长。 */
+    void articleCompletionIsMonotonicIdempotentAndDoesNotForgeVideoFields() {
+        var publicArticle = new CourseFactsClient.CourseFact(COURSE, "v8", "PUBLIC", TEACHER_AS_LEARNER,
+                Set.of(LESSON), Map.of(LESSON, "ARTICLE"));
+        when(courses.requirePublished(eq(COURSE), anyString())).thenReturn(publicArticle);
+        UUID requestId = UUID.randomUUID();
+
+        var first = service.completeArticle(LEARNER, COURSE, LESSON,
+                new LearningDtos.CompleteArticleLessonRequest(requestId), "trace-article-first");
+        var replay = service.completeArticle(LEARNER, COURSE, LESSON,
+                new LearningDtos.CompleteArticleLessonRequest(requestId), "trace-article-replay");
+        var secondRequest = service.completeArticle(LEARNER, COURSE, LESSON,
+                new LearningDtos.CompleteArticleLessonRequest(UUID.randomUUID()), "trace-article-second-id");
+
+        assertThat(first.completionPercent()).isEqualTo(100);
+        assertThat(first.revision()).isEqualTo(1);
+        assertThat(first.replayed()).isFalse();
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.completedAt()).isEqualTo(first.completedAt());
+        assertThat(secondRequest.revision()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM article_lesson_completion", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT position_seconds FROM lesson_progress", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT watched_seconds FROM lesson_progress", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT revision FROM lesson_progress", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 报名制试看不能记录正式进度，且 VIDEO 不能伪装为 ARTICLE 完成命令。 */
+    void articleCompletionRequiresPublicOrActiveEnrollmentAndExactArticleType() {
+        assertThatThrownBy(() -> service.completeArticle(LEARNER, COURSE, LESSON,
+                new LearningDtos.CompleteArticleLessonRequest(UUID.randomUUID()), "trace-no-enrollment"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.ENROLLMENT_REQUIRED"));
+
+        var publicVideo = new CourseFactsClient.CourseFact(COURSE, "v8", "PUBLIC", TEACHER_AS_LEARNER,
+                Set.of(LESSON), Map.of(LESSON, "VIDEO"));
+        when(courses.requirePublished(eq(COURSE), anyString())).thenReturn(publicVideo);
+        assertThatThrownBy(() -> service.completeArticle(LEARNER, COURSE, LESSON,
+                new LearningDtos.CompleteArticleLessonRequest(UUID.randomUUID()), "trace-video"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.LESSON_TYPE_INVALID"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM article_lesson_completion", Integer.class)).isZero();
     }
 
     @Test

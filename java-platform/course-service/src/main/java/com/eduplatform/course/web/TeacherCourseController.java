@@ -123,6 +123,21 @@ public class TeacherCourseController {
                 courseId, lessonId, resourceId, teacher.userId(), trace(servletRequest));
     }
 
+    @PostMapping("/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants")
+    /** 课程所有者按资源 ID 与动作预览或下载当前可编辑版本资料。 */
+    CourseDtos.CourseMediaAccessGrant resourceGrant(
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String lessonId,
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String resourceId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @Valid @RequestBody CourseDtos.CreateCourseResourceAccessGrantRequest request,
+            HttpServletRequest servletRequest) {
+        TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
+        return service.createTeacherResourceGrant(courseId, lessonId, resourceId, request.action(),
+                teacher.userId(), trace(servletRequest));
+    }
+
     private static String trace(HttpServletRequest request) {
         return (String) request.getAttribute(TraceFilter.ATTRIBUTE);
     }

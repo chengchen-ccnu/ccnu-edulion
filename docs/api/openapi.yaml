@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.18.0
-  description: T12D.1 Gateway contract. Replaces public account-name authentication with verified email or mainland-China phone identities, adds arithmetic CAPTCHA, password and verification-code login, immutable current protocol documents, channel capabilities, atomic identity bind/replace/unbind operations, and provider-neutral SMTP delivery semantics. The existing 15-minute in-memory access JWT, seven-day HttpOnly refresh cookie, MySQL Refresh Session facts and Redis sessionVersion cache remain unchanged. T12E pages, real SMS providers, account deletion, appeals, feedback submission and remember-me are intentionally excluded.
+  version: 0.19.0
+  description: T12F.1 forward-compatible backend contract. Adds controlled ARTICLE Markdown and ARTICLE_IMAGE bindings, protected lesson-content and course-owned resource grants, immutable resource metadata snapshots, required poster-v1 generation for newly uploaded lesson videos, and an idempotent ARTICLE 0-to-100 completion command. Public course detail no longer emits lesson media bindings. T12F.2 Vue pages, subtitles, multiple renditions, historical poster reprocessing, Office conversion, DRM, AI and Redis playback buffering are intentionally excluded.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -705,13 +705,64 @@ paths:
                             type: VIDEO
                             sequence: 1
                             previewable: true
-                            resources: []
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/courses/{courseId}/lessons/{lessonId}/content:
+    get:
+      tags: [Courses]
+      operationId: getCourseLessonContent
+      summary: Get one authorized lesson's protected content projection
+      description: |
+        Requires an authenticated learning-capable visitor. Course-service resolves only the current immutable
+        published version and permits a PUBLIC course, an ACTIVE enrollment, or a previewable lesson. Preview
+        still requires login. The response may contain controlled ARTICLE Markdown, one effective custom/automatic
+        poster grant, the published video resource row ID, inline ARTICLE_IMAGE grants and safe attachment snapshots;
+        it never exposes an OSS key, Bucket, permanent URL or service credential. Missing, draft, historical and
+        mismatched lessons share the same 404 response.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+      responses:
+        '200':
+          description: Authorized protected lesson content.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonContent'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CoursePlaybackForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/MediaConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
+  /api/v1/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants:
+    post:
+      tags: [Courses]
+      operationId: createCourseLessonResourceAccessGrant
+      summary: Authorize preview or download of one published course resource
+      description: The browser supplies only courseId, lessonId, the course-domain resource row ID and PREVIEW/DOWNLOAD action. Course-service verifies current publication and course access, then derives mediaId, purpose, ORIGINAL variant and disposition. PDF and ordinary images support both actions; PPTX/TXT support DOWNLOAD only; ARTICLE_IMAGE is delivered only by the protected content projection.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCourseResourceAccessGrantRequest'}
+      responses:
+        '201': {description: Short-lived resource read grant., content: {application/json: {schema: {$ref: '#/components/schemas/CourseMediaAccessGrant'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CoursePlaybackForbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/MediaConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
   /api/v1/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants:
     post:
       tags: [Courses]
@@ -1018,6 +1069,30 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/MediaDependencyUnavailable'
+  /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants:
+    post:
+      tags: [Teacher Courses]
+      operationId: createTeacherCourseLessonResourceAccessGrant
+      summary: Authorize owner preview or download of one editable course resource
+      description: Resolves only the current teacher-owned editable version. The browser cannot submit mediaId, purpose, variant, disposition or a visibility decision; other owners and stale resource IDs are indistinguishable from missing resources.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCourseResourceAccessGrantRequest'}
+      responses:
+        '201': {description: Short-lived owner resource grant., content: {application/json: {schema: {$ref: '#/components/schemas/CourseMediaAccessGrant'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/MediaConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
   /api/v1/teacher/knowledge-points:
     get:
       tags: [Knowledge Points]
@@ -1857,6 +1932,27 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/learning/courses/{courseId}/lessons/{lessonId}/article-completion:
+    post:
+      tags: [Learning]
+      operationId: completeArticleLesson
+      summary: Idempotently complete one ARTICLE lesson from 0 to 100 percent
+      description: This is a dedicated completion command, not a video position/watched-seconds event. clientRequestId is stable for one logical page-render completion; replay cannot create another fact or increment revision. PUBLIC courses and ACTIVE enrollments may record completion. An unenrolled visitor of an ENROLLMENT_REQUIRED preview lesson may read content but cannot record formal progress, and ordinary clients cannot move completion backwards.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CompleteArticleLessonRequest'}}}
+      responses:
+        '200': {description: Current monotonic ARTICLE completion fact., content: {application/json: {schema: {$ref: '#/components/schemas/ArticleLessonCompletion'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/learning/courses/{courseId}/lessons/{lessonId}/notes:
     get:
@@ -3581,7 +3677,7 @@ components:
     CourseDetail:
       type: object
       additionalProperties: false
-      required: [id, title, summary, description, coverMediaId, coverUrl, teacher, category, level, accessType, publishedVersion, chapters]
+      required: [id, title, summary, description, coverUrl, teacher, category, level, accessType, publishedVersion, chapters]
       properties:
         id:
           type: string
@@ -3599,7 +3695,8 @@ components:
         coverMediaId:
           type: [string, 'null']
           format: uuid
-          description: Stable COURSE_COVER media reference frozen into this published course version.
+          deprecated: true
+          description: Legacy compatibility field. Public CourseDetail responses no longer emit stable media identifiers; use coverUrl only as a transient authorized display projection.
         coverUrl:
           type: [string, 'null']
           format: uri
@@ -3674,7 +3771,7 @@ components:
     LessonSummary:
       type: object
       additionalProperties: false
-      required: [id, title, type, sequence, previewable, resources]
+      required: [id, title, type, sequence, previewable]
       properties:
         id:
           type: string
@@ -3691,9 +3788,13 @@ components:
           minimum: 1
         previewable:
           type: boolean
+        articleMarkdown:
+          type: string
+          description: Full controlled Markdown returned only in authenticated teacher draft/editor projections. Public CourseDetail responses omit this field.
         resources:
           type: array
-          description: Stable media references frozen into the same course version. Signed playback/download URLs are obtained separately and are never stored here.
+          deprecated: true
+          description: Legacy teacher/editor compatibility projection. Public CourseDetail responses omit this field; authenticated clients must use the protected lesson-content endpoint and course-owned resource row IDs.
           items:
             $ref: '#/components/schemas/LessonMediaResource'
     CreateCourseRequest:
@@ -3812,6 +3913,9 @@ components:
           minimum: 1
         previewable:
           type: boolean
+        articleMarkdown:
+          type: [string, 'null']
+          description: Controlled ARTICLE source, with at most 100,000 visible Unicode characters. Supports headings, lists, tables, fenced/inline code, HTTPS links, LaTeX and `![required alt](media:UUID)`. Raw HTML/iframe, data URLs, external images, dangerous protocols and malformed media placeholders are rejected immediately. Non-ARTICLE types discard a safe supplied value from persisted content.
         resources:
           type: array
           maxItems: 100
@@ -3821,8 +3925,8 @@ components:
             $ref: '#/components/schemas/LessonMediaResourceInput'
     LessonMediaPurpose:
       type: string
-      description: Course-owned lesson purposes enabled by an explicit T08A upload and binding policy.
-      enum: [LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT]
+      description: Course-owned lesson purposes enabled by an explicit binding policy. ARTICLE_IMAGE is always INLINE and may appear only in ARTICLE Markdown placeholders.
+      enum: [LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, ARTICLE_IMAGE]
     LessonMediaResourceInput:
       type: object
       additionalProperties: false
@@ -3839,10 +3943,20 @@ components:
           minimum: 1
           maximum: 100
           description: Ordering within the same purpose; values must be unique and contiguous from 1.
+        displayName:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 120
+          description: Optional teacher-facing name. Omission/blank input is normalized to the safe original filename returned by media-service at binding time.
+        presentation:
+          oneOf:
+            - $ref: '#/components/schemas/LessonResourcePresentation'
+            - type: 'null'
+          description: Preferred primary action. ARTICLE_IMAGE is forced to INLINE; PPTX/TXT are forced to DOWNLOAD. Omission uses the server's safe purpose/MIME default for compatibility.
     LessonMediaResource:
       type: object
       additionalProperties: false
-      required: [id, mediaId, purpose, sequence]
+      required: [id, mediaId, purpose, sequence, displayName, presentation, originalFileName, mimeType, size]
       properties:
         id:
           type: string
@@ -3856,6 +3970,97 @@ components:
         sequence:
           type: integer
           minimum: 1
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        presentation:
+          $ref: '#/components/schemas/LessonResourcePresentation'
+        originalFileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Immutable safe filename snapshot captured from media-service when bound.
+        mimeType:
+          type: string
+          minLength: 3
+          maxLength: 127
+          description: Immutable MIME snapshot captured at binding time.
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Immutable byte-size snapshot captured at binding time.
+    LessonResourcePresentation:
+      type: string
+      enum: [INLINE, DOWNLOAD]
+    CourseResourceAction:
+      type: string
+      enum: [PREVIEW, DOWNLOAD]
+    CreateCourseResourceAccessGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action:
+          $ref: '#/components/schemas/CourseResourceAction'
+    LessonContent:
+      type: object
+      additionalProperties: false
+      required: [courseId, lessonId, title, type, previewable, articleMarkdown, playbackResourceId, poster, inlineImages, resources]
+      properties:
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 120}
+        type: {type: string, enum: [VIDEO, ARTICLE, ASSESSMENT]}
+        previewable: {type: boolean}
+        articleMarkdown:
+          type: [string, 'null']
+          description: Full controlled source only for ARTICLE; null for VIDEO/ASSESSMENT. media:UUID values are usable only with the matching inlineImages grants in this response.
+        playbackResourceId:
+          type: [string, 'null']
+          format: uuid
+          description: Course-domain LESSON_VIDEO row ID for the existing playback-grant endpoint; never a mediaId.
+        poster:
+          oneOf:
+            - $ref: '#/components/schemas/CourseMediaAccessGrant'
+            - type: 'null'
+          description: Effective custom VIDEO_POSTER or automatic poster-v1 grant. Historical videos without either return null so the client may use one fixed placeholder.
+        inlineImages:
+          type: array
+          items: {$ref: '#/components/schemas/LessonInlineImage'}
+        resources:
+          type: array
+          description: Safe COURSEWARE/ARTICLE_ATTACHMENT projections. VIDEO, poster, subtitle and ARTICLE_IMAGE bindings are not downloadable through this list.
+          items: {$ref: '#/components/schemas/LessonContentResource'}
+    LessonInlineImage:
+      type: object
+      additionalProperties: false
+      required: [resourceId, mediaId, grant]
+      properties:
+        resourceId: {type: string, format: uuid}
+        mediaId:
+          type: string
+          format: uuid
+          description: Matches the controlled media:UUID placeholder; it is not accepted by any browser-facing authorization endpoint.
+        grant: {$ref: '#/components/schemas/CourseMediaAccessGrant'}
+    LessonContentResource:
+      type: object
+      additionalProperties: false
+      required: [id, purpose, displayName, presentation, originalFileName, mimeType, size, actions]
+      properties:
+        id: {type: string, format: uuid}
+        purpose: {type: string, enum: [COURSEWARE, ARTICLE_ATTACHMENT]}
+        displayName: {type: string, minLength: 1, maxLength: 120}
+        presentation: {$ref: '#/components/schemas/LessonResourcePresentation'}
+        originalFileName: {type: string, minLength: 1, maxLength: 255}
+        mimeType: {type: string, minLength: 3, maxLength: 127}
+        size: {type: integer, format: int64, minimum: 1}
+        actions:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: {$ref: '#/components/schemas/CourseResourceAction'}
     UpdatePublicationRequest:
       type: object
       additionalProperties: false
@@ -5106,6 +5311,29 @@ components:
         positionSeconds: {type: integer, format: int64, minimum: 0, maximum: 28800}
         watchedSeconds: {type: integer, minimum: 0, maximum: 300}
         completed: {type: boolean}
+    CompleteArticleLessonRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: Stable for one logical successfully rendered ARTICLE completion attempt; all bounded retries reuse it.
+    ArticleLessonCompletion:
+      type: object
+      additionalProperties: false
+      required: [courseId, lessonId, completionPercent, completedAt, revision, replayed]
+      properties:
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+        completionPercent:
+          type: integer
+          const: 100
+          description: ARTICLE completion is a monotonic 0-to-100 fact and cannot be moved backwards by ordinary clients.
+        completedAt: {type: string, format: date-time}
+        revision: {type: integer, format: int64, minimum: 1}
+        replayed: {type: boolean}
     LessonProgress:
       type: object
       additionalProperties: false
@@ -5676,8 +5904,8 @@ components:
           description: QUESTION_IMAGE and QUESTION_AUDIO require INLINE; QUESTION_ATTACHMENT requires ATTACHMENT. The service derives and validates the exact purpose from the assessment snapshot.
     MediaPurpose:
       type: string
-      description: Stable business purpose. T08A enables the six course purposes; T09 enables question attachments/import sources for teachers; T12D enables TEACHER_QUALIFICATION only for ordinary STUDENT accounts before application submission. Other frozen values remain disabled until their owning domain supplies policy and authorization.
-      enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
+      description: Stable business purpose. T12F.1 enables ARTICLE_IMAGE only for teacher-owned JPG/JPEG, PNG or WebP single-object uploads up to 10 MiB. SVG and GIF are rejected. Existing SUBTITLE policy remains enabled for backend READY binding validation, but no subtitle access/UI is added.
+      enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, ARTICLE_IMAGE, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
     MediaUploadMode:
       type: string
       enum: [SINGLE_PUT, MULTIPART]
@@ -5903,6 +6131,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MediaVariant'
+        processingContractVersion:
+          type: [string, 'null']
+          description: New LESSON_VIDEO uploads use LESSON_VIDEO_V5 and cannot become READY until hls-fmp4-v2 and poster-v1 both succeed. Null identifies historical assets and does not trigger reprocessing.
         errorCode:
           type: [string, 'null']
         errorMessage:
@@ -5984,6 +6215,21 @@ components:
         expiresAt:
           type: string
           format: date-time
+    CourseMediaAccessGrant:
+      type: object
+      additionalProperties: false
+      required: [method, url, headers, expiresAt]
+      description: Short-lived course-authorized poster, inline image, preview or download projection. It contains no Bucket, Object Key, permanent URL, media-service credential or service JWT.
+      properties:
+        method: {type: string, const: GET}
+        url:
+          type: string
+          format: uri
+          description: Expiring bearer URL. Never persist or log it.
+        headers:
+          type: object
+          additionalProperties: {type: string}
+        expiresAt: {type: string, format: date-time}
     MediaBindingValidationRequest:
       type: object
       additionalProperties: false
@@ -5994,7 +6240,7 @@ components:
     MediaBindingValidation:
       type: object
       additionalProperties: false
-      required: [mediaId, purpose, status, bindable]
+      required: [mediaId, purpose, status, bindable, originalFileName, mimeType, size, variants]
       properties:
         mediaId:
           type: string
@@ -6008,6 +6254,27 @@ components:
           type: boolean
           const: true
           description: True only after media-service has verified owner, exact purpose and READY state for this request.
+        originalFileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Safe original filename for the course-service immutable binding snapshot.
+        mimeType:
+          type: string
+          minLength: 3
+          maxLength: 127
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+        variants:
+          type: array
+          uniqueItems: true
+          items: {type: string, maxLength: 80}
+          description: Safe derived-variant names only; no Object Key, Bucket or URL is returned.
+        processingContractVersion:
+          type: [string, 'null']
+          description: LESSON_VIDEO_V5 for newly uploaded videos that require both hls-fmp4-v2 and poster-v1; null for historical assets.
     ApiError:
       type: object
       additionalProperties: false

@@ -11,6 +11,7 @@ public record MediaAsset(
         MediaPurpose purpose,
         MediaStatus status,
         ProcessingStatus processingStatus,
+        String processingContractVersion,
         String objectKey,
         String originalFilename,
         String mimeType,

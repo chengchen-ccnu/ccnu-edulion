@@ -71,6 +71,12 @@ public class CourseMediaAuthorizationIssuer {
         return issue(viewerId, mediaId, "COURSE_COVER", "COURSE_COVER_DISPLAY", "ORIGINAL", "INLINE", traceId);
     }
 
+    /** 为课程内容、海报或附件动作签发字段完全绑定的一次性服务令牌。 */
+    public String issueAccess(String visitorId, String mediaId, String purpose, String accessType,
+            String variant, String disposition, String traceId) {
+        return issue(visitorId, mediaId, purpose, accessType, variant, disposition, traceId);
+    }
+
     /** 将明确的访问类型、用途、变体和处置方式全部绑定进短时 JWT，调用方不能省略业务边界。 */
     private String issue(String visitorId, String mediaId, String purpose, String accessType,
             String variant, String disposition, String traceId) {

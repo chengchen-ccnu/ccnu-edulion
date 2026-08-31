@@ -191,6 +191,25 @@ class GatewayRouteSecurityTest {
     }
 
     @Test
+    /** 课时正文和资源动作都必须登录；公共课程详情的通配路由不能意外放行这些更具体的路径。 */
+    void lessonContentAndResourceActionsRequireLearningAccess() {
+        String base = "/api/v1/courses/00000000-0000-4000-8000-000000000201"
+                + "/lessons/00000000-0000-4000-8000-000000000202";
+        client.get().uri(base + "/content").exchange().expectStatus().isUnauthorized();
+        client.post().uri(base + "/resources/00000000-0000-4000-8000-000000000203/access-grants")
+                .bodyValue("{\"action\":\"DOWNLOAD\"}").exchange().expectStatus().isUnauthorized();
+
+        Instant now = Instant.now();
+        client.get().uri(base + "/content")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.route").isEqualTo("course");
+        client.post().uri(base + "/resources/00000000-0000-4000-8000-000000000203/access-grants")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .bodyValue("{\"action\":\"PREVIEW\"}").exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.route").isEqualTo("course");
+    }
+
+    @Test
     /** Given 普通或教师 JWT；Then 教师路由分别拒绝或转发令牌中重建的可信身份。 */
     void teacherCourseRoutesRequireTeacherRoleAndForwardTrustedIdentity() {
         Instant now = Instant.now();

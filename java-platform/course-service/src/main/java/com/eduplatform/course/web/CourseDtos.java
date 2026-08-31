@@ -25,7 +25,11 @@ public final class CourseDtos {
 
     public enum LessonType { VIDEO, ARTICLE, ASSESSMENT }
 
-    public enum LessonMediaPurpose { LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT }
+    public enum LessonMediaPurpose { LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, ARTICLE_IMAGE }
+
+    public enum LessonResourcePresentation { INLINE, DOWNLOAD }
+
+    public enum CourseResourceAction { PREVIEW, DOWNLOAD }
 
     public enum PublicationStatus { DRAFT, PUBLISHED, UNPUBLISHED }
 
@@ -65,12 +69,26 @@ public final class CourseDtos {
             @NotNull LessonType type,
             @Positive @Max(200) int sequence,
             boolean previewable,
-            @Size(max = 100) List<@Valid LessonMediaResourceInput> resources) {}
+            String articleMarkdown,
+            @Size(max = 100) List<@Valid LessonMediaResourceInput> resources) {
+        /** 兼容既有 Java 测试夹具；HTTP 契约仍包含显式可空 articleMarkdown。 */
+        public LessonInput(String title, LessonType type, int sequence, boolean previewable,
+                List<LessonMediaResourceInput> resources) {
+            this(title, type, sequence, previewable, null, resources);
+        }
+    }
 
     public record LessonMediaResourceInput(
             @NotNull UUID mediaId,
             @NotNull LessonMediaPurpose purpose,
-            @Positive @Max(100) int sequence) {}
+            @Positive @Max(100) int sequence,
+            @Size(max = 120) String displayName,
+            LessonResourcePresentation presentation) {
+        /** 兼容既有 Java 调用；服务端从媒体快照推导展示名与默认动作。 */
+        public LessonMediaResourceInput(UUID mediaId, LessonMediaPurpose purpose, int sequence) {
+            this(mediaId, purpose, sequence, null, null);
+        }
+    }
 
     public record UpdatePublicationRequest(
             @NotNull PublishTarget status,
@@ -112,12 +130,37 @@ public final class CourseDtos {
     public record Chapter(String id, String title, int sequence, List<LessonSummary> lessons) {}
 
     public record LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable,
-            List<LessonMediaResource> resources) {}
+            String articleMarkdown, List<LessonMediaResource> resources) {
+        /** 兼容既有 Java 调用；公开投影与旧测试不携带正文。 */
+        public LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable,
+                List<LessonMediaResource> resources) {
+            this(id, title, type, sequence, previewable, null, resources);
+        }
+    }
 
-    public record LessonMediaResource(String id, String mediaId, LessonMediaPurpose purpose, int sequence) {}
+    public record LessonMediaResource(String id, String mediaId, LessonMediaPurpose purpose, int sequence,
+            String displayName, LessonResourcePresentation presentation, String originalFileName,
+            String mimeType, long size) {}
 
     /** 短期 HLS 播放投影；URL 及请求头不得持久化、写事件或输出到普通日志。 */
     public record CourseMediaPlaybackGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+
+    /** 课程域完成可见性与资源动作判断后返回的短期安全媒体投影。 */
+    public record CourseMediaAccessGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+
+    public record CreateCourseResourceAccessGrantRequest(@NotNull CourseResourceAction action) {}
+
+    /** 受保护课时内容；附件仅暴露课程域 resourceId，浏览器不能凭 mediaId 申请授权。 */
+    public record LessonContent(String courseId, String lessonId, String title, LessonType type,
+            boolean previewable, String articleMarkdown, String playbackResourceId,
+            CourseMediaAccessGrant poster, List<LessonInlineImage> inlineImages,
+            List<LessonContentResource> resources) {}
+
+    public record LessonInlineImage(String resourceId, String mediaId, CourseMediaAccessGrant grant) {}
+
+    public record LessonContentResource(String id, LessonMediaPurpose purpose, String displayName,
+            LessonResourcePresentation presentation, String originalFileName, String mimeType, long size,
+            List<CourseResourceAction> actions) {}
 
     public record TeacherCourse(
             String id,

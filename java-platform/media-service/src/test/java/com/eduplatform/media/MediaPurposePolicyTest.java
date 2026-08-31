@@ -25,6 +25,23 @@ class MediaPurposePolicyTest {
                 UploadMode.MULTIPART);
         assertMode(MediaPurpose.ARTICLE_ATTACHMENT, "reading.pdf", "application/pdf", 20,
                 UploadMode.MULTIPART);
+        assertMode(MediaPurpose.ARTICLE_IMAGE, "formula.webp", "image/webp", 10L * 1024 * 1024,
+                UploadMode.SINGLE_PUT);
+    }
+
+    @Test
+    /** 正文图片固定单对象直传，并严格拒绝超限、GIF、SVG 与伪装 MIME。 */
+    void articleImageUsesStrictRasterPolicy() {
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.ARTICLE_IMAGE,
+                "animated.gif", "image/gif", 1024), Set.of("TEACHER"), 10))
+                .isInstanceOf(MediaException.class);
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.ARTICLE_IMAGE,
+                "vector.svg", "image/svg+xml", 1024), Set.of("TEACHER"), 10))
+                .isInstanceOf(MediaException.class);
+        assertThatThrownBy(() -> policy.validate(request(MediaPurpose.ARTICLE_IMAGE,
+                "oversized.png", "image/png", 10L * 1024 * 1024 + 1), Set.of("TEACHER"), 10))
+                .isInstanceOfSatisfying(MediaException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
     }
 
     @Test

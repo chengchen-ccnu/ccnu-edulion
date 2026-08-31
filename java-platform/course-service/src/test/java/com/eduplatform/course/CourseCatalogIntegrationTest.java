@@ -73,7 +73,8 @@ class CourseCatalogIntegrationTest {
                 new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, withVideo.revision()));
         CourseDtos.CourseDetail published = service.getPublished(draft.id());
         CourseDtos.LessonSummary publishedLesson = published.chapters().get(0).lessons().get(0);
-        CourseDtos.LessonMediaResource publishedResource = publishedLesson.resources().get(0);
+        assertThat(publishedLesson.resources()).as("公共课程详情不得泄漏资源绑定").isNull();
+        CourseDtos.LessonMediaResource publishedResource = withVideo.chapters().get(0).lessons().get(0).resources().get(0);
 
         CourseDtos.CourseMediaPlaybackGrant grant = service.createPublishedPlaybackGrant(
                 draft.id(), publishedLesson.id(), publishedResource.id(), studentId, "trace-public");
@@ -134,7 +135,8 @@ class CourseCatalogIntegrationTest {
         service.updatePublication(draft.id(), TEACHER_ID,
                 new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, nonPreview.revision()));
         CourseDtos.LessonSummary lesson = service.getPublished(draft.id()).chapters().get(0).lessons().get(0);
-        CourseDtos.LessonMediaResource resource = lesson.resources().get(0);
+        assertThat(lesson.resources()).isNull();
+        CourseDtos.LessonMediaResource resource = nonPreview.chapters().get(0).lessons().get(0).resources().get(0);
 
         assertThatThrownBy(() -> service.createPublishedPlaybackGrant(
                 draft.id(), lesson.id(), resource.id(), studentId, "trace-enrollment"))
@@ -170,8 +172,9 @@ class CourseCatalogIntegrationTest {
         service.updatePublication(draft.id(), TEACHER_ID,
                 new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, previewDraft.revision()));
         CourseDtos.LessonSummary previewLesson = service.getPublished(draft.id()).chapters().get(0).lessons().get(0);
+        CourseDtos.LessonMediaResource previewResource = previewDraft.chapters().get(0).lessons().get(0).resources().get(0);
         assertThat(service.createPublishedPlaybackGrant(draft.id(), previewLesson.id(),
-                previewLesson.resources().get(0).id(), studentId, "trace-preview").method()).isEqualTo("GET");
+                previewResource.id(), studentId, "trace-preview").method()).isEqualTo("GET");
     }
 
     @Test
@@ -264,7 +267,7 @@ class CourseCatalogIntegrationTest {
 
         assertThat(edited.coverMediaId()).isEqualTo(draftCover.toString());
         CourseDtos.CourseDetail published = service.getPublished(draft.id());
-        assertThat(published.coverMediaId()).isEqualTo(publishedCover.toString());
+        assertThat(published.coverMediaId()).as("公共详情只返回授权后的封面投影").isNull();
         assertThat(published.coverUrl()).isEqualTo("https://oss.example.test/temporary-cover/" + publishedCover);
         assertThat(coverClient.lastRequest().viewerId()).isEqualTo("00000000-0000-0000-0000-000000000000");
         assertOutboxCount("MediaReferenceBound", publishedCover, 2);
@@ -424,6 +427,158 @@ class CourseCatalogIntegrationTest {
                         error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
     }
 
+    @Test
+    /** ARTICLE 保存完整受控 Markdown 与安全快照；公共详情不泄漏，受保护内容按资源动作投影。 */
+    void articleContentRequiresExactImageBindingsAndReturnsSafeProtectedProjection() {
+        UUID image = UUID.randomUUID();
+        UUID pdf = UUID.randomUUID();
+        UUID text = UUID.randomUUID();
+        UUID slides = UUID.randomUUID();
+        mediaClient.register(image.toString(), TEACHER_ID, "ARTICLE_IMAGE", "READY",
+                "formula.webp", "image/webp", 2048);
+        mediaClient.register(pdf.toString(), TEACHER_ID, "ARTICLE_ATTACHMENT", "READY",
+                "讲义.pdf", "application/pdf", 4096);
+        mediaClient.register(text.toString(), TEACHER_ID, "ARTICLE_ATTACHMENT", "READY",
+                "说明.txt", "text/plain", 512);
+        mediaClient.register(slides.toString(), TEACHER_ID, "COURSEWARE", "READY",
+                "课件.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", 8192);
+        String markdown = "# 二次函数\n\n公式 $y=ax^2$\n\n|a|b|\n|-|-|\n|1|2|\n\n```java\nint y = x*x;\n```\n"
+                + "![函数图像](media:" + image + ")\n\n![再次引用](media:" + image + ")";
+        var draft = service.create(TEACHER_ID, createRequest(UUID.randomUUID(), "图文课程")).course();
+        var lesson = new CourseDtos.LessonInput("图文课", CourseDtos.LessonType.ARTICLE, 1, true, markdown,
+                List.of(
+                        new CourseDtos.LessonMediaResourceInput(image, CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE,
+                                1, null, CourseDtos.LessonResourcePresentation.INLINE),
+                        new CourseDtos.LessonMediaResourceInput(pdf, CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT,
+                                1, "PDF 讲义", CourseDtos.LessonResourcePresentation.INLINE),
+                        new CourseDtos.LessonMediaResourceInput(text, CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT,
+                                2, null, CourseDtos.LessonResourcePresentation.DOWNLOAD),
+                        new CourseDtos.LessonMediaResourceInput(slides, CourseDtos.LessonMediaPurpose.COURSEWARE,
+                                1, null, CourseDtos.LessonResourcePresentation.DOWNLOAD)));
+        var saved = service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("图文", 1, List.of(lesson)))));
+        var teacherLesson = saved.chapters().get(0).lessons().get(0);
+        assertThat(teacherLesson.articleMarkdown()).isEqualTo(markdown);
+        assertThat(teacherLesson.resources()).hasSize(4);
+        assertThat(teacherLesson.resources()).allSatisfy(resource -> {
+            assertThat(resource.originalFileName()).isNotBlank();
+            assertThat(resource.mimeType()).isNotBlank();
+            assertThat(resource.size()).isPositive();
+        });
+        service.updatePublication(draft.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, saved.revision()));
+
+        var publicLesson = service.getPublished(draft.id()).chapters().get(0).lessons().get(0);
+        assertThat(publicLesson.articleMarkdown()).isNull();
+        assertThat(publicLesson.resources()).isNull();
+        var content = service.getPublishedLessonContent(draft.id(), publicLesson.id(),
+                "00000000-0000-4000-8000-000000009201", "trace-article-content");
+        assertThat(content.articleMarkdown()).isEqualTo(markdown);
+        assertThat(content.inlineImages()).singleElement().satisfies(value -> {
+            assertThat(value.mediaId()).isEqualTo(image.toString());
+            assertThat(value.grant().url()).contains("temporary-content");
+        });
+        assertThat(content.resources()).hasSize(3).allSatisfy(resource ->
+                assertThat(resource.id()).isNotEqualTo(resource.originalFileName()));
+        var pptx = teacherLesson.resources().stream().filter(resource -> resource.mediaId().equals(slides.toString()))
+                .findFirst().orElseThrow();
+        assertThatThrownBy(() -> service.createPublishedResourceGrant(draft.id(), publicLesson.id(), pptx.id(),
+                CourseDtos.CourseResourceAction.PREVIEW, "00000000-0000-4000-8000-000000009201", "trace-pptx"))
+                .isInstanceOf(CourseException.class);
+        assertThat(service.createPublishedResourceGrant(draft.id(), publicLesson.id(), pptx.id(),
+                CourseDtos.CourseResourceAction.DOWNLOAD, "00000000-0000-4000-8000-000000009201", "trace-pptx-download")
+                .method()).isEqualTo("GET");
+    }
+
+    @Test
+    /** 类型改变释放不兼容资源并保留最终请求中的 COURSEWARE 稳定引用。 */
+    void lessonTypeChangeReleasesOnlyIncompatibleResourcesAndRetainsCourseware() {
+        UUID video = UUID.randomUUID();
+        UUID poster = UUID.randomUUID();
+        UUID subtitle = UUID.randomUUID();
+        UUID courseware = UUID.randomUUID();
+        UUID articleImage = UUID.randomUUID();
+        mediaClient.register(video.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+        mediaClient.register(poster.toString(), TEACHER_ID, "VIDEO_POSTER", "READY");
+        mediaClient.register(subtitle.toString(), TEACHER_ID, "SUBTITLE", "READY");
+        mediaClient.register(courseware.toString(), TEACHER_ID, "COURSEWARE", "READY");
+        mediaClient.register(articleImage.toString(), TEACHER_ID, "ARTICLE_IMAGE", "READY");
+        var draft = service.create(TEACHER_ID, createRequest(UUID.randomUUID(), "类型转换")).course();
+        var videoLesson = new CourseDtos.LessonInput("视频", CourseDtos.LessonType.VIDEO, 1, false, null,
+                List.of(
+                        new CourseDtos.LessonMediaResourceInput(video, CourseDtos.LessonMediaPurpose.LESSON_VIDEO, 1),
+                        new CourseDtos.LessonMediaResourceInput(poster, CourseDtos.LessonMediaPurpose.VIDEO_POSTER, 1),
+                        new CourseDtos.LessonMediaResourceInput(subtitle, CourseDtos.LessonMediaPurpose.SUBTITLE, 1),
+                        new CourseDtos.LessonMediaResourceInput(courseware, CourseDtos.LessonMediaPurpose.COURSEWARE, 1)));
+        var videoSaved = service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(videoLesson)))));
+        String coursewareResourceId = videoSaved.chapters().get(0).lessons().get(0).resources().stream()
+                .filter(resource -> resource.purpose() == CourseDtos.LessonMediaPurpose.COURSEWARE)
+                .findFirst().orElseThrow().id();
+
+        String markdown = "![正文图](media:" + articleImage + ")";
+        var articleLesson = new CourseDtos.LessonInput("图文", CourseDtos.LessonType.ARTICLE, 1, false, markdown,
+                List.of(
+                        new CourseDtos.LessonMediaResourceInput(courseware, CourseDtos.LessonMediaPurpose.COURSEWARE, 1),
+                        new CourseDtos.LessonMediaResourceInput(articleImage, CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE, 1)));
+        var articleSaved = service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(videoSaved.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(articleLesson)))));
+        String retainedId = articleSaved.chapters().get(0).lessons().get(0).resources().stream()
+                .filter(resource -> resource.purpose() == CourseDtos.LessonMediaPurpose.COURSEWARE)
+                .findFirst().orElseThrow().id();
+        assertThat(retainedId).isEqualTo(coursewareResourceId);
+        assertOutboxCount("MediaReferenceReleased", video, 1);
+        assertOutboxCount("MediaReferenceReleased", poster, 1);
+        assertOutboxCount("MediaReferenceReleased", subtitle, 1);
+        assertOutboxCount("MediaReferenceReleased", courseware, 0);
+    }
+
+    @Test
+    void articleDraftRejectsDangerousMarkdownAndReferenceBindingMismatchImmediately() {
+        var draft = service.create(TEACHER_ID, createRequest(UUID.randomUUID(), "非法正文")).course();
+        var dangerous = new CourseDtos.LessonInput("危险", CourseDtos.LessonType.ARTICLE, 1, false,
+                "<iframe src=\"https://example.test\"></iframe>", List.of());
+        assertThatThrownBy(() -> service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(dangerous))))))
+                .isInstanceOfSatisfying(CourseException.class,
+                        error -> assertThat(error.code()).isEqualTo("COURSE.MARKDOWN_INVALID"));
+
+        var disguisedAsVideo = new CourseDtos.LessonInput("危险视频", CourseDtos.LessonType.VIDEO, 1, false,
+                "<script>alert('xss')</script>", List.of());
+        assertThatThrownBy(() -> service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(disguisedAsVideo))))))
+                .isInstanceOfSatisfying(CourseException.class,
+                        error -> assertThat(error.code()).isEqualTo("COURSE.MARKDOWN_INVALID"));
+
+        UUID missing = UUID.randomUUID();
+        var mismatch = new CourseDtos.LessonInput("错配", CourseDtos.LessonType.ARTICLE, 1, false,
+                "![缺失绑定](media:" + missing + ")", List.of());
+        assertThatThrownBy(() -> service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(mismatch))))))
+                .isInstanceOfSatisfying(CourseException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
+
+        UUID inlineImage = UUID.randomUUID();
+        mediaClient.register(inlineImage.toString(), TEACHER_ID, "ARTICLE_IMAGE", "READY",
+                "正文图.webp", "image/webp", 1024);
+        var downloadableImage = new CourseDtos.LessonInput("错动作", CourseDtos.LessonType.ARTICLE, 1, false,
+                "![正文图](media:" + inlineImage + ")",
+                List.of(new CourseDtos.LessonMediaResourceInput(inlineImage,
+                        CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE, 1, null,
+                        CourseDtos.LessonResourcePresentation.DOWNLOAD)));
+        assertThatThrownBy(() -> service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("一", 1, List.of(downloadableImage))))))
+                .isInstanceOfSatisfying(CourseException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMON.VALIDATION_FAILED"));
+    }
+
     private CourseDtos.CreateCourseRequest createRequest(UUID requestId, String title) {
         return createRequest(requestId, title, null);
     }
@@ -478,7 +633,8 @@ class CourseCatalogIntegrationTest {
                         "第一章",
                         1,
                         List.of(new CourseDtos.LessonInput(
-                                "第一课", CourseDtos.LessonType.VIDEO, 1, previewable,
+                                "第一课", videoMediaId == null ? CourseDtos.LessonType.ARTICLE : CourseDtos.LessonType.VIDEO,
+                                1, previewable, videoMediaId == null ? "# 图文课时\n\n正文内容。" : null,
                                 videoMediaId == null ? List.of() : List.of(new CourseDtos.LessonMediaResourceInput(
                                         videoMediaId, CourseDtos.LessonMediaPurpose.LESSON_VIDEO, 1)))))));
     }

@@ -96,6 +96,24 @@ public class ServiceAuthorizationVerifier {
                     && request.purpose() == com.eduplatform.media.domain.MediaPurpose.COURSE_COVER
                     && "ORIGINAL".equals(request.variant())
                     && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            boolean articleImage = courseIssuer && "COURSE_ARTICLE_IMAGE".equals(request.accessType())
+                    && request.purpose() == com.eduplatform.media.domain.MediaPurpose.ARTICLE_IMAGE
+                    && "ORIGINAL".equals(request.variant())
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            boolean poster = courseIssuer && "COURSE_POSTER".equals(request.accessType())
+                    && ((request.purpose() == com.eduplatform.media.domain.MediaPurpose.VIDEO_POSTER
+                            && "ORIGINAL".equals(request.variant()))
+                        || (request.purpose() == com.eduplatform.media.domain.MediaPurpose.LESSON_VIDEO
+                            && "poster-v1".equals(request.variant())))
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            boolean courseResourcePurpose = Set.of(com.eduplatform.media.domain.MediaPurpose.COURSEWARE,
+                    com.eduplatform.media.domain.MediaPurpose.ARTICLE_ATTACHMENT).contains(request.purpose());
+            boolean resourcePreview = courseIssuer && "COURSE_RESOURCE_PREVIEW".equals(request.accessType())
+                    && courseResourcePurpose && "ORIGINAL".equals(request.variant())
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE;
+            boolean resourceDownload = courseIssuer && "COURSE_RESOURCE_DOWNLOAD".equals(request.accessType())
+                    && courseResourcePurpose && "ORIGINAL".equals(request.variant())
+                    && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.ATTACHMENT;
             boolean assessmentMedia = learningIssuer && "ASSESSMENT_QUESTION".equals(request.accessType())
                     && Set.of(com.eduplatform.media.domain.MediaPurpose.QUESTION_IMAGE,
                             com.eduplatform.media.domain.MediaPurpose.QUESTION_AUDIO,
@@ -105,7 +123,8 @@ public class ServiceAuthorizationVerifier {
                             && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.ATTACHMENT)
                         || (request.purpose() != com.eduplatform.media.domain.MediaPurpose.QUESTION_ATTACHMENT
                             && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE));
-            if (!playback && !coverDisplay && !assessmentMedia) {
+            if (!playback && !coverDisplay && !articleImage && !poster
+                    && !resourcePreview && !resourceDownload && !assessmentMedia) {
                 throw rejected();
             }
             if (!repository.consumeServiceAuthorization(jwt.getId(), issuer,

@@ -35,13 +35,18 @@ function fixture(accessType: CourseDetail["accessType"]): CourseDetail {
     category: { id: "category-1", name: "数学" }, level: "BEGINNER", accessType,
     publishedVersion: "v1", chapters: [{ id: "chapter-1", title: "第一章", sequence: 1, lessons: [
       { id: "lesson-2", title: "试看视频", type: "VIDEO", sequence: 2, previewable: true,
-        resources: [{ id: "resource-2", mediaId: "media-2", purpose: "LESSON_VIDEO", sequence: 1 }] },
+        resources: [resource("resource-2", "media-2", "LESSON_VIDEO", 1)] },
       { id: "lesson-article", title: "图文", type: "ARTICLE", sequence: 3, previewable: true, resources: [] },
       { id: "lesson-1", title: "正式视频", type: "VIDEO", sequence: 1, previewable: false,
         resources: [
-          { id: "resource-other", mediaId: "media-other", purpose: "ARTICLE_ATTACHMENT", sequence: 1 },
-          { id: "resource-1", mediaId: "media-1", purpose: "LESSON_VIDEO", sequence: 2 }
+          resource("resource-other", "media-other", "ARTICLE_ATTACHMENT", 1),
+          resource("resource-1", "media-1", "LESSON_VIDEO", 2)
         ] }
     ] }]
   };
+}
+
+function resource(id: string, mediaId: string, purpose: "LESSON_VIDEO" | "ARTICLE_ATTACHMENT", sequence: number) {
+  return { id, mediaId, purpose, sequence, displayName: "测试资源", presentation: "DOWNLOAD" as const,
+    originalFileName: "resource.bin", mimeType: "application/octet-stream", size: 8 };
 }

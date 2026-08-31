@@ -80,7 +80,9 @@ public final class MediaDtos {
     public record BindingValidationRequest(@NotNull MediaPurpose purpose) {}
 
     /** 成功响应本身证明 owner、用途和 READY 状态均已由 media-service 校验。 */
-    public record BindingValidation(String mediaId, MediaPurpose purpose, MediaStatus status, boolean bindable) {}
+    public record BindingValidation(String mediaId, MediaPurpose purpose, MediaStatus status, boolean bindable,
+            String originalFileName, String mimeType, long size, List<String> variants,
+            String processingContractVersion) {}
 
     public record Asset(
             String mediaId,
@@ -88,6 +90,7 @@ public final class MediaDtos {
             MediaPurpose purpose,
             MediaStatus status,
             ProcessingStatus processingStatus,
+            String processingContractVersion,
             String originalFileName,
             String mimeType,
             long size,

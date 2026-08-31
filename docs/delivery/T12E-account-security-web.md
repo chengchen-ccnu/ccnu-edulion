@@ -95,7 +95,7 @@ pnpm.cmd --dir web-apps --filter @edu/student-web run dev
 - 真实短信供应商未接入，前端只能按渠道能力关闭手机相关发送入口；不得用固定码模拟生产能力。
 - 教师资质真实上传依赖 media-service、OSS 和 `TEACHER_QUALIFICATION` 授权；本轮浏览器未创建 OSS 对象，自动化已覆盖生成契约调用和失败状态。
 - T16 再实现教师审核决定，T17A 再实现头像与完整资料，T12H 再设计账号注销；T12E 页面不提前展示这些入口。
-- 分支为 `codex/t12e-account-security-web`，关键实现提交为 `57b3643`；Ready PR 为 [#41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41)，本任务不自行合并。
+- 分支为 `codex/t12e-account-security-web`，关键实现提交为 `57b3643`，最终交付记录提交为 `a21ef9d`。[PR #41](https://github.com/chengchen-ccnu/ccnu-edulion/pull/41) 已在全部 CI 成功后合并到 `main@319a404`；本地 `main` 已同步，功能分支已清理。
 
 ## 注释与可读性检查
 

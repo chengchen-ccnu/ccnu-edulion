@@ -87,6 +87,12 @@ public class GatewaySecurityConfig {
                                 "/api/v1/auth/captchas", "/api/v1/auth/captchas/*/refresh").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/auth/channel-capabilities",
                                 "/api/v1/protocols/current").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/courses/*/lessons/*/content")
+                        .hasAuthority("learning:access")
+                        .pathMatchers(HttpMethod.POST,
+                                "/api/v1/courses/*/lessons/*/resources/*/playback-grants",
+                                "/api/v1/courses/*/lessons/*/resources/*/access-grants")
+                        .hasAuthority("learning:access")
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/api/v1/teacher/courses", "/api/v1/teacher/courses/**").hasRole("TEACHER")
                         .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")

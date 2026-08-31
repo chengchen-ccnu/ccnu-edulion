@@ -40,11 +40,16 @@ function course(): CourseDetail {
     level: "BEGINNER", accessType: "ENROLLMENT_REQUIRED", publishedVersion: "v2", chapters: [{
       id: "chapter-1", title: "第一章", sequence: 1, lessons: [
         { id: "lesson-1", title: "第一课", type: "VIDEO", sequence: 1, previewable: false,
-          resources: [{ id: "resource-1", mediaId: "media-1", purpose: "LESSON_VIDEO", sequence: 1 }] },
+          resources: [resource("resource-1", "media-1")] },
         { id: "lesson-2", title: "第二课", type: "VIDEO", sequence: 2, previewable: false,
-          resources: [{ id: "resource-2", mediaId: "media-2", purpose: "LESSON_VIDEO", sequence: 1 }] }
+          resources: [resource("resource-2", "media-2")] }
       ]
     }] };
+}
+
+function resource(id: string, mediaId: string) {
+  return { id, mediaId, purpose: "LESSON_VIDEO" as const, sequence: 1, displayName: "测试视频",
+    presentation: "INLINE" as const, originalFileName: "lesson.mp4", mimeType: "video/mp4", size: 8 };
 }
 
 function courseProgress(lessons: LessonProgress[]): CourseProgress {

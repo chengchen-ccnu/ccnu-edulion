@@ -8,6 +8,7 @@ public class LessonEntity {
     private String lessonType;
     private int position;
     private boolean previewable;
+    private String articleMarkdown;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -21,4 +22,6 @@ public class LessonEntity {
     public void setPosition(int position) { this.position = position; }
     public boolean isPreviewable() { return previewable; }
     public void setPreviewable(boolean previewable) { this.previewable = previewable; }
+    public String getArticleMarkdown() { return articleMarkdown; }
+    public void setArticleMarkdown(String articleMarkdown) { this.articleMarkdown = articleMarkdown; }
 }
