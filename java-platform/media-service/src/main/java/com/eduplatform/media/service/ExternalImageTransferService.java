@@ -87,7 +87,7 @@ public class ExternalImageTransferService {
                     "legacy-question-image." + extension, extension, downloaded.mimeType(), downloaded.bytes().length,
                     digest, objectKey, null, null, digest, mediaId, now.plus(properties.upload().sessionTtl()), now, now);
             MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, request.scope(), MediaPurpose.QUESTION_IMAGE,
-                    MediaStatus.READY, ProcessingStatus.SUCCEEDED, objectKey, session.originalFilename(),
+                    MediaStatus.READY, ProcessingStatus.SUCCEEDED, null, objectKey, session.originalFilename(),
                     downloaded.mimeType(), downloaded.bytes().length, digest, metadata.etag(), null, null,
                     now.plus(properties.maintenance().unboundRetention()), null, now, now);
             try {
@@ -128,7 +128,7 @@ public class ExternalImageTransferService {
 
     private MediaDtos.Asset response(MediaAsset asset) {
         return new MediaDtos.Asset(asset.mediaId(), asset.scope(), asset.purpose(), asset.status(), asset.processingStatus(),
-                asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), List.of(),
+                asset.processingContractVersion(), asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), List.of(),
                 asset.failureCode(), asset.failureMessage(), asset.createdAt(), asset.updatedAt());
     }
     private static String extension(String mime) { return switch (mime) {

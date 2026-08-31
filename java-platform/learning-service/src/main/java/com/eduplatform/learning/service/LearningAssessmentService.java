@@ -156,6 +156,51 @@ public class LearningAssessmentService {
         return progress(value, !inserted);
     }
 
+    /**
+     * 将成功渲染的 ARTICLE 课时从 0 单向推进到 100%。命令使用独立 clientRequestId 幂等表，
+     * 不生成视频 positionSeconds/watchedSeconds 事件；PUBLIC 或有效报名用户才可首次记录。
+     */
+    @Transactional
+    public LearningDtos.ArticleLessonCompletion completeArticle(String learnerId, String courseId, String lessonId,
+            LearningDtos.CompleteArticleLessonRequest input, String traceId) {
+        String requestId = input.clientRequestId().toString();
+        var replay = repository.articleCompletionRequest(requestId);
+        if (replay.isPresent()) {
+            var existingRequest = replay.orElseThrow();
+            if (!existingRequest.learnerId().equals(learnerId) || !existingRequest.courseId().equals(courseId)
+                    || !existingRequest.lessonId().equals(lessonId)) {
+                throw conflict("LEARNING.IDEMPOTENCY_CONFLICT", "相同请求 ID 已用于其他图文课时");
+            }
+            var fact = repository.articleCompletion(learnerId, courseId, lessonId);
+            return articleCompletion(fact, true);
+        }
+        CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
+        requireLesson(course, lessonId);
+        if (!course.isArticle(lessonId)) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "LEARNING.LESSON_TYPE_INVALID",
+                    "只有 ARTICLE 课时可以使用图文完成命令");
+        }
+        Instant now = Instant.now();
+        var candidate = new LearningAssessmentRepository.ArticleCompletionRow(UUID.randomUUID().toString(),
+                learnerId, courseId, lessonId, now);
+        boolean newFact = repository.insertArticleCompletionFact(candidate);
+        var fact = repository.articleCompletion(learnerId, courseId, lessonId);
+        if (newFact) {
+            repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId, now, now);
+            repository.markArticleProgressCompleted(learnerId, courseId, lessonId, now);
+        }
+        boolean inserted = repository.insertArticleCompletionRequest(requestId, learnerId, courseId,
+                lessonId, fact.id(), now);
+        if (!inserted) {
+            var current = repository.articleCompletionRequest(requestId).orElseThrow();
+            if (!current.learnerId().equals(learnerId) || !current.courseId().equals(courseId)
+                    || !current.lessonId().equals(lessonId)) {
+                throw conflict("LEARNING.IDEMPOTENCY_CONFLICT", "相同请求 ID 已用于其他图文课时");
+            }
+        }
+        return articleCompletion(fact, !inserted);
+    }
+
     /** 校验课程访问权后返回本人课时进度和按当前发布目录计算的完成率。 */
     public LearningDtos.CourseProgress progress(String learnerId, String courseId, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
@@ -1213,6 +1258,12 @@ public class LearningAssessmentService {
     private static LearningDtos.LessonProgress progress(ProgressRow row, boolean replayed) {
         return new LearningDtos.LessonProgress(row.courseId(), row.lessonId(), row.positionSeconds(),
                 row.watchedSeconds(), row.completed(), row.lastEventAt(), row.revision(), replayed);
+    }
+
+    private static LearningDtos.ArticleLessonCompletion articleCompletion(
+            LearningAssessmentRepository.ArticleCompletionRow row, boolean replayed) {
+        return new LearningDtos.ArticleLessonCompletion(row.courseId(), row.lessonId(), 100,
+                row.completedAt(), row.revision(), replayed);
     }
 
     private static LearningDtos.LearningNote note(NoteRow row) {

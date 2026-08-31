@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -46,6 +48,31 @@ public class CourseController {
     /** 返回公开课程详情与章节课时，不暴露教师草稿。 */
     CourseDtos.CourseDetail detail(@PathVariable @Pattern(regexp = UUID_PATTERN) String courseId) {
         return service.getPublished(courseId);
+    }
+
+    @GetMapping("/{courseId}/lessons/{lessonId}/content")
+    /** 登录用户读取发布课时内容；课程访问类型、报名或试看由 course-service 自行判断。 */
+    CourseDtos.LessonContent content(
+            @PathVariable @Pattern(regexp = UUID_PATTERN) String courseId,
+            @PathVariable @Pattern(regexp = UUID_PATTERN) String lessonId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            HttpServletRequest servletRequest) {
+        CourseViewerIdentity viewer = CourseViewerIdentity.require(userId);
+        return service.getPublishedLessonContent(courseId, lessonId, viewer.userId(), trace(servletRequest));
+    }
+
+    @PostMapping("/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants")
+    /** 只接收课程域资源 ID 与 preview/download 动作，mediaId、用途和 disposition 均由服务端解析。 */
+    CourseDtos.CourseMediaAccessGrant resourceGrant(
+            @PathVariable @Pattern(regexp = UUID_PATTERN) String courseId,
+            @PathVariable @Pattern(regexp = UUID_PATTERN) String lessonId,
+            @PathVariable @Pattern(regexp = UUID_PATTERN) String resourceId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @Valid @RequestBody CourseDtos.CreateCourseResourceAccessGrantRequest request,
+            HttpServletRequest servletRequest) {
+        CourseViewerIdentity viewer = CourseViewerIdentity.require(userId);
+        return service.createPublishedResourceGrant(courseId, lessonId, resourceId, request.action(),
+                viewer.userId(), trace(servletRequest));
     }
 
     @PostMapping("/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants")

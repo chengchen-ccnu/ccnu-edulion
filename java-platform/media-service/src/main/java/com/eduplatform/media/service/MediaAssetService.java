@@ -57,6 +57,7 @@ public class MediaAssetService {
     public static final String PROCESS_JOB = "COURSE_MEDIA_PROCESSING";
     public static final String PRESET_VERSION = "hls-fmp4-v2";
     public static final String LEGACY_PLAYBACK_VARIANT = "hls-v1";
+    public static final String LESSON_VIDEO_V5 = "LESSON_VIDEO_V5";
 
     private final MediaRepository repository;
     private final MediaPurposePolicy policy;
@@ -209,7 +210,8 @@ public class MediaAssetService {
             String mediaId = UUID.randomUUID().toString();
             MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, MediaAssetScope.TEACHER,
                     locked.purpose(), MediaStatus.PROCESSING,
-                    ProcessingStatus.PENDING, locked.objectKey(), locked.originalFilename(), metadata.mimeType(),
+                    ProcessingStatus.PENDING, locked.purpose() == MediaPurpose.LESSON_VIDEO ? LESSON_VIDEO_V5 : null,
+                    locked.objectKey(), locked.originalFilename(), metadata.mimeType(),
                     metadata.size(), locked.declaredSha256(), metadata.etag(), null, null,
                     now.plus(properties.maintenance().unboundRetention()), null, now, now);
             repository.insertAsset(asset);
@@ -274,7 +276,11 @@ public class MediaAssetService {
         if (asset.status() != MediaStatus.READY) {
             conflict("MEDIA.NOT_READY", "媒体尚未处理完成");
         }
-        return new MediaDtos.BindingValidation(mediaId, asset.purpose(), asset.status(), true);
+        List<String> variants = repository.listVariants(mediaId).stream()
+                .map(value -> value.variantName()).sorted().toList();
+        return new MediaDtos.BindingValidation(mediaId, asset.purpose(), asset.status(), true,
+                asset.originalFilename(), asset.mimeType(), asset.size(), variants,
+                asset.processingContractVersion());
     }
 
     /**
@@ -425,6 +431,7 @@ public class MediaAssetService {
                 .map(value -> new MediaDtos.Variant(value.variantName(), value.mimeType(), value.size(),
                         repository.listVariantComponents(value.variantId()).size())).toList();
         return new MediaDtos.Asset(asset.mediaId(), asset.scope(), asset.purpose(), asset.status(), asset.processingStatus(),
+                asset.processingContractVersion(),
                 asset.originalFilename(), asset.mimeType(), asset.size(), asset.sha256(), variants,
                 asset.failureCode(), asset.failureMessage(), asset.createdAt(), asset.updatedAt());
     }

@@ -99,6 +99,11 @@ class MediaHttpIntegrationTest {
         assertThat(valid.statusCode()).isEqualTo(200);
         assertThat(valid.body()).contains("\"bindable\":true", "\"status\":\"READY\"")
                 .doesNotContain("objectKey", "url");
+        JsonNode validation = mapper.readTree(valid.body());
+        assertThat(validation.get("originalFileName").asText()).isEqualTo("cover.png");
+        assertThat(validation.get("mimeType").asText()).isEqualTo("image/png");
+        assertThat(validation.get("size").asLong()).isPositive();
+        assertThat(validation.get("variants").isArray()).isTrue();
         assertThat(send("POST", "/api/v1/media/" + ready.mediaId() + "/binding-validations",
                 "{\"purpose\":\"LESSON_VIDEO\"}", "TEACHER").statusCode()).isEqualTo(422);
         assertThat(sendAs("POST", "/api/v1/media/" + ready.mediaId() + "/binding-validations",
@@ -186,9 +191,14 @@ class MediaHttpIntegrationTest {
 
         JsonNode ready = mapper.readTree(send("GET", "/api/v1/media/" + video.mediaId(), null, "TEACHER").body());
         assertThat(ready.get("status").asString()).isEqualTo("READY");
+        assertThat(ready.get("processingContractVersion").asText()).isEqualTo("LESSON_VIDEO_V5");
         assertThat(ready.get("variants")).anySatisfy(value ->
                 assertThat(value.get("variant").asString()).isEqualTo(HLS_V2));
-        assertThat(ready.get("variants").get(0).get("componentCount").asInt()).isEqualTo(2);
+        assertThat(ready.get("variants")).anySatisfy(value -> {
+            assertThat(value.get("variant").asString()).isEqualTo("poster-v1");
+            assertThat(value.get("mimeType").asString()).isEqualTo("image/webp");
+        });
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant_component", Integer.class)).isEqualTo(2);
         assertThat(ffmpeg.lastScratch()).isNotNull();
         assertThat(Files.exists(ffmpeg.lastScratch())).isFalse();

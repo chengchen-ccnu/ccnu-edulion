@@ -142,6 +142,19 @@ class MediaRealEnvironmentAcceptanceTest {
                 assertThat(readyVideo.get("processingStatus").asString()).isEqualTo("SUCCEEDED");
                 assertThat(readyVideo.get("variants")).anySatisfy(node ->
                         assertThat(node.get("variant").asString()).isEqualTo("hls-fmp4-v2"));
+                assertThat(readyVideo.get("processingContractVersion").asString()).isEqualTo("LESSON_VIDEO_V5");
+                assertThat(readyVideo.get("variants")).anySatisfy(node -> {
+                    assertThat(node.get("variant").asString()).isEqualTo("poster-v1");
+                    assertThat(node.get("mimeType").asString()).isEqualTo("image/webp");
+                    assertThat(node.get("size").asLong()).isPositive();
+                });
+                JsonNode posterGrant = mapper.readTree(send(port, "POST", "/api/v1/media/" + videoId
+                        + "/access-grants", "{\"variant\":\"poster-v1\",\"disposition\":\"INLINE\"}").body());
+                HttpResponse<byte[]> poster = http.send(HttpRequest.newBuilder(
+                                URI.create(posterGrant.get("url").asString())).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(poster.statusCode()).isEqualTo(200);
+                assertThat(poster.body()).isNotEmpty();
                 JsonNode hlsGrant = mapper.readTree(send(port, "POST", "/api/v1/media/" + videoId
                         + "/access-grants", "{\"variant\":\"hls-fmp4-v2\",\"disposition\":\"INLINE\"}").body());
                 HttpResponse<String> playlist = http.send(HttpRequest.newBuilder(
@@ -217,7 +230,7 @@ class MediaRealEnvironmentAcceptanceTest {
                 assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_asset WHERE owner_id = ?", Integer.class, OWNER))
                         .isEqualTo(3);
                 assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM media_variant WHERE media_id = ?", Integer.class, videoId))
-                        .isGreaterThanOrEqualTo(1);
+                        .isEqualTo(2);
             } finally {
                 context.getBean(RabbitListenerEndpointRegistry.class).stop();
                 cleanupExact(storage, repository, jdbc, eventIds);

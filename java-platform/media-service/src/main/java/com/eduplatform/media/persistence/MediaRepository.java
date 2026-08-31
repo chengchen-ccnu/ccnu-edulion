@@ -132,11 +132,11 @@ public class MediaRepository {
     public void insertAsset(MediaAsset asset) {
         jdbc.update("""
                 INSERT INTO media_asset(media_id, upload_id, owner_id, scope, purpose, status, processing_status,
-                    object_key, original_filename, mime_type, size_bytes, sha256, etag, failure_code,
+                    processing_contract_version, object_key, original_filename, mime_type, size_bytes, sha256, etag, failure_code,
                     failure_message, unbound_expires_at, deleted_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, asset.mediaId(), asset.uploadId(), asset.ownerId(), asset.scope().name(), asset.purpose().name(), asset.status().name(),
-                asset.processingStatus().name(), asset.objectKey(), asset.originalFilename(), asset.mimeType(),
+                asset.processingStatus().name(), asset.processingContractVersion(), asset.objectKey(), asset.originalFilename(), asset.mimeType(),
                 asset.size(), asset.sha256(), asset.etag(), asset.failureCode(), asset.failureMessage(),
                 timestamp(asset.unboundExpiresAt()), timestamp(asset.deletedAt()), timestamp(asset.createdAt()),
                 timestamp(asset.updatedAt()));
@@ -516,7 +516,7 @@ public class MediaRepository {
             rs.getString("media_id"), rs.getString("upload_id"), rs.getString("owner_id"),
             MediaAssetScope.valueOf(rs.getString("scope")),
             MediaPurpose.valueOf(rs.getString("purpose")), MediaStatus.valueOf(rs.getString("status")),
-            ProcessingStatus.valueOf(rs.getString("processing_status")), rs.getString("object_key"),
+            ProcessingStatus.valueOf(rs.getString("processing_status")), rs.getString("processing_contract_version"), rs.getString("object_key"),
             rs.getString("original_filename"), rs.getString("mime_type"), rs.getLong("size_bytes"),
             rs.getString("sha256"), rs.getString("etag"), rs.getString("failure_code"),
             rs.getString("failure_message"), nullableInstant(rs, "unbound_expires_at"),

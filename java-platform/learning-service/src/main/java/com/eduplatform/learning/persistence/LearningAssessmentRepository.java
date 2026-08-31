@@ -113,6 +113,51 @@ public class LearningAssessmentRepository {
                 this::progress, learnerId, courseId);
     }
 
+    /** 查询 ARTICLE 完成命令幂等键；调用方据此拒绝同一 ID 被挪用于其他课时。 */
+    public Optional<ArticleCompletionRequestRow> articleCompletionRequest(String clientRequestId) {
+        return jdbc.query("SELECT * FROM article_completion_request WHERE client_request_id=?", (rs, row) ->
+                new ArticleCompletionRequestRow(rs.getString("client_request_id"), rs.getString("learner_id"),
+                        rs.getString("course_id"), rs.getString("lesson_id"), rs.getString("completion_id")),
+                clientRequestId).stream().findFirst();
+    }
+
+    /** 仅首次插入单调完成事实；唯一约束吸收其他请求 ID 或并发调用。 */
+    public boolean insertArticleCompletionFact(ArticleCompletionRow value) {
+        try {
+            jdbc.update("INSERT INTO article_lesson_completion(id,learner_id,course_id,lesson_id,completed_at,revision,created_at) VALUES(?,?,?,?,?,1,?)",
+                    value.id(), value.learnerId(), value.courseId(), value.lessonId(),
+                    ts(value.completedAt()), ts(value.completedAt()));
+            return true;
+        } catch (DuplicateKeyException duplicate) {
+            return false;
+        }
+    }
+
+    public ArticleCompletionRow articleCompletion(String learnerId, String courseId, String lessonId) {
+        return jdbc.query("SELECT * FROM article_lesson_completion WHERE learner_id=? AND course_id=? AND lesson_id=?",
+                (rs, row) -> new ArticleCompletionRow(rs.getString("id"), rs.getString("learner_id"),
+                        rs.getString("course_id"), rs.getString("lesson_id"),
+                        rs.getTimestamp("completed_at").toInstant(), rs.getLong("revision")),
+                learnerId, courseId, lessonId).stream().findFirst().orElseThrow();
+    }
+
+    public boolean insertArticleCompletionRequest(String clientRequestId, String learnerId,
+            String courseId, String lessonId, String completionId, Instant now) {
+        try {
+            jdbc.update("INSERT INTO article_completion_request(client_request_id,learner_id,course_id,lesson_id,completion_id,created_at) VALUES(?,?,?,?,?,?)",
+                    clientRequestId, learnerId, courseId, lessonId, completionId, ts(now));
+            return true;
+        } catch (DuplicateKeyException duplicate) {
+            return false;
+        }
+    }
+
+    /** 首次 ARTICLE 完成只把既有通用进度单向推进为 completed，不写视频位置或观看时长。 */
+    public void markArticleProgressCompleted(String learnerId, String courseId, String lessonId, Instant now) {
+        jdbc.update("UPDATE lesson_progress SET completed=TRUE,last_event_at=?,revision=revision+1,updated_at=? WHERE learner_id=? AND course_id=? AND lesson_id=? AND completed=FALSE",
+                ts(now), ts(now), learnerId, courseId, lessonId);
+    }
+
     public void insertNote(NoteRow value) {
         jdbc.update("INSERT INTO learning_note(id,learner_id,course_id,lesson_id,content,position_seconds,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 value.id(), value.learnerId(), value.courseId(), value.lessonId(), value.content(),
@@ -506,6 +551,14 @@ public class LearningAssessmentRepository {
 
     public record EnrollmentRow(String id,String learnerId,String courseId,String courseVersionId,EnrollmentStatus status,Instant enrolledAt,Instant canceledAt,Instant createdAt,Instant updatedAt){}
     public record ProgressRow(String id,String learnerId,String courseId,String lessonId,long positionSeconds,long watchedSeconds,boolean completed,Instant lastEventAt,long revision,Instant createdAt,Instant updatedAt){}
+    public record ArticleCompletionRow(String id, String learnerId, String courseId, String lessonId,
+            Instant completedAt, long revision) {
+        public ArticleCompletionRow(String id, String learnerId, String courseId, String lessonId, Instant completedAt) {
+            this(id, learnerId, courseId, lessonId, completedAt, 1);
+        }
+    }
+    public record ArticleCompletionRequestRow(String clientRequestId, String learnerId,
+            String courseId, String lessonId, String completionId) {}
     public record NoteRow(String id,String learnerId,String courseId,String lessonId,String content,Long positionSeconds,long revision,Instant createdAt,Instant updatedAt){}
     public record IdempotencyRow(String ownerId,String requestId,String fingerprint,String resourceType,String resourceId,Instant createdAt){}
     public record AssessmentRow(String id,String ownerTeacherId,String courseId,String lessonId,String title,

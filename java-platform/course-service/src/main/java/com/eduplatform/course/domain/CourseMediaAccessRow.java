@@ -17,6 +17,16 @@ public class CourseMediaAccessRow {
     private String resourceId;
     private String mediaId;
     private String purpose;
+    private String lessonType;
+    private String lessonTitle;
+    private String articleMarkdown;
+    private String displayName;
+    private String presentation;
+    private String originalFileName;
+    private String mimeType;
+    private long sizeBytes;
+    private String variantNames;
+    private String processingContractVersion;
 
     public String getCourseId() { return courseId; }
     public void setCourseId(String courseId) { this.courseId = courseId; }
@@ -38,4 +48,24 @@ public class CourseMediaAccessRow {
     public void setMediaId(String mediaId) { this.mediaId = mediaId; }
     public String getPurpose() { return purpose; }
     public void setPurpose(String purpose) { this.purpose = purpose; }
+    public String getLessonType() { return lessonType; }
+    public void setLessonType(String lessonType) { this.lessonType = lessonType; }
+    public String getLessonTitle() { return lessonTitle; }
+    public void setLessonTitle(String lessonTitle) { this.lessonTitle = lessonTitle; }
+    public String getArticleMarkdown() { return articleMarkdown; }
+    public void setArticleMarkdown(String articleMarkdown) { this.articleMarkdown = articleMarkdown; }
+    public String getDisplayName() { return displayName; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public String getPresentation() { return presentation; }
+    public void setPresentation(String presentation) { this.presentation = presentation; }
+    public String getOriginalFileName() { return originalFileName; }
+    public void setOriginalFileName(String originalFileName) { this.originalFileName = originalFileName; }
+    public String getMimeType() { return mimeType; }
+    public void setMimeType(String mimeType) { this.mimeType = mimeType; }
+    public long getSizeBytes() { return sizeBytes; }
+    public void setSizeBytes(long sizeBytes) { this.sizeBytes = sizeBytes; }
+    public String getVariantNames() { return variantNames; }
+    public void setVariantNames(String variantNames) { this.variantNames = variantNames; }
+    public String getProcessingContractVersion() { return processingContractVersion; }
+    public void setProcessingContractVersion(String processingContractVersion) { this.processingContractVersion = processingContractVersion; }
 }

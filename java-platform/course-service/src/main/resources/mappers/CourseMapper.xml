@@ -69,10 +69,20 @@
                cv.lifecycle_status,
                cv.access_type,
                l.id AS lesson_id,
+               l.title AS lesson_title,
+               l.lesson_type,
+               l.article_markdown,
                l.previewable,
                r.id AS resource_id,
                r.media_id,
-               r.purpose
+               r.purpose,
+               r.display_name,
+               r.presentation,
+               r.original_file_name,
+               r.mime_type,
+               r.size_bytes,
+               r.variant_names,
+               r.processing_contract_version
         FROM course c
         JOIN course_version cv ON cv.id = c.published_version_id
         JOIN chapter ch ON ch.course_version_id = cv.id
@@ -93,10 +103,20 @@
                cv.lifecycle_status,
                cv.access_type,
                l.id AS lesson_id,
+               l.title AS lesson_title,
+               l.lesson_type,
+               l.article_markdown,
                l.previewable,
                r.id AS resource_id,
                r.media_id,
-               r.purpose
+               r.purpose,
+               r.display_name,
+               r.presentation,
+               r.original_file_name,
+               r.mime_type,
+               r.size_bytes,
+               r.variant_names,
+               r.processing_contract_version
         FROM course c
         JOIN course_version cv ON cv.id = COALESCE(c.current_draft_version_id, c.published_version_id)
         JOIN chapter ch ON ch.course_version_id = cv.id
@@ -106,6 +126,23 @@
           AND c.owner_teacher_id = #{teacherId}
           AND l.id = #{lessonId}
           AND r.id = #{resourceId}
+    </select>
+
+    <!-- 内容读取按发布版本与精确课时返回全部绑定；LEFT JOIN 允许无资源的合法 ARTICLE。 -->
+    <select id="listPublishedLessonContentRows" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
+        SELECT c.id AS course_id, c.owner_teacher_id, cv.id AS version_id, cv.lifecycle_status,
+               cv.access_type, l.id AS lesson_id, l.title AS lesson_title, l.lesson_type,
+               l.article_markdown, l.previewable, r.id AS resource_id, r.media_id, r.purpose,
+               r.display_name, r.presentation, r.original_file_name, r.mime_type, r.size_bytes,
+               r.variant_names, r.processing_contract_version
+        FROM course c
+        JOIN course_version cv ON cv.id = c.published_version_id
+        JOIN chapter ch ON ch.course_version_id = cv.id
+        JOIN lesson l ON l.chapter_id = ch.id
+        LEFT JOIN lesson_media_resource r ON r.lesson_id = l.id
+        WHERE c.id = #{courseId} AND c.publication_status = 'PUBLISHED'
+          AND cv.lifecycle_status = 'PUBLISHED' AND l.id = #{lessonId}
+        ORDER BY r.purpose, r.position, r.id
     </select>
 
     <select id="listActiveCategories" resultType="com.eduplatform.course.domain.CategoryEntity">
@@ -240,13 +277,18 @@
     </insert>
 
     <insert id="insertLesson">
-        INSERT INTO lesson (id, chapter_id, title, lesson_type, position, previewable)
-        VALUES (#{id}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable})
+        INSERT INTO lesson (id, chapter_id, title, lesson_type, position, previewable, article_markdown)
+        VALUES (#{id}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable}, #{articleMarkdown})
     </insert>
 
     <insert id="insertLessonMediaResource">
-        INSERT INTO lesson_media_resource (id, lesson_id, media_id, purpose, position)
-        VALUES (#{id}, #{lessonId}, #{mediaId}, #{purpose}, #{position})
+        INSERT INTO lesson_media_resource (
+            id, lesson_id, media_id, purpose, position, display_name, presentation,
+            original_file_name, mime_type, size_bytes, variant_names, processing_contract_version
+        ) VALUES (
+            #{id}, #{lessonId}, #{mediaId}, #{purpose}, #{position}, #{displayName}, #{presentation},
+            #{originalFileName}, #{mimeType}, #{sizeBytes}, #{variantNames}, #{processingContractVersion}
+        )
     </insert>
 
     <select id="listChapters" resultType="com.eduplatform.course.domain.ChapterEntity">
@@ -257,21 +299,23 @@
     </select>
 
     <select id="listLessons" resultType="com.eduplatform.course.domain.LessonEntity">
-        SELECT id, chapter_id, title, lesson_type, position, previewable
+        SELECT id, chapter_id, title, lesson_type, position, previewable, article_markdown
         FROM lesson
         WHERE chapter_id = #{chapterId}
         ORDER BY position, id
     </select>
 
     <select id="listLessonMediaResources" resultType="com.eduplatform.course.domain.LessonMediaResourceEntity">
-        SELECT id, lesson_id, media_id, purpose, position
+        SELECT id, lesson_id, media_id, purpose, position, display_name, presentation,
+               original_file_name, mime_type, size_bytes, variant_names, processing_contract_version
         FROM lesson_media_resource
         WHERE lesson_id = #{lessonId}
         ORDER BY purpose, position, id
     </select>
 
     <select id="listVersionMediaResources" resultType="com.eduplatform.course.domain.LessonMediaResourceEntity">
-        SELECT r.id, r.lesson_id, r.media_id, r.purpose, r.position
+        SELECT r.id, r.lesson_id, r.media_id, r.purpose, r.position, r.display_name, r.presentation,
+               r.original_file_name, r.mime_type, r.size_bytes, r.variant_names, r.processing_contract_version
         FROM lesson_media_resource r
         JOIN lesson l ON l.id = r.lesson_id
         JOIN chapter ch ON ch.id = l.chapter_id

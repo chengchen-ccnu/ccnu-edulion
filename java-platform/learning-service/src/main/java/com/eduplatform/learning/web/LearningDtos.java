@@ -50,6 +50,10 @@ public final class LearningDtos {
             boolean completed) {}
     public record LessonProgress(String courseId, String lessonId, long positionSeconds, long watchedSeconds,
             boolean completed, Instant lastEventAt, long revision, boolean replayed) {}
+    public record CompleteArticleLessonRequest(@NotNull UUID clientRequestId) {}
+    /** ARTICLE 的独立 0→100 单调完成事实，不复用视频位置或观看时长字段。 */
+    public record ArticleLessonCompletion(String courseId, String lessonId, int completionPercent,
+            Instant completedAt, long revision, boolean replayed) {}
     public record CourseProgress(String courseId, int completedLessonCount, int lessonCount,
             double completionPercent, List<LessonProgress> lessons) {}
 

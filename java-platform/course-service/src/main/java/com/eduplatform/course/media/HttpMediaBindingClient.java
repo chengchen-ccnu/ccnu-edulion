@@ -6,6 +6,7 @@ import com.eduplatform.shared.api.FieldError;
 import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -29,7 +30,7 @@ public class HttpMediaBindingClient implements MediaBindingClient {
     }
 
     @Override
-    public void requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
+    public BindingSnapshot requireBindable(String mediaId, String purpose, String teacherId, String traceId) {
         try {
             BindingValidation response = client.post()
                     .uri("/api/v1/media/{mediaId}/binding-validations", mediaId)
@@ -40,9 +41,14 @@ public class HttpMediaBindingClient implements MediaBindingClient {
                     .retrieve()
                     .body(BindingValidation.class);
             if (response == null || !response.bindable() || !mediaId.equals(response.mediaId())
-                    || !purpose.equals(response.purpose()) || !"READY".equals(response.status())) {
+                    || !purpose.equals(response.purpose()) || !"READY".equals(response.status())
+                    || response.originalFileName() == null || response.originalFileName().isBlank()
+                    || response.mimeType() == null || response.mimeType().isBlank() || response.size() <= 0) {
                 throw notBindable(mediaId, "媒体验证响应与请求不一致");
             }
+            return new BindingSnapshot(response.mediaId(), response.purpose(), response.originalFileName(),
+                    response.mimeType(), response.size(), response.variants() == null
+                            ? Set.of() : Set.copyOf(response.variants()), response.processingContractVersion());
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 404) {
                 throw notBindable(mediaId, "媒体不存在或不属于当前教师");
@@ -68,5 +74,7 @@ public class HttpMediaBindingClient implements MediaBindingClient {
                 "媒体服务暂时不可用，请稍后重试", List.of());
     }
 
-    private record BindingValidation(String mediaId, String purpose, String status, boolean bindable) {}
+    private record BindingValidation(String mediaId, String purpose, String status, boolean bindable,
+            String originalFileName, String mimeType, long size, List<String> variants,
+            String processingContractVersion) {}
 }

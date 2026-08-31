@@ -598,3 +598,16 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 页面与进度冻结：T12F.2 只修改既有课程编排和学习页，提供 Markdown 工具栏/实时预览、资料预览/下载、海报、倍速 1/1.25/1.5/2/2.5/3 和图文完成反馈。正文成功渲染后使用稳定请求 ID 写入 0→100 单调完成，页面存活期间最多重试三次，失败不阻止阅读且离页后不无限重试；未报名试看不写进度。
 - 排除项：T12F.1 不实现 Vue，T12F.2 不猜契约。两者均不实现多码率、清晰度选择、字幕访问/UI、Office 在线转换、历史海报生产重处理、DRM、AI 或 T12G Redis 缓冲；既有 `SUBTITLE` 枚举、上传策略和 READY 校验继续保留。不得搬迁播放器、增加平行学习路由、第二套 OSS 客户端、跨服务数据库关系或永久 URL。
 - 数据与验证：本次总控只修改页面规格、backlog、verification、ADR-0004、总体架构和本地环境文档，并将未开发分支从 `codex/t12f-course-content-player` 改名为 `codex/t12f1-course-content-contract`；未修改 OpenAPI、Java、Python、Vue、Flyway、事件或生成代码，未连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 任务或外部服务，没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象、变体或迁移检查点。只需执行文档差异检查和范围审计，不能把本次记录解释为 T12F.1/T12F.2 已实现。
+
+## 2026-08-31 T12F.1 课程内容、资源授权与自动海报后端契约
+
+- 契约优先：`docs/api/openapi.yaml` 从 0.18.0 向前演进到 0.19.0，新增受保护课时内容、课程域资源动作授权、ARTICLE 完成命令及安全绑定快照；公共 LessonSummary 资源改为 deprecated/optional 并实际不输出正文/资源，前端类型由 `openapi-typescript` 重生，没有手写 DTO 或新 Vue 页面。
+- Course V4：ARTICLE 保存受控 Markdown 与严格 `media:UUID` 引用集合，危险 HTML/协议、外部图片、空 alt、错占位符、重复/错用途/非 READY 绑定立即拒绝；发布校验 ARTICLE 非空和 V5 视频 HLS+poster，公共防泄漏、登录试看/报名、PDF/图片预览下载与 PPTX/TXT 下载动作由服务端决定。类型互转按最终请求释放不兼容资源并在课程事务写 Outbox，共同 COURSEWARE 不抖动；已发布版本仍复制到新草稿修改。
+- Media V5：ARTICLE_IMAGE 限 JPG/JPEG/PNG/WebP、10 MiB、单对象，拒绝 SVG/GIF/Multipart；新视频以 `LESSON_VIDEO_V5` 要求 `hls-fmp4-v2` 和 WebP `poster-v1` 同时成功。海报在前 30% 最多 12 个关键帧内跳过近黑/近白，回退 10%，最长边 1280且不上采样；失败复用既有有限重试并最终 FAILED，派生对象随视频回收，历史空契约不重处理。
+- Learning V12：ARTICLE 完成使用独立事实与请求表，稳定 `clientRequestId` 重放不新增事实或 revision，不伪造视频 position/watched 事件；PUBLIC 或 ACTIVE 报名可写，未报名付费试看只读不写，普通客户端没有回退命令。
+- 自动化：Java `clean verify` 8 个 Reactor 模块全部成功，Gateway 21 项/1 跳过、IAM 28/1、Course 24/2、Learning 62/6、Media 29/6，无失败。受影响定向测试中 Course Markdown/绑定 17/17、Media HTTP/策略/命令 20/20、Learning+Gateway 27/27 通过。前端 `generate:api`、`typecheck`、31 文件 212 项 Vitest 和三端 build 通过，仅有既有 chunk 警告；提交前 `check:api` 仅因按设计比较 HEAD 而报告生成文件尚未提交，提交后必须重跑。
+- 真实 FFmpeg：显式运行 `T12F1FfmpegPosterRealAcceptanceTest` 1/1 通过。用例在 JUnit 临时目录生成一秒黑场加四秒测试画面，真实 ffprobe/FFmpeg 先拒绝黑场再选择彩色关键帧，输出 640×360 WebP。首轮真实运行发现 filtergraph 逗号转义错误，修正后通过；临时视频、候选 PNG、WebP 与日志由 JUnit 精确清理。
+- 真实 MySQL/RabbitMQ：三个现有专用开发 Schema 已正常向前保留 Course V4、Media V5、Learning V12 和 Flyway 历史，没有创建数据库或跨域关系。`CourseEnrollmentRealEnvironmentAcceptanceTest` 在真实 `edu_platform_course_dev` + RabbitMQ 1/1 通过，验证真实队列、eventId 幂等、changedAt 乱序和 ACTIVE/CANCELED 投影；随机 enrollment/learner/course/event ID 在 finally 中精确删除。第一次因本地 Rabbit 密码环境值为空被 broker 拒绝，未创建 Fixture；使用正确的本机运行配置后通过，未修改 broker 用户或服务。
+- OSS 与 Seed：编排已实现生产禁用的固定 ID Initialize/Cleanup/Rebuild，按 Media→Course→Learning 初始化、逆序清理；媒体脚本合成视频、自动/自定义海报、正文图、有效最小 PDF/PPTX 与 TXT，不提交二进制。当前本机共享配置只有 OSS 访问凭据，缺少 endpoint/region/bucket；统一前置检查会在任何领域写入前失败。早先分域尝试已清掉固定 Course/Learning 数据，Media 未初始化，因此没有保留 T12F.1 Seed、OSS 对象、消息或本机文件；只保留三项迁移。不能把 H2/本地目录冒充真实 OSS，补齐明确开发 Bucket 后须重跑 Rebuild 和综合访问/精确 Cleanup。
+- 可读性与边界：权限判断、Markdown 验证、处理状态机、幂等、Outbox、Seed/清理和复杂测试均增加中文 Javadoc/注释；OpenAPI/SQL 解释兼容与空值语义，生成代码未手改。本任务没有 Vue、多码率、清晰度、字幕 UI、历史海报 API、Office 转换、DRM、AI、Redis 播放缓存、第二套 OSS 客户端或跨 Schema Join/外键/事务。
+- 发布：分支为 `codex/t12f1-course-content-contract`；关键提交与 Ready PR 在最终推送后回填，目标 `main`，不得自行合并。完整实现、命令、演示和清理说明见 `docs/delivery/T12F.1-course-content-contract.md`。

@@ -71,6 +71,14 @@ public class MediaProcessingCoordinator {
         ProcessingResult result;
         try {
             result = worker.process(asset);
+            if (MediaAssetService.LESSON_VIDEO_V5.equals(asset.processingContractVersion())) {
+                java.util.Set<String> variants = result.variants().stream()
+                        .map(ProcessingResult.VariantResult::name).collect(java.util.stream.Collectors.toSet());
+                if (!(variants.contains(FfmpegMediaProcessingWorker.HLS_VARIANT)
+                        && variants.contains(FfmpegMediaProcessingWorker.POSTER_VARIANT))) {
+                    throw new IllegalStateException("LESSON_VIDEO_V5 requires HLS and poster-v1");
+                }
+            }
         } catch (RuntimeException failure) {
             repository.failProcessing(asset.mediaId(), MediaAssetService.PROCESS_JOB,
                     MediaAssetService.PRESET_VERSION, "MEDIA.PROCESSING_FAILED", safeReason(failure), Instant.now());

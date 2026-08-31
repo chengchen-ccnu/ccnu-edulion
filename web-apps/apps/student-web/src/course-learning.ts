@@ -22,7 +22,7 @@ export function courseLearningEntries(course: CourseDetail, enrolled = false): C
     .flatMap(chapter => [...chapter.lessons]
       .sort((left, right) => left.sequence - right.sequence)
       .flatMap(lesson => {
-        const resource = [...lesson.resources]
+        const resource = [...(lesson.resources ?? [])]
           .sort((left, right) => left.sequence - right.sequence)
           .find(item => item.purpose === "LESSON_VIDEO");
         if (lesson.type !== "VIDEO" || !resource) return [];

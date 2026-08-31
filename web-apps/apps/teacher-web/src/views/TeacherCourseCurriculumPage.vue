@@ -143,7 +143,7 @@ function syncChapters(snapshot: TeacherCourse) {
   chapters.value = snapshot.chapters.map(chapter => ({ id: chapter.id, uiKey: chapter.id, title: chapter.title,
     sequence: chapter.sequence, lessons: chapter.lessons.map(lesson => ({ id: lesson.id, uiKey: lesson.id, title: lesson.title,
       type: lesson.type, sequence: lesson.sequence, previewable: lesson.previewable,
-      resources: lesson.resources.map(resource => ({ id: resource.id, mediaId: resource.mediaId,
+      resources: (lesson.resources ?? []).map(resource => ({ id: resource.id, mediaId: resource.mediaId,
         purpose: resource.purpose, sequence: resource.sequence })) })) }));
 }
 

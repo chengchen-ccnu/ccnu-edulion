@@ -140,9 +140,9 @@ T08B 浏览器直传要求专用 OSS Bucket 配置精确 CORS：只允许实际�
 
 Media V3 新增 `consumed_service_authorization`，以 jti 主键拒绝服务令牌重放并在到期后由维护任务清理。表中不保存 JWT、签名 URL、课程 ID、课时 ID、Object Key 或 Bucket。应用不会创建 `edu_platform_media_dev` 数据库；只在用途明确的 media dev/test Schema 中由 Flyway 向前迁移。T08A.1 没有 Course 迁移、Seed 或报名数据。
 
-## T12F.1 课程内容、资源授权与自动海报前置
+## T12F.1 课程内容、资源授权与自动海报
 
-T12F.1 复用现有 MySQL、OSS、RabbitMQ、FFmpeg/ffprobe 和本机加密凭据，不要求安装新的基础软件，也不引入第二套对象存储客户端。计划从 OpenAPI 0.18.0 向前演进到 0.19.0，并分别在用途明确的开发 Schema 应用 Course V4、Media V5 和 Learning V12；不得修改既有迁移、启用 baseline/out-of-order、跨 Schema 建外键或自动创建数据库。
+T12F.1 复用现有 MySQL、OSS、RabbitMQ、FFmpeg/ffprobe 和本机加密凭据，不要求安装新的基础软件，也不引入第二套对象存储客户端。OpenAPI 已从 0.18.0 向前演进到 0.19.0，并分别在用途明确的开发 Schema 应用 Course V4、Media V5 和 Learning V12；不得修改既有迁移、启用 baseline/out-of-order、跨 Schema 建外键或自动创建数据库。
 
 启动和真实验收仍通过 `scripts/Invoke-WithLocalEnvironment.ps1` 注入既有配置，推荐顺序为 RabbitMQ → media-service → course-service → learning-service → Gateway。`course-service` 只能通过 `MEDIA_SERVICE_BASE_URL` 和版本化内部授权访问媒体；它与 learning-service 都不接收 OSS AccessKey、Bucket 或 Object Key。T12F.1 不新增必须写入 `local.env` 的秘密；若实现需要新的非敏感调优参数，应在交付文档中给出默认值，秘密继续由现有 DPAPI/进程环境注入。
 
@@ -154,7 +154,30 @@ T12F.1 复用现有 MySQL、OSS、RabbitMQ、FFmpeg/ffprobe 和本机加密凭�
 - 受保护课时内容的 owner/已报名/登录试看/未授权边界，以及图文完成命令的 0→100 单调、稳定请求 ID 幂等；
 - 只操作 `edu_platform_course_dev`、`edu_platform_media_dev`、`edu_platform_learning_dev` 和唯一开发 OSS 前缀，结束后精确复核临时表记录、消息、OSS 对象和本地转码目录。
 
-T12F.1 负责提供一套显式、生产禁用、固定 ID 的跨域 local/test 演示数据，分别通过各领域自己的 API、Seed 或脚本编排，不跨库 Join/外键/事务：一门课程草稿和已发布版本、一个短视频课时、一个含公式/表格/代码/正文图片/PDF/TXT/PPTX 的图文课时，以及初始未完成的学习进度。二进制由脚本生成，不提交大型文件；必须同时提供幂等 `Initialize`、精确 `Cleanup` 和恢复初始未完成状态的 `Rebuild`。具体命令只有在 T12F.1 实现并验证后才能写入交付文档，当前规划不能冒充可运行脚本。
+T12F.1 提供一套显式、生产禁用、固定 ID 的跨域 local/test 演示数据，分别由 Media、Course、Learning 自己的 Seed 测试操作本域 Schema，顶层脚本只负责编排，不跨库 Join/外键/事务。数据包含一门已发布课程、一个短视频课时、自动 `poster-v1` 与独立自定义海报、一个含公式/表格/代码/正文图片的图文课时、PDF/TXT/PPTX，以及初始未完成的学习进度。视频、图片、有效最小 PDF/PPTX 均在临时目录内合成，不提交二进制；临时目录由用例退出时精确删除。
+
+所有命令从仓库根目录执行；脚本先经 `Invoke-WithLocalEnvironment.ps1` 注入凭据，再确认三个固定开发 Schema 以及 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET` 和访问凭据均非空。任何一项缺失都会在修改任一领域前失败，不能把本地目录或 Mock 冒充真实 OSS：
+
+```powershell
+# 固定 ID 已完整存在时只校验并保持幂等。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Initialize
+
+# Learning → Course → Media 逆序精确删除固定进度/事实、课程子表和数据库记录所指向的 Object Key。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Cleanup
+
+# 先精确清理再以相同 ID 重建，并把图文学习进度恢复为 0%。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Rebuild
+```
+
+可独立运行不访问 OSS 的真实 FFmpeg 海报验收。它在 JUnit 临时目录合成一秒黑场加四秒测试画面，确认跳过黑场关键帧、WebP、宽高比与不上采样，并由 JUnit 清理全部文件：
+
+```powershell
+$env:T12F1_FFMPEG_REAL_ACCEPTANCE = 'true'
+mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl media-service -am -Dtest=T12F1FfmpegPosterRealAcceptanceTest -Dsurefire.failIfNoSpecifiedTests=false test
+Remove-Item Env:T12F1_FFMPEG_REAL_ACCEPTANCE
+```
+
+正式环境不设置 `T12F1_DEMO_SEED_ENABLED`，普通启动和构建不会加载上述 Seed。当前本机共享配置缺少 OSS endpoint/region/bucket，最近一次 `Rebuild` 已按前置门禁安全停止，未留下半套演示数据；补齐明确开发 Bucket 后应直接重跑 `Rebuild`，再按交付文档执行内容读取、预览/下载和最终 Cleanup 复核。
 
 历史 `READY` 视频不自动重处理。T12F.2 真实验收若需为少量本地视频补海报，只能先经 Course API 清点当前发布版本缺失项，再用正常授权下载、FFmpeg 截帧、正常 `VIDEO_POSTER` 上传/绑定和新版本发布；不枚举 OSS Bucket、不直接写媒体表，并记录前后课程版本、mediaId 与回退方式。多码率、清晰度选择、字幕实现、Office 转换和历史海报生产重处理 API 均不属于 T12F.1/T12F.2。
 

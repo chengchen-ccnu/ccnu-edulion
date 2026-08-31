@@ -8,6 +8,8 @@ import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
 import com.eduplatform.course.domain.LessonMediaResourceEntity;
 import com.eduplatform.course.media.MediaBindingClient;
+import com.eduplatform.course.media.MediaBindingClient.BindingSnapshot;
+import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
@@ -24,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -44,20 +47,25 @@ public class CourseCatalogService {
     private final MediaBindingClient mediaBindingClient;
     private final MediaCoverClient mediaCoverClient;
     private final MediaPlaybackClient mediaPlaybackClient;
+    private final MediaAccessClient mediaAccessClient;
     private final CourseMediaEventFactory mediaEvents;
     private final EnrollmentAccessRepository enrollmentAccess;
+    private final ControlledMarkdownValidator markdownValidator;
 
     public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
             MediaBindingClient mediaBindingClient, MediaCoverClient mediaCoverClient,
-            MediaPlaybackClient mediaPlaybackClient,
-            CourseMediaEventFactory mediaEvents, EnrollmentAccessRepository enrollmentAccess) {
+            MediaPlaybackClient mediaPlaybackClient, MediaAccessClient mediaAccessClient,
+            CourseMediaEventFactory mediaEvents, EnrollmentAccessRepository enrollmentAccess,
+            ControlledMarkdownValidator markdownValidator) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.mediaBindingClient = mediaBindingClient;
         this.mediaCoverClient = mediaCoverClient;
         this.mediaPlaybackClient = mediaPlaybackClient;
+        this.mediaAccessClient = mediaAccessClient;
         this.mediaEvents = mediaEvents;
         this.enrollmentAccess = enrollmentAccess;
+        this.markdownValidator = markdownValidator;
     }
 
     @Transactional(readOnly = true)
@@ -88,14 +96,14 @@ public class CourseCatalogService {
                 version.getTitle(),
                 version.getSummary(),
                 version.getDescription(),
-                version.getCoverMediaId(),
+                null,
                 coverUrl(version.getCoverMediaId(), version.getCoverUrl(), PUBLIC_COVER_VIEWER_ID, newTraceId()),
                 new CourseDtos.TeacherSummary(version.getOwnerTeacherId(), version.getInstructorDisplayName()),
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
                 CourseDtos.CourseLevel.valueOf(version.getLevel()),
                 CourseDtos.CourseAccessType.valueOf(version.getAccessType()),
                 version.getVersionLabel(),
-                curriculum(version.getId()));
+                curriculum(version.getId(), false));
     }
 
     /**
@@ -146,6 +154,109 @@ public class CourseCatalogService {
         requireVideoResource(access);
         return mediaPlaybackClient.issuePlayback(
                 access.getMediaId(), access.getPurpose(), teacherId, traceId);
+    }
+
+    /**
+     * 返回发布课时的受保护内容投影。PUBLIC、有效报名或登录试看可访问；试看仍要求控制器提供登录身份。
+     * 正文图片与海报直接返回短期授权，资料只返回课程域资源 ID 和允许动作。
+     */
+    @Transactional(readOnly = true)
+    public CourseDtos.LessonContent getPublishedLessonContent(
+            String courseId, String lessonId, String visitorId, String traceId) {
+        List<CourseMediaAccessRow> rows = mapper.listPublishedLessonContentRows(courseId, lessonId);
+        if (rows.isEmpty()) {
+            throw notFound();
+        }
+        CourseMediaAccessRow lesson = rows.get(0);
+        requirePublishedLessonAccess(lesson, visitorId);
+        List<CourseMediaAccessRow> resources = rows.stream().filter(row -> row.getResourceId() != null).toList();
+        String playbackResourceId = resources.stream()
+                .filter(row -> "LESSON_VIDEO".equals(row.getPurpose()))
+                .map(CourseMediaAccessRow::getResourceId).findFirst().orElse(null);
+        CourseDtos.CourseMediaAccessGrant poster = effectivePoster(resources, visitorId, traceId);
+        List<CourseDtos.LessonInlineImage> images = resources.stream()
+                .filter(row -> "ARTICLE_IMAGE".equals(row.getPurpose()))
+                .map(row -> new CourseDtos.LessonInlineImage(row.getResourceId(), row.getMediaId(),
+                        mediaAccessClient.issue(row.getMediaId(), row.getPurpose(), visitorId,
+                                "COURSE_ARTICLE_IMAGE", "ORIGINAL", "INLINE", traceId)))
+                .toList();
+        List<CourseDtos.LessonContentResource> attachments = resources.stream()
+                .filter(row -> Set.of("COURSEWARE", "ARTICLE_ATTACHMENT").contains(row.getPurpose()))
+                .map(this::contentResource).toList();
+        return new CourseDtos.LessonContent(courseId, lessonId, lesson.getLessonTitle(),
+                CourseDtos.LessonType.valueOf(lesson.getLessonType()), lesson.isPreviewable(),
+                "ARTICLE".equals(lesson.getLessonType()) ? lesson.getArticleMarkdown() : null,
+                playbackResourceId, poster, images, attachments);
+    }
+
+    /** 按课程域 resourceId 和动作签发发布资源授权；浏览器请求体不能携带 mediaId、用途或 disposition。 */
+    @Transactional(readOnly = true)
+    public CourseDtos.CourseMediaAccessGrant createPublishedResourceGrant(String courseId, String lessonId,
+            String resourceId, CourseDtos.CourseResourceAction action, String visitorId, String traceId) {
+        CourseMediaAccessRow row = mapper.findPublishedMediaAccess(courseId, lessonId, resourceId);
+        if (row == null) throw notFound();
+        requirePublishedLessonAccess(row, visitorId);
+        return issueResourceAction(row, action, visitorId, traceId);
+    }
+
+    /** 课程所有者可为当前可编辑版本的资料申请预览或下载授权。 */
+    @Transactional(readOnly = true)
+    public CourseDtos.CourseMediaAccessGrant createTeacherResourceGrant(String courseId, String lessonId,
+            String resourceId, CourseDtos.CourseResourceAction action, String teacherId, String traceId) {
+        CourseMediaAccessRow row = mapper.findOwnedEditableMediaAccess(courseId, lessonId, resourceId, teacherId);
+        if (row == null) throw notFound();
+        return issueResourceAction(row, action, teacherId, traceId);
+    }
+
+    private void requirePublishedLessonAccess(CourseMediaAccessRow row, String visitorId) {
+        if (!"PUBLIC".equals(row.getAccessType()) && !row.isPreviewable()
+                && !enrollmentAccess.hasActive(visitorId, row.getCourseId())) {
+            throw new CourseException(HttpStatus.FORBIDDEN, "COURSE.ENROLLMENT_REQUIRED", "该课时需要报名后访问");
+        }
+    }
+
+    private CourseDtos.CourseMediaAccessGrant effectivePoster(
+            List<CourseMediaAccessRow> resources, String visitorId, String traceId) {
+        CourseMediaAccessRow custom = resources.stream().filter(row -> "VIDEO_POSTER".equals(row.getPurpose()))
+                .findFirst().orElse(null);
+        if (custom != null) {
+            return mediaAccessClient.issue(custom.getMediaId(), custom.getPurpose(), visitorId,
+                    "COURSE_POSTER", "ORIGINAL", "INLINE", traceId);
+        }
+        CourseMediaAccessRow video = resources.stream().filter(row -> "LESSON_VIDEO".equals(row.getPurpose()))
+                .findFirst().orElse(null);
+        if (video == null || video.getVariantNames() == null
+                || !Set.of(video.getVariantNames().split(",")).contains("poster-v1")) {
+            return null;
+        }
+        return mediaAccessClient.issue(video.getMediaId(), video.getPurpose(), visitorId,
+                "COURSE_POSTER", "poster-v1", "INLINE", traceId);
+    }
+
+    private CourseDtos.LessonContentResource contentResource(CourseMediaAccessRow row) {
+        return new CourseDtos.LessonContentResource(row.getResourceId(),
+                CourseDtos.LessonMediaPurpose.valueOf(row.getPurpose()), row.getDisplayName(),
+                CourseDtos.LessonResourcePresentation.valueOf(row.getPresentation()), row.getOriginalFileName(),
+                row.getMimeType(), row.getSizeBytes(), allowedActions(row.getMimeType()));
+    }
+
+    private CourseDtos.CourseMediaAccessGrant issueResourceAction(CourseMediaAccessRow row,
+            CourseDtos.CourseResourceAction action, String visitorId, String traceId) {
+        if (!Set.of("COURSEWARE", "ARTICLE_ATTACHMENT").contains(row.getPurpose())
+                || !allowedActions(row.getMimeType()).contains(action)) {
+            throw notFound();
+        }
+        return mediaAccessClient.issue(row.getMediaId(), row.getPurpose(), visitorId,
+                action == CourseDtos.CourseResourceAction.PREVIEW ? "COURSE_RESOURCE_PREVIEW" : "COURSE_RESOURCE_DOWNLOAD",
+                "ORIGINAL", action == CourseDtos.CourseResourceAction.PREVIEW ? "INLINE" : "ATTACHMENT", traceId);
+    }
+
+    private static List<CourseDtos.CourseResourceAction> allowedActions(String mimeType) {
+        String mime = mimeType == null ? "" : mimeType.toLowerCase(java.util.Locale.ROOT);
+        if (mime.equals("application/pdf") || mime.startsWith("image/")) {
+            return List.of(CourseDtos.CourseResourceAction.PREVIEW, CourseDtos.CourseResourceAction.DOWNLOAD);
+        }
+        return List.of(CourseDtos.CourseResourceAction.DOWNLOAD);
     }
 
     @Transactional(readOnly = true)
@@ -290,18 +401,19 @@ public class CourseCatalogService {
         if (Objects.equals(hash, draft.getCurriculumHash())) {
             return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
         }
-        validateLessonMedia(request.chapters(), teacherId, traceId);
+        Map<String, BindingSnapshot> snapshots = validateLessonMedia(request.chapters(), teacherId, traceId);
         if (draft.getRowVersion() != request.expectedRevision()) {
             throw versionConflict();
         }
         if (mapper.reserveCurriculum(draft.getId(), hash, request.expectedRevision()) != 1) {
             throw versionConflict();
         }
-        releaseLessonMedia(draft.getId(), traceId);
+        ExistingCurriculum existing = indexCurriculum(draft.getId());
+        releaseRemovedLessonMedia(existing, request.chapters(), traceId);
         mapper.deleteLessonMediaByVersion(draft.getId());
         mapper.deleteLessonsByVersion(draft.getId());
         mapper.deleteChaptersByVersion(draft.getId());
-        insertCurriculum(draft.getId(), request.chapters(), traceId);
+        insertCurriculum(draft.getId(), request.chapters(), snapshots, existing, traceId);
         return toTeacherCourse(requireOwnedCourse(courseId, teacherId, false), traceId);
     }
 
@@ -326,7 +438,7 @@ public class CourseCatalogService {
         }
 
         if (request.status() == CourseDtos.PublishTarget.PUBLISHED) {
-            publish(course, editable);
+            publish(course, editable, teacherId, newTraceId());
         } else {
             unpublish(course);
         }
@@ -337,13 +449,14 @@ public class CourseCatalogService {
     }
 
     /** 校验目录后把当前草稿固化为发布版本，并归档先前发布版本；调用方事务负责整体回滚。 */
-    private void publish(CourseEntity course, CourseVersionEntity editable) {
+    private void publish(CourseEntity course, CourseVersionEntity editable, String teacherId, String traceId) {
         if (course.getCurrentDraftVersionId() != null) {
             if (mapper.countChapters(editable.getId()) == 0 || mapper.countEmptyChapters(editable.getId()) > 0) {
                 throw new CourseException(HttpStatus.UNPROCESSABLE_CONTENT,
                         "COURSE.PUBLISH_VALIDATION_FAILED", "每门发布课程至少需要一个非空章节",
                         List.of(new FieldError("chapters", "至少创建一个章节，且每章至少包含一个课时")));
             }
+            validatePublishableLessons(editable.getId(), teacherId, traceId);
             if (course.getPublishedVersionId() != null
                     && !course.getPublishedVersionId().equals(editable.getId())) {
                 mapper.archiveVersion(course.getPublishedVersionId());
@@ -412,6 +525,7 @@ public class CourseCatalogService {
                 lesson.setLessonType(sourceLesson.getLessonType());
                 lesson.setPosition(sourceLesson.getPosition());
                 lesson.setPreviewable(sourceLesson.isPreviewable());
+                lesson.setArticleMarkdown(sourceLesson.getArticleMarkdown());
                 mapper.insertLesson(lesson);
                 for (LessonMediaResourceEntity sourceResource : mapper.listLessonMediaResources(sourceLesson.getId())) {
                     LessonMediaResourceEntity resource = new LessonMediaResourceEntity();
@@ -420,6 +534,13 @@ public class CourseCatalogService {
                     resource.setMediaId(sourceResource.getMediaId());
                     resource.setPurpose(sourceResource.getPurpose());
                     resource.setPosition(sourceResource.getPosition());
+                    resource.setDisplayName(sourceResource.getDisplayName());
+                    resource.setPresentation(sourceResource.getPresentation());
+                    resource.setOriginalFileName(sourceResource.getOriginalFileName());
+                    resource.setMimeType(sourceResource.getMimeType());
+                    resource.setSizeBytes(sourceResource.getSizeBytes());
+                    resource.setVariantNames(sourceResource.getVariantNames());
+                    resource.setProcessingContractVersion(sourceResource.getProcessingContractVersion());
                     mapper.insertLessonMediaResource(resource);
                     reference(CourseMediaEventFactory.BOUND, resource.getMediaId(),
                             "LESSON_RESOURCE", resource.getId(), traceId);
@@ -428,36 +549,102 @@ public class CourseCatalogService {
         }
     }
 
-    private void insertCurriculum(String versionId, List<CourseDtos.ChapterInput> inputs, String traceId) {
+    private void insertCurriculum(String versionId, List<CourseDtos.ChapterInput> inputs,
+            Map<String, BindingSnapshot> snapshots, ExistingCurriculum existing, String traceId) {
         for (CourseDtos.ChapterInput chapterInput : inputs) {
             ChapterEntity chapter = new ChapterEntity();
-            chapter.setId(UUID.randomUUID().toString());
+            chapter.setId(existing.chapterIds().getOrDefault(chapterInput.sequence(), UUID.randomUUID().toString()));
             chapter.setCourseVersionId(versionId);
             chapter.setTitle(chapterInput.title().trim());
             chapter.setPosition(chapterInput.sequence());
             mapper.insertChapter(chapter);
             for (CourseDtos.LessonInput lessonInput : chapterInput.lessons()) {
                 LessonEntity lesson = new LessonEntity();
-                lesson.setId(UUID.randomUUID().toString());
+                String lessonKey = lessonKey(chapterInput.sequence(), lessonInput.sequence());
+                lesson.setId(existing.lessonIds().getOrDefault(lessonKey, UUID.randomUUID().toString()));
                 lesson.setChapterId(chapter.getId());
                 lesson.setTitle(lessonInput.title().trim());
                 lesson.setLessonType(lessonInput.type().name());
                 lesson.setPosition(lessonInput.sequence());
                 lesson.setPreviewable(lessonInput.previewable());
+                lesson.setArticleMarkdown(lessonInput.type() == CourseDtos.LessonType.ARTICLE
+                        ? lessonInput.articleMarkdown() : null);
                 mapper.insertLesson(lesson);
                 for (CourseDtos.LessonMediaResourceInput input : resources(lessonInput)) {
                     LessonMediaResourceEntity resource = new LessonMediaResourceEntity();
-                    resource.setId(UUID.randomUUID().toString());
+                    String resourceKey = resourceKey(chapterInput.sequence(), lessonInput.sequence(),
+                            input.purpose().name(), input.mediaId().toString());
+                    LessonMediaResourceEntity retained = existing.resources().get(resourceKey);
+                    resource.setId(retained == null ? UUID.randomUUID().toString() : retained.getId());
                     resource.setLessonId(lesson.getId());
                     resource.setMediaId(input.mediaId().toString());
                     resource.setPurpose(input.purpose().name());
                     resource.setPosition(input.sequence());
+                    BindingSnapshot snapshot = snapshots.get(input.mediaId().toString());
+                    resource.setDisplayName(normalizeDisplayName(input.displayName(), snapshot.originalFileName()));
+                    resource.setPresentation(normalizePresentation(input, snapshot.mimeType()).name());
+                    resource.setOriginalFileName(snapshot.originalFileName());
+                    resource.setMimeType(snapshot.mimeType());
+                    resource.setSizeBytes(snapshot.size());
+                    resource.setVariantNames(String.join(",", snapshot.variants().stream().sorted().toList()));
+                    resource.setProcessingContractVersion(snapshot.processingContractVersion());
                     mapper.insertLessonMediaResource(resource);
-                    reference(CourseMediaEventFactory.BOUND, resource.getMediaId(),
-                            "LESSON_RESOURCE", resource.getId(), traceId);
+                    if (retained == null) {
+                        reference(CourseMediaEventFactory.BOUND, resource.getMediaId(),
+                                "LESSON_RESOURCE", resource.getId(), traceId);
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * 按章节/课时位置索引当前草稿，使整目录请求仍能保留最终请求中完全相同的资源引用 ID。
+     * 类型改变时不兼容资源因校验无法出现在最终集合，必然释放；COURSEWARE 若仍存在则不产生释放/重绑抖动。
+     */
+    private ExistingCurriculum indexCurriculum(String versionId) {
+        Map<Integer, String> chapters = new java.util.HashMap<>();
+        Map<String, String> lessons = new java.util.HashMap<>();
+        Map<String, LessonMediaResourceEntity> resources = new java.util.HashMap<>();
+        for (ChapterEntity chapter : mapper.listChapters(versionId)) {
+            chapters.put(chapter.getPosition(), chapter.getId());
+            for (LessonEntity lesson : mapper.listLessons(chapter.getId())) {
+                lessons.put(lessonKey(chapter.getPosition(), lesson.getPosition()), lesson.getId());
+                for (LessonMediaResourceEntity resource : mapper.listLessonMediaResources(lesson.getId())) {
+                    resources.put(resourceKey(chapter.getPosition(), lesson.getPosition(),
+                            resource.getPurpose(), resource.getMediaId()), resource);
+                }
+            }
+        }
+        return new ExistingCurriculum(Map.copyOf(chapters), Map.copyOf(lessons), Map.copyOf(resources));
+    }
+
+    /** 只为最终目录不再保留的精确引用写 Released Outbox；事件与目录替换处于同一事务。 */
+    private void releaseRemovedLessonMedia(ExistingCurriculum existing,
+            List<CourseDtos.ChapterInput> chapters, String traceId) {
+        Set<String> retained = new HashSet<>();
+        for (CourseDtos.ChapterInput chapter : chapters) {
+            for (CourseDtos.LessonInput lesson : chapter.lessons()) {
+                for (CourseDtos.LessonMediaResourceInput resource : resources(lesson)) {
+                    retained.add(resourceKey(chapter.sequence(), lesson.sequence(),
+                            resource.purpose().name(), resource.mediaId().toString()));
+                }
+            }
+        }
+        existing.resources().forEach((key, resource) -> {
+            if (!retained.contains(key)) {
+                reference(CourseMediaEventFactory.RELEASED, resource.getMediaId(),
+                        "LESSON_RESOURCE", resource.getId(), traceId);
+            }
+        });
+    }
+
+    private static String lessonKey(int chapterSequence, int lessonSequence) {
+        return chapterSequence + ":" + lessonSequence;
+    }
+
+    private static String resourceKey(int chapterSequence, int lessonSequence, String purpose, String mediaId) {
+        return chapterSequence + ":" + lessonSequence + ":" + purpose + ":" + mediaId;
     }
 
     private CourseDtos.TeacherCourse toTeacherCourse(CourseEntity course) {
@@ -489,7 +676,7 @@ public class CourseCatalogService {
                 new CourseDtos.CategorySummary(version.getCategoryId(), version.getCategoryName()),
                 CourseDtos.CourseLevel.valueOf(version.getLevel()),
                 CourseDtos.CourseAccessType.valueOf(version.getAccessType()),
-                curriculum(version.getId()),
+                curriculum(version.getId(), true),
                 course.getCreatedAt(),
                 version.getUpdatedAt());
     }
@@ -509,7 +696,7 @@ public class CourseCatalogService {
         return versionId == null ? null : mapper.findVersion(versionId).getVersionLabel();
     }
 
-    private List<CourseDtos.Chapter> curriculum(String versionId) {
+    private List<CourseDtos.Chapter> curriculum(String versionId, boolean includeResources) {
         List<CourseDtos.Chapter> chapters = new ArrayList<>();
         for (ChapterEntity chapter : mapper.listChapters(versionId)) {
             List<CourseDtos.LessonSummary> lessons = mapper.listLessons(chapter.getId()).stream()
@@ -519,12 +706,16 @@ public class CourseCatalogService {
                             CourseDtos.LessonType.valueOf(lesson.getLessonType()),
                             lesson.getPosition(),
                             lesson.isPreviewable(),
-                            mapper.listLessonMediaResources(lesson.getId()).stream()
+                            includeResources && "ARTICLE".equals(lesson.getLessonType())
+                                    ? lesson.getArticleMarkdown() : null,
+                            includeResources ? mapper.listLessonMediaResources(lesson.getId()).stream()
                                     .map(resource -> new CourseDtos.LessonMediaResource(
                                             resource.getId(), resource.getMediaId(),
                                             CourseDtos.LessonMediaPurpose.valueOf(resource.getPurpose()),
-                                            resource.getPosition()))
-                                    .toList()))
+                                            resource.getPosition(), resource.getDisplayName(),
+                                            CourseDtos.LessonResourcePresentation.valueOf(resource.getPresentation()),
+                                            resource.getOriginalFileName(), resource.getMimeType(), resource.getSizeBytes()))
+                                    .toList() : null))
                     .toList();
             chapters.add(new CourseDtos.Chapter(
                     chapter.getId(), chapter.getTitle(), chapter.getPosition(), lessons));
@@ -599,6 +790,7 @@ public class CourseCatalogService {
         Map<CourseDtos.LessonMediaPurpose, Set<Integer>> positions = new java.util.EnumMap<>(
                 CourseDtos.LessonMediaPurpose.class);
         Set<UUID> mediaIds = new HashSet<>();
+        Set<String> articleImages = new HashSet<>();
         for (CourseDtos.LessonMediaResourceInput resource : resources(lesson)) {
             if (!allowed(lesson.type(), resource.purpose())) {
                 throw curriculumSequenceError("chapters.lessons.resources", "课时类型与媒体用途不匹配");
@@ -606,10 +798,20 @@ public class CourseCatalogService {
             if (!mediaIds.add(resource.mediaId())) {
                 throw curriculumSequenceError("chapters.lessons.resources", "同一课时不能重复绑定同一媒体");
             }
+            if (resource.purpose() == CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE) {
+                articleImages.add(resource.mediaId().toString());
+            }
             Set<Integer> purposePositions = positions.computeIfAbsent(resource.purpose(), key -> new HashSet<>());
             if (!purposePositions.add(resource.sequence())) {
                 throw curriculumSequenceError("chapters.lessons.resources", "同一用途的资源序号不能重复");
             }
+        }
+        Set<String> suppliedMarkdownImages = markdownValidator.validate(lesson.articleMarkdown());
+        Set<String> markdownImages = lesson.type() == CourseDtos.LessonType.ARTICLE
+                ? suppliedMarkdownImages : Set.of();
+        if (!markdownImages.equals(articleImages)) {
+            throw curriculumSequenceError("chapters.lessons.articleMarkdown",
+                    "正文 media:UUID 引用必须与 ARTICLE_IMAGE 绑定严格一致");
         }
         for (Map.Entry<CourseDtos.LessonMediaPurpose, Set<Integer>> entry : positions.entrySet()) {
             requireContiguous(entry.getValue(), entry.getValue().size(), "chapters.lessons.resources",
@@ -628,21 +830,114 @@ public class CourseCatalogService {
                     CourseDtos.LessonMediaPurpose.SUBTITLE,
                     CourseDtos.LessonMediaPurpose.COURSEWARE).contains(purpose);
             case ARTICLE -> Set.of(CourseDtos.LessonMediaPurpose.COURSEWARE,
-                    CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT).contains(purpose);
+                    CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT,
+                    CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE).contains(purpose);
             case ASSESSMENT -> false;
         };
     }
 
     /** 在任何课程目录写入前逐项调用 media-service，拒绝他人、错用途、未就绪或不存在资产。 */
-    private void validateLessonMedia(List<CourseDtos.ChapterInput> chapters, String teacherId, String traceId) {
+    private Map<String, BindingSnapshot> validateLessonMedia(
+            List<CourseDtos.ChapterInput> chapters, String teacherId, String traceId) {
+        Map<String, BindingSnapshot> snapshots = new LinkedHashMap<>();
         for (CourseDtos.ChapterInput chapter : chapters) {
             for (CourseDtos.LessonInput lesson : chapter.lessons()) {
                 for (CourseDtos.LessonMediaResourceInput resource : resources(lesson)) {
-                    mediaBindingClient.requireBindable(resource.mediaId().toString(), resource.purpose().name(),
-                            teacherId, traceId);
+                    BindingSnapshot snapshot = mediaBindingClient.requireBindable(resource.mediaId().toString(),
+                            resource.purpose().name(), teacherId, traceId);
+                    validatePresentation(resource, snapshot.mimeType());
+                    snapshots.put(resource.mediaId().toString(), snapshot);
                 }
             }
         }
+        return Map.copyOf(snapshots);
+    }
+
+    /** 发布前重新验证 READY，并按课时类型校验正文、视频和新处理契约的自动海报。 */
+    private void validatePublishableLessons(String versionId, String teacherId, String traceId) {
+        for (ChapterEntity chapter : mapper.listChapters(versionId)) {
+            for (LessonEntity lesson : mapper.listLessons(chapter.getId())) {
+                List<LessonMediaResourceEntity> resources = mapper.listLessonMediaResources(lesson.getId());
+                Set<String> articleImages = new HashSet<>();
+                boolean video = false;
+                for (LessonMediaResourceEntity resource : resources) {
+                    BindingSnapshot current = mediaBindingClient.requireBindable(resource.getMediaId(),
+                            resource.getPurpose(), teacherId, traceId);
+                    if ("ARTICLE_IMAGE".equals(resource.getPurpose())) articleImages.add(resource.getMediaId());
+                    if ("LESSON_VIDEO".equals(resource.getPurpose())) {
+                        video = true;
+                        if ("LESSON_VIDEO_V5".equals(current.processingContractVersion())
+                                && !(current.variants().contains("hls-fmp4-v2")
+                                    && current.variants().contains("poster-v1"))) {
+                            throw publishError("chapters.lessons.resources", "新视频必须同时具有 HLS 与 poster-v1");
+                        }
+                    }
+                }
+                if ("VIDEO".equals(lesson.getLessonType()) && !video) {
+                    throw publishError("chapters.lessons.resources", "VIDEO 课时发布时必须绑定 READY 视频");
+                }
+                if ("ARTICLE".equals(lesson.getLessonType())) {
+                    if (lesson.getArticleMarkdown() == null || lesson.getArticleMarkdown().isBlank()) {
+                        throw publishError("chapters.lessons.articleMarkdown", "ARTICLE 课时发布时正文不能为空");
+                    }
+                    if (!markdownValidator.validate(lesson.getArticleMarkdown()).equals(articleImages)) {
+                        throw publishError("chapters.lessons.articleMarkdown", "正文图片引用与绑定不一致");
+                    }
+                }
+            }
+        }
+    }
+
+    private static String normalizeDisplayName(String requested, String originalFileName) {
+        String value = requested == null || requested.isBlank() ? originalFileName : requested.trim();
+        if (value == null || value.isBlank() || value.codePointCount(0, value.length()) > 120) {
+            throw curriculumError("chapters.lessons.resources.displayName", "displayName 必须为 1～120 字");
+        }
+        return value;
+    }
+
+    private static CourseDtos.LessonResourcePresentation normalizePresentation(
+            CourseDtos.LessonMediaResourceInput input, String mimeType) {
+        CourseDtos.LessonResourcePresentation requested = input.presentation();
+        if (input.purpose() == CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE) {
+            return CourseDtos.LessonResourcePresentation.INLINE;
+        }
+        if (requested != null) return requested;
+        return isPreviewableMime(mimeType)
+                ? CourseDtos.LessonResourcePresentation.INLINE : CourseDtos.LessonResourcePresentation.DOWNLOAD;
+    }
+
+    private static void validatePresentation(CourseDtos.LessonMediaResourceInput input, String mimeType) {
+        if (input.purpose() == CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE
+                && input.presentation() != null
+                && input.presentation() != CourseDtos.LessonResourcePresentation.INLINE) {
+            throw curriculumError("chapters.lessons.resources.presentation", "ARTICLE_IMAGE 固定为 INLINE");
+        }
+        CourseDtos.LessonResourcePresentation actual = normalizePresentation(input, mimeType);
+        if (input.purpose() == CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE
+                && actual != CourseDtos.LessonResourcePresentation.INLINE) {
+            throw curriculumError("chapters.lessons.resources.presentation", "ARTICLE_IMAGE 固定为 INLINE");
+        }
+        if (!isPreviewableMime(mimeType) && actual == CourseDtos.LessonResourcePresentation.INLINE
+                && Set.of(CourseDtos.LessonMediaPurpose.COURSEWARE,
+                        CourseDtos.LessonMediaPurpose.ARTICLE_ATTACHMENT).contains(input.purpose())) {
+            throw curriculumError("chapters.lessons.resources.presentation", "PPTX/TXT 资料只允许 DOWNLOAD");
+        }
+    }
+
+    private static boolean isPreviewableMime(String mimeType) {
+        String value = mimeType == null ? "" : mimeType.toLowerCase(java.util.Locale.ROOT);
+        return value.equals("application/pdf") || value.startsWith("image/");
+    }
+
+    private CourseException publishError(String field, String reason) {
+        return new CourseException(HttpStatus.UNPROCESSABLE_CONTENT, "COURSE.PUBLISH_VALIDATION_FAILED",
+                "课程内容不满足发布条件", List.of(new FieldError(field, reason)));
+    }
+
+    private static CourseException curriculumError(String field, String reason) {
+        return new CourseException(HttpStatus.UNPROCESSABLE_CONTENT,
+                "COMMON.VALIDATION_FAILED", "请求参数不合法", List.of(new FieldError(field, reason)));
     }
 
     private void requireContiguous(Set<Integer> values, int size, String field, String reason) {
@@ -711,13 +1006,6 @@ public class CourseCatalogService {
         }
     }
 
-    private void releaseLessonMedia(String versionId, String traceId) {
-        for (LessonMediaResourceEntity resource : mapper.listVersionMediaResources(versionId)) {
-            reference(CourseMediaEventFactory.RELEASED, resource.getMediaId(),
-                    "LESSON_RESOURCE", resource.getId(), traceId);
-        }
-    }
-
     private void reference(String eventType, String mediaId, String referenceType,
             String referenceId, String traceId) {
         mapper.insertOutbox(mediaEvents.create(eventType, mediaId, referenceType, referenceId, traceId));
@@ -745,4 +1033,7 @@ public class CourseCatalogService {
 
     /** 课程创建结果；created=false 表示命中同一教师/clientRequestId 的既有幂等结果。 */
     public record CreateResult(CourseDtos.TeacherCourse course, boolean created) {}
+
+    private record ExistingCurriculum(Map<Integer, String> chapterIds, Map<String, String> lessonIds,
+            Map<String, LessonMediaResourceEntity> resources) {}
 }

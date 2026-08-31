@@ -6,6 +6,8 @@ import java.net.http.HttpClient;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -64,10 +66,15 @@ public class HttpCourseFactsClient implements CourseFactsClient {
 
     private static CourseFact fact(Published value) {
         Set<String> lessonIds = new LinkedHashSet<>();
+        Map<String, String> lessonTypes = new LinkedHashMap<>();
         if (value.chapters() != null) for (Chapter chapter : value.chapters()) {
-            if (chapter.lessons() != null) for (Lesson lesson : chapter.lessons()) lessonIds.add(lesson.id());
+            if (chapter.lessons() != null) for (Lesson lesson : chapter.lessons()) {
+                lessonIds.add(lesson.id());
+                if (lesson.type() != null) lessonTypes.put(lesson.id(), lesson.type());
+            }
         }
-        return new CourseFact(value.id(), value.publishedVersion(), value.accessType(), value.teacher().id(), Set.copyOf(lessonIds));
+        return new CourseFact(value.id(), value.publishedVersion(), value.accessType(), value.teacher().id(),
+                Set.copyOf(lessonIds), Map.copyOf(lessonTypes));
     }
 
     private static QuestionException notFound() {
@@ -81,5 +88,5 @@ public class HttpCourseFactsClient implements CourseFactsClient {
     private record Published(String id, String publishedVersion, String accessType, Teacher teacher, List<Chapter> chapters) {}
     private record Teacher(String id) {}
     private record Chapter(List<Lesson> lessons) {}
-    private record Lesson(String id) {}
+    private record Lesson(String id, String type) {}
 }

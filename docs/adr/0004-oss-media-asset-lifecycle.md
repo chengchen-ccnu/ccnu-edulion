@@ -117,6 +117,16 @@ T12F 拆成顺序实施的两个任务：T12F.1“课程内容、资源授权与
 
 本轮不实现多码率、清晰度选择、字幕访问接口或页面、历史海报生产重处理、Office 在线转换、DRM、AI 和 T12G Redis 播放心跳缓冲。既有 `SUBTITLE` 枚举、上传策略和 `READY` 绑定校验继续保留，不能为缩小范围删除安全能力；页面不展示字幕入口。自动海报不触发历史资产暗中批处理。
 
+## T12F.1 实施状态
+
+T12F.1 已按上述决策向前落地 OpenAPI 0.19.0、Course V4、Media V5 与 Learning V12。课程域保存受控 ARTICLE Markdown、正文图片严格引用集合和绑定时安全元数据快照；公开详情不再输出正文、资源行或稳定封面媒体标识，登录后的受保护内容接口才按 PUBLIC、有效报名或 `previewable` 返回正文、有效海报和安全资源投影。浏览器资源授权只接收课程/课时/课程域资源行与动作，课程域自行决定媒体用途、变体和 disposition；教师草稿继续返回完整 Markdown 与绑定快照。
+
+新上传 `LESSON_VIDEO` 以 `LESSON_VIDEO_V5` 标识处理契约，只有 `hls-fmp4-v2` 和 WebP `poster-v1` 均存在才进入 READY；历史资产的空契约不触发重处理。真实 FFmpeg 验收使用黑场后接测试画面的合成视频，确认有限关键帧选择跳过黑场、输出保持 640×360 且不上采样；该验收还发现并修复了 filtergraph 逗号转义兼容性。自动海报与 HLS 仍由同一个有限重试处理作业承担，耗尽后资产进入 FAILED，派生对象随原视频精确回收。
+
+课时类型切换按最终请求比较资源：视频转图文释放视频、海报、字幕，图文转视频释放正文图和 ARTICLE_ATTACHMENT，ASSESSMENT 互转同样清除不兼容内容；共同保留的 COURSEWARE 复用原课程资源行，不产生释放/重绑抖动。所有解除仍与课程事务共同写 `MediaReferenceReleased` Outbox。Learning 的 ARTICLE 完成使用独立的稳定 `clientRequestId` 幂等事实，不复用视频 position/watched 事件，普通调用只能从未完成推进到 100%。
+
+本任务没有增加字幕可见能力、Vue 页面、多码率、历史海报 API、Office 转换、第二套对象存储客户端或跨服务数据库关系。真实开发 MySQL 已保留 Course V4、Media V5、Learning V12 的 Flyway 历史；真实 RabbitMQ 与 FFmpeg 验收完成。当前本机共享配置缺少 OSS endpoint、region 和 bucket，演示脚本在任何领域写入前已安全失败，因此没有把 Mock/本地目录冒充真实 OSS，也没有留下半套 Seed；补齐明确开发 Bucket 后可按交付文档执行 Rebuild 完成真实 OSS 综合复验。
+
 ## T09A 历史图片转存补充
 
 历史题库中的 HTTPS 图片不是可长期保存的业务 URL。T09A 仅允许 `media-service` 通过显式主机白名单、DNS/重定向复核、图片 MIME 白名单、单图大小上限和请求超时执行服务端转存；转存结果走既有 `QUESTION_IMAGE` 资产、READY 状态和引用台账。`learning-service` 只提交临时外部地址并接收稳定 `mediaId`，不得保存该地址、接入 OSS SDK或记录短期签名结果。dry-run 只报告图片数量和风险，不发起网络请求。来源地址哈希与幂等键可用于重复转存去重，但外部 URL 明文不进入数据库、事件或日志。

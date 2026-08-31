@@ -85,6 +85,17 @@ public class LearningController {
                 lessonId, request, trace(servlet));
     }
 
+    @PostMapping("/api/v1/learning/courses/{courseId}/lessons/{lessonId}/article-completion")
+    /** 正文成功渲染后记录独立的 ARTICLE 0→100 完成事实；客户端重试必须复用 clientRequestId。 */
+    public LearningDtos.ArticleLessonCompletion completeArticle(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @PathVariable String lessonId,
+            @Valid @RequestBody LearningDtos.CompleteArticleLessonRequest request, HttpServletRequest servlet) {
+        return learning.completeArticle(LearningIdentity.learner(userId, roles, permissions).userId(), courseId,
+                lessonId, request, trace(servlet));
+    }
+
     @GetMapping("/api/v1/learning/courses/{courseId}/lessons/{lessonId}/notes")
     /** 返回本人在当前课时的学习笔记。 */
     public List<LearningDtos.LearningNote> notes(@RequestHeader("X-User-Id") String userId,
