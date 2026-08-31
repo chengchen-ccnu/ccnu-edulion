@@ -50,6 +50,20 @@ import tools.jackson.databind.ObjectMapper;
         "platform.media.messaging.enabled=false", "platform.media.maintenance.enabled=false",
         "platform.media.oss.enabled=true", "platform.media.oss.key-prefix=t12f1-demo",
         "platform.media.worker.enabled=true",
+        "spring.autoconfigure.exclude="
+                + "org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayResilience4JCircuitBreakerAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayNoLoadBalancerClientAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayFunctionAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayMetricsAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayStreamAutoConfiguration,"
+                + "org.springframework.cloud.gateway.discovery.GatewayDiscoveryClientAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.SimpleUrlHandlerMappingGlobalCorsAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayReactiveLoadBalancerClientAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.LocalResponseCacheAutoConfiguration,"
+                + "org.springframework.cloud.gateway.config.GatewayTracingAutoConfiguration",
         "spring.flyway.locations=filesystem:src/main/resources/db/migration"
 })
 @ActiveProfiles("local")
@@ -185,12 +199,22 @@ class T12F1MediaDemoSeedTest {
         assertThat(countAssets()).isZero();
     }
 
+    /** 同时复核数据库状态与每个精确原件/派生键的 OSS HEAD，防止“有记录无对象”的半套 Seed。 */
     private void validateSeed() {
         assertThat(countAssets()).isEqualTo(IDS.size());
         assertThat(repository.findAsset(VIDEO).orElseThrow().status()).isEqualTo(MediaStatus.READY);
         assertThat(repository.listVariants(VIDEO)).extracting(value -> value.variantName())
                 .containsExactlyInAnyOrder("hls-fmp4-v2", "poster-v1");
         assertThat(repository.findVariant(VIDEO, "poster-v1").orElseThrow().mimeType()).isEqualTo("image/webp");
+        for (String mediaId : IDS) {
+            MediaAsset asset = repository.findAsset(mediaId).orElseThrow();
+            assertThat(storage.head(asset.objectKey()).size()).isEqualTo(asset.size());
+            repository.listVariants(mediaId).forEach(variant -> {
+                assertThat(storage.head(variant.objectKey()).size()).isEqualTo(variant.size());
+                repository.listVariantComponents(variant.variantId()).forEach(component ->
+                        assertThat(storage.head(component.objectKey()).size()).isEqualTo(component.size()));
+            });
+        }
     }
 
     private int countAssets() {

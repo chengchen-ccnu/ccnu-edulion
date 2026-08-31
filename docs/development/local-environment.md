@@ -177,7 +177,7 @@ mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl media-ser
 Remove-Item Env:T12F1_FFMPEG_REAL_ACCEPTANCE
 ```
 
-正式环境不设置 `T12F1_DEMO_SEED_ENABLED`，普通启动和构建不会加载上述 Seed。当前本机共享配置缺少 OSS endpoint/region/bucket，最近一次 `Rebuild` 已按前置门禁安全停止，未留下半套演示数据；补齐明确开发 Bucket 后应直接重跑 `Rebuild`，再按交付文档执行内容读取、预览/下载和最终 Cleanup 复核。
+正式环境不设置 `T12F1_DEMO_SEED_ENABLED`，普通启动和构建不会加载上述 Seed。本机已在仓库外 `local.env` 恢复项目专用开发 OSS 的非敏感 Endpoint、签名 Region 与 Bucket；AccessKey 仍由安全来源注入。阿里云 Endpoint/Location 可以是 `oss-cn-beijing`，但当前 OSS SDK 的 V4 签名 Region 应填写 `cn-beijing`。真实 `Rebuild` 与再次 `Initialize` 已通过，后者同时复核固定数据库记录和精确 OSS HEAD；当前按交付要求保留一套图文进度为 0% 的演示 Seed。不再需要时执行 Cleanup，重新演示执行 Rebuild。
 
 历史 `READY` 视频不自动重处理。T12F.2 真实验收若需为少量本地视频补海报，只能先经 Course API 清点当前发布版本缺失项，再用正常授权下载、FFmpeg 截帧、正常 `VIDEO_POSTER` 上传/绑定和新版本发布；不枚举 OSS Bucket、不直接写媒体表，并记录前后课程版本、mediaId 与回退方式。多码率、清晰度选择、字幕实现、Office 转换和历史海报生产重处理 API 均不属于 T12F.1/T12F.2。
 

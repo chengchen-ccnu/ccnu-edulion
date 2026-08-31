@@ -125,7 +125,7 @@ T12F.1 已按上述决策向前落地 OpenAPI 0.19.0、Course V4、Media V5 与 
 
 课时类型切换按最终请求比较资源：视频转图文释放视频、海报、字幕，图文转视频释放正文图和 ARTICLE_ATTACHMENT，ASSESSMENT 互转同样清除不兼容内容；共同保留的 COURSEWARE 复用原课程资源行，不产生释放/重绑抖动。所有解除仍与课程事务共同写 `MediaReferenceReleased` Outbox。Learning 的 ARTICLE 完成使用独立的稳定 `clientRequestId` 幂等事实，不复用视频 position/watched 事件，普通调用只能从未完成推进到 100%。
 
-本任务没有增加字幕可见能力、Vue 页面、多码率、历史海报 API、Office 转换、第二套对象存储客户端或跨服务数据库关系。真实开发 MySQL 已保留 Course V4、Media V5、Learning V12 的 Flyway 历史；真实 RabbitMQ 与 FFmpeg 验收完成。当前本机共享配置缺少 OSS endpoint、region 和 bucket，演示脚本在任何领域写入前已安全失败，因此没有把 Mock/本地目录冒充真实 OSS，也没有留下半套 Seed；补齐明确开发 Bucket 后可按交付文档执行 Rebuild 完成真实 OSS 综合复验。
+本任务没有增加字幕可见能力、Vue 页面、多码率、历史海报 API、Office 转换、第二套对象存储客户端或跨服务数据库关系。真实开发 MySQL 已保留 Course V4、Media V5、Learning V12 的 Flyway 历史；真实项目专用 OSS、RabbitMQ 与 FFmpeg 综合验收完成。演示 Rebuild 和第二次幂等 Initialize 均通过，Initialize 会按数据库记录对每个固定原件、HLS 组件和 `poster-v1` 执行精确 HEAD，避免留下“有记录无对象”的半套 Seed；当前只保留交付文档列明的固定演示对象与本域数据，随机验收前缀均已精确清理。
 
 ## T09A 历史图片转存补充
 

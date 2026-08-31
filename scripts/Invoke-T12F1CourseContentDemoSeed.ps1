@@ -36,6 +36,8 @@ function Invoke-DomainSeed {
 }
 
 $seedCommand = {
+    # local.env 可能为日常联调启用 RabbitMQ；Seed 本身不发布消息，必须在凭据加载后再次关闭监听。
+    $env:RABBITMQ_ENABLED = "false"
     if ($env:MEDIA_MYSQL_DATABASE -ne "edu_platform_media_dev" -or
         $env:COURSE_MYSQL_DATABASE -ne "edu_platform_course_dev" -or
         $env:LEARNING_MYSQL_DATABASE -ne "edu_platform_learning_dev") {
