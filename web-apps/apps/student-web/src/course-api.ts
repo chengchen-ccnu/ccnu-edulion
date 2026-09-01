@@ -4,21 +4,27 @@ import {
 } from "@edu/api-client";
 import type {
   CategorySummary,
+  CourseMediaAccessGrant,
   CourseMediaPlaybackGrant,
   CourseDetail,
   CoursePage,
   GatewayClient,
-  ListCoursesQuery
+  LessonContent,
+  ListCoursesQuery,
+  CourseResourceAction
 } from "@edu/api-client";
 import type { AuthStore } from "@edu/auth";
 
 import { authStore } from "./auth";
 
-/** 学生端只读课程目录 API；所有请求经 Gateway，数据结构来自 OpenAPI。 */
+/** 学生端课程 API；公开目录与受保护课时内容严格使用 OpenAPI 生成投影。 */
 export interface StudentCourseApi {
   list(query: ListCoursesQuery): Promise<CoursePage>;
   categories(): Promise<CategorySummary[]>;
   detail(courseId: string, signal?: AbortSignal): Promise<CourseDetail>;
+  lessonContent(courseId: string, lessonId: string, signal?: AbortSignal): Promise<LessonContent>;
+  resourceGrant(courseId: string, lessonId: string, resourceId: string, action: CourseResourceAction,
+    signal?: AbortSignal): Promise<CourseMediaAccessGrant>;
   playbackGrant(courseId: string, lessonId: string, resourceId: string,
     signal?: AbortSignal): Promise<CourseMediaPlaybackGrant>;
 }
@@ -44,6 +50,22 @@ export function createStudentCourseApi(
       const result = await client.GET("/api/v1/courses/{courseId}", {
         params: { path: { courseId } }, signal
       });
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async lessonContent(courseId, lessonId, signal) {
+      const result = await store.authorizedRequest(Authorization => client.GET(
+        "/api/v1/courses/{courseId}/lessons/{lessonId}/content", {
+          headers: { Authorization }, params: { path: { courseId, lessonId } }, signal
+        }));
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async resourceGrant(courseId, lessonId, resourceId, action, signal) {
+      const result = await store.authorizedRequest(Authorization => client.POST(
+        "/api/v1/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants", {
+          headers: { Authorization }, params: { path: { courseId, lessonId, resourceId } }, body: { action }, signal
+        }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },

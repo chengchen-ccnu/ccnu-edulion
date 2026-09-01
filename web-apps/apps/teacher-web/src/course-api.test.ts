@@ -53,6 +53,22 @@ describe("teacher course API", () => {
     await expect(api.playbackGrant("course-1", "lesson-1", "resource-1"))
       .resolves.toMatchObject({ method: "GET" });
   });
+
+  it("requests teacher resource actions through the owner course path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      expect(new URL(request.url).pathname).toBe("/api/v1/teacher/courses/course-1/lessons/lesson-1/resources/resource-1/access-grants");
+      await expect(request.json()).resolves.toEqual({ action: "DOWNLOAD" });
+      return json({ method: "GET", url: "https://signed.example.test/resource", headers: {},
+        expiresAt: "2099-01-01T00:00:00Z" }, 201);
+    }));
+    const store = { authorizedRequest: (request: (authorization: string) => Promise<unknown>) =>
+      request("Bearer teacher-token") } as unknown as AuthStore;
+    const api = createTeacherCourseApi(store, createGatewayClient("http://gateway.test"));
+
+    await expect(api.resourceGrant("course-1", "lesson-1", "resource-1", "DOWNLOAD"))
+      .resolves.toMatchObject({ method: "GET" });
+  });
 });
 
 function json(body: unknown, status = 200): Response {

@@ -46,5 +46,12 @@ describe("playback grant runtime", () => {
     expect(source).toContain('positionSecond !== lastPositionSecond');
     expect(source).not.toContain('watch(() => props.initialPositionSeconds');
     expect(source).toContain('@durationchange="reportDuration"');
+    expect(source).toContain("[1, 1.25, 1.5, 2, 2.5, 3]");
+    expect(source).toContain("video.value.preservesPitch = true");
+    expect(source).toContain("resetPlaybackRate()");
+    expect(source).toContain("posterAbort?.abort()");
+    expect(source).toContain("URL.revokeObjectURL(posterObjectUrl)");
+    expect(source).not.toContain("localStorage");
+    expect(source).not.toContain("sessionStorage");
   });
 });

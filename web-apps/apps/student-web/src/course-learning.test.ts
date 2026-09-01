@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { courseLearningEntries, findLearningEntry, firstAccessibleLearningEntry } from "./course-learning";
 
 describe("course learning model", () => {
-  it("orders published video lessons and keeps only the first LESSON_VIDEO resource", () => {
+  it("orders every published lesson without reading public media bindings", () => {
     const course = fixture("PUBLIC");
 
-    expect(courseLearningEntries(course).map(item => [item.lesson.id, item.resourceId, item.accessible]))
-      .toEqual([["lesson-1", "resource-1", true], ["lesson-2", "resource-2", true]]);
+    expect(courseLearningEntries(course).map(item => [item.lesson.id, item.lesson.type, item.accessible]))
+      .toEqual([["lesson-1", "VIDEO", true], ["lesson-2", "VIDEO", true], ["lesson-article", "ARTICLE", true]]);
   });
 
   it("offers only previewable lessons before enrollment and unlocks the same stable entries afterwards", () => {
@@ -19,11 +19,11 @@ describe("course learning model", () => {
     expect(courseLearningEntries(course, true).every(item => item.accessible)).toBe(true);
   });
 
-  it("treats an unknown or non-video lesson deep link as missing", () => {
+  it("resolves article deep links and treats only unknown lessons as missing", () => {
     const course = fixture("PUBLIC");
 
-    expect(findLearningEntry(course, "lesson-2")?.resourceId).toBe("resource-2");
-    expect(findLearningEntry(course, "lesson-article")).toBeNull();
+    expect(findLearningEntry(course, "lesson-2")?.lesson.type).toBe("VIDEO");
+    expect(findLearningEntry(course, "lesson-article")?.lesson.type).toBe("ARTICLE");
     expect(findLearningEntry(course, "missing")).toBeNull();
   });
 });

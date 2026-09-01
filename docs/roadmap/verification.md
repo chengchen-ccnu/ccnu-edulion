@@ -619,3 +619,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 一致性验证：重新执行 `pnpm.cmd --dir web-apps run check:api` 成功，OpenAPI 0.19.0 可重新生成且已跟踪 `schema.d.ts` 与 HEAD 无差异；`git diff --check` 通过。T12F.2 只能消费生成客户端，不得修改服务端契约来迁就页面、维护手写 DTO、搬迁播放器或创建第二套上传/学习路由。
 - 实施边界：教师在既有课程编排页完成 Markdown 工具栏/实时预览、ARTICLE_IMAGE 上传插入、资源展示名/主动作和类型切换二次确认；学生在既有学习页消费受保护内容，显示有效/占位海报、1～3 倍速、资料预览/下载，并在正文成功渲染后以同一请求 ID 最多重试三次同步 100% 完成。多码率、清晰度选择、字幕 UI、历史海报生产重处理 API、Office 转换、DRM、AI 和 T12G Redis 缓冲继续排除。
 - 数据与环境：本次总控没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 任务或外部服务，没有创建、修改或清理 Schema、表、消息、对象、迁移或伪数据；T12F.1 明确保留的固定演示 Seed 原样保留，供 T12F.2 页面和真实浏览器验收使用。没有执行 Seed Cleanup/Rebuild，也没有删除已有安全措施。
+
+## 2026-09-01 T12F.2 课程内容与播放器前端
+
+- Git 与契约：开始时分支为 `codex/t12f2-course-content-player`、工作区干净，HEAD `4c6aa3ff` 的 merge-base/main 为 PR #42 合并提交 `e53a58d`。完整复核页面规格、backlog、verification、T12F.1 交付、ADR-0004 与 OpenAPI 0.19.0 后确认契约足够；本任务没有修改 OpenAPI、Java、事件或 Flyway，只从生成 `components["schemas"]` 导出类型别名。
+- 教师端：既有课程编排页实现 ARTICLE Markdown 工具栏、共享实时预览、`ARTICLE_IMAGE` 上传/引用收口、资料 `displayName`/`presentation`、显式 revision 保存、409/422/429/离线提示、未保存离页保护及三类课时互转二次确认。SUBTITLE 后端枚举和既有绑定边界保留，页面没有字幕入口。
+- 学生端：既有学习页只从受保护内容接口读取正文、播放 mediaId、海报与资源；共享消毒器完成 Markdown/KaTeX/GFM/正文图渲染后才用页面级稳定 UUID 调用 ARTICLE 完成，最多退避三次且失败不阻断阅读。资料每次动作重新申请授权并只生成内存 Blob；付费未报名试看不写完成。
+- 播放器：自定义海报、自动 `poster-v1` 与固定 SVG 占位按优先级展示；倍速固定 1/1.25/1.5/2/2.5/3，保持音调且只存播放器实例，切课恢复 1x；组件/页面离开时销毁 HLS、请求、计时器和临时 URL，不使用 Web Storage。
+- 自动门禁：`check:api` 通过；全 workspace typecheck 通过；Vitest 35 文件/226 测试通过；admin/student/teacher 生产构建通过，仅有既有学生 chunk 大小警告；`git diff --check` 通过。新增测试覆盖 Markdown 消毒、图片解码失败不完成、生成客户端路径、类型切换边界、资源动作清理、海报/倍速复位和 ARTICLE 有限重试。
+- 真实浏览器：固定学生深链接成功渲染标题、2 个 KaTeX、GFM 表格、代码和 READY Blob 正文图；PDF 显示预览/下载，TXT/PPTX 只下载，三个下载动作无错误；ARTICLE 从 Seed 0% 变 100%。视频使用 Blob 自定义海报，六档倍速和 3x 生效，切课恢复 1x，无字幕 UI。390×844、834×1112、1440×900 均无横向溢出，焦点轮廓可见。
+- 数据恢复：真实完成后执行固定 Seed Rebuild；清理阶段完成但长任务未完成初始化，随后幂等 Initialize 完整通过。最终专用 Learning dev Schema 只读核验为固定进度 `completed=0`、位置/观看 0，完成事实与幂等请求均 0；固定 6 个媒体资产、课程和两个课时继续保留。未枚举 Bucket、直写媒体表、补历史海报或新建随机课程。
+- 未通过项：本地启动配置最初使 Gateway/IAM 分别读取 Redis DB 0/1，登录后 session-version fail-closed；验收进程对齐后登录成功。随后硬刷新及 5173→5174 跳转仍复现既有 HttpOnly refresh Cookie 未恢复，最新数据库会话保持 ACTIVE ROOT、没有轮换 CHILD，前端返回 `IAM.INVALID_REFRESH`。因此学生硬刷新恢复和教师真实页面交互不能标记通过；没有通过放宽 HttpOnly/SameSite 或增加第二套登录绕过。详细命令、流程与风险见 `docs/delivery/T12F.2-course-content-player.md`。

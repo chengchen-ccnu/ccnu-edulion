@@ -55,6 +55,31 @@ describe("student course API", () => {
     await expect(api.playbackGrant("course-1", "lesson-1", "resource-1"))
       .resolves.toMatchObject({ method: "GET" });
   });
+
+  it("reads protected lesson content and requests a fresh action grant by course resource id", async () => {
+    const calls: Array<{ path: string; method: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      calls.push({ path, method: request.method, body: request.method === "POST" ? await request.json() : null });
+      if (request.method === "GET") return json({ courseId: "course-1", lessonId: "lesson-1", title: "图文",
+        type: "ARTICLE", previewable: false, articleMarkdown: "# 正文", playbackResourceId: null, poster: null,
+        inlineImages: [], resources: [] });
+      return json({ method: "GET", url: "https://signed.example.test/resource", headers: {},
+        expiresAt: "2099-01-01T00:00:00Z" }, 201);
+    }));
+    const store = { authorizedRequest: (request: (authorization: string) => Promise<unknown>) =>
+      request("Bearer student-token") } as never;
+    const api = createStudentCourseApi(createGatewayClient("http://gateway.test"), store);
+
+    await api.lessonContent("course-1", "lesson-1");
+    await api.resourceGrant("course-1", "lesson-1", "resource-1", "PREVIEW");
+    expect(calls).toEqual([
+      { method: "GET", path: "/api/v1/courses/course-1/lessons/lesson-1/content", body: null },
+      { method: "POST", path: "/api/v1/courses/course-1/lessons/lesson-1/resources/resource-1/access-grants",
+        body: { action: "PREVIEW" } }
+    ]);
+  });
 });
 
 function json(body: unknown, status = 200): Response {

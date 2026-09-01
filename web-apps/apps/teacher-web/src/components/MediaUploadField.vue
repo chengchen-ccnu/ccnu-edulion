@@ -13,14 +13,19 @@ import type { MediaUploadViewState } from "../media-upload";
 const props = defineProps<{
   modelValue: string | null;
   purpose: Extract<MediaPurpose, "COURSE_COVER" | "LESSON_VIDEO" | "QUESTION_IMAGE" | "QUESTION_AUDIO"
-    | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE">;
+    | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "VIDEO_POSTER" | "COURSEWARE"
+    | "ARTICLE_ATTACHMENT" | "ARTICLE_IMAGE">;
   checkpointKey: string;
   accept: string;
   label: string;
   currentUrl?: string | null;
   disabled?: boolean;
 }>();
-const emit = defineEmits<{ "update:modelValue": [value: string | null]; "busy-change": [value: boolean] }>();
+const emit = defineEmits<{
+  "update:modelValue": [value: string | null];
+  "busy-change": [value: boolean];
+  ready: [value: { mediaId: string; fileName: string; mimeType: string; size: number; previewUrl: string | null }];
+}>();
 
 const input = ref<HTMLInputElement | null>(null);
 const selectedFile = ref<File | null>(null);
@@ -30,12 +35,18 @@ const state = ref<MediaUploadViewState>({ stage: "IDLE", progress: 0, uploadedBy
 const uploader = new MediaUploader({ api: teacherMediaApi, purpose: props.purpose,
   checkpointKey: props.checkpointKey, onChange: next => {
     state.value = next;
-    if (next.stage === "READY" && next.mediaId) emit("update:modelValue", next.mediaId);
+    if (next.stage === "READY" && next.mediaId) {
+      emit("update:modelValue", next.mediaId);
+      emit("ready", { mediaId: next.mediaId, fileName: next.fileName ?? selectedFile.value?.name ?? "未命名文件",
+        mimeType: selectedFile.value?.type ?? "application/octet-stream", size: selectedFile.value?.size ?? next.totalBytes,
+        previewUrl: previewUrl.value });
+    }
   } });
 const busy = computed(() => ["RESTORING", "HASHING", "CREATING", "UPLOADING", "COMPLETING", "PROCESSING"]
   .includes(state.value.stage));
 const percent = computed(() => Math.round(state.value.progress * 100));
-const imagePurpose = computed(() => props.purpose === "COURSE_COVER" || props.purpose === "QUESTION_IMAGE");
+const imagePurpose = computed(() => ["COURSE_COVER", "QUESTION_IMAGE", "VIDEO_POSTER", "ARTICLE_IMAGE"]
+  .includes(props.purpose));
 const displayUrl = computed(() => previewUrl.value ?? props.currentUrl ?? null);
 const placeholderLabel = computed(() => state.value.fileName ?? (props.modelValue
   ? imagePurpose.value ? "已绑定图片，展示地址暂不可用" : "已绑定媒体文件"
@@ -86,6 +97,8 @@ async function remove() {
 function browse() {
   input.value?.click();
 }
+
+defineExpose({ browse });
 
 function revokePreview() {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);

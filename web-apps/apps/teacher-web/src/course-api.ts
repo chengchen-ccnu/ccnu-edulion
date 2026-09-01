@@ -4,6 +4,7 @@ import {
 } from "@edu/api-client";
 import type {
   CategorySummary,
+  CourseMediaAccessGrant,
   CourseMediaPlaybackGrant,
   CoursePublication,
   CreateCourseRequest,
@@ -13,7 +14,8 @@ import type {
   TeacherCourse,
   TeacherCoursePage,
   UpdateCourseRequest,
-  UpdatePublicationRequest
+  UpdatePublicationRequest,
+  CourseResourceAction
 } from "@edu/api-client";
 import type { AuthStore } from "@edu/auth";
 
@@ -30,6 +32,8 @@ export interface TeacherCourseApi {
   updatePublication(courseId: string, body: UpdatePublicationRequest): Promise<CoursePublication>;
   playbackGrant(courseId: string, lessonId: string, resourceId: string,
     signal?: AbortSignal): Promise<CourseMediaPlaybackGrant>;
+  resourceGrant(courseId: string, lessonId: string, resourceId: string, action: CourseResourceAction,
+    signal?: AbortSignal): Promise<CourseMediaAccessGrant>;
 }
 
 /**
@@ -96,6 +100,14 @@ export function createTeacherCourseApi(
       const result = await authorized(Authorization => client.POST(
         "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants", {
           headers: { Authorization }, params: { path: { courseId, lessonId, resourceId } }, signal
+        }));
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async resourceGrant(courseId, lessonId, resourceId, action, signal) {
+      const result = await authorized(Authorization => client.POST(
+        "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/access-grants", {
+          headers: { Authorization }, params: { path: { courseId, lessonId, resourceId } }, body: { action }, signal
         }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
