@@ -46,6 +46,10 @@ public interface CourseMapper {
     List<CourseMediaAccessRow> listPublishedLessonContentRows(@Param("courseId") String courseId,
             @Param("lessonId") String lessonId);
 
+    /** owner 范围内查询当前可编辑版本的精确课时及全部资源；空资源 ARTICLE 也返回一行。 */
+    List<CourseMediaAccessRow> listOwnedEditableLessonContentRows(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId, @Param("teacherId") String teacherId);
+
     List<CategoryEntity> listActiveCategories();
 
     CourseEntity findOwnedCourse(@Param("courseId") String courseId, @Param("teacherId") String teacherId);

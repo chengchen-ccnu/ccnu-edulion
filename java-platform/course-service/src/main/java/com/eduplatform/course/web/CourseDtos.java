@@ -158,6 +158,13 @@ public final class CourseDtos {
 
     public record LessonInlineImage(String resourceId, String mediaId, CourseMediaAccessGrant grant) {}
 
+    /** 教师当前可编辑 ARTICLE 正文投影；只包含 Markdown 和实际引用图片的新短期授权。 */
+    public record TeacherArticleContent(String courseId, String lessonId, String articleMarkdown,
+            List<TeacherArticleInlineImage> inlineImages) {}
+
+    /** 正文占位符与短期授权的最小映射；不暴露普通资料行或存储定位信息。 */
+    public record TeacherArticleInlineImage(String mediaId, CourseMediaAccessGrant grant) {}
+
     public record LessonContentResource(String id, LessonMediaPurpose purpose, String displayName,
             LessonResourcePresentation presentation, String originalFileName, String mimeType, long size,
             List<CourseResourceAction> actions) {}
