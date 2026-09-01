@@ -311,6 +311,54 @@ class MediaHttpIntegrationTest {
     }
 
     @Test
+    /** 课程正文图只接受精确 COURSE_ARTICLE_IMAGE/ORIGINAL/INLINE，并继续复核 READY 与一次性 jti。 */
+    void internalCourseArticleImageRequiresExactAuthorizationAndReadyAsset() throws Exception {
+        CompletedTestAsset image = createUploadedAsset("00000000-0000-4000-8000-000000007223",
+                "ARTICLE_IMAGE", "article-image.png", "image/png",
+                "article-image".getBytes(StandardCharsets.UTF_8));
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(image.mediaId()) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        String body = internalAccessBody(TEACHER, "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "ORIGINAL");
+        Instant now = Instant.now();
+        String token = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, image.mediaId(),
+                "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+
+        HttpResponse<String> granted = sendInternal(token, image.mediaId(), body);
+
+        assertThat(granted.statusCode()).withFailMessage(granted.body()).isEqualTo(201);
+        assertThat(storage.readSigned(mapper.readTree(granted.body()).get("url").asString()))
+                .isEqualTo("article-image");
+        assertThat(granted.body()).doesNotContain("objectKey", "bucket", "token");
+        assertThat(sendInternal(token, image.mediaId(), body).statusCode()).isEqualTo(403);
+
+        String wrongAction = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, image.mediaId(),
+                "ARTICLE_IMAGE", "COURSE_RESOURCE_PREVIEW", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+        assertThat(sendInternal(wrongAction, image.mediaId(),
+                internalAccessBody(TEACHER, "ARTICLE_IMAGE", "COURSE_RESOURCE_PREVIEW", "ORIGINAL"))
+                .statusCode()).isEqualTo(403);
+        String wrongVariant = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, image.mediaId(),
+                "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "poster-v1", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+        assertThat(sendInternal(wrongVariant, image.mediaId(),
+                internalAccessBody(TEACHER, "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "poster-v1"))
+                .statusCode()).isEqualTo(403);
+
+        CompletedTestAsset pending = createUploadedAsset("00000000-0000-4000-8000-000000007224",
+                "ARTICLE_IMAGE", "pending-article.png", "image/png",
+                "pending-article".getBytes(StandardCharsets.UTF_8));
+        String pendingToken = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, pending.mediaId(),
+                "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30));
+        assertThat(sendInternal(pendingToken, pending.mediaId(),
+                internalAccessBody(TEACHER, "ARTICLE_IMAGE", "COURSE_ARTICLE_IMAGE", "ORIGINAL"))
+                .statusCode()).isEqualTo(409);
+    }
+
+    @Test
     /** 学习域签发的题目媒体令牌只能访问精确 ORIGINAL，并由 jti 唯一消费；课程域 issuer 不能越权代签。 */
     void internalAssessmentMediaAuthorizationRequiresLearningIssuerAndRejectsReplay() throws Exception {
         CompletedTestAsset image = createUploadedAsset("00000000-0000-4000-8000-000000007304",

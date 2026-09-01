@@ -217,18 +217,31 @@ class GatewayRouteSecurityTest {
     /** Given 普通或教师 JWT；Then 教师路由分别拒绝或转发令牌中重建的可信身份。 */
     void teacherCourseRoutesRequireTeacherRoleAndForwardTrustedIdentity() {
         Instant now = Instant.now();
-        client.get().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")
+        String coursePath = "/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201";
+        String articleContentPath = coursePath
+                + "/lessons/00000000-0000-4000-8000-000000000202/article-content";
+        client.get().uri(coursePath)
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
+                .exchange().expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("IAM.FORBIDDEN");
+        client.get().uri(articleContentPath)
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
                 .exchange().expectStatus().isForbidden()
                 .expectBody().jsonPath("$.code").isEqualTo("IAM.FORBIDDEN");
 
-        client.get().uri("/api/v1/teacher/courses/00000000-0000-4000-8000-000000000201")
+        client.get().uri(coursePath)
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300),
                         "TEACHER", "teaching:access")))
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001")
                 .jsonPath("$.roles").isEqualTo("TEACHER");
+        client.get().uri(articleContentPath)
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300),
+                        "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.route").isEqualTo("course")
+                .jsonPath("$.userId").isEqualTo("00000000-0000-4000-8000-000000000001");
     }
 
     @Test

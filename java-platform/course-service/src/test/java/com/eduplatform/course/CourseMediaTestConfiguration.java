@@ -1,16 +1,17 @@
 package com.eduplatform.course;
 
+import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.media.MediaBindingClient;
 import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
-import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.service.CourseException;
 import com.eduplatform.course.web.CourseDtos;
 import com.eduplatform.shared.api.FieldError;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.time.Instant;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -39,11 +40,50 @@ class CourseMediaTestConfiguration {
 
     @Bean
     @Primary
-    MediaAccessClient fakeMediaAccessClient() {
-        return (mediaId, purpose, visitorId, accessType, variant, disposition, traceId) ->
-                new CourseDtos.CourseMediaAccessGrant("GET",
-                        "https://oss.example.test/temporary-content/" + mediaId,
-                        Map.of(), Instant.parse("2026-08-05T10:10:00Z"));
+    FakeMediaAccessClient fakeMediaAccessClient() {
+        return new FakeMediaAccessClient();
+    }
+
+    /**
+     * 模拟领域服务授权调用，记录 course-service 自行解析出的全部字段，并可令指定媒体返回安全错误。
+     */
+    static final class FakeMediaAccessClient implements MediaAccessClient {
+        private final List<AccessRequest> requests = new ArrayList<>();
+        private final Map<String, CourseException> failures = new HashMap<>();
+
+        void clear() {
+            requests.clear();
+            failures.clear();
+        }
+
+        void failNotReady(String mediaId) {
+            failures.put(mediaId, new CourseException(HttpStatus.CONFLICT,
+                    "MEDIA.NOT_READY", "媒体尚未处理完成"));
+        }
+
+        void failNotFound(String mediaId) {
+            failures.put(mediaId, new CourseException(HttpStatus.NOT_FOUND,
+                    "COURSE.NOT_FOUND", "课程不存在或不可见"));
+        }
+
+        List<AccessRequest> requests() {
+            return List.copyOf(requests);
+        }
+
+        @Override
+        public CourseDtos.CourseMediaAccessGrant issue(String mediaId, String purpose, String visitorId,
+                String accessType, String variant, String disposition, String traceId) {
+            requests.add(new AccessRequest(mediaId, purpose, visitorId, accessType, variant, disposition, traceId));
+            CourseException failure = failures.get(mediaId);
+            if (failure != null) throw failure;
+            int sequence = requests.size();
+            return new CourseDtos.CourseMediaAccessGrant("GET",
+                    "https://oss.example.test/temporary-content/" + mediaId + "?grant=" + sequence,
+                    Map.of(), Instant.parse("2026-08-05T10:10:00Z").plusSeconds(sequence));
+        }
+
+        record AccessRequest(String mediaId, String purpose, String visitorId,
+                String accessType, String variant, String disposition, String traceId) {}
     }
 
     /**

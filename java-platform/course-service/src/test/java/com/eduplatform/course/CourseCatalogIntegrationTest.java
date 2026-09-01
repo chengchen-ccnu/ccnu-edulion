@@ -34,12 +34,14 @@ class CourseCatalogIntegrationTest {
     @Autowired CourseMediaTestConfiguration.FakeMediaBindingClient mediaClient;
     @Autowired CourseMediaTestConfiguration.FakeMediaCoverClient coverClient;
     @Autowired CourseMediaTestConfiguration.FakeMediaPlaybackClient playbackClient;
+    @Autowired CourseMediaTestConfiguration.FakeMediaAccessClient accessClient;
 
     @BeforeEach
     void resetData() {
         mediaClient.clear();
         coverClient.clear();
         playbackClient.clear();
+        accessClient.clear();
         jdbc.update("DELETE FROM consumed_learning_event");
         jdbc.update("DELETE FROM course_enrollment_access");
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
@@ -492,6 +494,122 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
+    /** owner 每次重进当前编辑版本都重新授权；请求字段只能来自保存的 Markdown 与绑定行。 */
+    void teacherArticleContentReauthorizesSavedReferencedImages() {
+        SavedArticle saved = saveArticle("教师正文重进");
+
+        CourseDtos.TeacherArticleContent first = service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-first-entry");
+        CourseDtos.TeacherArticleContent refreshed = service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-refresh-entry");
+
+        assertThat(first.articleMarkdown()).contains("media:" + saved.mediaId());
+        assertThat(first.inlineImages()).singleElement().satisfies(image -> {
+            assertThat(image.mediaId()).isEqualTo(saved.mediaId().toString());
+            assertThat(image.grant().url()).contains("grant=1");
+        });
+        assertThat(refreshed.inlineImages()).singleElement().satisfies(image ->
+                assertThat(image.grant().url()).contains("grant=2"));
+        assertThat(accessClient.requests()).hasSize(2).allSatisfy(request -> {
+            assertThat(request.mediaId()).isEqualTo(saved.mediaId().toString());
+            assertThat(request.purpose()).isEqualTo("ARTICLE_IMAGE");
+            assertThat(request.visitorId()).isEqualTo(TEACHER_ID);
+            assertThat(request.accessType()).isEqualTo("COURSE_ARTICLE_IMAGE");
+            assertThat(request.variant()).isEqualTo("ORIGINAL");
+            assertThat(request.disposition()).isEqualTo("INLINE");
+        });
+        assertThatThrownBy(() -> service.createTeacherResourceGrant(saved.courseId(), saved.lessonId(),
+                saved.resourceId(), CourseDtos.CourseResourceAction.PREVIEW, TEACHER_ID, "trace-ordinary-preview"))
+                .isInstanceOfSatisfying(CourseException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+    }
+
+    @Test
+    /** owner 查询只命中当前可编辑版本；其他教师、错课程/课时和旧发布课时保持不可枚举。 */
+    void teacherArticleContentRejectsNonOwnerAndHistoricalLessons() {
+        SavedArticle published = saveArticle("历史正文");
+        service.updatePublication(published.courseId(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, published.revision()));
+        assertThat(service.getTeacherArticleContent(published.courseId(), published.lessonId(), TEACHER_ID,
+                "trace-current-published").inlineImages()).hasSize(1);
+
+        UUID replacementImage = UUID.randomUUID();
+        mediaClient.register(replacementImage.toString(), TEACHER_ID, "ARTICLE_IMAGE", "READY");
+        CourseDtos.TeacherCourse current = service.getTeacherCourse(published.courseId(), TEACHER_ID);
+        CourseDtos.LessonInput replacement = new CourseDtos.LessonInput("新草稿正文", CourseDtos.LessonType.ARTICLE,
+                1, false, "![新图](media:" + replacementImage + ")",
+                List.of(new CourseDtos.LessonMediaResourceInput(replacementImage,
+                        CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE, 1)));
+        CourseDtos.TeacherCourse draft = service.replaceCurriculum(published.courseId(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(current.revision(),
+                        List.of(new CourseDtos.ChapterInput("新草稿", 1, List.of(replacement)))));
+        String currentLessonId = draft.chapters().get(0).lessons().get(0).id();
+
+        assertNotFound(() -> service.getTeacherArticleContent(
+                published.courseId(), published.lessonId(), TEACHER_ID, "trace-historical"));
+        assertNotFound(() -> service.getTeacherArticleContent(
+                published.courseId(), currentLessonId, OTHER_TEACHER_ID, "trace-other-owner"));
+        assertNotFound(() -> service.getTeacherArticleContent(
+                UUID.randomUUID().toString(), currentLessonId, TEACHER_ID, "trace-wrong-course"));
+        assertNotFound(() -> service.getTeacherArticleContent(
+                published.courseId(), UUID.randomUUID().toString(), TEACHER_ID, "trace-wrong-lesson"));
+        assertThat(service.getTeacherArticleContent(published.courseId(), currentLessonId, TEACHER_ID,
+                "trace-current-draft").inlineImages()).hasSize(1);
+    }
+
+    @Test
+    /** 未引用绑定不进入响应；占位符缺少绑定时整次读取失败且不会调用媒体授权。 */
+    void teacherArticleContentIgnoresUnreferencedBindingsAndRejectsMissingBindings() {
+        SavedArticle saved = saveArticle("绑定集合防御");
+        UUID unreferenced = UUID.randomUUID();
+        insertCorruptResource(saved.lessonId(), unreferenced.toString(), "ARTICLE_IMAGE", 2);
+
+        CourseDtos.TeacherArticleContent content = service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-unreferenced");
+        assertThat(content.inlineImages()).extracting(CourseDtos.TeacherArticleInlineImage::mediaId)
+                .containsExactly(saved.mediaId().toString());
+        assertThat(accessClient.requests()).extracting(CourseMediaTestConfiguration.FakeMediaAccessClient.AccessRequest::mediaId)
+                .containsExactly(saved.mediaId().toString());
+
+        jdbc.update("DELETE FROM lesson_media_resource WHERE id = ?", saved.resourceId());
+        accessClient.clear();
+        assertContentConflict(() -> service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-missing-binding"));
+        assertThat(accessClient.requests()).isEmpty();
+    }
+
+    @Test
+    /** 重复/错用途绑定在调用媒体域前拒绝；媒体域仍独立拒绝非 READY 与实际用途错配。 */
+    void teacherArticleContentRejectsDuplicateWrongPurposeAndNonReadyMedia() {
+        SavedArticle saved = saveArticle("用途与状态防御");
+        String duplicateId = insertCorruptResource(
+                saved.lessonId(), saved.mediaId().toString(), "COURSEWARE", 1);
+        assertContentConflict(() -> service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-duplicate-binding"));
+        assertThat(accessClient.requests()).isEmpty();
+
+        jdbc.update("DELETE FROM lesson_media_resource WHERE id = ?", duplicateId);
+        jdbc.update("UPDATE lesson_media_resource SET purpose = 'COURSEWARE' WHERE id = ?", saved.resourceId());
+        assertContentConflict(() -> service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-wrong-purpose"));
+        assertThat(accessClient.requests()).isEmpty();
+
+        jdbc.update("UPDATE lesson_media_resource SET purpose = 'ARTICLE_IMAGE' WHERE id = ?", saved.resourceId());
+        accessClient.failNotReady(saved.mediaId().toString());
+        assertThatThrownBy(() -> service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-not-ready"))
+                .isInstanceOfSatisfying(CourseException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("MEDIA.NOT_READY");
+                });
+
+        accessClient.clear();
+        accessClient.failNotFound(saved.mediaId().toString());
+        assertNotFound(() -> service.getTeacherArticleContent(
+                saved.courseId(), saved.lessonId(), TEACHER_ID, "trace-media-purpose-mismatch"));
+    }
+
+    @Test
     /** 类型改变释放不兼容资源并保留最终请求中的 COURSEWARE 稳定引用。 */
     void lessonTypeChangeReleasesOnlyIncompatibleResourcesAndRetainsCourseware() {
         UUID video = UUID.randomUUID();
@@ -582,6 +700,52 @@ class CourseCatalogIntegrationTest {
     private CourseDtos.CreateCourseRequest createRequest(UUID requestId, String title) {
         return createRequest(requestId, title, null);
     }
+
+    private SavedArticle saveArticle(String title) {
+        UUID image = UUID.randomUUID();
+        mediaClient.register(image.toString(), TEACHER_ID, "ARTICLE_IMAGE", "READY",
+                "正文图.png", "image/png", 2048);
+        CourseDtos.TeacherCourse draft = service.create(
+                TEACHER_ID, createRequest(UUID.randomUUID(), title)).course();
+        CourseDtos.LessonInput article = new CourseDtos.LessonInput("已保存正文", CourseDtos.LessonType.ARTICLE,
+                1, false, "# 正文\n\n![图示](media:" + image + ")",
+                List.of(new CourseDtos.LessonMediaResourceInput(image,
+                        CourseDtos.LessonMediaPurpose.ARTICLE_IMAGE, 1, null,
+                        CourseDtos.LessonResourcePresentation.INLINE)));
+        CourseDtos.TeacherCourse saved = service.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("正文章", 1, List.of(article)))));
+        CourseDtos.LessonSummary lesson = saved.chapters().get(0).lessons().get(0);
+        return new SavedArticle(saved.id(), lesson.id(), lesson.resources().get(0).id(), image, saved.revision());
+    }
+
+    private String insertCorruptResource(String lessonId, String mediaId, String purpose, int position) {
+        String resourceId = UUID.randomUUID().toString();
+        jdbc.update("""
+                INSERT INTO lesson_media_resource (
+                    id, lesson_id, media_id, purpose, position, display_name, presentation,
+                    original_file_name, mime_type, size_bytes, variant_names, processing_contract_version
+                ) VALUES (?, ?, ?, ?, ?, '异常测试资源', 'INLINE', 'corrupt-test.png',
+                          'image/png', 128, '', NULL)
+                """, resourceId, lessonId, mediaId, purpose, position);
+        return resourceId;
+    }
+
+    private static void assertNotFound(org.assertj.core.api.ThrowableAssert.ThrowingCallable callable) {
+        assertThatThrownBy(callable).isInstanceOfSatisfying(CourseException.class, error -> {
+            assertThat(error.status().value()).isEqualTo(404);
+            assertThat(error.code()).isEqualTo("COURSE.NOT_FOUND");
+        });
+    }
+
+    private static void assertContentConflict(org.assertj.core.api.ThrowableAssert.ThrowingCallable callable) {
+        assertThatThrownBy(callable).isInstanceOfSatisfying(CourseException.class, error -> {
+            assertThat(error.status().value()).isEqualTo(409);
+            assertThat(error.code()).isEqualTo("COURSE.CONTENT_INCONSISTENT");
+        });
+    }
+
+    private record SavedArticle(String courseId, String lessonId, String resourceId, UUID mediaId, long revision) {}
 
     private CourseDtos.CreateCourseRequest createRequest(UUID requestId, String title, UUID coverMediaId) {
         return createRequest(requestId, title, coverMediaId, CourseDtos.CourseAccessType.PUBLIC);

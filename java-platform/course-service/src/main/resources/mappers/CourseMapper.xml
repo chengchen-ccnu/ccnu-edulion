@@ -145,6 +145,22 @@
         ORDER BY r.purpose, r.position, r.id
     </select>
 
+    <!-- 教师正文读取先限定 owner 与当前可编辑版本；LEFT JOIN 允许正文尚未插图的合法 ARTICLE 草稿。 -->
+    <select id="listOwnedEditableLessonContentRows" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
+        SELECT c.id AS course_id, c.owner_teacher_id, cv.id AS version_id, cv.lifecycle_status,
+               cv.access_type, l.id AS lesson_id, l.title AS lesson_title, l.lesson_type,
+               l.article_markdown, l.previewable, r.id AS resource_id, r.media_id, r.purpose,
+               r.display_name, r.presentation, r.original_file_name, r.mime_type, r.size_bytes,
+               r.variant_names, r.processing_contract_version
+        FROM course c
+        JOIN course_version cv ON cv.id = COALESCE(c.current_draft_version_id, c.published_version_id)
+        JOIN chapter ch ON ch.course_version_id = cv.id
+        JOIN lesson l ON l.chapter_id = ch.id
+        LEFT JOIN lesson_media_resource r ON r.lesson_id = l.id
+        WHERE c.id = #{courseId} AND c.owner_teacher_id = #{teacherId} AND l.id = #{lessonId}
+        ORDER BY r.purpose, r.position, r.id
+    </select>
+
     <select id="listActiveCategories" resultType="com.eduplatform.course.domain.CategoryEntity">
         SELECT id, name
         FROM category
