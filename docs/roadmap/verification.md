@@ -630,3 +630,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实浏览器：固定学生深链接成功渲染标题、2 个 KaTeX、GFM 表格、代码和 READY Blob 正文图；PDF 显示预览/下载，TXT/PPTX 只下载，三个下载动作无错误；ARTICLE 从 Seed 0% 变 100%。视频使用 Blob 自定义海报，六档倍速和 3x 生效，切课恢复 1x，无字幕 UI。390×844、834×1112、1440×900 均无横向溢出，焦点轮廓可见。
 - 数据恢复：真实完成后执行固定 Seed Rebuild；清理阶段完成但长任务未完成初始化，随后幂等 Initialize 完整通过。最终专用 Learning dev Schema 只读核验为固定进度 `completed=0`、位置/观看 0，完成事实与幂等请求均 0；固定 6 个媒体资产、课程和两个课时继续保留。未枚举 Bucket、直写媒体表、补历史海报或新建随机课程。
 - 未通过项：本地启动配置最初使 Gateway/IAM 分别读取 Redis DB 0/1，登录后 session-version fail-closed；验收进程对齐后登录成功。随后硬刷新及 5173→5174 跳转仍复现既有 HttpOnly refresh Cookie 未恢复，最新数据库会话保持 ACTIVE ROOT、没有轮换 CHILD，前端返回 `IAM.INVALID_REFRESH`。因此学生硬刷新恢复和教师真实页面交互不能标记通过；没有通过放宽 HttpOnly/SameSite 或增加第二套登录绕过。详细命令、流程与风险见 `docs/delivery/T12F.2-course-content-player.md`。
+- 发布：关键实现提交 `a37fc37` 已按规则推送到 `codex/t12f2-course-content-player`；[Ready PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 已创建，目标 `main`，本任务不自行合并。
