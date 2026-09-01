@@ -29,7 +29,7 @@ describe("safe article markdown", () => {
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:t12f2-article") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
-    vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (value: string) {
+    vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (this: HTMLImageElement, value: string) {
       this.setAttribute("src", value);
       queueMicrotask(() => this.onload?.(new Event("load")));
     });
@@ -54,7 +54,7 @@ describe("safe article markdown", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["broken"]), { status: 200 })));
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:t12f2-broken") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (value: string) {
+    vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (this: HTMLImageElement, value: string) {
       this.setAttribute("src", value);
       queueMicrotask(() => this.onerror?.(new Event("error")));
     });
