@@ -225,14 +225,14 @@ function inlineAllowed(resource: EditableResource): boolean {
   return resource.mimeType === "application/pdf" || Boolean(resource.mimeType?.startsWith("image/"));
 }
 
-/** 已保存正文图片通过课程 owner 授权读取；新上传未保存图片只使用当前页面的本地 Blob。 */
-function resolveTeacherImage(lesson: EditableLesson, mediaId: string, signal: AbortSignal): Promise<CourseMediaAccessGrant> {
+/** 新上传正文图片只使用当前页面 Blob；已保存图片等待教师正文授权契约，不能猜作普通资料授权。 */
+function resolveTeacherImage(lesson: EditableLesson, mediaId: string, _signal: AbortSignal): Promise<CourseMediaAccessGrant> {
   const resource = lesson.resources.find(item => item.purpose === "ARTICLE_IMAGE" && item.mediaId === mediaId);
   if (!course.value || !lesson.id || !resource) return Promise.reject(new Error("正文图片尚未绑定。"));
   if (resource.localUrl) return Promise.resolve({ method: "GET", url: resource.localUrl, headers: {},
     expiresAt: new Date(Date.now() + 60_000).toISOString() });
   if (!resource.id) return Promise.reject(new Error("正文图片保存后才能预览。"));
-  return teacherCourseApi.resourceGrant(course.value.id, lesson.id, resource.id, "PREVIEW", signal);
+  return Promise.reject(new Error("OpenAPI 0.19.0 未提供教师正文图片预览授权；新上传图片可在保存前本地预览。"));
 }
 
 async function runResourceAction(lesson: EditableLesson, resource: EditableResource, action: "PREVIEW" | "DOWNLOAD") {

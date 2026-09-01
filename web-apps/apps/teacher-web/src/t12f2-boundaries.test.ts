@@ -29,5 +29,6 @@ describe("T12F.2 teacher content boundaries", () => {
     expect(curriculum).not.toMatch(/字幕按钮|字幕菜单|上传字幕/);
     expect(curriculum).toContain('item.purpose === "COURSEWARE" || item.purpose === "ARTICLE_ATTACHMENT"');
     expect(curriculum).toContain("references.has(resource.mediaId.toLowerCase())");
+    expect(curriculum).toContain("OpenAPI 0.19.0 未提供教师正文图片预览授权");
   });
 });

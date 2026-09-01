@@ -44,9 +44,12 @@ class AuthControllerTest {
 
         assertThat(response.getBody()).extracting(LoginResponse::accessToken, LoginResponse::expiresIn)
                 .containsExactly("access-token", 900L);
-        assertThat(response.getHeaders().getFirst(HttpHeaders.SET_COOKIE))
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).hasSize(2);
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE).get(0))
                 .contains("EDU_REFRESH=opaque-refresh", "HttpOnly", "SameSite=Strict", "Path=/api/v1")
                 .doesNotContain("Secure");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE).get(1))
+                .contains("EDU_REFRESH=", "Max-Age=0", "Path=/api/v1/auth", "HttpOnly", "SameSite=Strict");
     }
 
     @Test
@@ -54,6 +57,10 @@ class AuthControllerTest {
         ResponseEntity<Void> response = controller.logout("opaque-refresh");
         verify(authService).logout("opaque-refresh");
         assertThat(response.getStatusCode().value()).isEqualTo(204);
-        assertThat(response.getHeaders().getFirst(HttpHeaders.SET_COOKIE)).contains("Max-Age=0", "EDU_REFRESH=");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).hasSize(2);
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE).get(0))
+                .contains("Max-Age=0", "EDU_REFRESH=", "Path=/api/v1");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE).get(1))
+                .contains("Max-Age=0", "EDU_REFRESH=", "Path=/api/v1/auth");
     }
 }

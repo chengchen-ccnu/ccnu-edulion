@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
@@ -92,9 +93,12 @@ class GatewayRouteSecurityTest {
 
     @Test
     void authenticationRoutesArePublicAndReachIam() {
-        client.post().uri("/api/v1/auth/login").bodyValue("{\"account\":\"x\",\"password\":\"password\"}")
+        var login = client.post().uri("/api/v1/auth/login").bodyValue("{\"account\":\"x\",\"password\":\"password\"}")
                 .header("Content-Type", "application/json").exchange()
-                .expectStatus().isOk().expectHeader().valueMatches("Set-Cookie", "EDU_REFRESH=.*");
+                .expectStatus().isOk().expectBody().returnResult();
+        assertThat(login.getResponseHeaders().get(HttpHeaders.SET_COOKIE)).hasSize(2)
+                .anySatisfy(value -> assertThat(value).contains("Path=/api/v1"))
+                .anySatisfy(value -> assertThat(value).contains("Max-Age=0", "Path=/api/v1/auth"));
         client.post().uri("/api/v1/auth/refresh").cookie("EDU_REFRESH", "opaque")
                 .exchange().expectStatus().isOk();
         client.post().uri("/api/v1/auth/logout").cookie("EDU_REFRESH", "opaque")
@@ -361,6 +365,7 @@ class GatewayRouteSecurityTest {
         exchange.getRequestBody().readAllBytes();
         String path = exchange.getRequestURI().getPath();
         if ("/api/v1/auth/logout".equals(path)) {
+            exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=; Max-Age=0; Path=/api/v1; HttpOnly; SameSite=Strict");
             exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=; Max-Age=0; Path=/api/v1/auth; HttpOnly; SameSite=Strict");
             exchange.sendResponseHeaders(204, -1);
             exchange.close();
@@ -374,7 +379,8 @@ class GatewayRouteSecurityTest {
             body = "{\"id\":\"" + userId + "\",\"displayName\":\"测试学生\",\"avatarUrl\":null,"
                     + "\"roles\":[\"" + roles + "\"],\"permissions\":[\"" + permissions + "\"]}";
         } else if (path.startsWith("/api/v1/auth/") || "/api/v1/protocols/current".equals(path)) {
-            exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=opaque; Path=/api/v1/auth; HttpOnly; SameSite=Strict");
+            exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=opaque; Path=/api/v1; HttpOnly; SameSite=Strict");
+            exchange.getResponseHeaders().add("Set-Cookie", "EDU_REFRESH=; Max-Age=0; Path=/api/v1/auth; HttpOnly; SameSite=Strict");
             body = "{\"tokenType\":\"Bearer\",\"accessToken\":\"downstream-token\",\"expiresIn\":900}";
         } else {
             exchange.sendResponseHeaders(404, -1);
