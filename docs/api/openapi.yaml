@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.19.0
-  description: T12F.1 forward-compatible backend contract. Adds controlled ARTICLE Markdown and ARTICLE_IMAGE bindings, protected lesson-content and course-owned resource grants, immutable resource metadata snapshots, required poster-v1 generation for newly uploaded lesson videos, and an idempotent ARTICLE 0-to-100 completion command. Public course detail no longer emits lesson media bindings. T12F.2 Vue pages, subtitles, multiple renditions, historical poster reprocessing, Office conversion, DRM, AI and Redis playback buffering are intentionally excluded.
+  version: 0.19.1
+  description: T12F.1.1 forward-compatible contract. Adds a teacher-owner projection for controlled ARTICLE Markdown and short-lived inline grants for only the ARTICLE_IMAGE assets actually referenced by the current editable lesson. The browser cannot submit an arbitrary mediaId. Existing protected learner content, ordinary course resource actions, poster generation and ARTICLE completion semantics remain unchanged. Vue pages, subtitles, multiple renditions, historical poster reprocessing, Office conversion, DRM, AI and Redis playback buffering are intentionally excluded.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -1036,6 +1036,37 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/article-content:
+    get:
+      tags: [Teacher Courses]
+      operationId: getTeacherCourseLessonArticleContent
+      summary: Get the owner-authorized ARTICLE editor content projection
+      description: |
+        Resolves only the current editable course version (the draft when present, otherwise the current published
+        editor snapshot) after verifying that the authenticated teacher owns the course. Course-service parses the
+        saved controlled Markdown and its same-lesson resource rows itself; the request has no mediaId, resourceId
+        or version parameter. Only media IDs actually referenced by Markdown, uniquely bound as ARTICLE_IMAGE in
+        that lesson, and independently confirmed READY by media-service receive a short-lived ORIGINAL/INLINE grant.
+        Wrong owners, courses, lessons, lesson types and non-current versions are indistinguishable from missing
+        content. The response contains no ordinary resource list, Bucket, Object Key, permanent URL, OSS credential
+        or reusable service token. Expired grants can be replaced only by calling this endpoint again and repeating
+        the owner/current-version checks.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/LessonId'
+      responses:
+        '200':
+          description: Current editable ARTICLE Markdown and its freshly authorized inline images.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherArticleContent'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/MediaConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
   /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants:
     post:
       tags: [Teacher Courses]
@@ -4044,6 +4075,33 @@ components:
           format: uuid
           description: Matches the controlled media:UUID placeholder; it is not accepted by any browser-facing authorization endpoint.
         grant: {$ref: '#/components/schemas/CourseMediaAccessGrant'}
+    TeacherArticleContent:
+      type: object
+      additionalProperties: false
+      required: [courseId, lessonId, articleMarkdown, inlineImages]
+      description: Minimal current-editor ARTICLE projection. It intentionally omits ordinary resources and storage internals.
+      properties:
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+        articleMarkdown:
+          type: string
+          description: Saved controlled ARTICLE source. Every media:UUID placeholder must have exactly one matching inlineImages item.
+        inlineImages:
+          type: array
+          items: {$ref: '#/components/schemas/TeacherArticleInlineImage'}
+    TeacherArticleInlineImage:
+      type: object
+      additionalProperties: false
+      required: [mediaId, grant]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+          description: Stable ID parsed from the saved Markdown. No browser-facing endpoint accepts it to mint a grant.
+        grant:
+          allOf:
+            - $ref: '#/components/schemas/CourseMediaAccessGrant'
+          description: Fresh short-lived ORIGINAL/INLINE grant issued after owner and current-version authorization.
     LessonContentResource:
       type: object
       additionalProperties: false

@@ -109,6 +109,22 @@ public class TeacherCourseController {
         return service.updatePublication(courseId, teacher.userId(), request);
     }
 
+    @GetMapping("/{courseId}/lessons/{lessonId}/article-content")
+    /**
+     * 返回 owner 当前可编辑版本的已保存 ARTICLE 正文与新图片授权。
+     * 请求不接受 mediaId/resourceId；非 owner、错课时和历史版本统一不可见。
+     */
+    CourseDtos.TeacherArticleContent articleContent(
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String courseId,
+            @PathVariable @Pattern(regexp = CourseController.UUID_PATTERN) String lessonId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            HttpServletRequest servletRequest) {
+        TeacherIdentity teacher = TeacherIdentity.require(userId, roles);
+        return service.getTeacherArticleContent(
+                courseId, lessonId, teacher.userId(), trace(servletRequest));
+    }
+
     @PostMapping("/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants")
     /** 仅课程所有者可预览当前草稿或未发布版本中的视频资源。 */
     CourseDtos.CourseMediaPlaybackGrant playback(

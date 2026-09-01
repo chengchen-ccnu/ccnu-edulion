@@ -747,6 +747,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/article-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the owner-authorized ARTICLE editor content projection
+         * @description Resolves only the current editable course version (the draft when present, otherwise the current published
+         *     editor snapshot) after verifying that the authenticated teacher owns the course. Course-service parses the
+         *     saved controlled Markdown and its same-lesson resource rows itself; the request has no mediaId, resourceId
+         *     or version parameter. Only media IDs actually referenced by Markdown, uniquely bound as ARTICLE_IMAGE in
+         *     that lesson, and independently confirmed READY by media-service receive a short-lived ORIGINAL/INLINE grant.
+         *     Wrong owners, courses, lessons, lesson types and non-current versions are indistinguishable from missing
+         *     content. The response contains no ordinary resource list, Bucket, Object Key, permanent URL, OSS credential
+         *     or reusable service token. Expired grants can be replaced only by calling this endpoint again and repeating
+         *     the owner/current-version checks.
+         */
+        get: operations["getTeacherCourseLessonArticleContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/resources/{resourceId}/playback-grants": {
         parameters: {
             query?: never;
@@ -2534,6 +2562,25 @@ export interface components {
              * @description Matches the controlled media:UUID placeholder; it is not accepted by any browser-facing authorization endpoint.
              */
             mediaId: string;
+            grant: components["schemas"]["CourseMediaAccessGrant"];
+        };
+        /** @description Minimal current-editor ARTICLE projection. It intentionally omits ordinary resources and storage internals. */
+        TeacherArticleContent: {
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string;
+            /** @description Saved controlled ARTICLE source. Every media:UUID placeholder must have exactly one matching inlineImages item. */
+            articleMarkdown: string;
+            inlineImages: components["schemas"]["TeacherArticleInlineImage"][];
+        };
+        TeacherArticleInlineImage: {
+            /**
+             * Format: uuid
+             * @description Stable ID parsed from the saved Markdown. No browser-facing endpoint accepts it to mint a grant.
+             */
+            mediaId: string;
+            /** @description Fresh short-lived ORIGINAL/INLINE grant issued after owner and current-version authorization. */
             grant: components["schemas"]["CourseMediaAccessGrant"];
         };
         LessonContentResource: {
@@ -5736,6 +5783,36 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getTeacherCourseLessonArticleContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
+                lessonId: components["parameters"]["LessonId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current editable ARTICLE Markdown and its freshly authorized inline images. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherArticleContent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["MediaConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
     createTeacherCourseLessonPlaybackGrant: {

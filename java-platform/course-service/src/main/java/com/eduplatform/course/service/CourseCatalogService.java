@@ -7,9 +7,9 @@ import com.eduplatform.course.domain.CourseMediaAccessRow;
 import com.eduplatform.course.domain.CourseVersionEntity;
 import com.eduplatform.course.domain.LessonEntity;
 import com.eduplatform.course.domain.LessonMediaResourceEntity;
+import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.media.MediaBindingClient;
 import com.eduplatform.course.media.MediaBindingClient.BindingSnapshot;
-import com.eduplatform.course.media.MediaAccessClient;
 import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
@@ -22,11 +22,11 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.LinkedHashMap;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -187,6 +187,73 @@ public class CourseCatalogService {
                 CourseDtos.LessonType.valueOf(lesson.getLessonType()), lesson.isPreviewable(),
                 "ARTICLE".equals(lesson.getLessonType()) ? lesson.getArticleMarkdown() : null,
                 playbackResourceId, poster, images, attachments);
+    }
+
+    /**
+     * 为课程 owner 重新进入编辑器时返回当前可编辑 ARTICLE 正文及实际引用图片的新短期授权。
+     *
+     * <p>输入只有课程与课时 ID；服务端先用 owner 条件解析当前草稿（无草稿时为当前发布编辑快照），
+     * 再重新解析保存的 Markdown。每个引用必须在同课时全部资源中恰好出现一次且用途为
+     * ARTICLE_IMAGE，未引用绑定不会进入响应。任一绑定缺失、重复或错用途时整次读取以安全冲突失败，
+     * 不会把浏览器提供的任意 mediaId 交给 media-service。媒体域随后独立复核精确用途与 READY，
+     * 并只返回 ORIGINAL/INLINE 短期授权。</p>
+     *
+     * @param courseId 当前教师拥有的课程 ID
+     * @param lessonId 当前可编辑版本中的 ARTICLE 课时 ID
+     * @param teacherId Gateway 验证后的教师 ID，同时用于 owner 查询与媒体访问审计
+     * @param traceId 当前请求追踪 ID
+     * @return 已保存 Markdown 和与其引用集合一一对应的新短期图片授权
+     * @throws CourseException 非 owner、历史/错课时、非 ARTICLE 返回不可枚举 404；内容绑定不一致或媒体非 READY 拒绝返回
+     */
+    @Transactional(readOnly = true)
+    public CourseDtos.TeacherArticleContent getTeacherArticleContent(
+            String courseId, String lessonId, String teacherId, String traceId) {
+        List<CourseMediaAccessRow> rows = mapper.listOwnedEditableLessonContentRows(
+                courseId, lessonId, teacherId);
+        if (rows.isEmpty() || !"ARTICLE".equals(rows.get(0).getLessonType())) {
+            throw notFound();
+        }
+        String markdown = rows.get(0).getArticleMarkdown();
+        Set<String> references = parseSavedArticleReferences(markdown);
+        List<CourseMediaAccessRow> resources = rows.stream()
+                .filter(row -> row.getResourceId() != null)
+                .toList();
+        List<CourseMediaAccessRow> referencedBindings = references.stream()
+                .sorted()
+                .map(mediaId -> requireUniqueArticleImage(resources, mediaId))
+                .toList();
+        List<CourseDtos.TeacherArticleInlineImage> images = referencedBindings.stream()
+                .map(row -> new CourseDtos.TeacherArticleInlineImage(row.getMediaId(),
+                        mediaAccessClient.issue(row.getMediaId(), row.getPurpose(), teacherId,
+                                "COURSE_ARTICLE_IMAGE", "ORIGINAL", "INLINE", traceId)))
+                .toList();
+        return new CourseDtos.TeacherArticleContent(courseId, lessonId,
+                markdown == null ? "" : markdown, images);
+    }
+
+    /** 已保存正文理论上已通过写校验；若数据异常，读取使用安全冲突而非回显解析细节。 */
+    private Set<String> parseSavedArticleReferences(String markdown) {
+        try {
+            return markdownValidator.validate(markdown);
+        } catch (CourseException exception) {
+            throw contentInconsistent();
+        }
+    }
+
+    /** 在同课时全部用途中确认 mediaId 只有一条绑定且用途精确，防止错用途或重复行被授权。 */
+    private CourseMediaAccessRow requireUniqueArticleImage(List<CourseMediaAccessRow> resources, String mediaId) {
+        List<CourseMediaAccessRow> matches = resources.stream()
+                .filter(row -> mediaId.equals(row.getMediaId()))
+                .toList();
+        if (matches.size() != 1 || !"ARTICLE_IMAGE".equals(matches.get(0).getPurpose())) {
+            throw contentInconsistent();
+        }
+        return matches.get(0);
+    }
+
+    private static CourseException contentInconsistent() {
+        return new CourseException(HttpStatus.CONFLICT, "COURSE.CONTENT_INCONSISTENT",
+                "课程正文资源状态冲突，请刷新或重新保存后重试");
     }
 
     /** 按课程域 resourceId 和动作签发发布资源授权；浏览器请求体不能携带 mediaId、用途或 disposition。 */
