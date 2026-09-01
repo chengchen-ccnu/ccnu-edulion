@@ -611,3 +611,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - OSS 与 Seed：编排已实现生产禁用的固定 ID Initialize/Cleanup/Rebuild，按 Media→Course→Learning 初始化、逆序清理；媒体脚本合成视频、自动/自定义海报、正文图、有效最小 PDF/PPTX 与 TXT，不提交二进制。经凭据包装器和只读 Bucket 元数据确认项目专用开发 OSS 后，真实 Rebuild 完整通过；再次 Initialize 对 6 个固定资产、HLS/`poster-v1` 派生对象、2 个课时和 0% 图文进度做数据库与精确 OSS HEAD 复核，确认幂等。`MediaRealEnvironmentAcceptanceTest` 2/2 通过真实 MySQL/OSS/RabbitMQ/FFmpeg 的单对象/Multipart、授权下载、confirm/return、重试/DLQ/重投及精确清理。随机验收对象、消息、记录和本机文件已清理，仅明确保留固定 T12F.1 Seed 与三项迁移。
 - 可读性与边界：权限判断、Markdown 验证、处理状态机、幂等、Outbox、Seed/清理和复杂测试均增加中文 Javadoc/注释；OpenAPI/SQL 解释兼容与空值语义，生成代码未手改。本任务没有 Vue、多码率、清晰度、字幕 UI、历史海报 API、Office 转换、DRM、AI、Redis 播放缓存、第二套 OSS 客户端或跨 Schema Join/外键/事务。
 - 发布：关键实现提交 `f5e03b5` 已按规则推送到 `codex/t12f1-course-content-contract`；Ready [PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已创建，目标 `main`，本任务不自行合并。完整实现、命令、演示和清理说明见 `docs/delivery/T12F.1-course-content-contract.md`。
+
+## 2026-09-01 T12F.2 契约阻断与 T12F.1.1 前置审计
+
+- 现状复核：[PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已合并为 `main@e53a58d`，OpenAPI 0.19.0、Course V4、Media V5、Learning V12 和生成客户端已在 `main`。T12F.2 [PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 保持 Ready/Open、`MERGEABLE/CLEAN`，两组 Java、Frontend、Python、OpenAPI 共 8 项 CI 全部成功；本次总控没有合并、关闭、改写或追加该 PR。
+- 阻断证据：T12F.2 的学生受保护正文、正文图片、资料动作、海报、倍速和图文完成真实流程已通过，但教师重新进入已保存 ARTICLE 课时时，普通 owner 资源动作对 `ARTICLE_IMAGE` 返回 404。OpenAPI 0.19.0 有意只在学生受保护正文投影中返回正文图片内联授权，普通资料动作又明确排除该用途；因此前端停止猜测并只保留新上传未保存图片的本地 Blob 预览。CI 全绿不能证明“保存—刷新—重新进入”产品闭环完成，PR #43 暂停合并。
+- 最小补口：新增 T12F.1.1，OpenAPI 只向前到 0.19.1，为教师 owner 当前可编辑课程版本提供专用正文内容投影。course-service 必须从该版本 Markdown 引用和同课时绑定行解析 `ARTICLE_IMAGE mediaId`，不接受浏览器任意 mediaId；仅用途精确、READY、正文实际引用的资产可经 media-service 获得短期 `ORIGINAL/INLINE`。其他教师、错课程/课时、历史或非可编辑版本保持不可枚举拒绝，响应不得泄漏 Bucket、Object Key、永久 URL 或服务令牌。
+- 范围门禁：T12F.1.1 只允许修改 OpenAPI、Course/Media 必要授权实现、生成客户端、权限/安全测试和交付文档；预计无需数据库迁移。不得实现 Vue、把 `ARTICLE_IMAGE` 加入普通资料列表或 PREVIEW/DOWNLOAD、增加任意 mediaId 授权入口、重写学生投影、修改 T12F.2 分支或扩大字幕/多码率/历史处理等范围。若实现发现必须新增迁移或破坏 0.19.0 语义，应停止并回报总控，不得自行扩展。
+- 后续顺序：T12F.1.1 独立验收、合并并清理分支后，才可切回 `codex/t12f2-course-content-player`，将最新 `main` 以普通 merge 合入，解决文档冲突，消费 0.19.1 生成客户端并验证教师保存、硬刷新、重新进入后正文图预览；PR #43 重新全绿且真实闭环通过后才能合并。
+- Git 与数据：开始时 T12F.2 分支和工作区干净，随后从与 `origin/main` 一致的 `e53a58d` 创建 `codex/t12f1.1-teacher-article-image-access`。本次只修改 page-specs、backlog 和 verification，没有修改 OpenAPI、Java、Vue、Flyway、事件、生成代码或 T12F.2 分支；没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部服务，没有创建、修改或清理 Schema、表、Seed、消息、对象或伪数据。
