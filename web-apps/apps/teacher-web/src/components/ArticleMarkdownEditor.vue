@@ -15,7 +15,7 @@ const props = defineProps<{
   images: ArticleContentImage[];
   lessonId?: string;
   checkpointKey: string;
-  resolveImage: (mediaId: string, signal: AbortSignal) => Promise<CourseMediaAccessGrant>;
+  resolveImage: (mediaId: string, signal: AbortSignal, refresh?: boolean) => Promise<CourseMediaAccessGrant>;
 }>();
 const emit = defineEmits<{
   "update:modelValue": [value: string];

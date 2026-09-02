@@ -69,6 +69,25 @@ describe("teacher course API", () => {
     await expect(api.resourceGrant("course-1", "lesson-1", "resource-1", "DOWNLOAD"))
       .resolves.toMatchObject({ method: "GET" });
   });
+
+  it("loads saved article content through the generated owner projection path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      expect(new URL(request.url).pathname)
+        .toBe("/api/v1/teacher/courses/course-1/lessons/lesson-1/article-content");
+      expect(request.headers.get("Authorization")).toBe("Bearer teacher-token");
+      expect(request.signal.aborted).toBe(false);
+      return json({ courseId: "course-1", lessonId: "lesson-1", articleMarkdown: "![图](media:media-1)",
+        inlineImages: [{ mediaId: "media-1", grant: { method: "GET", url: "https://signed.example.test/image",
+          headers: {}, expiresAt: "2099-01-01T00:00:00Z" } }] });
+    }));
+    const store = { authorizedRequest: (request: (authorization: string) => Promise<unknown>) =>
+      request("Bearer teacher-token") } as unknown as AuthStore;
+    const api = createTeacherCourseApi(store, createGatewayClient("http://gateway.test"));
+
+    await expect(api.articleContent("course-1", "lesson-1", new AbortController().signal))
+      .resolves.toMatchObject({ articleMarkdown: "![图](media:media-1)", inlineImages: [{ mediaId: "media-1" }] });
+  });
 });
 
 function json(body: unknown, status = 200): Response {

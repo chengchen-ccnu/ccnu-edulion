@@ -11,6 +11,7 @@ import type {
   GatewayClient,
   ListTeacherCoursesQuery,
   ReplaceCurriculumRequest,
+  TeacherArticleContent,
   TeacherCourse,
   TeacherCoursePage,
   UpdateCourseRequest,
@@ -25,11 +26,12 @@ import { authStore } from "./auth";
 export interface TeacherCourseApi {
   list(query: ListTeacherCoursesQuery): Promise<TeacherCoursePage>;
   categories(): Promise<CategorySummary[]>;
-  detail(courseId: string): Promise<TeacherCourse>;
+  detail(courseId: string, signal?: AbortSignal): Promise<TeacherCourse>;
   create(body: CreateCourseRequest): Promise<TeacherCourse>;
   update(courseId: string, body: UpdateCourseRequest): Promise<TeacherCourse>;
   replaceCurriculum(courseId: string, body: ReplaceCurriculumRequest): Promise<TeacherCourse>;
   updatePublication(courseId: string, body: UpdatePublicationRequest): Promise<CoursePublication>;
+  articleContent(courseId: string, lessonId: string, signal?: AbortSignal): Promise<TeacherArticleContent>;
   playbackGrant(courseId: string, lessonId: string, resourceId: string,
     signal?: AbortSignal): Promise<CourseMediaPlaybackGrant>;
   resourceGrant(courseId: string, lessonId: string, resourceId: string, action: CourseResourceAction,
@@ -61,9 +63,9 @@ export function createTeacherCourseApi(
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },
-    async detail(courseId) {
+    async detail(courseId, signal) {
       const result = await authorized(Authorization => client.GET("/api/v1/teacher/courses/{courseId}", {
-        headers: { Authorization }, params: { path: { courseId } }
+        headers: { Authorization }, params: { path: { courseId } }, signal
       }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
@@ -93,6 +95,14 @@ export function createTeacherCourseApi(
       const result = await authorized(Authorization => client.PUT("/api/v1/teacher/courses/{courseId}/publication", {
         headers: { Authorization }, params: { path: { courseId } }, body
       }));
+      if (!result.data) throw gatewayRequestError(result.response, result.error);
+      return result.data;
+    },
+    async articleContent(courseId, lessonId, signal) {
+      const result = await authorized(Authorization => client.GET(
+        "/api/v1/teacher/courses/{courseId}/lessons/{lessonId}/article-content", {
+          headers: { Authorization }, params: { path: { courseId, lessonId } }, signal
+        }));
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },

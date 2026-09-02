@@ -81,4 +81,40 @@ describe("safe article markdown", () => {
     expect(rendered).not.toHaveBeenCalled();
     app.unmount();
   });
+
+  it("requests a fresh business projection when a short-lived image grant expires", async () => {
+    const mediaId = "00000000-0000-4000-8000-000000000704";
+    const freshGrant = { method: "GET" as const, url: "https://signed.example.test/fresh-image",
+      headers: {}, expiresAt: "2099-01-01T00:00:00Z" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(new Response(new Blob(["image"]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:t12f2-refresh") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (this: HTMLImageElement, value: string) {
+      this.setAttribute("src", value);
+      queueMicrotask(() => this.onload?.(new Event("load")));
+    });
+    const resolver = vi.fn(async (_id: string, _signal: AbortSignal, refresh?: boolean) => {
+      expect(refresh).toBe(true);
+      return freshGrant;
+    });
+    const rendered = vi.fn();
+    const host = document.createElement("div"); document.body.append(host);
+    const app = createApp({ render: () => h(SafeArticleContent, {
+      source: `![替代文字](media:${mediaId})`, images: [{ mediaId, grant: {
+        method: "GET", url: "https://signed.example.test/expired-image", headers: {}, expiresAt: "2020-01-01T00:00:00Z"
+      } }], resolveImage: resolver, onRendered: rendered
+    }) });
+
+    app.mount(host); await nextTick();
+    await vi.waitFor(() => expect(host.querySelector("img")?.src).toContain("blob:t12f2-refresh"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://signed.example.test/expired-image");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://signed.example.test/fresh-image");
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(rendered).toHaveBeenCalledOnce();
+    app.unmount();
+  });
 });

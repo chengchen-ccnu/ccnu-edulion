@@ -658,3 +658,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 分支恢复：开始合并前 `codex/t12f2-course-content-player` 工作区干净，随后以普通 merge 合入最新 `main`。OpenAPI 0.19.1、Course owner `article-content` 投影、权限实现、生成客户端和测试已进入 T12F.2；文档冲突按“T12F.1.1 已合并、T12F.2 等待最终真实复验”的事实合并，没有改写已验收的业务实现或扩大功能范围。
 - 最终前置：自动生成契约与后端补口已经满足。PR #43 合并前仍必须让教师页面消费生成的 `article-content` 投影，并通过真实浏览器完成“保存含 ARTICLE_IMAGE 的正文—硬刷新—重新进入—图片成功加载”，同时复核非 owner/过期授权及离页 Blob URL 清理；随后重跑受影响前端门禁和最新 PR CI。未完成这些检查前不得仅凭旧 CI 合并。
 - 数据与环境：本次总控只执行 Git、GitHub 和文档合并操作，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部服务，没有创建、修改或清理数据库、表、Seed、消息、对象或伪数据；T12F.1 固定演示 Seed 保持不变。
+
+## 2026-09-02 T12F.2 教师已保存 ARTICLE_IMAGE 前端闭环终验
+
+- Git 与范围：本次继续在 `codex/t12f2-course-content-player` 完成，工作区开始时干净，HEAD 包含普通 merge 提交 `e97bf67`。实现只修改教师前端、共享安全正文预览、前端测试和 T12F.2 交付/路线文档，没有修改 OpenAPI、Java、Flyway、事件 Schema、学生内容投影、普通资料 PREVIEW/DOWNLOAD、字幕、多码率或历史海报。
+- 实现结果：教师 API 客户端消费生成的 OpenAPI 0.19.1 `GET /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/article-content`；课程编排页在重新进入、刷新和切课时读取 `articleMarkdown` 与 `inlineImages`，通过现有 `SafeArticleContent`、短期授权和内存 Blob URL 渲染。图片授权返回 401/403 时重新走 `article-content` 申请，不保存永久 URL、不拼接 OSS 地址、不向接口提交任意 mediaId；未保存新上传图片继续使用本地预览。请求、组件实例和 Blob URL 在切课、重新加载、重试及离开时清理。
+- 自动化验证：`pnpm.cmd --dir web-apps run check:api` 通过并确认生成客户端为 0.19.1；workspace typecheck 通过；Vitest 35 个文件、228 个测试全部通过；workspace build 中 admin/student/teacher 均成功，仅保留既有 student chunk 大小警告；`git diff --check` 通过。新增覆盖生成 API 路径/鉴权、保存正文 hydration、错误状态/重试、本地 Blob 预览、授权过期刷新和 Blob 释放。
+- 真实本地人工验收：用户已在专用本地环境确认固定 Seed 的教师保存含 `ARTICLE_IMAGE` 正文后硬刷新、重新进入课时，正文图片成功显示；非 owner 无法读取；过期授权通过再次请求 `article-content` 恢复；loading、401、403、404、409、429、503、离线和图片加载失败均有可见处理；离页请求和 Blob URL 已释放；控制台无错误，页面/存储/日志未泄露 Bucket、Object Key、永久 URL 或 Token。该条为用户人工验收结论，不冒充自动化浏览器观测。
+- 临时数据清理：人工验收使用固定课程 `00000000-0000-4000-8000-00000000f201`、ARTICLE 课时 `00000000-0000-4000-8000-00000000f232` 和图片 `00000000-0000-4000-8000-00000000f103`，仅涉及专用 `edu_platform_media_dev`、`edu_platform_course_dev`、`edu_platform_learning_dev` 三个开发 Schema 的既有 T12F.1 固定 Seed。验收结束后已按 `scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Cleanup` 成功清理，停止 5173/5174、8080–8084 验收进程；临时验收日志已清空，未改动本地凭据、仓库环境配置或非本任务数据。
+- PR 状态：已准备将本次提交推送到既有 [Ready/Open PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43)，不合并；推送后等待该 PR 最新 8 项 CI 全部成功再交付。

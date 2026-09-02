@@ -9,7 +9,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import { renderArticleMarkdown } from "./render-article-markdown";
 
-export type ArticleImageResolver = (mediaId: string, signal: AbortSignal) => Promise<CourseMediaAccessGrant>;
+export type ArticleImageResolver = (mediaId: string, signal: AbortSignal, refresh?: boolean) => Promise<CourseMediaAccessGrant>;
 export type ArticleContentImage = Pick<LessonInlineImage, "mediaId"> & Partial<Pick<LessonInlineImage, "grant" | "resourceId">>;
 
 const props = defineProps<{
@@ -43,7 +43,8 @@ async function render() {
     if (currentGeneration === generation && !controller.signal.aborted) emit("rendered");
   } catch (error) {
     if (currentGeneration !== generation || controller?.signal.aborted) return;
-    errorMessage.value = error instanceof Error ? error.message : "正文渲染失败。";
+    errorMessage.value = error instanceof TypeError ? "当前网络不可用，正文图片未加载。"
+      : error instanceof Error ? error.message : "正文渲染失败。";
     emit("renderError", errorMessage.value);
   }
 }
@@ -52,16 +53,27 @@ async function hydrateImage(node: HTMLElement, imageMap: Map<string, ArticleCont
   const mediaId = node.dataset.articleMediaId?.toLowerCase() ?? "";
   const image = imageMap.get(mediaId);
   if (!image) throw new Error("正文图片引用无效，未记录完成状态。");
-  const grant = props.resolveImage ? await props.resolveImage(mediaId, signal) : image.grant;
+  let grant = image.grant;
+  if (!grant && props.resolveImage) grant = await props.resolveImage(mediaId, signal);
   if (!grant) throw new Error("正文图片尚未绑定，保存目录后可读取预览。");
-  const response = await fetch(grant.url, { method: grant.method, headers: grant.headers, signal, cache: "no-store" });
+  let response = await fetch(grant.url, { method: grant.method, headers: grant.headers, signal, cache: "no-store" });
+  if (!response.ok && props.resolveImage && [401, 403].includes(response.status)) {
+    // 短期授权可能在正文已经打开后过期；只允许通过业务投影重新申请一次，不续签或拼接存储地址。
+    grant = await props.resolveImage(mediaId, signal, true);
+    response = await fetch(grant.url, { method: grant.method, headers: grant.headers, signal, cache: "no-store" });
+  }
   if (!response.ok) throw new Error("正文图片暂时无法读取，未记录完成状态。");
   const objectUrl = URL.createObjectURL(await response.blob());
   objectUrls.add(objectUrl);
   const rendered = document.createElement("img");
   rendered.alt = node.dataset.articleAlt ?? "";
   rendered.decoding = "async";
-  await waitForImage(rendered, objectUrl, signal);
+  try { await waitForImage(rendered, objectUrl, signal); }
+  catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    objectUrls.delete(objectUrl);
+    throw error;
+  }
   rendered.loading = "lazy";
   node.replaceWith(rendered);
 }

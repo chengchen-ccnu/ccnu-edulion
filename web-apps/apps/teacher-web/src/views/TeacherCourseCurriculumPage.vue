@@ -5,9 +5,9 @@
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { ChapterInput, CourseMediaAccessGrant, LessonInput, LessonMediaResource,
-  LessonMediaResourceInput, TeacherCourse } from "@edu/api-client";
+  LessonMediaResourceInput, TeacherArticleContent, TeacherCourse } from "@edu/api-client";
 import { createResourceActionController, HlsVideoPlayer, playbackErrorMessage } from "@edu/ui";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute } from "vue-router";
 
 import { teacherCourseApi } from "../course-api";
@@ -17,10 +17,12 @@ import { publicationControls } from "../publication-controls";
 
 type ResourceSnapshot = Pick<LessonMediaResource, "id" | "displayName" | "presentation" | "originalFileName" | "mimeType" | "size">;
 type EditableResource = LessonMediaResourceInput & Partial<ResourceSnapshot> & { localUrl?: string | null };
-type EditableLesson = Omit<LessonInput, "resources"> & { id?: string; uiKey: string; resources: EditableResource[] };
+type EditableLesson = Omit<LessonInput, "resources"> & { id?: string; uiKey: string; resources: EditableResource[];
+  articleContent?: TeacherArticleContent };
 type EditableChapter = Omit<ChapterInput, "lessons"> & { id?: string; uiKey: string; lessons: EditableLesson[] };
 type TeacherVideoSelection = { lessonId: string; resourceId: string; title: string; posterGrant: CourseMediaAccessGrant | null };
 type ReadyUpload = { mediaId: string; fileName: string; mimeType: string; size: number; previewUrl: string | null };
+type ArticleContentState = "idle" | "loading" | "ready" | "error";
 
 const route = useRoute();
 const course = ref<TeacherCourse | null>(null);
@@ -33,8 +35,13 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const busyKeys = ref<Set<string>>(new Set());
 const resourceError = ref<Record<string, string>>({});
+const articleContentState = ref<Record<string, ArticleContentState>>({});
+const articleContentError = ref<Record<string, string>>({});
 const selectedVideo = ref<TeacherVideoSelection | null>(null);
 const resourceActions = createResourceActionController();
+let pageController: AbortController | null = null;
+let loadGeneration = 0;
+const articleContentRequests = new Map<string, Promise<TeacherArticleContent>>();
 
 const publishBlocker = computed(() => {
   if (!course.value) return "课程尚未加载。";
@@ -47,19 +54,50 @@ const canPublish = computed(() => publishBlocker.value === "");
 const publication = computed(() => course.value ? publicationControls(course.value) : null);
 
 onMounted(() => { window.addEventListener("beforeunload", warnBeforeUnload); void load(); });
-onBeforeUnmount(() => { window.removeEventListener("beforeunload", warnBeforeUnload); resourceActions.dispose(); });
-onBeforeRouteLeave(() => !dirty.value || window.confirm("目录还有未保存修改，确认离开并放弃这些修改？"));
+onBeforeUnmount(() => { window.removeEventListener("beforeunload", warnBeforeUnload); disposePageRuntime(); });
+onBeforeRouteLeave(() => {
+  if (dirty.value && !window.confirm("目录还有未保存修改，确认离开并放弃这些修改？")) return false;
+  disposePageRuntime();
+  return true;
+});
+watch(() => String(route.params.courseId), (next, previous) => {
+  if (next !== previous) void load();
+});
 
 async function load() {
+  pageController?.abort();
+  articleContentRequests.clear();
+  resourceActions.dispose();
+  const controller = new AbortController();
+  pageController = controller;
+  const currentGeneration = ++loadGeneration;
   loading.value = true;
   errorMessage.value = "";
   try {
-    const snapshot = await teacherCourseApi.detail(String(route.params.courseId));
+    const snapshot = await teacherCourseApi.detail(String(route.params.courseId), controller.signal);
+    if (!isCurrentPageRequest(controller, currentGeneration)) return;
     course.value = snapshot;
     syncChapters(snapshot);
     dirty.value = false;
-  } catch (error) { errorMessage.value = messageFor(error, "课程目录加载失败"); }
-  finally { loading.value = false; }
+    loading.value = false;
+    hydrateSavedArticleContent(controller, currentGeneration);
+  } catch (error) {
+    if (isCurrentPageRequest(controller, currentGeneration)) errorMessage.value = messageFor(error, "课程目录加载失败");
+  } finally {
+    if (isCurrentPageRequest(controller, currentGeneration)) loading.value = false;
+  }
+}
+
+function disposePageRuntime() {
+  loadGeneration += 1;
+  pageController?.abort();
+  pageController = null;
+  articleContentRequests.clear();
+  resourceActions.dispose();
+}
+
+function isCurrentPageRequest(controller: AbortController, generation: number): boolean {
+  return pageController === controller && loadGeneration === generation && !controller.signal.aborted;
 }
 
 function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -126,6 +164,7 @@ async function save() {
           resources: writableResources(lesson) })) }))
     });
     course.value = updated; syncChapters(updated); dirty.value = false;
+    if (pageController && !pageController.signal.aborted) hydrateSavedArticleContent(pageController, loadGeneration);
     successMessage.value = updated.publishedVersion
       ? `目录已保存到 ${updated.draftVersion ?? updated.version}，线上版本尚未改变。` : "课程目录已保存。";
   } catch (error) { errorMessage.value = messageFor(error, "课程目录保存失败"); }
@@ -152,6 +191,55 @@ function syncChapters(snapshot: TeacherCourse) {
       title: lesson.title, type: lesson.type, sequence: lesson.sequence, previewable: lesson.previewable,
       articleMarkdown: lesson.articleMarkdown ?? null,
       resources: (lesson.resources ?? []).map(resource => ({ ...resource })) })) }));
+  articleContentState.value = Object.fromEntries(chapters.value.flatMap(chapter => chapter.lessons
+    .filter(lesson => lesson.type === "ARTICLE" && lesson.id)
+    .map(lesson => [lesson.uiKey, "idle" as const])));
+  articleContentError.value = {};
+}
+
+/** 读取当前可编辑版本的已保存 ARTICLE 投影；失败只影响该正文图片，不吞掉其余目录内容。 */
+function hydrateSavedArticleContent(controller: AbortController, generation: number) {
+  const articleLessons = chapters.value.flatMap(chapter => chapter.lessons)
+    .filter(lesson => lesson.type === "ARTICLE" && lesson.id);
+  void Promise.all(articleLessons.map(lesson => loadArticleContent(lesson, controller, generation)));
+}
+
+/** 每个课程/课时只共享同一份 in-flight 请求，避免安全渲染器和页面状态重复申请授权。 */
+function requestArticleContent(courseId: string, lessonId: string, signal: AbortSignal): Promise<TeacherArticleContent> {
+  const key = `${courseId}:${lessonId}`;
+  const existing = articleContentRequests.get(key);
+  if (existing) return existing;
+  const request = teacherCourseApi.articleContent(courseId, lessonId, signal);
+  articleContentRequests.set(key, request);
+  const clear = () => { if (articleContentRequests.get(key) === request) articleContentRequests.delete(key); };
+  void request.then(clear, clear);
+  return request;
+}
+
+async function loadArticleContent(lesson: EditableLesson, controller: AbortController, generation: number) {
+  if (!course.value || !lesson.id || lesson.type !== "ARTICLE") return;
+  setArticleContentState(lesson.uiKey, "loading", "");
+  try {
+    const projection = await requestArticleContent(course.value.id, lesson.id, controller.signal);
+    if (!isCurrentPageRequest(controller, generation)) return;
+    lesson.articleContent = projection;
+    if (!dirty.value) lesson.articleMarkdown = projection.articleMarkdown;
+    setArticleContentState(lesson.uiKey, "ready", "");
+  } catch (error) {
+    if (isCurrentPageRequest(controller, generation)) {
+      setArticleContentState(lesson.uiKey, "error", articleContentMessage(error));
+    }
+  }
+}
+
+function setArticleContentState(key: string, state: ArticleContentState, message: string) {
+  articleContentState.value = { ...articleContentState.value, [key]: state };
+  articleContentError.value = { ...articleContentError.value, [key]: message };
+}
+
+function retryArticleContent(lesson: EditableLesson) {
+  if (!pageController || pageController.signal.aborted || !lesson.id) return;
+  void loadArticleContent(lesson, pageController, loadGeneration);
 }
 
 function mediaIdFor(lesson: EditableLesson, purpose: EditableResource["purpose"]): string | null {
@@ -214,7 +302,11 @@ function learningResources(lesson: EditableLesson) {
 }
 
 function articleImages(lesson: EditableLesson) {
-  return lesson.resources.filter(item => item.purpose === "ARTICLE_IMAGE").map(item => ({ mediaId: item.mediaId }));
+  const grants = new Map((lesson.articleContent?.inlineImages ?? [])
+    .map(image => [image.mediaId.toLowerCase(), image.grant] as const));
+  return lesson.resources.filter(item => item.purpose === "ARTICLE_IMAGE").map(item => ({
+    mediaId: item.mediaId, grant: grants.get(item.mediaId.toLowerCase())
+  }));
 }
 
 function defaultPresentation(mimeType: string): "INLINE" | "DOWNLOAD" {
@@ -225,14 +317,30 @@ function inlineAllowed(resource: EditableResource): boolean {
   return resource.mimeType === "application/pdf" || Boolean(resource.mimeType?.startsWith("image/"));
 }
 
-/** 新上传正文图片只使用当前页面 Blob；已保存图片等待教师正文授权契约，不能猜作普通资料授权。 */
-function resolveTeacherImage(lesson: EditableLesson, mediaId: string, _signal: AbortSignal): Promise<CourseMediaAccessGrant> {
+/** 新上传图片读取当前页面 Blob；已保存图片只经 owner 正文投影取得短期授权，过期时强制重新申请。 */
+async function resolveTeacherImage(lesson: EditableLesson, mediaId: string, signal: AbortSignal,
+    refresh = false): Promise<CourseMediaAccessGrant> {
   const resource = lesson.resources.find(item => item.purpose === "ARTICLE_IMAGE" && item.mediaId === mediaId);
-  if (!course.value || !lesson.id || !resource) return Promise.reject(new Error("正文图片尚未绑定。"));
-  if (resource.localUrl) return Promise.resolve({ method: "GET", url: resource.localUrl, headers: {},
-    expiresAt: new Date(Date.now() + 60_000).toISOString() });
-  if (!resource.id) return Promise.reject(new Error("正文图片保存后才能预览。"));
-  return Promise.reject(new Error("OpenAPI 0.19.0 未提供教师正文图片预览授权；新上传图片可在保存前本地预览。"));
+  if (!course.value || !lesson.id || !resource) throw new Error("正文图片尚未绑定。");
+  if (resource.localUrl) return {
+    method: "GET", url: resource.localUrl, headers: {},
+    expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const projected = lesson.articleContent?.inlineImages.find(image =>
+    image.mediaId.toLowerCase() === mediaId.toLowerCase());
+  if (projected && !refresh) return projected.grant;
+  try {
+    const projection = await requestArticleContent(course.value.id, lesson.id, signal);
+    if (!signal.aborted && pageController && !pageController.signal.aborted) {
+      lesson.articleContent = projection;
+      setArticleContentState(lesson.uiKey, "ready", "");
+    }
+    const image = projection.inlineImages.find(item => item.mediaId.toLowerCase() === mediaId.toLowerCase());
+    if (!image) throw new Error("正文图片未包含在当前保存投影中。");
+    return image.grant;
+  } catch (error) {
+    if (!signal.aborted) setArticleContentState(lesson.uiKey, "error", articleContentMessage(error));
+    throw error;
+  }
 }
 
 async function runResourceAction(lesson: EditableLesson, resource: EditableResource, action: "PREVIEW" | "DOWNLOAD") {
@@ -277,6 +385,18 @@ async function updatePublication(status: "PUBLISHED" | "UNPUBLISHED") {
   finally { publishing.value = false; }
 }
 
+function articleContentMessage(error: unknown): string {
+  if (error instanceof GatewayRequestError && error.status === 401) return "登录状态已失效，请重新登录后读取已保存正文。";
+  if (error instanceof Error && error.message === "AUTHENTICATION_REQUIRED") return "登录状态已失效，请重新登录后读取已保存正文。";
+  if (error instanceof GatewayRequestError && error.status === 403) return "当前教师身份无权读取这份正文。";
+  if (error instanceof GatewayRequestError && error.status === 404) return "课程、课时不存在或正文当前不可见。";
+  if (error instanceof GatewayRequestError && error.status === 409) return "已保存正文与图片绑定不一致，请修复正文引用后再保存。";
+  if (error instanceof GatewayRequestError && error.status === 429) return "正文授权请求过于频繁，请稍后手动重试。";
+  if (error instanceof GatewayRequestError && error.status === 503) return "正文图片授权服务暂时不可用，请稍后重试。";
+  if (error instanceof TypeError) return "当前网络不可用，已保存正文仍保留在编辑区，可恢复网络后重试。";
+  return "已保存正文暂时无法读取，请手动重试。";
+}
+
 function resourceActionMessage(error: unknown): string {
   if (error instanceof GatewayRequestError && error.status === 422) return "该文件类型不允许执行这个动作。";
   if (error instanceof GatewayRequestError && error.status === 429) return "授权请求过于频繁，请稍后手动重试。";
@@ -285,9 +405,13 @@ function resourceActionMessage(error: unknown): string {
 }
 
 function messageFor(error: unknown, fallback: string): string {
+  if (error instanceof GatewayRequestError && error.status === 401) return "登录状态已失效，请重新登录后继续编辑。";
+  if (error instanceof Error && error.message === "AUTHENTICATION_REQUIRED") return "登录状态已失效，请重新登录后继续编辑。";
+  if (error instanceof GatewayRequestError && error.status === 403) return "当前教师身份无权编辑这门课程。";
   if (error instanceof GatewayRequestError && error.status === 409) return "课程版本已变化。你的输入仍保留，请另行核对后再决定是否重新加载。";
   if (error instanceof GatewayRequestError && error.status === 422) return error.message;
   if (error instanceof GatewayRequestError && error.status === 429) return "请求过于频繁，请稍后手动重试。";
+  if (error instanceof GatewayRequestError && error.status === 503) return "课程服务暂时不可用，请稍后重试。";
   if (error instanceof GatewayRequestError && error.status === 404) return "课程不存在或不属于当前教师。";
   if (error instanceof TypeError) return "当前网络不可用，你的未保存输入仍保留。";
   return error instanceof GatewayRequestError ? error.message : fallback;
@@ -339,10 +463,15 @@ function messageFor(error: unknown, fallback: string): string {
                   @click="selectTeacherVideo(lesson,lesson.resources.find(item=>item.purpose==='LESSON_VIDEO')!)">owner 预览</button>
               </section>
 
+              <p v-if="lesson.type === 'ARTICLE' && articleContentState[lesson.uiKey] === 'loading'"
+                class="feedback feedback--info" role="status">正在读取已保存正文和短期图片授权…</p>
+              <p v-if="lesson.type === 'ARTICLE' && articleContentState[lesson.uiKey] === 'error'"
+                class="feedback feedback--warning" role="alert">{{ articleContentError[lesson.uiKey] }}
+                <button type="button" @click="retryArticleContent(lesson)">重新读取已保存正文</button></p>
               <ArticleMarkdownEditor v-if="lesson.type === 'ARTICLE'" class="lesson-content-editor"
                 :model-value="lesson.articleMarkdown ?? ''" :lesson-id="lesson.id" :images="articleImages(lesson)"
                 :checkpoint-key="`teacher-article-image:${course.id}:${lesson.id ?? lesson.uiKey}`"
-                :resolve-image="(mediaId,signal)=>resolveTeacherImage(lesson,mediaId,signal)"
+                :resolve-image="(mediaId,signal,refresh)=>resolveTeacherImage(lesson,mediaId,signal,refresh)"
                 @update:model-value="lesson.articleMarkdown=$event; dirty=true" @image-ready="addResource(lesson,'ARTICLE_IMAGE',$event)" />
 
               <section v-if="lesson.type !== 'ASSESSMENT'" class="lesson-content-editor lesson-resources-editor">
