@@ -742,3 +742,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 强制检查点刷新：`ENDED/PERSISTED` 成功后刷新同一深链接，进度读取日志为 `200/PERSISTED`，页面恢复已保存进度。Redis 故障采用 Learning `18084` 的 Redis 端口 `1` 隔离实例，未执行 `FLUSHDB`；浏览器 `HEARTBEAT` 返回 `503/LEARNING.PROGRESS_BUFFER_UNAVAILABLE`，页面没有虚假成功，刷新读取为 `200/PERSISTED_ONLY` 并显示最近已保存进度；恢复正常 Redis 后有限重试再次得到 `200/BUFFERED`。
 - 播放器提示复核：结束后曾出现“无法播放媒体”的瞬态提示；同期媒体元素 `readyState=4`、`error=null`，刷新后可重新从起点播放，且 `ENDED/PERSISTED` 正常。证据表明这是既有 HLS 结束态展示，不由 T12G.2 生命周期改动引入，也不影响重播。
 - 数据审计与清理：验收前后目标聚合均为 `position=8`、`watched=8`、`completed=false`、`revision=1`、`buffer_version=0`，`last_event_at` 与原基线一致；事件表仅保留原有 `NULL` 事件。目标 Redis Hash 不存在、dirty ZSet 无目标成员，dirty cardinality 验收前后均为 0。未创建数据库、表、伪数据、OSS 对象或消息。
+
+## 2026-09-05 T12G.2 合并与 T11C 前置审计
+
+- 合并与清理：[PR #46](https://github.com/chengchen-ccnu/ccnu-edulion/pull/46) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后，以普通 merge 合并为 `main@accec558b4d94e7e26c3caa5576203fe988c04aa`；本地 `main` 已快进同步，`codex/t12g2-progress-sync-web` 本地和远端分支均已清理。
+- 优先级结论：下一任务选择 T11C。它的显式依赖 T11B、T12B 已合并，并直接阻塞 T18 发布前集成；T12C 和 T12H 在 backlog 中仍明确后移。T13 虽已满足独立前置并可与无冲突任务并行，但当前总控按单任务顺序先补齐学习测评主链的作业与成绩册缺口。
+- 现状与缺口：OpenAPI 0.20.0、Learning V13、既有测评状态机、不可变试卷、作答/批改/关闭/公布与教师结果分页均可复用；`HOMEWORK` 已是合法类型。但现行 `opensAt`/`closesAt` 明确只允许 EXAM，作答仍是单一当前 attempt，且没有迟交策略、作答次数、跨测评成绩册、安全导出契约；教师端也尚未注册 `/teacher/gradebook` 实现路由。因此 T11C 需要先向前演进契约，再实现后端和冻结页面，不得由前端猜测字段。
+- 前置结论：Git、T11B/T12B 领域能力、题目/媒体复用边界、固定 `/teacher/gradebook` 页面职责及生成客户端流程均满足，已从最新 `main` 准备 `codex/t11c-homework-gradebook`。正式实施前仍需确认 HOMEWORK 开放/截止、迟交、次数、成绩册人口口径和导出安全等产品规则；规则未确认前不得直接编码或把 EXAM 语义机械复用到 HOMEWORK。
+- 数据与代码：本次总控只执行 GitHub 合并、Git 同步/分支清理、只读契约与代码审计及状态文档更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
