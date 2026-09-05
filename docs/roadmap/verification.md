@@ -720,3 +720,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化结果：`pnpm.cmd --dir web-apps run check:api` 通过且生成客户端无漂移；`pnpm.cmd --dir web-apps run typecheck` 通过（8 workspace）；`pnpm.cmd --dir web-apps run test` 通过（36 个测试文件、236 项）；`pnpm.cmd --dir web-apps run build` 通过（三端构建，保留既有大 chunk 警告）；专项覆盖 5 秒采样、五类事件、完成门禁、失败合并、有限重试/稳定 ID、检查点超时、keepalive 认证头、dispose 清理和浏览器存储边界。
 - 真实浏览器门禁：通过正常 Course API 和课程详情页唯一核对课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”、发布版本 `v4`、第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a`“第 2 课 行列式的定义”、VIDEO。in-app 浏览器当前为匿名会话并停留在统一登录页，无法确认受保护内容的 READY、报名/访问事实和播放授权；按规则停止，没有替换课程、发送真实进度或触碰 OSS/媒体数据。因此真实五类事件、Redis 故障恢复、刷新恢复和真实清理仍标为待补验。
 - 数据边界：本轮未连接或修改 `edu_platform_learning_dev`、Redis DB 4、Course/Media/OSS、RabbitMQ；未创建数据库、表、伪数据、进度事件、Redis Key、租约或 OSS 对象，故无本轮清理项。独立交付说明见 [`docs/delivery/T12G.2-progress-sync-web.md`](../delivery/T12G.2-progress-sync-web.md)。
+
+## 2026-09-05 T12G.2 真实浏览器复核
+
+- 学生测试账号登录成功，目标课时受保护内容加载成功；课程“线性代数”v4、第 2 课“行列式的定义”通过报名/访问事实、视频 READY 和播放授权门禁，视频实际时长约 12.2 秒。
+- 播放约 1 秒后暂停以及自然播放结束均触发前端进度请求，但两者都返回 422；页面正确保持“进度尚未同步”，点击重试仍失败。真实 `PAUSE`/`ENDED` 持久化未通过，故不宣称五类事件链路验收成功。
+- 点击退出学习后，路由守卫正确展示“重试/仍然离开”；选择“仍然离开”成功返回课程详情，失败检查点不会阻止用户明确离开。
+- 只读核对专用 `edu_platform_learning_dev` 的目标课程/课时，验收后为 1 条聚合行（position 8、watched 8、completed false）和 1 条 `NULL` 事件类型记录；未观察到本轮新增的已接受 PAUSE/ENDED 事件。未创建数据库、表、伪数据、Redis Key、租约或 OSS 对象，无清理项。
+- 结论：前置访问与前端失败反馈/离页分支通过；进度请求 422 是当前发布阻塞问题，需定位实际请求字段与服务端校验后重新验收。教师账号未用于本次学生端 T12G.2 复核，教师端不在本任务页面范围内。
