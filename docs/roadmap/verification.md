@@ -718,7 +718,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 可靠性与反馈：控制器只保留一个活动请求和一个合并快照，失败 watchedSeconds/最远位置/时间在内存中合并；网络、超时、429、5xx 最多三次有限重试，重试复用相同 clientEventId/请求体，逻辑保存成功后才生成新 ID。强制检查点最多等待约 3 秒，失败显示“进度尚未同步”并提供“重试/仍然离开”；`BUFFERED` 显示“正在同步”，`PERSISTED` 显示“已保存”，读取 `PERSISTED_ONLY` 显示“当前显示最近已保存进度”。
 - 离页边界：SPA 路由由 `onBeforeRouteLeave` 统一拦截；`pagehide` 通过认证头和 `fetch keepalive` 一次性尽力发送 LEAVE，`beforeunload` 仅在确有未保存内存快照时启用。没有 localStorage、sessionStorage、IndexedDB、Cookie 进度写入，也没有卸载后的无限重试。
 - 自动化结果：`pnpm.cmd --dir web-apps run check:api` 通过且生成客户端无漂移；`pnpm.cmd --dir web-apps run typecheck` 通过（8 workspace）；`pnpm.cmd --dir web-apps run test` 通过（36 个测试文件、236 项）；`pnpm.cmd --dir web-apps run build` 通过（三端构建，保留既有大 chunk 警告）；专项覆盖 5 秒采样、五类事件、完成门禁、失败合并、有限重试/稳定 ID、检查点超时、keepalive 认证头、dispose 清理和浏览器存储边界。
-- 真实浏览器门禁：通过正常 Course API 和课程详情页唯一核对课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”、发布版本 `v4`、第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a`“第 2 课 行列式的定义”、VIDEO。in-app 浏览器当前为匿名会话并停留在统一登录页，无法确认受保护内容的 READY、报名/访问事实和播放授权；按规则停止，没有替换课程、发送真实进度或触碰 OSS/媒体数据。因此真实五类事件、Redis 故障恢复、刷新恢复和真实清理仍标为待补验。
+- 阶段性浏览器记录（已由下方最终真实验收覆盖）：当时通过正常 Course API 和课程详情页唯一核对课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”、发布版本 `v4`、第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a`“第 2 课 行列式的定义”、VIDEO；因当时浏览器为匿名会话而停止，未发送真实进度或触碰 OSS/媒体数据。最终受保护学生会话、五类事件、Redis 故障恢复、刷新恢复和精确清理结果见下方最终真实验收。
 - 数据边界：本轮未连接或修改 `edu_platform_learning_dev`、Redis DB 4、Course/Media/OSS、RabbitMQ；未创建数据库、表、伪数据、进度事件、Redis Key、租约或 OSS 对象，故无本轮清理项。独立交付说明见 [`docs/delivery/T12G.2-progress-sync-web.md`](../delivery/T12G.2-progress-sync-web.md)。
 
 ## 2026-09-05 T12G.2 真实浏览器复核
