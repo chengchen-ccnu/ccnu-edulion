@@ -29,6 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
  */
 public class AuthController {
     static final String REFRESH_COOKIE = "EDU_REFRESH";
+    private static final String REFRESH_COOKIE_PATH = "/api/v1";
+    private static final String LEGACY_REFRESH_COOKIE_PATH = "/api/v1/auth";
 
     private final AuthService authService;
     private final IamProperties properties;
@@ -74,8 +76,10 @@ public class AuthController {
     public ResponseEntity<Void> logout(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
         authService.logout(refreshToken);
-        ResponseCookie cleared = cookie("").maxAge(Duration.ZERO).build();
-        return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, cleared.toString()).build();
+        ResponseCookie cleared = cookie("", REFRESH_COOKIE_PATH).maxAge(Duration.ZERO).build();
+        ResponseCookie legacyCleared = cookie("", LEGACY_REFRESH_COOKIE_PATH).maxAge(Duration.ZERO).build();
+        return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE,
+                cleared.toString(), legacyCleared.toString()).build();
     }
 
     /** 返回 JWT subject 对应用户的实时角色和权限，用于前端恢复登录态。 */
@@ -91,16 +95,21 @@ public class AuthController {
     }
 
     private ResponseEntity<LoginResponse> withRefreshCookie(TokenPair tokens) {
-        ResponseCookie cookie = cookie(tokens.refreshToken()).maxAge(properties.refresh().ttl()).build();
+        ResponseCookie cookie = cookie(tokens.refreshToken(), REFRESH_COOKIE_PATH)
+                .maxAge(properties.refresh().ttl()).build();
+        // T12D.1 曾将 Path 从 /api/v1/auth 扩到 /api/v1；成功签发时同步清除旧 Cookie，
+        // 避免浏览器同时发送两个同名值并让刷新接口读取到已经失效的旧会话。
+        ResponseCookie legacyCleared = cookie("", LEGACY_REFRESH_COOKIE_PATH).maxAge(Duration.ZERO).build();
         LoginResponse body = new LoginResponse("Bearer", tokens.accessToken(), tokens.expiresIn());
-        return ResponseEntity.status(HttpStatus.OK).header(HttpHeaders.SET_COOKIE, cookie.toString()).body(body);
+        return ResponseEntity.status(HttpStatus.OK).header(HttpHeaders.SET_COOKIE,
+                cookie.toString(), legacyCleared.toString()).body(body);
     }
 
-    private ResponseCookie.ResponseCookieBuilder cookie(String value) {
+    private ResponseCookie.ResponseCookieBuilder cookie(String value, String path) {
         return ResponseCookie.from(REFRESH_COOKIE, value)
                 .httpOnly(true)
                 .secure(properties.refresh().cookieSecure())
                 .sameSite("Strict")
-                .path("/api/v1");
+                .path(path);
     }
 }

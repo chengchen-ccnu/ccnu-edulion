@@ -4,6 +4,8 @@ import {
 } from "@edu/api-client";
 import type {
   CourseProgress,
+  ArticleLessonCompletion,
+  CompleteArticleLessonRequest,
   Enrollment,
   EnrollmentPage,
   GatewayClient,
@@ -31,6 +33,8 @@ export interface StudentLearningApi {
   progress(courseId: string, signal?: AbortSignal): Promise<CourseProgress>;
   reportProgress(courseId: string, lessonId: string, body: ReportLessonProgressRequest,
     signal?: AbortSignal): Promise<LessonProgress>;
+  completeArticle(courseId: string, lessonId: string, body: CompleteArticleLessonRequest,
+    signal?: AbortSignal): Promise<ArticleLessonCompletion>;
   notes(courseId: string, lessonId: string, signal?: AbortSignal): Promise<LearningNote[]>;
   createNote(courseId: string, lessonId: string, content: string, positionSeconds: number | null,
     signal?: AbortSignal): Promise<LearningNote>;
@@ -85,6 +89,12 @@ export function createStudentLearningApi(client: GatewayClient = createGatewayCl
     reportProgress(courseId, lessonId, body, signal) {
       return authorized(Authorization => client.POST(
         "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
+          headers: { Authorization }, params: { path: { courseId, lessonId } }, body, signal
+        }), signal);
+    },
+    completeArticle(courseId, lessonId, body, signal) {
+      return authorized(Authorization => client.POST(
+        "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/article-completion", {
           headers: { Authorization }, params: { path: { courseId, lessonId } }, body, signal
         }), signal);
     },

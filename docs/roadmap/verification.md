@@ -612,6 +612,27 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 可读性与边界：权限判断、Markdown 验证、处理状态机、幂等、Outbox、Seed/清理和复杂测试均增加中文 Javadoc/注释；OpenAPI/SQL 解释兼容与空值语义，生成代码未手改。本任务没有 Vue、多码率、清晰度、字幕 UI、历史海报 API、Office 转换、DRM、AI、Redis 播放缓存、第二套 OSS 客户端或跨 Schema Join/外键/事务。
 - 发布：关键实现提交 `f5e03b5` 已按规则推送到 `codex/t12f1-course-content-contract`；Ready [PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已创建，目标 `main`，本任务不自行合并。完整实现、命令、演示和清理说明见 `docs/delivery/T12F.1-course-content-contract.md`。
 
+## 2026-08-31 T12F.1 合并与 T12F.2 前置审计
+
+- 合并与清理：[PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 在 Ready、`MERGEABLE/CLEAN` 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后合并为 `main@e53a58d`；本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12f1-course-content-contract` 本地和远端分支均已精确删除。
+- 前置结论：OpenAPI 0.19.0、Course V4、Media V5、Learning V12、生成 TypeScript 客户端、受保护课时内容/资源动作授权、`ARTICLE_IMAGE`、自动/自定义海报投影、图文完成命令和生产禁用的固定演示 Seed 均已进入 `main`。既有教师课程编排页、学生 `/learn/:courseId/:lessonId` 和共享 `HlsVideoPlayer` 是唯一实现落点；页面规格已冻结 Markdown、资料、海报、倍速、完成反馈和排除项。因此 T12F.2 的 Git、契约、生成类型、页面职责、真实数据和浏览器验收前置满足，已从最新 `main` 准备 `codex/t12f2-course-content-player`。
+- 一致性验证：重新执行 `pnpm.cmd --dir web-apps run check:api` 成功，OpenAPI 0.19.0 可重新生成且已跟踪 `schema.d.ts` 与 HEAD 无差异；`git diff --check` 通过。T12F.2 只能消费生成客户端，不得修改服务端契约来迁就页面、维护手写 DTO、搬迁播放器或创建第二套上传/学习路由。
+- 实施边界：教师在既有课程编排页完成 Markdown 工具栏/实时预览、ARTICLE_IMAGE 上传插入、资源展示名/主动作和类型切换二次确认；学生在既有学习页消费受保护内容，显示有效/占位海报、1～3 倍速、资料预览/下载，并在正文成功渲染后以同一请求 ID 最多重试三次同步 100% 完成。多码率、清晰度选择、字幕 UI、历史海报生产重处理 API、Office 转换、DRM、AI 和 T12G Redis 缓冲继续排除。
+- 数据与环境：本次总控没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 任务或外部服务，没有创建、修改或清理 Schema、表、消息、对象、迁移或伪数据；T12F.1 明确保留的固定演示 Seed 原样保留，供 T12F.2 页面和真实浏览器验收使用。没有执行 Seed Cleanup/Rebuild，也没有删除已有安全措施。
+
+## 2026-09-01 T12F.2 课程内容与播放器前端
+
+- Git 与契约：开始时分支为 `codex/t12f2-course-content-player`、工作区干净，HEAD `4c6aa3ff` 的 merge-base/main 为 PR #42 合并提交 `e53a58d`。完整复核页面规格、backlog、verification、T12F.1 交付、ADR-0004 与 OpenAPI 0.19.0 后确认契约足够；本任务没有修改 OpenAPI、Java、事件或 Flyway，只从生成 `components["schemas"]` 导出类型别名。
+- 教师端：既有课程编排页实现 ARTICLE Markdown 工具栏、共享实时预览、`ARTICLE_IMAGE` 上传/引用收口、资料 `displayName`/`presentation`、显式 revision 保存、409/422/429/离线提示、未保存离页保护及三类课时互转二次确认。SUBTITLE 后端枚举和既有绑定边界保留，页面没有字幕入口。
+- 学生端：既有学习页只从受保护内容接口读取正文、播放 mediaId、海报与资源；共享消毒器完成 Markdown/KaTeX/GFM/正文图渲染后才用页面级稳定 UUID 调用 ARTICLE 完成，最多退避三次且失败不阻断阅读。资料每次动作重新申请授权并只生成内存 Blob；付费未报名试看不写完成。
+- 播放器：自定义海报、自动 `poster-v1` 与固定 SVG 占位按优先级展示；倍速固定 1/1.25/1.5/2/2.5/3，保持音调且只存播放器实例，切课恢复 1x；组件/页面离开时销毁 HLS、请求、计时器和临时 URL，不使用 Web Storage。
+- 自动门禁：`check:api` 通过；全 workspace typecheck 通过；Vitest 35 文件/226 测试通过；admin/student/teacher 生产构建通过，仅有既有学生 chunk 大小警告；`git diff --check` 通过。新增测试覆盖 Markdown 消毒、图片解码失败不完成、生成客户端路径、类型切换边界、资源动作清理、海报/倍速复位和 ARTICLE 有限重试。
+- 真实浏览器：固定学生深链接成功渲染标题、2 个 KaTeX、GFM 表格、代码和 READY Blob 正文图；PDF 显示预览/下载，TXT/PPTX 只下载，三个下载动作无错误；ARTICLE 从 Seed 0% 变 100%。视频使用 Blob 自定义海报，六档倍速和 3x 生效，切课恢复 1x，无字幕 UI。390×844、834×1112、1440×900 均无横向溢出，焦点轮廓可见。
+- 数据恢复：真实完成后执行固定 Seed Rebuild；清理阶段完成但长任务未完成初始化，随后幂等 Initialize 完整通过。最终专用 Learning dev Schema 只读核验为固定进度 `completed=0`、位置/观看 0，完成事实与幂等请求均 0；固定 6 个媒体资产、课程和两个课时继续保留。未枚举 Bucket、直写媒体表、补历史海报或新建随机课程。
+- 补验与认证修复：本地启动配置最初使 Gateway/IAM 分别读取 Redis DB 0/1，验收进程对齐后继续发现刷新请求携带 Cookie、最新数据库会话却保持 ACTIVE ROOT。Git 历史确认 T12D.1 把 Cookie Path 从 `/api/v1/auth` 扩为 `/api/v1` 时未清理旧 Path，浏览器会同时发送两个同名值。登录/刷新成功/退出响应同时清理旧 Path；`AuthControllerTest` 2/2 通过，真实学生深链接硬刷新、教师 5173→5174 跳转和教师页硬刷新均通过，未放宽 HttpOnly/SameSite、未持久化 Access Token。
+- 补验契约差异：教师真实课程编排页加载、跨端和刷新成功，Markdown、KaTeX、GFM 表格、代码及资料区可见；保存后的 ARTICLE_IMAGE owner 预览返回 404。T12F.1 交付与 OpenAPI 0.19.0 只为学生受保护正文投影提供 ARTICLE_IMAGE 内联授权，普通 owner 资料动作不含该用途。按契约规则已停止前端猜测调用并显示明确错误；新上传未保存图片保留本地 Blob 预览。后续必须先补最小教师正文图片投影，本 PR 不修改 Course/Media 业务契约。
+- 发布：关键实现提交 `a37fc37` 已按规则推送到 `codex/t12f2-course-content-player`；[Ready PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 已创建，目标 `main`，本任务不自行合并。
+
 ## 2026-09-01 T12F.2 契约阻断与 T12F.1.1 前置审计
 
 - 现状复核：[PR #42](https://github.com/chengchen-ccnu/ccnu-edulion/pull/42) 已合并为 `main@e53a58d`，OpenAPI 0.19.0、Course V4、Media V5、Learning V12 和生成客户端已在 `main`。T12F.2 [PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 保持 Ready/Open、`MERGEABLE/CLEAN`，两组 Java、Frontend、Python、OpenAPI 共 8 项 CI 全部成功；本次总控没有合并、关闭、改写或追加该 PR。
@@ -630,3 +651,19 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实非 READY 与测试脚手架：Media 门控最终 1/1 通过，只把固定 `...f103` 从 READY 暂时改为 UPLOADED，真实 Gateway/Course/Media 链路返回 `MEDIA.NOT_READY`，finally 恢复 READY。首次两次运行分别在测试方法前暴露跨模块 test classpath 的 Flyway 重名和 Gateway 自动配置污染，未触碰媒体状态；按既有 Media 真实测试限定自身迁移并排除 Gateway 自动配置后通过。
 - 数据与清理：没有创建数据库、表、迁移或 OSS 对象。随机课程/版本/章节/课时/绑定/Outbox 已按 courseId 逆序精确删除；固定 T12F.1 Course/Media Seed 和 OSS 原件未删除。媒体状态恢复 READY，本轮新增 nonce、到期 nonce 与 `t12f11-*` 访问审计已清理，临时服务和日志已停止/清空；没有改动本地凭据或仓库环境配置。
 - 可读性与边界：新增业务方法、SQL、权限/绑定校验、跨服务失败和真实门控清理均有中文注释；生成文件未手改。无 Vue、Flyway、事件、跨 Schema Join/外键/事务、直接 OSS SDK、普通 ARTICLE_IMAGE PREVIEW/DOWNLOAD、任意 mediaId 入口或范围外媒体能力。关键实现 `1b586da`、验证记录 `3c7d6c9` 已推送，Ready [PR #44](https://github.com/chengchen-ccnu/ccnu-edulion/pull/44) 目标 `main` 并保持 Open。完整说明见 `docs/delivery/T12F.1.1-teacher-article-image-access.md`；T12F.2 PR #43 继续等待本任务合并。
+
+## 2026-09-01 T12F.1.1 合并与 T12F.2 恢复审计
+
+- 合并与清理：[PR #44](https://github.com/chengchen-ccnu/ccnu-edulion/pull/44) 在 Ready、`MERGEABLE/CLEAN` 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后，以普通 merge 合并为 `main@1402e07`；本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12f1.1-teacher-article-image-access` 本地和远端分支均已删除。
+- 分支恢复：开始合并前 `codex/t12f2-course-content-player` 工作区干净，随后以普通 merge 合入最新 `main`。OpenAPI 0.19.1、Course owner `article-content` 投影、权限实现、生成客户端和测试已进入 T12F.2；文档冲突按“T12F.1.1 已合并、T12F.2 等待最终真实复验”的事实合并，没有改写已验收的业务实现或扩大功能范围。
+- 最终前置：自动生成契约与后端补口已经满足。PR #43 合并前仍必须让教师页面消费生成的 `article-content` 投影，并通过真实浏览器完成“保存含 ARTICLE_IMAGE 的正文—硬刷新—重新进入—图片成功加载”，同时复核非 owner/过期授权及离页 Blob URL 清理；随后重跑受影响前端门禁和最新 PR CI。未完成这些检查前不得仅凭旧 CI 合并。
+- 数据与环境：本次总控只执行 Git、GitHub 和文档合并操作，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg 或外部服务，没有创建、修改或清理数据库、表、Seed、消息、对象或伪数据；T12F.1 固定演示 Seed 保持不变。
+
+## 2026-09-02 T12F.2 教师已保存 ARTICLE_IMAGE 前端闭环终验
+
+- Git 与范围：本次继续在 `codex/t12f2-course-content-player` 完成，工作区开始时干净，HEAD 包含普通 merge 提交 `e97bf67`。实现只修改教师前端、共享安全正文预览、前端测试和 T12F.2 交付/路线文档，没有修改 OpenAPI、Java、Flyway、事件 Schema、学生内容投影、普通资料 PREVIEW/DOWNLOAD、字幕、多码率或历史海报。
+- 实现结果：教师 API 客户端消费生成的 OpenAPI 0.19.1 `GET /api/v1/teacher/courses/{courseId}/lessons/{lessonId}/article-content`；课程编排页在重新进入、刷新和切课时读取 `articleMarkdown` 与 `inlineImages`，通过现有 `SafeArticleContent`、短期授权和内存 Blob URL 渲染。图片授权返回 401/403 时重新走 `article-content` 申请，不保存永久 URL、不拼接 OSS 地址、不向接口提交任意 mediaId；未保存新上传图片继续使用本地预览。请求、组件实例和 Blob URL 在切课、重新加载、重试及离开时清理。
+- 自动化验证：`pnpm.cmd --dir web-apps run check:api` 通过并确认生成客户端为 0.19.1；workspace typecheck 通过；Vitest 35 个文件、228 个测试全部通过；workspace build 中 admin/student/teacher 均成功，仅保留既有 student chunk 大小警告；`git diff --check` 通过。新增覆盖生成 API 路径/鉴权、保存正文 hydration、错误状态/重试、本地 Blob 预览、授权过期刷新和 Blob 释放。
+- 真实本地人工验收：用户已在专用本地环境确认固定 Seed 的教师保存含 `ARTICLE_IMAGE` 正文后硬刷新、重新进入课时，正文图片成功显示；非 owner 无法读取；过期授权通过再次请求 `article-content` 恢复；loading、401、403、404、409、429、503、离线和图片加载失败均有可见处理；离页请求和 Blob URL 已释放；控制台无错误，页面/存储/日志未泄露 Bucket、Object Key、永久 URL 或 Token。该条为用户人工验收结论，不冒充自动化浏览器观测。
+- 临时数据清理：人工验收使用固定课程 `00000000-0000-4000-8000-00000000f201`、ARTICLE 课时 `00000000-0000-4000-8000-00000000f232` 和图片 `00000000-0000-4000-8000-00000000f103`，仅涉及专用 `edu_platform_media_dev`、`edu_platform_course_dev`、`edu_platform_learning_dev` 三个开发 Schema 的既有 T12F.1 固定 Seed。验收结束后已按 `scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Cleanup` 成功清理，停止 5173/5174、8080–8084 验收进程；临时验收日志已清空，未改动本地凭据、仓库环境配置或非本任务数据。
+- PR 状态：已准备将本次提交推送到既有 [Ready/Open PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43)，不合并；推送后等待该 PR 最新 8 项 CI 全部成功再交付。

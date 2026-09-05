@@ -5,7 +5,7 @@
  * 共享组件不判断教师或学生权限；403 等角色语义由调用页面传入，并只向外发出领域中立播放样本。
  * 切换资源或卸载时会中止授权请求、清理刷新定时器、销毁播放器并移除 video 的临时地址。
  */
-import type { CourseMediaPlaybackGrant } from "@edu/api-client";
+import type { CourseMediaAccessGrant, CourseMediaPlaybackGrant } from "@edu/api-client";
 import type Hls from "hls.js";
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 
@@ -18,6 +18,7 @@ const props = defineProps<{
   grantProvider: (signal: AbortSignal) => Promise<CourseMediaPlaybackGrant>;
   errorMessageProvider?: (error: unknown) => string;
   initialPositionSeconds?: number;
+  posterGrant?: CourseMediaAccessGrant | null;
   title: string;
 }>();
 const emit = defineEmits<{
@@ -29,10 +30,15 @@ const emit = defineEmits<{
 const video = ref<HTMLVideoElement | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const playbackRate = ref(1);
+const posterUrl = ref(new URL("./assets/video-poster-placeholder.svg", import.meta.url).href);
+const playbackRates = [1, 1.25, 1.5, 2, 2.5, 3] as const;
 let hls: Hls | null = null;
 let activeHeaders: Record<string, string> = {};
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let grantAbort: AbortController | null = null;
+let posterAbort: AbortController | null = null;
+let posterObjectUrl: string | null = null;
 let generation = 0;
 let lastPositionSecond = -1;
 const progressTracker = createPlaybackProgressTracker(sample => emit("playbackProgress", sample));
@@ -40,8 +46,10 @@ const progressTracker = createPlaybackProgressTracker(sample => emit("playbackPr
 watch(() => props.grantKey, () => {
   progressTracker.flush();
   progressTracker.reset();
+  resetPlaybackRate();
   void loadGrant(false);
 }, { immediate: true });
+watch(() => [props.grantKey, props.posterGrant] as const, () => { void loadPoster(); }, { immediate: true, deep: true });
 onBeforeUnmount(cleanup);
 
 /** 获取或刷新播放授权；429 最多退避两次，其他错误立即停止，避免形成无界刷新循环。 */
@@ -131,6 +139,7 @@ function cleanup() {
   progressTracker.flush();
   generation += 1;
   clearRuntime(true);
+  clearPoster();
   progressTracker.reset();
 }
 
@@ -161,6 +170,47 @@ function handlePause() {
 
 function handleEnded() {
   if (video.value) progressTracker.complete(video.value.currentTime);
+}
+
+/** 倍速仅绑定当前 video 元素；切课或重建组件都恢复 1x，并要求浏览器保持音调。 */
+function changePlaybackRate(event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value);
+  if (!playbackRates.includes(value as typeof playbackRates[number])) return;
+  playbackRate.value = value;
+  if (video.value) {
+    video.value.preservesPitch = true;
+    video.value.playbackRate = value;
+  }
+}
+
+function resetPlaybackRate() {
+  playbackRate.value = 1;
+  if (!video.value) return;
+  video.value.preservesPitch = true;
+  video.value.playbackRate = 1;
+}
+
+/** 海报短期授权只换取内存 Blob URL；无海报或读取失败时使用仓库内固定占位图。 */
+async function loadPoster() {
+  clearPoster();
+  posterUrl.value = new URL("./assets/video-poster-placeholder.svg", import.meta.url).href;
+  if (!props.posterGrant) return;
+  const controller = new AbortController();
+  posterAbort = controller;
+  try {
+    const response = await fetch(props.posterGrant.url, { method: props.posterGrant.method,
+      headers: props.posterGrant.headers, signal: controller.signal, cache: "no-store" });
+    if (!response.ok || controller.signal.aborted) return;
+    posterObjectUrl = URL.createObjectURL(await response.blob());
+    posterUrl.value = posterObjectUrl;
+  } catch { /* 海报失败不阻断视频播放，固定占位图继续可见。 */ }
+}
+
+function clearPoster() {
+  posterAbort?.abort();
+  posterAbort = null;
+  if (posterObjectUrl) URL.revokeObjectURL(posterObjectUrl);
+  posterObjectUrl = null;
 }
 
 /** 允许业务页面从笔记时间点定位播放器；目标仍由原生 video 按媒体时长约束。 */
@@ -197,9 +247,12 @@ function clearGrantRequest() {
 
 <template>
   <section class="hls-player" :aria-busy="loading">
-    <video ref="video" controls playsinline preload="auto" :aria-label="title"
+    <video ref="video" controls playsinline preload="auto" :poster="posterUrl" :aria-label="title"
       @loadedmetadata="reportDuration" @durationchange="reportDuration"
       @play="handlePlay" @timeupdate="handleTimeUpdate" @pause="handlePause" @ended="handleEnded" />
+    <label class="hls-player__rate"><span>播放速度</span><select :value="playbackRate" aria-label="播放速度" @change="changePlaybackRate">
+      <option v-for="rate in playbackRates" :key="rate" :value="rate">{{ rate }}x</option>
+    </select></label>
     <div v-if="loading" class="hls-player__status" role="status">正在获取短期播放授权…</div>
     <div v-else-if="errorMessage" class="hls-player__error" role="alert">
       <span>{{ errorMessage }}</span>
@@ -212,6 +265,8 @@ function clearGrantRequest() {
 .hls-player { display: grid; gap: 10px; width: 100%; }
 .hls-player video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #101522; border-radius: 14px; }
 .hls-player__status,.hls-player__error { padding: 11px 13px; border-radius: 9px; font-size: .8rem; }
+.hls-player__rate { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: #53627a; font-size: .78rem; font-weight: 750; }
+.hls-player__rate select { min-height: 36px; padding: 0 30px 0 10px; color: #26344d; background: #fff; border: 1px solid #cbd6e7; border-radius: 8px; }
 .hls-player__status { color: #365b91; background: #edf4ff; }
 .hls-player__error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #922b3a; background: #fff2f4; }
 .hls-player__error button { min-height: 36px; padding: 0 12px; color: inherit; background: #fff; border: 1px solid #efbdc5; border-radius: 8px; cursor: pointer; }

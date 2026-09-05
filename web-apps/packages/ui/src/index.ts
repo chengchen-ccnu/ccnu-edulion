@@ -1,6 +1,11 @@
 export { default as AppShell } from "./AppShell.vue";
 export { default as HlsVideoPlayer } from "./HlsVideoPlayer.vue";
 export { default as SafeAssessmentContent } from "./SafeAssessmentContent.vue";
+export { default as SafeArticleContent } from "./SafeArticleContent.vue";
+export type { ArticleContentImage, ArticleImageResolver } from "./SafeArticleContent.vue";
+export { renderArticleMarkdown } from "./render-article-markdown";
+export { createResourceActionController } from "./resource-actions";
+export type { ResourceActionController } from "./resource-actions";
 export type { AssessmentContentMedia, AssessmentMediaGrant, AssessmentMediaResolver } from "./SafeAssessmentContent.vue";
 export { renderAssessmentContent } from "./render-assessment-content";
 export { playbackErrorMessage } from "./playback-runtime";
