@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.20.0
-  description: T12G.1 forward-compatible contract. Adds explicit playback event types, Redis-buffered HEARTBEAT semantics, forced MySQL checkpoints and persistence-status feedback while retaining the T12F.1.1 teacher ARTICLE projection. HEARTBEAT never requests completion; PAUSE, LESSON_SWITCH, LEAVE and ENDED form durable MySQL facts. Clients omitting eventType keep the legacy synchronous MySQL path. Vue playback wiring, subtitles, multiple renditions, DRM, AI and Redis Stream/RabbitMQ progress pipelines remain excluded.
+  version: 0.21.0
+  description: T11C.1 forward-compatible contract. Adds HOMEWORK timing, late windows, immutable multiple attempts, learner course tasks, teacher gradebook projections and synchronous UTF-8 CSV export while retaining PRACTICE, EXAM and T11B publication semantics. The contract does not add Vue pages, historical-attempt browsing, async exports, OSS reports or a second assessment service.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2255,6 +2255,82 @@ paths:
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
+  /api/v1/learning/courses/{courseId}/tasks:
+    get:
+      tags: [Learning]
+      operationId: listLearnerCourseTasks
+      summary: List enrolled learner HOMEWORK and EXAM tasks
+      description: Returns published course tasks visible to the enrolled learner. Course-level NOT_OPEN tasks expose only safe metadata; lesson-level NOT_OPEN tasks require the optional currentLessonId to match. PRACTICE never enters this contract.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: currentLessonId
+          in: query
+          schema: {type: [string, 'null'], format: uuid}
+      responses:
+        '200': {description: Safe learner task summaries with server time., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerCourseTaskPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/learning/courses/{courseId}/tasks/{assessmentId}:
+    get:
+      tags: [Learning]
+      operationId: getLearnerCourseTask
+      summary: Get one safe learner course task
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/AssessmentId'
+        - name: currentLessonId
+          in: query
+          schema: {type: [string, 'null'], format: uuid}
+      responses:
+        '200': {description: Safe task detail; NOT_OPEN tasks contain no questions., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerCourseTask'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/learning/courses/{courseId}/tasks/{assessmentId}/attempts:
+    post:
+      tags: [Learning]
+      operationId: startLearnerCourseTaskAttempt
+      summary: Start or resume the current learner task attempt
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/AssessmentId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/StartAttemptRequest'}}}
+      responses:
+        '201': {description: Current draft created or resumed., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptDraft'}}}}
+        '200': {description: Existing draft returned., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptDraft'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result:
+    get:
+      tags: [Learning]
+      operationId: getLearnerCourseTaskResult
+      summary: Get the learner's final valid task result
+      description: Resolves the server-side final attempt pointer and never accepts a historical attempt identifier.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/AssessmentId'
+      responses:
+        '200': {description: Safe final task result following T11B publication visibility., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/teacher/assessments:
     get:
       tags: [Teacher Assessments]
@@ -2404,6 +2480,26 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/teacher/assessments/{assessmentId}/deadline:
+    put:
+      tags: [Teacher Assessments]
+      operationId: updateTeacherAssessmentDeadline
+      summary: Adjust an owned published assessment deadline with an audit record
+      description: Only an open, unpublished assessment can be adjusted. The new final deadline must be at least one hour after server time; expectedRevision protects concurrent changes and prior late submissions are reclassified from the new close time.
+      parameters:
+        - $ref: '#/components/parameters/AssessmentId'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UpdateAssessmentDeadlineRequest'}}}
+      responses:
+        '200': {description: Updated teacher assessment., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherAssessment'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/assessments/{assessmentId}/answer-publication:
     post:
       tags: [Teacher Assessments]
@@ -2468,6 +2564,102 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/gradebook:
+    get:
+      tags: [Teacher Assessments]
+      operationId: getTeacherGradebook
+      summary: Query a safe course HOMEWORK and EXAM gradebook matrix
+      description: Requires teaching access and course ownership. Before every selected assessment is closed, settled and fully graded, the aggregate is PENDING and all score cells and numeric statistics are null. PRACTICE is rejected by the type filter and never included.
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema: {type: string, format: uuid}
+        - name: assessmentId
+          in: query
+          schema: {type: string, format: uuid}
+        - name: type
+          in: query
+          schema: {type: string, enum: [HOMEWORK, EXAM]}
+        - name: submissionStatus
+          in: query
+          schema: {$ref: '#/components/schemas/AssessmentSubmissionStatus'}
+        - name: gradingStatus
+          in: query
+          schema: {$ref: '#/components/schemas/AssessmentGradingStatus'}
+        - name: late
+          in: query
+          schema: {type: boolean}
+        - name: keyword
+          in: query
+          schema: {type: string, maxLength: 120}
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: sort
+          in: query
+          schema: {$ref: '#/components/schemas/GradebookSortField', default: STUDENT_NUMBER}
+        - name: direction
+          in: query
+          schema: {type: string, enum: [asc, desc], default: asc}
+      responses:
+        '200': {description: Course gradebook matrix and safe aggregate state., content: {application/json: {schema: {$ref: '#/components/schemas/Gradebook'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/gradebook/export:
+    get:
+      tags: [Teacher Assessments]
+      operationId: exportTeacherGradebookCsv
+      summary: Download a synchronized UTF-8 BOM gradebook CSV
+      description: The selected course must have at most 5000 students and 100 closed, settled and fully graded HOMEWORK/EXAM assessments. The response is a synchronous dynamic-column CSV and contains no answers, comments, contact information or historical attempts.
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema: {type: string, format: uuid}
+        - name: clientRequestId
+          in: query
+          required: true
+          schema: {type: string, format: uuid}
+        - name: assessmentId
+          in: query
+          schema: {type: string, format: uuid}
+        - name: type
+          in: query
+          schema: {type: string, enum: [HOMEWORK, EXAM]}
+        - name: submissionStatus
+          in: query
+          schema: {$ref: '#/components/schemas/AssessmentSubmissionStatus'}
+        - name: gradingStatus
+          in: query
+          schema: {$ref: '#/components/schemas/AssessmentGradingStatus'}
+        - name: late
+          in: query
+          schema: {type: boolean}
+        - name: keyword
+          in: query
+          schema: {type: string, maxLength: 120}
+      responses:
+        '200':
+          description: UTF-8 CSV with BOM; file name is stable and contains no student identity.
+          headers:
+            Content-Disposition:
+              description: Attachment file name for the generated CSV.
+              schema: {type: string, example: attachment; filename="gradebook-course-20260905.csv"}
+          content:
+            text/csv:
+              schema: {type: string, format: binary}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/media/external-image-transfers:
     post:
@@ -5458,6 +5650,25 @@ components:
     AssessmentType:
       type: string
       enum: [PRACTICE, HOMEWORK, EXAM]
+    HomeworkLatePolicy:
+      type: string
+      description: HOMEWORK only. DISALLOW closes at closesAt; ALLOW_UNTIL records late submissions without an automatic score penalty and closes at lateUntil.
+      enum: [DISALLOW, ALLOW_UNTIL]
+    AssessmentTimeState:
+      type: string
+      enum: [NOT_OPEN, OPEN, LATE_WINDOW, CLOSED]
+    AssessmentSubmissionStatus:
+      type: string
+      enum: [NOT_STARTED, IN_PROGRESS, SUBMITTED, MISSING, WITHDRAWN]
+    AssessmentGradingStatus:
+      type: string
+      enum: [NOT_REQUIRED, PENDING, PARTIALLY_GRADED, GRADED]
+    GradebookAggregateStatus:
+      type: string
+      enum: [READY, PENDING]
+    GradebookSortField:
+      type: string
+      enum: [STUDENT_NUMBER, LAST_SUBMITTED_AT, SCORE, SUBMISSION_STATUS, GRADING_STATUS]
     AssessmentStatus:
       type: string
       enum: [DRAFT, PUBLISHED, ARCHIVED]
@@ -5488,7 +5699,7 @@ components:
     CreateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
+      required: [clientRequestId, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds]
       properties:
         clientRequestId: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -5501,20 +5712,31 @@ components:
         opensAt:
           type: [string, 'null']
           format: date-time
-          description: Optional server-enforced EXAM open time. Must be null for other assessment types.
+          description: HOMEWORK may omit this and then opens immediately after publication; EXAM keeps its existing server-enforced open-time rule; PRACTICE must omit it.
         closesAt:
           type: [string, 'null']
           format: date-time
-          description: Optional server-enforced EXAM close time and must be later than opensAt when both are present. Must be null for other types.
+          description: Required for HOMEWORK and must be later than opensAt when both are present; EXAM keeps its existing close-time rule; PRACTICE must omit it.
+        latePolicy: {$ref: '#/components/schemas/HomeworkLatePolicy'}
+        lateUntil:
+          type: [string, 'null']
+          format: date-time
+          description: Required at least one hour after closesAt for ALLOW_UNTIL; null for DISALLOW and non-HOMEWORK.
+        maxAttempts:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 1
+          description: HOMEWORK formal submission limit. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one.
         timeLimitSeconds:
           type: [integer, 'null']
           minimum: 60
           maximum: 28800
-          description: Optional EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt. Must be null for other types.
+          description: EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt; HOMEWORK and PRACTICE must omit it.
     UpdateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [expectedRevision, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
+      required: [expectedRevision, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds]
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         title: {type: string, minLength: 1, maxLength: 160}
@@ -5524,7 +5746,19 @@ components:
         answerPublicationPolicy: {$ref: '#/components/schemas/AnswerPublicationPolicy'}
         opensAt: {type: [string, 'null'], format: date-time}
         closesAt: {type: [string, 'null'], format: date-time}
+        latePolicy: {$ref: '#/components/schemas/HomeworkLatePolicy'}
+        lateUntil: {type: [string, 'null'], format: date-time}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5, default: 1}
         timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
+    UpdateAssessmentDeadlineRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, closesAt, lateUntil, reason]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        closesAt: {type: string, format: date-time}
+        lateUntil: {type: [string, 'null'], format: date-time}
+        reason: {type: string, minLength: 1, maxLength: 500}
     AssessmentQuestionInput:
       type: object
       additionalProperties: false
@@ -5568,7 +5802,7 @@ components:
     AssessmentSummary:
       type: object
       additionalProperties: false
-      required: [id, courseId, lessonId, title, type, status, closeStatus, settlementStatus, gradePublicationPolicy, answerPublicationPolicy, gradePublicationStatus, answerPublicationStatus, closedAt, affectedInProgressAttemptCount, activeAttemptCount, pendingSettlementCount, pendingManualGradingAttemptCount, pendingManualGradingAnswerCount, gradePublishedAt, answerPublishedAt, gradePublicationEligible, answerPublicationEligible, resultsReady, opensAt, closesAt, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
+      required: [id, courseId, lessonId, title, type, status, closeStatus, settlementStatus, gradePublicationPolicy, answerPublicationPolicy, gradePublicationStatus, answerPublicationStatus, closedAt, affectedInProgressAttemptCount, activeAttemptCount, pendingSettlementCount, pendingManualGradingAttemptCount, pendingManualGradingAnswerCount, gradePublishedAt, answerPublishedAt, gradePublicationEligible, answerPublicationEligible, resultsReady, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -5595,6 +5829,9 @@ components:
         resultsReady: {type: boolean, description: True only after closure, zero pending settlements and zero answers requiring manual grading.}
         opensAt: {type: [string, 'null'], format: date-time}
         closesAt: {type: [string, 'null'], format: date-time}
+        latePolicy: {$ref: '#/components/schemas/HomeworkLatePolicy'}
+        lateUntil: {type: [string, 'null'], format: date-time}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5}
         timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
         questionCount: {type: integer, minimum: 0}
         totalPoints: {type: number, minimum: 0}
@@ -5614,7 +5851,7 @@ components:
     AttemptSummary:
       type: object
       additionalProperties: false
-      required: [id, status, revision, startedAt, deadlineAt, submittedAt, gradedAt]
+      required: [id, status, revision, startedAt, deadlineAt, submittedAt, gradedAt, attemptSequence, finalAttempt, lateSubmission]
       properties:
         id: {type: string, format: uuid}
         status: {$ref: '#/components/schemas/AttemptStatus'}
@@ -5623,6 +5860,9 @@ components:
         deadlineAt: {type: [string, 'null'], format: date-time}
         submittedAt: {type: [string, 'null'], format: date-time}
         gradedAt: {type: [string, 'null'], format: date-time}
+        attemptSequence: {type: integer, minimum: 1, maximum: 5}
+        finalAttempt: {type: boolean}
+        lateSubmission: {type: boolean}
     LearnerAssessmentSummary:
       allOf:
         - $ref: '#/components/schemas/AssessmentSummary'
@@ -5751,7 +5991,7 @@ components:
     AttemptDraft:
       type: object
       additionalProperties: false
-      required: [id, assessmentId, status, revision, answers, startedAt, deadlineAt, serverTime, createdAt, updatedAt]
+      required: [id, assessmentId, status, revision, answers, startedAt, deadlineAt, serverTime, createdAt, updatedAt, attemptSequence, attemptsUsed, maxAttempts, lateSubmission]
       properties:
         id: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
@@ -5766,6 +6006,10 @@ components:
         serverTime: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
+        attemptSequence: {type: integer, minimum: 1, maximum: 5}
+        attemptsUsed: {type: integer, minimum: 0, maximum: 5}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5}
+        lateSubmission: {type: boolean}
     AttemptAnswerResult:
       type: object
       additionalProperties: false
@@ -5789,7 +6033,7 @@ components:
     AttemptResult:
       type: object
       additionalProperties: false
-      required: [attemptId, assessmentId, learnerId, status, revision, gradeVisible, answerVisible, score, totalPoints, submittedAt, gradeUpdatedAt, assessment, answers]
+      required: [attemptId, assessmentId, learnerId, status, revision, gradeVisible, answerVisible, score, totalPoints, submittedAt, gradeUpdatedAt, assessment, answers, attemptSequence, finalAttempt, lateSubmission]
       properties:
         attemptId: {type: string, format: uuid}
         assessmentId: {type: string, format: uuid}
@@ -5807,6 +6051,9 @@ components:
           description: Latest grading or regrading time; null when gradeVisible is false.
         assessment: {$ref: '#/components/schemas/AttemptResultAssessment'}
         answers: {type: array, items: {$ref: '#/components/schemas/AttemptAnswerResult'}}
+        attemptSequence: {type: integer, minimum: 1, maximum: 5}
+        finalAttempt: {type: boolean}
+        lateSubmission: {type: boolean}
     AttemptResultAssessment:
       type: object
       additionalProperties: false
@@ -5942,6 +6189,138 @@ components:
         page: {type: integer, minimum: 1}
         size: {type: integer, minimum: 1, maximum: 100}
         total: {type: integer, format: int64, minimum: 0}
+    LearnerCourseTaskSummary:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, lessonId, title, type, timeState, submissionStatus, gradingStatus, lateSubmission, attemptsUsed, maxAttempts, opensAt, closesAt, lateUntil, lastSubmittedAt, finalAttempt, questionContentAvailable]
+      properties:
+        id: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: [string, 'null'], format: uuid}
+        title: {type: string}
+        type: {type: string, enum: [HOMEWORK, EXAM]}
+        timeState: {$ref: '#/components/schemas/AssessmentTimeState'}
+        submissionStatus: {$ref: '#/components/schemas/AssessmentSubmissionStatus'}
+        gradingStatus: {$ref: '#/components/schemas/AssessmentGradingStatus'}
+        lateSubmission: {type: boolean}
+        attemptsUsed: {type: integer, minimum: 0, maximum: 5}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5}
+        opensAt: {type: [string, 'null'], format: date-time}
+        closesAt: {type: [string, 'null'], format: date-time}
+        lateUntil: {type: [string, 'null'], format: date-time}
+        lastSubmittedAt: {type: [string, 'null'], format: date-time}
+        finalAttempt:
+          oneOf:
+            - $ref: '#/components/schemas/AttemptSummary'
+            - type: 'null'
+        questionContentAvailable: {type: boolean}
+    LearnerCourseTaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total, serverTime]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/LearnerCourseTaskSummary'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+        serverTime: {type: string, format: date-time}
+    LearnerCourseTask:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, lessonId, title, type, timeState, submissionStatus, gradingStatus, lateSubmission, attemptsUsed, maxAttempts, opensAt, closesAt, lateUntil, lastSubmittedAt, description, questions, serverTime, finalAttempt]
+      properties:
+        id: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: [string, 'null'], format: uuid}
+        title: {type: string}
+        type: {type: string, enum: [HOMEWORK, EXAM]}
+        timeState: {$ref: '#/components/schemas/AssessmentTimeState'}
+        submissionStatus: {$ref: '#/components/schemas/AssessmentSubmissionStatus'}
+        gradingStatus: {$ref: '#/components/schemas/AssessmentGradingStatus'}
+        lateSubmission: {type: boolean}
+        attemptsUsed: {type: integer, minimum: 0, maximum: 5}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5}
+        opensAt: {type: [string, 'null'], format: date-time}
+        closesAt: {type: [string, 'null'], format: date-time}
+        lateUntil: {type: [string, 'null'], format: date-time}
+        lastSubmittedAt: {type: [string, 'null'], format: date-time}
+        description: {type: string}
+        questions: {type: array, items: {$ref: '#/components/schemas/LearnerAssessmentQuestion'}}
+        serverTime: {type: string, format: date-time}
+        finalAttempt:
+          oneOf:
+            - $ref: '#/components/schemas/AttemptSummary'
+            - type: 'null'
+    GradebookCell:
+      type: object
+      additionalProperties: false
+      required: [scorePercent, submissionStatus, gradingStatus, lateSubmission, attemptId, learnerId]
+      properties:
+        scorePercent: {type: [number, 'null'], minimum: 0, maximum: 100}
+        submissionStatus: {$ref: '#/components/schemas/AssessmentSubmissionStatus'}
+        gradingStatus: {$ref: '#/components/schemas/AssessmentGradingStatus'}
+        lateSubmission: {type: boolean}
+        attemptId: {type: [string, 'null'], format: uuid}
+        learnerId: {type: [string, 'null'], format: uuid}
+    AssessmentStats:
+      type: object
+      additionalProperties: false
+      required: [gradedStudentAverage, allStudentAverage, expectedCount, onTimeSubmissionRate, finalSubmissionRate, missingCount, pendingCount, highestScore, lowestScore, scoreDistribution]
+      properties:
+        gradedStudentAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+        allStudentAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+        expectedCount: {type: integer, minimum: 0}
+        onTimeSubmissionRate: {type: [number, 'null'], minimum: 0, maximum: 100}
+        finalSubmissionRate: {type: [number, 'null'], minimum: 0, maximum: 100}
+        missingCount: {type: integer, minimum: 0}
+        pendingCount: {type: integer, minimum: 0}
+        highestScore: {type: [number, 'null'], minimum: 0, maximum: 100}
+        lowestScore: {type: [number, 'null'], minimum: 0, maximum: 100}
+        scoreDistribution: {type: object, additionalProperties: {type: integer, minimum: 0}}
+    GradebookAssessment:
+      type: object
+      additionalProperties: false
+      required: [assessmentId, title, type, closeStatus, settlementStatus, aggregateStatus, participantCount, missingCount, pendingCount, resultsReady, stats]
+      properties:
+        assessmentId: {type: string, format: uuid}
+        title: {type: string}
+        type: {type: string, enum: [HOMEWORK, EXAM]}
+        closeStatus: {$ref: '#/components/schemas/AssessmentCloseStatus'}
+        settlementStatus: {$ref: '#/components/schemas/AssessmentSettlementStatus'}
+        aggregateStatus: {$ref: '#/components/schemas/GradebookAggregateStatus'}
+        participantCount: {type: integer, minimum: 0}
+        missingCount: {type: integer, minimum: 0}
+        pendingCount: {type: integer, minimum: 0}
+        resultsReady: {type: boolean}
+        stats: {$ref: '#/components/schemas/AssessmentStats'}
+    GradebookRow:
+      type: object
+      additionalProperties: false
+      required: [learnerId, courseStudentNumber, nickname, nicknameAvailable, nicknameDependencyFailed, assessments, homeworkAverage, examAverage]
+      properties:
+        learnerId: {type: string, format: uuid}
+        courseStudentNumber: {type: string, pattern: '^[0-9]{4,}$'}
+        nickname: {type: [string, 'null']}
+        nicknameAvailable: {type: boolean}
+        nicknameDependencyFailed: {type: boolean}
+        assessments: {type: object, additionalProperties: {$ref: '#/components/schemas/GradebookCell'}}
+        homeworkAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+        examAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+    Gradebook:
+      type: object
+      additionalProperties: false
+      required: [courseId, aggregateStatus, assessments, rows, homeworkAverage, examAverage, nicknameDependencyFailed, page, size, total]
+      properties:
+        courseId: {type: string, format: uuid}
+        aggregateStatus: {$ref: '#/components/schemas/GradebookAggregateStatus'}
+        assessments: {type: array, items: {$ref: '#/components/schemas/GradebookAssessment'}}
+        rows: {type: array, items: {$ref: '#/components/schemas/GradebookRow'}}
+        homeworkAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+        examAverage: {type: [number, 'null'], minimum: 0, maximum: 100}
+        nicknameDependencyFailed: {type: boolean}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 5000}
+        total: {type: integer, minimum: 0}
     ExternalImageTransferRequest:
       type: object
       additionalProperties: false
