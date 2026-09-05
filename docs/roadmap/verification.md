@@ -702,3 +702,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据边界：只确认/使用本任务所属 Learning V13 和本轮随机 UUID 进度记录；没有创建其他领域表、Seed、OSS 对象或 MQ 消息。真实用例结束后 MySQL `lesson_progress_event`/`lesson_progress`、Redis Hash、dirty 成员和租约均按 run ID 精确清理为零。T12G.2 浏览器播放器验收未执行。
 - 当前实现仍未引入 RabbitMQ、Redis Stream、DLQ 或 Vue 业务改动；需在实现提交后补跑 `pnpm.cmd --dir web-apps run check:api` 并记录 CI/PR 结果。
 - 实现提交：`a48a334`，分支 `codex/t12g1-progress-buffer-contract` 已推送；Ready PR 为 [#45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45)，`check:api` 在提交后通过。PR 最新 CI 全绿：两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 均通过；未合并。
+
+## 2026-09-05 T12G.1 合并与 T12G.2 前置审计
+
+- 合并与清理：[PR #45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45) 保持 Ready、`MERGEABLE/CLEAN`，两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 共 8 项检查全部成功后，以普通 merge 合并为 `main@aebc942`。本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12g1-progress-buffer-contract` 本地和远端分支均已精确删除。
+- 契约前置：OpenAPI 0.20.0、生成 `schema.d.ts`、Learning V13、五类事件、`BUFFERED/PERSISTED/PERSISTED_ONLY`、Redis 缓冲、强制检查点和学生读合并均已进入 `main`。现有 `HlsVideoPlayer`、领域中立播放采样器、`progress-sync.ts`、`CourseLearningPage.vue` 及其测试提供唯一前端改造落点；当前仍是 15 秒无事件类型串行上报并在离页直接丢弃队列，恰好属于 T12G.2 要替换的任务内容，不是前置阻塞。
+- 数据前置：通过正在运行的正常公共 Course API 只读查询，唯一命中课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”，当前发布版本 `v4`、访问类型 PUBLIC；第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a` 为 VIDEO“第 2 课 行列式的定义”。T12G.2 启动真实学生会话后仍须通过受保护内容接口复核视频 READY、报名/访问和播放授权；若失败应停止验收，不得替换课程或操作 OSS。
+- T12G.2 结论：Git、契约、生成客户端、固定页面/播放器落点和真实课程目录前置满足，已从最新 `main` 创建 `codex/t12g2-progress-sync-web`。任务只允许显式五类事件、最多 5 秒心跳、页面内存合并/有限重试、强制检查点约 3 秒等待及离页确认、keepalive/beacon 尽力提交和三态反馈；不得修改 OpenAPI/Java/Flyway、复制学习页/播放器、持久化未保存进度或把标签关闭描述为可靠送达。
+- 数据与代码：本次总控只执行 GitHub 合并、Git 同步、分支清理、正常 Course API 只读查询和状态/前置文档更新；没有修改 Vue、TypeScript、OpenAPI、Java、Flyway、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，没有创建、修改或清理 Schema、表、Seed、报名、进度、Key、租约、消息、对象或伪数据。
