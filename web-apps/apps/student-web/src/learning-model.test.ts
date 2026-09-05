@@ -60,5 +60,5 @@ function courseProgress(lessons: LessonProgress[]): CourseProgress {
 function lessonProgress(lessonId: string, positionSeconds: number, completed: boolean, lastEventAt: string,
     revision = 1, watchedSeconds = positionSeconds): LessonProgress {
   return { courseId: "course-1", lessonId, positionSeconds, watchedSeconds, completed,
-    lastEventAt, revision, replayed: false };
+    lastEventAt, revision, replayed: false, persistenceStatus: "PERSISTED" };
 }

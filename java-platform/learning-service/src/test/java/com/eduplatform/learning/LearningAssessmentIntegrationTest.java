@@ -180,6 +180,44 @@ class LearningAssessmentIntegrationTest {
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
     }
 
+    @Test
+    /** 显式强制检查点直接落 MySQL；只有 ENDED 可以携带 completed=true。 */
+    void explicitCheckpointPersistsAndOnlyEndedCanComplete() {
+        service.enroll(LEARNER, COURSE, "trace-t12g-checkpoint-enroll");
+        Instant now = Instant.now();
+        var paused = service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(UUID.randomUUID(), now, 120, 10, false,
+                        LearningDtos.ProgressEventType.PAUSE), "trace-t12g-pause");
+        assertThat(paused.persistenceStatus()).isEqualTo(LearningDtos.ProgressPersistenceStatus.PERSISTED);
+        assertThat(jdbc.queryForObject("SELECT event_type FROM lesson_progress_event", String.class))
+                .isEqualTo("PAUSE");
+        assertThatThrownBy(() -> service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(UUID.randomUUID(), now.plusSeconds(1), 130, 1, true,
+                        LearningDtos.ProgressEventType.LEAVE), "trace-t12g-invalid-completion"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.PROGRESS_COMPLETION_EVENT_INVALID"));
+        var ended = service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(UUID.randomUUID(), now.plusSeconds(2), 130, 1, true,
+                        LearningDtos.ProgressEventType.ENDED), "trace-t12g-ended");
+        assertThat(ended.completed()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lesson_progress_event WHERE event_type='ENDED'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** Redis 未接通时显式 HEARTBEAT 必须返回 503，不能把缓冲失败包装为成功。 */
+    void explicitHeartbeatWithoutRedisNeverReturnsFalseSuccess() {
+        service.enroll(LEARNER, COURSE, "trace-t12g-heartbeat-enroll");
+        assertThatThrownBy(() -> service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(UUID.randomUUID(), Instant.now(), 10, 1, false,
+                        LearningDtos.ProgressEventType.HEARTBEAT), "trace-t12g-heartbeat"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(503);
+                    assertThat(error.code()).isEqualTo("LEARNING.PROGRESS_BUFFER_UNAVAILABLE");
+                });
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lesson_progress", Integer.class)).isZero();
+    }
+
     /**
      * 验证测评快照会显式保存知识点中的可空字段，防止从 MySQL JSON 读回时因字段缺失而失败。
      */

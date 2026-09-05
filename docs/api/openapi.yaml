@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.19.1
-  description: T12F.1.1 forward-compatible contract. Adds a teacher-owner projection for controlled ARTICLE Markdown and short-lived inline grants for only the ARTICLE_IMAGE assets actually referenced by the current editable lesson. The browser cannot submit an arbitrary mediaId. Existing protected learner content, ordinary course resource actions, poster generation and ARTICLE completion semantics remain unchanged. Vue pages, subtitles, multiple renditions, historical poster reprocessing, Office conversion, DRM, AI and Redis playback buffering are intentionally excluded.
+  version: 0.20.0
+  description: T12G.1 forward-compatible contract. Adds explicit playback event types, Redis-buffered HEARTBEAT semantics, forced MySQL checkpoints and persistence-status feedback while retaining the T12F.1.1 teacher ARTICLE projection. HEARTBEAT never requests completion; PAUSE, LESSON_SWITCH, LEAVE and ENDED form durable MySQL facts. Clients omitting eventType keep the legacy synchronous MySQL path. Vue playback wiring, subtitles, multiple renditions, DRM, AI and Redis Stream/RabbitMQ progress pipelines remain excluded.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -1948,8 +1948,8 @@ paths:
     post:
       tags: [Learning]
       operationId: reportLessonProgress
-      summary: Idempotently merge one bounded playback progress event
-      description: clientEventId is unique per learner. Duplicate or out-of-order events cannot reduce position/completion or add watched time twice; one event may add at most 300 watched seconds and position is bounded to 8 hours.
+      summary: Buffer or persist one bounded playback progress event
+      description: clientEventId is unique per learner. Missing eventType preserves the legacy synchronous MySQL path. Explicit HEARTBEAT atomically merges the latest snapshot into a Redis Hash and dirty ZSet and returns BUFFERED; PAUSE, LESSON_SWITCH, LEAVE and ENDED synchronously persist to MySQL and return PERSISTED. Duplicate or out-of-order events cannot reduce position/completion or add watched time twice. Only ENDED may set completed=true; one request may add at most 300 watched seconds and position is bounded to 8 hours. Redis or MySQL failures never return a false success.
       parameters:
         - $ref: '#/components/parameters/CourseId'
         - $ref: '#/components/parameters/LessonId'
@@ -1957,7 +1957,7 @@ paths:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/ReportLessonProgressRequest'}}}
       responses:
-        '200': {description: Current monotonic progress; replayed marks duplicate clientEventId., content: {application/json: {schema: {$ref: '#/components/schemas/LessonProgress'}}}}
+        '200': {description: Current monotonic progress; replayed marks duplicate clientEventId and persistenceStatus identifies BUFFERED or PERSISTED., content: {application/json: {schema: {$ref: '#/components/schemas/LessonProgress'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
@@ -5369,6 +5369,17 @@ components:
         positionSeconds: {type: integer, format: int64, minimum: 0, maximum: 28800}
         watchedSeconds: {type: integer, minimum: 0, maximum: 300}
         completed: {type: boolean}
+        eventType:
+          allOf: [{$ref: '#/components/schemas/ProgressEventType'}]
+          description: Optional for legacy clients. When present, HEARTBEAT is buffered and the four checkpoint types persist directly to MySQL.
+    ProgressEventType:
+      type: string
+      enum: [HEARTBEAT, PAUSE, LESSON_SWITCH, LEAVE, ENDED]
+      description: Explicit playback lifecycle event; the server never infers it from request intervals.
+    ProgressPersistenceStatus:
+      type: string
+      enum: [BUFFERED, PERSISTED, PERSISTED_ONLY]
+      description: BUFFERED is accepted in Redis, PERSISTED is in MySQL, and PERSISTED_ONLY means the student read degraded to MySQL because Redis was unavailable.
     CompleteArticleLessonRequest:
       type: object
       additionalProperties: false
@@ -5395,7 +5406,7 @@ components:
     LessonProgress:
       type: object
       additionalProperties: false
-      required: [courseId, lessonId, positionSeconds, watchedSeconds, completed, lastEventAt, revision, replayed]
+      required: [courseId, lessonId, positionSeconds, watchedSeconds, completed, lastEventAt, revision, replayed, persistenceStatus]
       properties:
         courseId: {type: string, format: uuid}
         lessonId: {type: string, format: uuid}
@@ -5405,6 +5416,7 @@ components:
         lastEventAt: {type: string, format: date-time}
         revision: {type: integer, format: int64, minimum: 0}
         replayed: {type: boolean}
+        persistenceStatus: {$ref: '#/components/schemas/ProgressPersistenceStatus'}
     CourseProgress:
       type: object
       additionalProperties: false

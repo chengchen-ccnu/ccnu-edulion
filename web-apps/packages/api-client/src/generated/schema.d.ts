@@ -1379,8 +1379,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Idempotently merge one bounded playback progress event
-         * @description clientEventId is unique per learner. Duplicate or out-of-order events cannot reduce position/completion or add watched time twice; one event may add at most 300 watched seconds and position is bounded to 8 hours.
+         * Buffer or persist one bounded playback progress event
+         * @description clientEventId is unique per learner. Missing eventType preserves the legacy synchronous MySQL path. Explicit HEARTBEAT atomically merges the latest snapshot into a Redis Hash and dirty ZSet and returns BUFFERED; PAUSE, LESSON_SWITCH, LEAVE and ENDED synchronously persist to MySQL and return PERSISTED. Duplicate or out-of-order events cannot reduce position/completion or add watched time twice. Only ENDED may set completed=true; one request may add at most 300 watched seconds and position is bounded to 8 hours. Redis or MySQL failures never return a false success.
          */
         post: operations["reportLessonProgress"];
         delete?: never;
@@ -3334,7 +3334,19 @@ export interface components {
             positionSeconds: number;
             watchedSeconds: number;
             completed: boolean;
+            /** @description Optional for legacy clients. When present, HEARTBEAT is buffered and the four checkpoint types persist directly to MySQL. */
+            eventType?: components["schemas"]["ProgressEventType"];
         };
+        /**
+         * @description Explicit playback lifecycle event; the server never infers it from request intervals.
+         * @enum {string}
+         */
+        ProgressEventType: "HEARTBEAT" | "PAUSE" | "LESSON_SWITCH" | "LEAVE" | "ENDED";
+        /**
+         * @description BUFFERED is accepted in Redis, PERSISTED is in MySQL, and PERSISTED_ONLY means the student read degraded to MySQL because Redis was unavailable.
+         * @enum {string}
+         */
+        ProgressPersistenceStatus: "BUFFERED" | "PERSISTED" | "PERSISTED_ONLY";
         CompleteArticleLessonRequest: {
             /**
              * Format: uuid
@@ -3373,6 +3385,7 @@ export interface components {
             /** Format: int64 */
             revision: number;
             replayed: boolean;
+            persistenceStatus: components["schemas"]["ProgressPersistenceStatus"];
         };
         CourseProgress: {
             /** Format: uuid */
@@ -6888,7 +6901,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Current monotonic progress; replayed marks duplicate clientEventId. */
+            /** @description Current monotonic progress; replayed marks duplicate clientEventId and persistenceStatus identifies BUFFERED or PERSISTED. */
             200: {
                 headers: {
                     [name: string]: unknown;

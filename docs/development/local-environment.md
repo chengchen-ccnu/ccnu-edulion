@@ -521,7 +521,9 @@ T12G.1 复用现有 MySQL 和 Redis，不新增 RabbitMQ 队列、Redis Stream�
 
 T12G.2 的真实浏览器验收使用本地“线性代数”课程第 2 课“行列式定义”。验收前必须通过正常 Course API 解析并核对稳定课程/课时 ID、已发布版本、`READY` 视频和当前学生访问事实，不能只按标题命中或在缺失时替换其他课程。只播放现有低成本视频，不上传、复制、转码或删除其 OSS 对象。临时进度、Redis Key 和 Worker 租约必须带本轮 run ID 并在结束后精确清理，同时保留课程、媒体及验收前原始进度；若对象并非明确本地开发数据，应停止并报告。
 
-T12G.1 实现时应把批次大小、刷新间隔、租约、积压阈值、去重保留期等非敏感调优项做成配置，并在其交付文档和 `.env.example` 记录真实变量名与默认值。当前规划任务不预先发明未实现变量，也不需要向仓库外 `local.env` 增加密码、Token 或新秘密。
+T12G.1 已将批次大小、刷新间隔、租约、Worker 并发、课程事实短缓存和积压阈值做成配置，并在交付文档与 `.env.example` 记录真实变量名和默认值：`LEARNING_PROGRESS_BUFFER_ENABLED=true`、`LEARNING_PROGRESS_BUFFER_WORKER_DELAY=5s`、`LEARNING_PROGRESS_BUFFER_BATCH_SIZE=1000`、`LEARNING_PROGRESS_BUFFER_WORKER_CONCURRENCY=16`、`LEARNING_PROGRESS_BUFFER_LEASE_DURATION=15s`、`LEARNING_PROGRESS_BUFFER_BACKLOG_THRESHOLD=10000`、`LEARNING_COURSE_FACT_CACHE_TTL=1s`。这些变量均为非敏感调优项，不需要向仓库外 `local.env` 增加密码、Token 或新秘密；当前实现没有增加去重保留期，Redis Hash 只在成功落库且版本未变化时删除。
+
+真实验收入口为 `scripts/Invoke-T12G1RealAcceptance.ps1` 和 `scripts/Invoke-T12G1CapacityAcceptance.ps1`，两者都通过 `scripts/Invoke-WithLocalEnvironment.ps1` 注入凭据并强制校验 `LEARNING_MYSQL_DATABASE=edu_platform_learning_dev`、`LEARNING_REDIS_DATABASE=4`。容量脚本使用独立随机 run ID、1,000 个合成 UUID 学习者和独立清理测试；不得在生产配置或未明确标识的数据库中运行。故障场景使用错误连接/隔离测试实例，不停止或重启共享 MySQL/Redis 服务；清理断言必须显示本轮 MySQL 行数和 Redis key 数为 0。
 
 ## 全量验证
 

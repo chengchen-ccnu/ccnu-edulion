@@ -51,5 +51,7 @@ management:
 
 platform:
   learning:
+    progress-buffer:
+      enabled: ${LEARNING_PROGRESS_BUFFER_ENABLED:true}
     import:
       messaging-enabled: ${RABBITMQ_ENABLED:false}

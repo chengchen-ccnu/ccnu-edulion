@@ -16,6 +16,9 @@ import com.eduplatform.learning.persistence.LearningAssessmentRepository.NoteRow
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.ProgressRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.WrongRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.RedoRow;
+import com.eduplatform.learning.progress.ProgressBufferStore;
+import com.eduplatform.learning.progress.ProgressBufferStore.BufferedProgress;
+import com.eduplatform.learning.progress.ProgressBufferUnavailableException;
 import com.eduplatform.learning.persistence.QuestionRepository;
 import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.learning.web.LearningDtos.AnswerInput;
@@ -48,7 +51,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,10 +75,12 @@ public class LearningAssessmentService {
     private final QuestionService questionService;
     private final MediaClient media;
     private final ObjectMapper mapper;
+    private final ProgressBufferStore progressBuffer;
+    private final MeterRegistry meterRegistry;
 
     public LearningAssessmentService(LearningAssessmentRepository repository, CourseFactsClient courses,
             LearningEvents events, QuestionRepository questions, QuestionService questionService,
-            MediaClient media, ObjectMapper mapper) {
+            MediaClient media, ObjectMapper mapper, ProgressBufferStore progressBuffer, MeterRegistry meterRegistry) {
         this.repository = repository;
         this.courses = courses;
         this.events = events;
@@ -81,6 +88,8 @@ public class LearningAssessmentService {
         this.questionService = questionService;
         this.media = media;
         this.mapper = mapper;
+        this.progressBuffer = progressBuffer;
+        this.meterRegistry = meterRegistry;
     }
 
     /** 报名已发布课程；重复 ACTIVE 请求返回原记录，取消后重报会恢复原业务 ID 并发出新访问事件。 */
@@ -131,8 +140,8 @@ public class LearningAssessmentService {
     }
 
     /**
-     * 合并播放器进度。clientEventId 唯一约束吸收重试，旧事件只允许提高播放位置/完成状态，
-     * watchedSeconds 仅对未乱序的新事件累计，MySQL 始终是最终事实来源。
+     * 按显式事件类型处理播放进度。旧客户端缺少 eventType 时继续同步写 MySQL；HEARTBEAT 只写 Redis，
+     * PAUSE/LESSON_SWITCH/LEAVE/ENDED 直接形成 MySQL 可恢复事实。完成标志只有 ENDED 可以由新契约设置。
      */
     @Transactional
     public LearningDtos.LessonProgress reportProgress(String learnerId, String courseId, String lessonId,
@@ -144,8 +153,50 @@ public class LearningAssessmentService {
                 || input.occurredAt().isBefore(now.minus(MAX_OFFLINE_AGE))) {
             throw invalid("LEARNING.PROGRESS_TIME_INVALID", "进度事件时间超出允许范围");
         }
+        LearningDtos.ProgressEventType eventType = input.eventType();
+        if (eventType == LearningDtos.ProgressEventType.HEARTBEAT) {
+            if (input.completed()) {
+                throw invalid("LEARNING.PROGRESS_COMPLETION_EVENT_INVALID", "只有 ENDED 事件可以记录完成");
+            }
+            try {
+                if (progressBuffer.backlogExceedsLimit()) {
+                    meterRegistry.counter("learning.progress.heartbeat.rejected", "reason", "backlog").increment();
+                    throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
+                            "LEARNING.PROGRESS_BUFFER_BACKLOG", "进度缓冲积压过多，请稍后重试");
+                }
+            } catch (ProgressBufferUnavailableException unavailable) {
+                meterRegistry.counter("learning.progress.heartbeat.rejected", "reason", "redis").increment();
+                throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "LEARNING.PROGRESS_BUFFER_UNAVAILABLE", "进度缓冲暂时不可用，请稍后重试");
+            }
+            ProgressRow persisted = repository.findProgress(learnerId, courseId, lessonId).orElse(null);
+            try {
+                var buffered = progressBuffer.buffer(learnerId, courseId, lessonId, persisted, input, now);
+                return progress(buffered.value(), buffered.replayed(), LearningDtos.ProgressPersistenceStatus.BUFFERED);
+            } catch (ProgressBufferUnavailableException unavailable) {
+                throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "LEARNING.PROGRESS_BUFFER_UNAVAILABLE", "进度缓冲暂时不可用，请稍后重试");
+            }
+        }
+        if (eventType != null && input.completed() && eventType != LearningDtos.ProgressEventType.ENDED) {
+            throw invalid("LEARNING.PROGRESS_COMPLETION_EVENT_INVALID", "只有 ENDED 事件可以记录完成");
+        }
+        try {
+            return persistCheckpoint(learnerId, courseId, lessonId, input, eventType, now);
+        } catch (DataAccessException databaseFailure) {
+            // 强制检查点失败必须明确返回 503，不能把未落库结果包装成成功响应。
+            meterRegistry.counter("learning.progress.checkpoint.failures").increment();
+            throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "LEARNING.PROGRESS_PERSISTENCE_UNAVAILABLE", "进度暂时无法可靠保存，请稍后重试");
+        }
+    }
+
+    /** 强制检查点与旧客户端兼容写入同一 MySQL 聚合和幂等表，Worker 不会参与该路径。 */
+    private LearningDtos.LessonProgress persistCheckpoint(String learnerId, String courseId, String lessonId,
+            LearningDtos.ReportProgressRequest input, LearningDtos.ProgressEventType eventType, Instant now) {
         boolean inserted = repository.insertProgressEvent(input.clientEventId().toString(), learnerId, courseId,
-                lessonId, input.occurredAt(), input.positionSeconds(), input.watchedSeconds(), input.completed(), now);
+                lessonId, input.occurredAt(), input.positionSeconds(), input.watchedSeconds(), input.completed(),
+                eventType, now);
         repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId, input.occurredAt(), now);
         if (inserted) {
             ProgressRow locked = repository.lockProgress(learnerId, courseId, lessonId);
@@ -153,7 +204,8 @@ public class LearningAssessmentService {
                     input.occurredAt(), now);
         }
         ProgressRow value = repository.lockProgress(learnerId, courseId, lessonId);
-        return progress(value, !inserted);
+        meterRegistry.counter("learning.progress.checkpoint.persisted").increment();
+        return progress(value, !inserted, LearningDtos.ProgressPersistenceStatus.PERSISTED);
     }
 
     /**
@@ -205,12 +257,30 @@ public class LearningAssessmentService {
     public LearningDtos.CourseProgress progress(String learnerId, String courseId, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
         List<ProgressRow> rows = repository.progress(learnerId, courseId);
-        int completed = (int) rows.stream().filter(ProgressRow::completed).count();
+        List<LearningDtos.LessonProgress> views = new ArrayList<>();
+        Set<String> returnedLessons = new HashSet<>();
+        for (ProgressRow row : rows) {
+            var read = progressBuffer.read(learnerId, courseId, row.lessonId());
+            if (!read.available()) meterRegistry.counter("learning.progress.read.degraded").increment();
+            views.add(read.available() && read.value().isPresent()
+                    ? progress(row, read.value().orElseThrow(), false, LearningDtos.ProgressPersistenceStatus.BUFFERED)
+                    : progress(row, false, read.available() ? LearningDtos.ProgressPersistenceStatus.PERSISTED
+                            : LearningDtos.ProgressPersistenceStatus.PERSISTED_ONLY));
+            returnedLessons.add(row.lessonId());
+        }
+        // 心跳尚未落库时 lesson_progress 不存在，仍把 Redis 中的最新课时投影返回给学生。
+        for (String lessonId : course.lessonIds()) {
+            if (returnedLessons.contains(lessonId)) continue;
+            var read = progressBuffer.read(learnerId, courseId, lessonId);
+            if (read.available() && read.value().isPresent()) {
+                views.add(progress(read.value().orElseThrow(), false, LearningDtos.ProgressPersistenceStatus.BUFFERED));
+            }
+        }
+        int completed = (int) views.stream().filter(LearningDtos.LessonProgress::completed).count();
         int lessonCount = course.lessonIds().size();
         double percent = lessonCount == 0 ? 0 : BigDecimal.valueOf(completed * 100.0 / lessonCount)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
-        return new LearningDtos.CourseProgress(courseId, completed, lessonCount, percent,
-                rows.stream().map(row -> progress(row, false)).toList());
+        return new LearningDtos.CourseProgress(courseId, completed, lessonCount, percent, views);
     }
 
     /** 返回学习者本人在指定当前课时的笔记；无访问权时拒绝。 */
@@ -1255,9 +1325,29 @@ public class LearningAssessmentService {
                 row.status(), row.enrolledAt(), row.canceledAt(), row.updatedAt());
     }
 
-    private static LearningDtos.LessonProgress progress(ProgressRow row, boolean replayed) {
+    private static LearningDtos.LessonProgress progress(ProgressRow row, boolean replayed,
+            LearningDtos.ProgressPersistenceStatus status) {
         return new LearningDtos.LessonProgress(row.courseId(), row.lessonId(), row.positionSeconds(),
-                row.watchedSeconds(), row.completed(), row.lastEventAt(), row.revision(), replayed);
+                row.watchedSeconds(), row.completed(), row.lastEventAt(), row.revision(), replayed, status);
+    }
+
+    private static LearningDtos.LessonProgress progress(BufferedProgress value, boolean replayed,
+            LearningDtos.ProgressPersistenceStatus status) {
+        return new LearningDtos.LessonProgress(value.courseId(), value.lessonId(), value.positionSeconds(),
+                value.watchedSeconds(), value.completed(), value.lastEventAt(), value.version(), replayed, status);
+    }
+
+    /** 合并 MySQL 事实与 Redis 最新快照，位置/时长/完成和事件时间都保持单调。 */
+    private static LearningDtos.LessonProgress progress(ProgressRow persisted, BufferedProgress buffered,
+            boolean replayed, LearningDtos.ProgressPersistenceStatus status) {
+        long position = Math.max(persisted.positionSeconds(), buffered.positionSeconds());
+        long watched = Math.max(persisted.watchedSeconds(), buffered.watchedSeconds());
+        boolean completed = persisted.completed() || buffered.completed();
+        Instant eventAt = persisted.lastEventAt().isAfter(buffered.lastEventAt())
+                ? persisted.lastEventAt() : buffered.lastEventAt();
+        long revision = Math.max(persisted.revision(), buffered.version());
+        return new LearningDtos.LessonProgress(persisted.courseId(), persisted.lessonId(), position, watched,
+                completed, eventAt, revision, replayed, status);
     }
 
     private static LearningDtos.ArticleLessonCompletion articleCompletion(

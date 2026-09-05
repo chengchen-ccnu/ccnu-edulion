@@ -45,5 +45,6 @@ describe("lesson progress sync queue", () => {
 
 function progress(positionSeconds: number, replayed: boolean): LessonProgress {
   return { courseId: "course-1", lessonId: "lesson-1", positionSeconds, watchedSeconds: 30,
-    completed: false, lastEventAt: "2026-08-26T00:00:00Z", revision: 2, replayed };
+    completed: false, lastEventAt: "2026-08-26T00:00:00Z", revision: 2, replayed,
+    persistenceStatus: "PERSISTED" };
 }

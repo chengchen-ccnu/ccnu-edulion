@@ -35,7 +35,7 @@ class HttpMediaClientTest {
                 "http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(2),
                 "edu-learning-service", "edu-media-service", Duration.ofSeconds(30),
                 "test-assessment-media-secret-32-bytes-minimum"),
-                new LearningProperties.Course("http://127.0.0.1:8082", Duration.ofSeconds(2)),
+                new LearningProperties.Course("http://127.0.0.1:8082", Duration.ofSeconds(2), Duration.ZERO),
                 new LearningProperties.ImportSettings(1024, Duration.ofHours(1), false, Duration.ofSeconds(1), Duration.ofSeconds(1), 3));
         client = new HttpMediaClient(properties, new AssessmentMediaAuthorizationIssuer(properties));
     }
