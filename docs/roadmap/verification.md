@@ -667,3 +667,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实本地人工验收：用户已在专用本地环境确认固定 Seed 的教师保存含 `ARTICLE_IMAGE` 正文后硬刷新、重新进入课时，正文图片成功显示；非 owner 无法读取；过期授权通过再次请求 `article-content` 恢复；loading、401、403、404、409、429、503、离线和图片加载失败均有可见处理；离页请求和 Blob URL 已释放；控制台无错误，页面/存储/日志未泄露 Bucket、Object Key、永久 URL 或 Token。该条为用户人工验收结论，不冒充自动化浏览器观测。
 - 临时数据清理：人工验收使用固定课程 `00000000-0000-4000-8000-00000000f201`、ARTICLE 课时 `00000000-0000-4000-8000-00000000f232` 和图片 `00000000-0000-4000-8000-00000000f103`，仅涉及专用 `edu_platform_media_dev`、`edu_platform_course_dev`、`edu_platform_learning_dev` 三个开发 Schema 的既有 T12F.1 固定 Seed。验收结束后已按 `scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Cleanup` 成功清理，停止 5173/5174、8080–8084 验收进程；临时验收日志已清空，未改动本地凭据、仓库环境配置或非本任务数据。
 - PR 状态：已准备将本次提交推送到既有 [Ready/Open PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43)，不合并；推送后等待该 PR 最新 8 项 CI 全部成功再交付。
+
+## 2026-09-05 T12F.2 合并与 T12G 前置审计
+
+- 合并与清理：[PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 在真实教师正文图片终验完成、Ready、`MERGEABLE/CLEAN` 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后，以普通 merge 合并为 `main@96b58dc`；本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12f2-course-content-player` 本地和远端分支均已精确删除。
+- T12G 前置结论：T02 已提供本地 Redis/健康配置，T11 已提供 `progress-events` 契约、MySQL `lesson_progress_event` 幂等事实、`lesson_progress` 单调聚合和课程访问校验，T12A/T12F.2 已提供播放器定时采样、暂停/结束触发、有限前端队列及既有学习页。`learning-service` 已包含 Spring Data Redis 与 Spring AMQP 依赖，并为 local profile 约定独立 Redis DB 4 和 RabbitMQ 连接。因此 Git、领域归属、基础设施、现有 API/数据事实和页面落点均满足，已从最新 `main` 创建 `codex/t12g-progress-buffer`。
+- 实施前必须冻结的语义：当前 `ReportProgressRequest` 只有位置、增量观看时长、完成标记和时间，无法可靠区分周期心跳与暂停、离开、切课、结束等强制检查点。T12G 应先以兼容方式定义事件种类/持久性结果，再让普通心跳写 Redis、强制检查点形成 MySQL 可恢复事实；读取需合并两层最新值并保持位置/完成单调。不能根据请求间隔猜类型，不能在 Redis 故障时返回虚假成功，也不能同时引入 Redis Stream 与 RabbitMQ 两套生产落库链路。
+- 范围与验证边界：T12G 只修改 Learning 进度契约/实现、必要的播放器上报标记、Redis/可靠落库配置与测试，不重做页面、不缓存作答/成绩/ARTICLE 完成事实、不使用 Redis 分布式锁替代 MySQL 事务和唯一约束。实现验收必须覆盖多实例并发、乱序/重复、Redis 重启或不可用、消费者重试/DLQ 或待恢复记录、强制检查点、读合并、最终落库、积压恢复和精确测试数据/Key/消息清理。
+- 本次数据与代码：总控只执行 GitHub 合并、Git 同步/分支清理、只读代码/配置审计和上述文档状态更新；没有修改 OpenAPI、Java、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg，没有创建、修改或清理 Schema、表、Seed、Key、消息、对象或伪数据。
