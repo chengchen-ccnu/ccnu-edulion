@@ -21,6 +21,7 @@ import { authStore } from "./auth";
 
 type AuthorizedResult<T> = { data?: T; error?: unknown; response: Response };
 type Wait = (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+const runtimeEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 
 /**
  * 学生端学习事实 API。输入、输出全部引用 OpenAPI 生成类型，请求只经过 Gateway 和统一认证层。
@@ -84,21 +85,33 @@ export function createStudentLearningApi(client: GatewayClient = createGatewayCl
       }), signal);
     },
     progress(courseId, signal) {
-      return authorized(Authorization => client.GET("/api/v1/learning/courses/{courseId}/progress", {
-        headers: { Authorization }, params: { path: { courseId } }, signal
-      }), signal);
+      return authorized(async Authorization => {
+        const result = await client.GET("/api/v1/learning/courses/{courseId}/progress", {
+          headers: { Authorization }, params: { path: { courseId } }, signal
+        });
+        logProgressReadNetwork(result);
+        return result;
+      }, signal);
     },
     reportProgress(courseId, lessonId, body, signal) {
-      return authorized(Authorization => client.POST(
-        "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
+      return authorized(async Authorization => {
+        const result = await client.POST(
+          "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
           headers: { Authorization }, params: { path: { courseId, lessonId } }, body, signal
-        }), signal);
+          });
+        logProgressNetwork(body, result);
+        return result;
+      }, signal);
     },
     reportProgressKeepalive(courseId, lessonId, body) {
-      return authorized(Authorization => client.POST(
-        "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
+      return authorized(async Authorization => {
+        const result = await client.POST(
+          "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
           headers: { Authorization }, params: { path: { courseId, lessonId } }, body, keepalive: true
-        }), undefined, 1);
+          });
+        logProgressNetwork(body, result);
+        return result;
+      }, undefined, 1);
     },
     completeArticle(courseId, lessonId, body, signal) {
       return authorized(Authorization => client.POST(
@@ -130,6 +143,32 @@ export function createStudentLearningApi(client: GatewayClient = createGatewayCl
       }).then(result => result.response.status === 204 ? { ...result, data: null } : result), signal);
     }
   };
+}
+
+/** 仅开发环境记录进度网络结果，供真实验收核对事件类型和服务端持久化状态；不记录令牌、URL 或用户身份。 */
+function logProgressNetwork(body: ReportLessonProgressRequest, result: AuthorizedResult<LessonProgress>): void {
+  if (runtimeEnv?.MODE !== "development") return;
+  const error = result.error as { code?: string; fieldErrors?: Array<{ field?: string; reason?: string }> } | undefined;
+  console.info(`[T12G.2 progress network] ${JSON.stringify({
+    eventType: body.eventType ?? "LEGACY",
+    status: result.response.status,
+    persistenceStatus: result.data?.persistenceStatus,
+    code: error?.code,
+    fieldErrors: error?.fieldErrors?.map(item => ({ field: item.field, reason: item.reason }))
+  })}`);
+}
+
+/** 仅开发环境记录课程进度读取结果，确认 Redis 降级时页面使用 PERSISTED_ONLY；不记录课程或用户标识。 */
+function logProgressReadNetwork(result: AuthorizedResult<CourseProgress>): void {
+  if (runtimeEnv?.MODE !== "development") return;
+  const persistenceStatuses = result.data?.lessons
+    .map(item => item.persistenceStatus)
+    .filter((status): status is NonNullable<typeof status> => status !== undefined);
+  console.info(`[T12G.2 progress read network] ${JSON.stringify({
+    status: result.response.status,
+    persistenceStatuses,
+    code: (result.error as { code?: string } | undefined)?.code
+  })}`);
 }
 
 function retryDelay(retryAfter: string | null, attempt: number): number {

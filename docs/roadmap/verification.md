@@ -733,4 +733,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 - 首轮 422 未能从浏览器诊断中取得可重复响应体；代码检查确认请求字段已按 OpenAPI 0.20.0 生成，页面此前只丢弃了服务端 `code`/`fieldErrors`。现已保留这些稳定诊断信息，并用稳定路由名和课程参数识别 `LESSON_SWITCH`。
 - 重新打开同一学生会话后，暂停约 1 秒触发 PAUSE 并显示“已保存”；自然播放结束触发 ENDED，页面显示 100% 和“已保存”。专用 `edu_platform_learning_dev` 只读核对目标课时聚合为 `position=12`、`watched=21`、`completed=1`，事件表存在 PAUSE/ENDED；未创建伪数据或修改其他领域数据。
-- 切课路由可正常切换；本次未把偶发的播放器“无法播放媒体”提示纳入 422 修复结论。完整 LESSON_SWITCH/LEAVE 事件逐项核对、HEARTBEAT/BUFFERED、刷新恢复和 Redis 故障恢复仍待发布前专项验收。
+- 切课路由可正常切换；本阶段尚未覆盖的事件、刷新和 Redis 故障项已在下方最终真实验收中补齐。播放器提示在该阶段仅作现象记录，最终结论见下方。
+
+## 2026-09-05 T12G.2 最终真实验收
+
+- 固定验收对象：既有课程“线性代数”v4、第 2 课“行列式的定义”，未替换课程、课时或 OSS。真实浏览器开发日志逐项确认 `HEARTBEAT → 200/BUFFERED`、`PAUSE → 200/PERSISTED`、`LESSON_SWITCH → 200/PERSISTED`、`LEAVE → 200/PERSISTED`、`ENDED → 200/PERSISTED`。
+- 切课初次未出现 `LESSON_SWITCH` 的原因已定位为动态路由复用同一记录，`onBeforeRouteLeave` 不会处理参数更新；前端改为 `onBeforeRouteUpdate` 后，路由守卫日志和服务端网络日志均确认 `LESSON_SWITCH`。真正离开学习空间的 `LEAVE` 也返回 `PERSISTED`。
+- 强制检查点刷新：`ENDED/PERSISTED` 成功后刷新同一深链接，进度读取日志为 `200/PERSISTED`，页面恢复已保存进度。Redis 故障采用 Learning `18084` 的 Redis 端口 `1` 隔离实例，未执行 `FLUSHDB`；浏览器 `HEARTBEAT` 返回 `503/LEARNING.PROGRESS_BUFFER_UNAVAILABLE`，页面没有虚假成功，刷新读取为 `200/PERSISTED_ONLY` 并显示最近已保存进度；恢复正常 Redis 后有限重试再次得到 `200/BUFFERED`。
+- 播放器提示复核：结束后曾出现“无法播放媒体”的瞬态提示；同期媒体元素 `readyState=4`、`error=null`，刷新后可重新从起点播放，且 `ENDED/PERSISTED` 正常。证据表明这是既有 HLS 结束态展示，不由 T12G.2 生命周期改动引入，也不影响重播。
+- 数据审计与清理：验收前后目标聚合均为 `position=8`、`watched=8`、`completed=false`、`revision=1`、`buffer_version=0`，`last_event_at` 与原基线一致；事件表仅保留原有 `NULL` 事件。目标 Redis Hash 不存在、dirty ZSet 无目标成员，dirty cardinality 验收前后均为 0。未创建数据库、表、伪数据、OSS 对象或消息。

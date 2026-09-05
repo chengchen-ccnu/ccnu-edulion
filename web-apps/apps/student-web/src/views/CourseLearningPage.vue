@@ -10,7 +10,7 @@ import type { CourseDetail, CourseProgress, Enrollment, LearnerAssessmentSummary
 import { createResourceActionController, HlsVideoPlayer, playbackErrorMessage, SafeArticleContent } from "@edu/ui";
 import type { PlaybackProgressSample } from "@edu/ui";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import type { RouteLocationRaw } from "vue-router";
 
 import { studentCourseApi } from "../course-api";
@@ -90,18 +90,21 @@ onMounted(() => {
 });
 onBeforeUnmount(() => { cancelPage(); resourceActions.dispose(); });
 
-/** 统一捕获路由离开；课时之间使用 LESSON_SWITCH，离开学习空间使用 LEAVE。 */
-onBeforeRouteLeave(async to => {
+/**
+ * 在路由真正变化前保存视频进度检查点。
+ * 输入是导航目标和事件类型；成功返回 true 允许导航，失败返回 false 并保留可重试的导航目标。
+ */
+async function checkpointNavigation(to: RouteLocationRaw, eventType: "LESSON_SWITCH" | "LEAVE"): Promise<boolean> {
   if (bypassNextNavigationGuard) {
     bypassNextNavigationGuard = false;
     return true;
   }
   if (pendingNavigation.value) return false;
   if (!progressSync || !learningFactsAllowed.value || content.value?.type !== "VIDEO") return true;
-  // 用稳定路由名和课程参数识别同一学习空间，避免基路径或编码差异把切课误记为离页。
-  const sameCourseLearningSpace = to.name === "course-learning"
-    && String(to.params.courseId) === String(route.params.courseId);
-  const eventType = sameCourseLearningSpace ? "LESSON_SWITCH" : "LEAVE";
+  if (import.meta.env.DEV) {
+    const target = typeof to === "string" ? to : "path" in to ? to.path : "name" in to ? to.name : undefined;
+    console.info(`[T12G.2 route guard] ${JSON.stringify({ target, eventType })}`);
+  }
   const label = eventType === "LESSON_SWITCH" ? "切换课时" : "退出学习";
   if (navigationBusy.value) return false;
   navigationBusy.value = true;
@@ -111,7 +114,18 @@ onBeforeRouteLeave(async to => {
   if (persisted) return true;
   pendingNavigation.value = { to, eventType, label };
   return false;
+}
+
+/** 动态课时路由复用同一组件记录，参数更新必须在 update 守卫中写入 LESSON_SWITCH 检查点。 */
+onBeforeRouteUpdate(async to => {
+  if (to.name !== "course-learning"
+      || String(to.params.courseId) !== String(route.params.courseId)
+      || String(to.params.lessonId) === String(route.params.lessonId)) return true;
+  return checkpointNavigation(to, "LESSON_SWITCH");
 });
+
+/** 离开整个学习空间时写入 LEAVE 检查点，失败则阻止导航并提供重试/继续操作。 */
+onBeforeRouteLeave(to => checkpointNavigation(to, "LEAVE"));
 
 /** 深链接与刷新先恢复发布课程，再独立读取报名、进度和笔记；部分失败不会移除播放器。 */
 async function loadPage([courseId, lessonId]: unknown[]) {
