@@ -701,3 +701,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 容量缺陷闭环：首轮真实容量暴露 course-service 同步放大和单线程/小批次 Worker 瓶颈；T12G.1 内已加入 1 秒课程事实短缓存、1000 批次及 16 路受控 Worker 并行，修复后重新执行完整 10 分钟验收通过。独立清理测试输出 `learners=1000 mysqlRows=0 redisKeys=0`。
 - 数据边界：只确认/使用本任务所属 Learning V13 和本轮随机 UUID 进度记录；没有创建其他领域表、Seed、OSS 对象或 MQ 消息。真实用例结束后 MySQL `lesson_progress_event`/`lesson_progress`、Redis Hash、dirty 成员和租约均按 run ID 精确清理为零。T12G.2 浏览器播放器验收未执行。
 - 当前实现仍未引入 RabbitMQ、Redis Stream、DLQ 或 Vue 业务改动；需在实现提交后补跑 `pnpm.cmd --dir web-apps run check:api` 并记录 CI/PR 结果。
+- 实现提交：`a48a334`，分支 `codex/t12g1-progress-buffer-contract` 已推送；Ready PR 为 [#45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45)，`check:api` 在提交后通过。PR 最新 CI 全绿：两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 均通过；未合并。
