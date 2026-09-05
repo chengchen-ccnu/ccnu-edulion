@@ -1,8 +1,15 @@
+/**
+ * 共享播放器只描述生命周期原因，不绑定学生端或任何后端事件枚举。
+ * 业务页面负责把 HEARTBEAT、PAUSE 和 ENDED 映射为自己的持久化契约；FLUSH 仅用于离页前抓取内存中的最后样本。
+ */
+export type PlaybackProgressKind = "HEARTBEAT" | "PAUSE" | "ENDED" | "FLUSH";
+
 /** 共享播放器发出的领域中立进度样本；业务页面负责决定是否以及向哪个领域持久化。 */
 export interface PlaybackProgressSample {
   positionSeconds: number;
   watchedSeconds: number;
   completed: boolean;
+  kind: PlaybackProgressKind;
 }
 
 export interface PlaybackProgressTracker {
@@ -16,11 +23,11 @@ export interface PlaybackProgressTracker {
 
 /**
  * 按真实播放墙钟时间累计观看秒数，拖动进度条不会虚增观看时长。
- * 默认每累计 15 秒或暂停/结束时产生一次有界样本；页面卸载可 flush 后立即释放播放器资源。
+ * 默认每累计 5 秒或暂停/结束时产生一次有界样本；页面卸载可 flush 后立即释放播放器资源。
  */
 export function createPlaybackProgressTracker(
     emit: (sample: PlaybackProgressSample) => void,
-    clock: () => number = () => performance.now(), intervalSeconds = 15): PlaybackProgressTracker {
+    clock: () => number = () => performance.now(), intervalSeconds = 5): PlaybackProgressTracker {
   let playingSince: number | null = null;
   let watchedMilliseconds = 0;
   let positionSeconds = 0;
@@ -33,11 +40,11 @@ export function createPlaybackProgressTracker(
     playingSince = current;
   }
 
-  function report(completed: boolean, force: boolean): void {
+  function report(completed: boolean, force: boolean, kind: PlaybackProgressKind): void {
     const watchedSeconds = Math.min(300, Math.floor(watchedMilliseconds / 1_000));
     if (!force && watchedSeconds < intervalSeconds) return;
     if (!completed && watchedSeconds === 0 && Math.floor(positionSeconds) === Math.floor(lastReportedPosition)) return;
-    emit({ positionSeconds, watchedSeconds, completed });
+    emit({ positionSeconds, watchedSeconds, completed, kind });
     watchedMilliseconds -= watchedSeconds * 1_000;
     lastReportedPosition = positionSeconds;
   }
@@ -50,24 +57,24 @@ export function createPlaybackProgressTracker(
     observe(position) {
       accumulate();
       positionSeconds = Math.max(0, position);
-      report(false, false);
+      report(false, false, "HEARTBEAT");
     },
     pause(position) {
       accumulate();
       playingSince = null;
       positionSeconds = Math.max(0, position);
-      report(false, true);
+      report(false, true, "PAUSE");
     },
     complete(position) {
       accumulate();
       playingSince = null;
       positionSeconds = Math.max(0, position);
-      report(true, true);
+      report(true, true, "ENDED");
     },
     flush() {
       accumulate();
       playingSince = null;
-      report(false, true);
+      report(false, true, "FLUSH");
     },
     reset() {
       playingSince = null;

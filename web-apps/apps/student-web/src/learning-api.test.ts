@@ -79,6 +79,25 @@ describe("student learning API", () => {
     expect(waits).toEqual([0, 0]);
   });
 
+  it("sends keepalive progress with Authorization in headers and no URL token", async () => {
+    let observed: Request | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      observed = input instanceof Request ? input : new Request(input, init);
+      return json(progress());
+    }));
+    const api = createStudentLearningApi(createGatewayClient("http://gateway.test"), authStore());
+
+    await api.reportProgressKeepalive("course-1", "lesson-1", { clientEventId: uuid(13),
+      occurredAt: "2026-08-26T00:00:00Z", positionSeconds: 40, watchedSeconds: 2,
+      completed: false, eventType: "LEAVE" });
+
+    expect(observed).toBeDefined();
+    const request = observed as Request;
+    expect(request.keepalive).toBe(true);
+    expect(request.headers.get("Authorization")).toBe("Bearer learner-token");
+    expect(new URL(request.url).search).toBe("");
+  });
+
   it("reuses one stable article clientRequestId for at most three attempts", async () => {
     const bodies: string[] = [];
     let attempts = 0;

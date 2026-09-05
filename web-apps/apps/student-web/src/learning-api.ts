@@ -21,10 +21,12 @@ import { authStore } from "./auth";
 
 type AuthorizedResult<T> = { data?: T; error?: unknown; response: Response };
 type Wait = (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+const runtimeEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 
 /**
  * 学生端学习事实 API。输入、输出全部引用 OpenAPI 生成类型，请求只经过 Gateway 和统一认证层。
  * 429 最多退避两次并复用原请求体；调用方传入的 AbortSignal 会同时取消等待与网络请求。
+ * reportProgressKeepalive 仅用于 pagehide 的一次性尽力请求，使用现有 Authorization 头和 fetch keepalive，不把令牌放入 URL。
  */
 export interface StudentLearningApi {
   enrollments(query: ListMyEnrollmentsQuery, signal?: AbortSignal): Promise<EnrollmentPage>;
@@ -33,6 +35,7 @@ export interface StudentLearningApi {
   progress(courseId: string, signal?: AbortSignal): Promise<CourseProgress>;
   reportProgress(courseId: string, lessonId: string, body: ReportLessonProgressRequest,
     signal?: AbortSignal): Promise<LessonProgress>;
+  reportProgressKeepalive(courseId: string, lessonId: string, body: ReportLessonProgressRequest): Promise<LessonProgress>;
   completeArticle(courseId: string, lessonId: string, body: CompleteArticleLessonRequest,
     signal?: AbortSignal): Promise<ArticleLessonCompletion>;
   notes(courseId: string, lessonId: string, signal?: AbortSignal): Promise<LearningNote[]>;
@@ -46,12 +49,12 @@ export interface StudentLearningApi {
 export function createStudentLearningApi(client: GatewayClient = createGatewayClient(), store: AuthStore = authStore,
     wait: Wait = abortableDelay): StudentLearningApi {
   async function authorized<T>(request: (authorization: string) => Promise<AuthorizedResult<T>>,
-      signal?: AbortSignal): Promise<T> {
+      signal?: AbortSignal, maxAttempts = 3): Promise<T> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const result = await store.authorizedRequest(request);
       if (result.data !== undefined) return result.data;
-      if (result.response.status !== 429 || attempt === 2) {
+      if (result.response.status !== 429 || attempt === maxAttempts - 1 || attempt === 2) {
         throw gatewayRequestError(result.response, result.error as never);
       }
       await wait(retryDelay(result.response.headers.get("Retry-After"), attempt), signal);
@@ -82,15 +85,33 @@ export function createStudentLearningApi(client: GatewayClient = createGatewayCl
       }), signal);
     },
     progress(courseId, signal) {
-      return authorized(Authorization => client.GET("/api/v1/learning/courses/{courseId}/progress", {
-        headers: { Authorization }, params: { path: { courseId } }, signal
-      }), signal);
+      return authorized(async Authorization => {
+        const result = await client.GET("/api/v1/learning/courses/{courseId}/progress", {
+          headers: { Authorization }, params: { path: { courseId } }, signal
+        });
+        logProgressReadNetwork(result);
+        return result;
+      }, signal);
     },
     reportProgress(courseId, lessonId, body, signal) {
-      return authorized(Authorization => client.POST(
-        "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
+      return authorized(async Authorization => {
+        const result = await client.POST(
+          "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
           headers: { Authorization }, params: { path: { courseId, lessonId } }, body, signal
-        }), signal);
+          });
+        logProgressNetwork(body, result);
+        return result;
+      }, signal);
+    },
+    reportProgressKeepalive(courseId, lessonId, body) {
+      return authorized(async Authorization => {
+        const result = await client.POST(
+          "/api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events", {
+          headers: { Authorization }, params: { path: { courseId, lessonId } }, body, keepalive: true
+          });
+        logProgressNetwork(body, result);
+        return result;
+      }, undefined, 1);
     },
     completeArticle(courseId, lessonId, body, signal) {
       return authorized(Authorization => client.POST(
@@ -122,6 +143,32 @@ export function createStudentLearningApi(client: GatewayClient = createGatewayCl
       }).then(result => result.response.status === 204 ? { ...result, data: null } : result), signal);
     }
   };
+}
+
+/** 仅开发环境记录进度网络结果，供真实验收核对事件类型和服务端持久化状态；不记录令牌、URL 或用户身份。 */
+function logProgressNetwork(body: ReportLessonProgressRequest, result: AuthorizedResult<LessonProgress>): void {
+  if (runtimeEnv?.MODE !== "development") return;
+  const error = result.error as { code?: string; fieldErrors?: Array<{ field?: string; reason?: string }> } | undefined;
+  console.info(`[T12G.2 progress network] ${JSON.stringify({
+    eventType: body.eventType ?? "LEGACY",
+    status: result.response.status,
+    persistenceStatus: result.data?.persistenceStatus,
+    code: error?.code,
+    fieldErrors: error?.fieldErrors?.map(item => ({ field: item.field, reason: item.reason }))
+  })}`);
+}
+
+/** 仅开发环境记录课程进度读取结果，确认 Redis 降级时页面使用 PERSISTED_ONLY；不记录课程或用户标识。 */
+function logProgressReadNetwork(result: AuthorizedResult<CourseProgress>): void {
+  if (runtimeEnv?.MODE !== "development") return;
+  const persistenceStatuses = result.data?.lessons
+    .map(item => item.persistenceStatus)
+    .filter((status): status is NonNullable<typeof status> => status !== undefined);
+  console.info(`[T12G.2 progress read network] ${JSON.stringify({
+    status: result.response.status,
+    persistenceStatuses,
+    code: (result.error as { code?: string } | undefined)?.code
+  })}`);
 }
 
 function retryDelay(retryAfter: string | null, attempt: number): number {

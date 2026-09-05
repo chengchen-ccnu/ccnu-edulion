@@ -9,8 +9,9 @@ import type { CourseDetail, CourseProgress, Enrollment, LearnerAssessmentSummary
   LessonContentResource, LessonProgress } from "@edu/api-client";
 import { createResourceActionController, HlsVideoPlayer, playbackErrorMessage, SafeArticleContent } from "@edu/ui";
 import type { PlaybackProgressSample } from "@edu/ui";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 
 import { studentCourseApi } from "../course-api";
 import { studentAssessmentApi } from "../assessment-api";
@@ -21,6 +22,7 @@ import { createProgressSyncController } from "../progress-sync";
 import type { ProgressSyncController } from "../progress-sync";
 
 const route = useRoute();
+const router = useRouter();
 const course = ref<CourseDetail | null>(null);
 const content = ref<LessonContent | null>(null);
 const enrollment = ref<Enrollment | null>(null);
@@ -47,7 +49,11 @@ const editingNoteId = ref<string | null>(null);
 const editingContent = ref("");
 const currentPositionSeconds = ref(0);
 const videoDurationSeconds = ref(0);
-const player = ref<{ seekTo(positionSeconds: number): void } | null>(null);
+const player = ref<{ seekTo(positionSeconds: number): void; flushProgress(): void } | null>(null);
+const syncStatus = ref<"idle" | "syncing" | "saved" | "unsynced" | "persisted-only">("idle");
+const hasUnsavedProgress = ref(false);
+const pendingNavigation = ref<{ to: RouteLocationRaw; eventType: "LESSON_SWITCH" | "LEAVE"; label: string } | null>(null);
+const navigationBusy = ref(false);
 let pageAbort: AbortController | null = null;
 let progressSync: ProgressSyncController | null = null;
 let loadGeneration = 0;
@@ -55,6 +61,9 @@ let articleClientRequestId = "";
 let articleCompletionStarted = false;
 let articleRendered = false;
 let learningFactsLoaded = false;
+let bypassNextNavigationGuard = false;
+let unloadWarningRegistered = false;
+let latestPlaybackSample: PlaybackProgressSample = { positionSeconds: 0, watchedSeconds: 0, completed: false, kind: "FLUSH" };
 const resourceActions = createResourceActionController();
 
 const enrolled = computed(() => enrollment.value?.status === "ACTIVE");
@@ -75,7 +84,48 @@ const videoProgressPercent = computed(() => {
 });
 
 watch(() => [route.params.courseId, route.params.lessonId], loadPage, { immediate: true });
+onMounted(() => {
+  window.addEventListener("pagehide", handlePageHide);
+  window.addEventListener("online", handleOnline);
+});
 onBeforeUnmount(() => { cancelPage(); resourceActions.dispose(); });
+
+/**
+ * 在路由真正变化前保存视频进度检查点。
+ * 输入是导航目标和事件类型；成功返回 true 允许导航，失败返回 false 并保留可重试的导航目标。
+ */
+async function checkpointNavigation(to: RouteLocationRaw, eventType: "LESSON_SWITCH" | "LEAVE"): Promise<boolean> {
+  if (bypassNextNavigationGuard) {
+    bypassNextNavigationGuard = false;
+    return true;
+  }
+  if (pendingNavigation.value) return false;
+  if (!progressSync || !learningFactsAllowed.value || content.value?.type !== "VIDEO") return true;
+  if (import.meta.env.DEV) {
+    const target = typeof to === "string" ? to : "path" in to ? to.path : "name" in to ? to.name : undefined;
+    console.info(`[T12G.2 route guard] ${JSON.stringify({ target, eventType })}`);
+  }
+  const label = eventType === "LESSON_SWITCH" ? "切换课时" : "退出学习";
+  if (navigationBusy.value) return false;
+  navigationBusy.value = true;
+  capturePlaybackForCheckpoint();
+  const persisted = await progressSync.checkpoint(eventType, latestPlaybackSample);
+  navigationBusy.value = false;
+  if (persisted) return true;
+  pendingNavigation.value = { to, eventType, label };
+  return false;
+}
+
+/** 动态课时路由复用同一组件记录，参数更新必须在 update 守卫中写入 LESSON_SWITCH 检查点。 */
+onBeforeRouteUpdate(async to => {
+  if (to.name !== "course-learning"
+      || String(to.params.courseId) !== String(route.params.courseId)
+      || String(to.params.lessonId) === String(route.params.lessonId)) return true;
+  return checkpointNavigation(to, "LESSON_SWITCH");
+});
+
+/** 离开整个学习空间时写入 LEAVE 检查点，失败则阻止导航并提供重试/继续操作。 */
+onBeforeRouteLeave(to => checkpointNavigation(to, "LEAVE"));
 
 /** 深链接与刷新先恢复发布课程，再独立读取报名、进度和笔记；部分失败不会移除播放器。 */
 async function loadPage([courseId, lessonId]: unknown[]) {
@@ -140,8 +190,10 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
   if (stale(controller, generation)) return;
   if (progressResult.status === "fulfilled") {
     progress.value = progressResult.value;
-    currentPositionSeconds.value = progressResult.value.lessons.find(item => item.lessonId === lessonId)?.positionSeconds ?? 0;
-    articleCompleted.value = Boolean(progressResult.value.lessons.find(item => item.lessonId === lessonId)?.completed);
+    const lessonProgress = progressResult.value.lessons.find(item => item.lessonId === lessonId);
+    currentPositionSeconds.value = lessonProgress?.positionSeconds ?? 0;
+    articleCompleted.value = Boolean(lessonProgress?.completed);
+    if (lessonProgress?.persistenceStatus === "PERSISTED_ONLY") syncStatus.value = "persisted-only";
   } else {
     progressError.value = learningErrorMessage(progressResult.reason, "课程进度暂时无法读取。");
   }
@@ -161,13 +213,111 @@ function startProgressSync(courseId: string, lessonId: string) {
       reportedProgress.value = value;
       if (progress.value) progress.value = mergeCourseProgress(progress.value, value);
       progressError.value = "";
+      syncStatus.value = value.persistenceStatus === "BUFFERED" ? "syncing"
+        : value.persistenceStatus === "PERSISTED_ONLY" ? "persisted-only" : "saved";
+      updateUnloadWarning();
     },
-    error => { progressError.value = learningErrorMessage(error, "本次进度写入失败，后续播放仍会继续同步。"); }
+    error => {
+      progressError.value = learningErrorMessage(error, "本次进度写入失败，后续播放仍会继续同步。");
+      syncStatus.value = "unsynced";
+      updateUnloadWarning();
+    },
+    undefined,
+    undefined,
+    { reportKeepalive: body => studentLearningApi.reportProgressKeepalive(courseId, lessonId, body) }
   );
 }
 
 function handlePlaybackProgress(sample: PlaybackProgressSample) {
-  if (learningFactsAllowed.value) progressSync?.enqueue(sample);
+  latestPlaybackSample = sample;
+  if (sample.kind === "FLUSH") return;
+  if (learningFactsAllowed.value) {
+    syncStatus.value = "syncing";
+    progressSync?.enqueue(sample);
+    hasUnsavedProgress.value = progressSync?.hasUnsavedProgress() ?? false;
+    updateUnloadWarning();
+  }
+}
+
+/** 导航前让播放器把当前墙钟增量吐出；FLUSH 本身不形成 HEARTBEAT，随后由页面映射为检查点事件。 */
+function capturePlaybackForCheckpoint() {
+  player.value?.flushProgress();
+  latestPlaybackSample = {
+    ...latestPlaybackSample,
+    positionSeconds: Math.max(latestPlaybackSample.positionSeconds, currentPositionSeconds.value),
+    kind: "FLUSH"
+  };
+}
+
+function navigateTo(to: RouteLocationRaw) {
+  if (navigationBusy.value || pendingNavigation.value) return;
+  void router.push(to).catch(() => undefined);
+}
+
+async function retryPendingNavigation() {
+  const target = pendingNavigation.value;
+  if (!target || !progressSync || navigationBusy.value) return;
+  navigationBusy.value = true;
+  capturePlaybackForCheckpoint();
+  const persisted = await progressSync.checkpoint(target.eventType, latestPlaybackSample);
+  navigationBusy.value = false;
+  if (!persisted) {
+    syncStatus.value = "unsynced";
+    updateUnloadWarning();
+    return;
+  }
+  bypassNextNavigationGuard = true;
+  pendingNavigation.value = null;
+  void router.push(target.to).catch(() => { bypassNextNavigationGuard = false; });
+}
+
+/** 用户明确接受尽力保存边界后允许导航，但不把失败检查点标成已保存。 */
+function continuePendingNavigation() {
+  const target = pendingNavigation.value;
+  if (!target || navigationBusy.value) return;
+  bypassNextNavigationGuard = true;
+  pendingNavigation.value = null;
+  void router.push(target.to).catch(() => { bypassNextNavigationGuard = false; });
+}
+
+function retryProgress() {
+  if (!hasUnsavedProgress.value) return;
+  progressSync?.retry();
+  syncStatus.value = "syncing";
+  hasUnsavedProgress.value = progressSync?.hasUnsavedProgress() ?? false;
+  updateUnloadWarning();
+}
+
+/** 网络恢复只唤醒页面内仍未保存的快照，不在后台创建新的无限重试循环。 */
+function handleOnline() {
+  if (hasUnsavedProgress.value) retryProgress();
+}
+
+function handlePageHide() {
+  if (!progressSync || !course.value || !current.value || !learningFactsAllowed.value || content.value?.type !== "VIDEO") return;
+  capturePlaybackForCheckpoint();
+  progressSync.keepalive("LEAVE", latestPlaybackSample);
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!progressSync?.hasUnsavedProgress()) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+function updateUnloadWarning() {
+  const shouldWarn = progressSync?.hasUnsavedProgress() ?? false;
+  hasUnsavedProgress.value = shouldWarn;
+  if (shouldWarn && !unloadWarningRegistered) {
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    unloadWarningRegistered = true;
+  } else if (!shouldWarn) removeUnloadWarning();
+}
+
+function removeUnloadWarning() {
+  if (!unloadWarningRegistered) return;
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  unloadWarningRegistered = false;
 }
 
 /** 播放授权始终使用当前发布课程资源行，页面从不把 mediaId 或 OSS 地址作为授权输入。 */
@@ -332,6 +482,11 @@ function resetPageState() {
   editingNoteId.value = null;
   currentPositionSeconds.value = 0;
   videoDurationSeconds.value = 0;
+  syncStatus.value = "idle";
+  hasUnsavedProgress.value = false;
+  pendingNavigation.value = null;
+  navigationBusy.value = false;
+  latestPlaybackSample = { positionSeconds: 0, watchedSeconds: 0, completed: false, kind: "FLUSH" };
 }
 
 function stale(controller: AbortController, generation: number): boolean {
@@ -386,7 +541,13 @@ function learningErrorMessage(error: unknown, fallback: string): string {
   if (error.status === 403) return "当前账号没有访问该学习事实的权限，或尚未报名。";
   if (error.status === 404) return "课程、课时或学习记录不存在、已下架或不可见。";
   if (error.status === 409) return "学习状态已被其他请求更新，请刷新后重试。";
-  if (error.status === 422) return "提交内容不符合要求，请修正后重试。";
+  if (error.status === 422) {
+    const fieldErrors = Object.entries(error.fieldErrors)
+      .map(([field, reason]) => `${field}: ${reason}`)
+      .join("；");
+    const detail = fieldErrors ? `（${fieldErrors}）` : "";
+    return `${error.message || "提交内容不符合要求"}${detail} [${error.code}]`;
+  }
   if (error.status === 429) return "请求过于频繁，有限重试仍未成功，请稍后手动重试。";
   if (error.status === 503) return "课程或学习服务暂时不可用，请稍后重试。";
   return error.message || fallback;
@@ -406,8 +567,11 @@ function formatSeconds(value: number): string {
 }
 
 function cancelPage() {
+  window.removeEventListener("pagehide", handlePageHide);
+  window.removeEventListener("online", handleOnline);
   progressSync?.dispose();
   progressSync = null;
+  removeUnloadWarning();
   pageAbort?.abort();
   pageAbort = null;
   resourceActions.dispose();
@@ -416,7 +580,7 @@ function cancelPage() {
 
 <template>
   <div class="learning-topbar">
-    <RouterLink v-if="course" :to="`/courses/${course.id}`">← 退出学习</RouterLink>
+    <RouterLink v-if="course" :to="`/courses/${course.id}`" @click.prevent="navigateTo(`/courses/${course.id}`)">← 退出学习</RouterLink>
     <RouterLink v-else to="/courses">← 返回课程中心</RouterLink>
     <span v-if="course">{{ course.title }} · 线上版本 {{ course.publishedVersion }}</span>
   </div>
@@ -480,8 +644,24 @@ function cancelPage() {
           <span :style="{ width: `${content.type === 'ARTICLE' ? articleCompleted || currentProgress?.completed ? 100 : 0 : videoProgressPercent}%` }" />
         </div>
         <p v-if="content.type === 'ARTICLE' && !learningFactsAllowed" class="panel-note">当前是未报名付费试看：可阅读正文和允许的资料，但不记录完成。</p>
+        <p v-if="content.type === 'VIDEO' && syncStatus !== 'idle'" class="progress-sync-status" role="status" aria-live="polite">
+          <span v-if="syncStatus === 'syncing'">正在同步</span>
+          <span v-else-if="syncStatus === 'saved'">已保存</span>
+          <span v-else-if="syncStatus === 'persisted-only'">当前显示最近已保存进度</span>
+          <span v-else>进度尚未同步</span>
+        </p>
         <p v-if="articleCompletionError" class="panel-error" role="status">{{ articleCompletionError }}</p>
-        <p v-if="progressError && !articleCompletionError" class="panel-error" role="alert">{{ progressError }}</p>
+        <p v-if="progressError && !articleCompletionError" class="panel-error" role="alert">
+          {{ progressError }}
+          <button v-if="content.type === 'VIDEO' && hasUnsavedProgress" type="button" @click="retryProgress">重试</button>
+        </p>
+        <div v-if="pendingNavigation" class="progress-sync-navigation" role="alert">
+          <p>进度尚未保存，{{ pendingNavigation.label }}前可以重试；浏览器关闭或崩溃时只能尽力保存。</p>
+          <div>
+            <button type="button" :disabled="navigationBusy" @click="retryPendingNavigation">重试</button>
+            <button type="button" :disabled="navigationBusy" @click="continuePendingNavigation">仍然离开</button>
+          </div>
+        </div>
       </section>
 
       <section class="learning-notes-panel" aria-labelledby="learning-notes-heading">
@@ -533,9 +713,11 @@ function cancelPage() {
       </section>
 
       <nav class="lesson-navigation" aria-label="课时导航">
-        <RouterLink v-if="previous?.accessible" :to="`/learn/${course.id}/${previous.lesson.id}`"><small>上一课</small><strong>{{ previous.lesson.title }}</strong></RouterLink>
+        <RouterLink v-if="previous?.accessible" :to="`/learn/${course.id}/${previous.lesson.id}`"
+          @click.prevent="navigateTo(`/learn/${course.id}/${previous.lesson.id}`)"><small>上一课</small><strong>{{ previous.lesson.title }}</strong></RouterLink>
         <span v-else class="lesson-navigation__disabled"><small>上一课</small><strong>{{ previous ? "需要报名" : "已经是第一课" }}</strong></span>
-        <RouterLink v-if="next?.accessible" :to="`/learn/${course.id}/${next.lesson.id}`"><small>下一课</small><strong>{{ next.lesson.title }}</strong></RouterLink>
+        <RouterLink v-if="next?.accessible" :to="`/learn/${course.id}/${next.lesson.id}`"
+          @click.prevent="navigateTo(`/learn/${course.id}/${next.lesson.id}`)"><small>下一课</small><strong>{{ next.lesson.title }}</strong></RouterLink>
         <span v-else class="lesson-navigation__disabled"><small>下一课</small><strong>{{ next ? "需要报名" : "已经是最后一课" }}</strong></span>
       </nav>
     </main>
@@ -546,6 +728,7 @@ function cancelPage() {
         <ol>
           <li v-for="entry in entries" :key="entry.lesson.id" :class="{ 'is-current': entry.lesson.id === current.lesson.id }">
             <RouterLink v-if="entry.accessible" :to="`/learn/${course.id}/${entry.lesson.id}`"
+              @click.prevent="navigateTo(`/learn/${course.id}/${entry.lesson.id}`)"
               :aria-current="entry.lesson.id === current.lesson.id ? 'page' : undefined">
               <span>{{ entry.chapterSequence }}.{{ entry.lesson.sequence }}</span><strong>{{ entry.lesson.title }}</strong>
               <small>{{ entry.lesson.previewable ? "试看" : lessonTypeLabel(entry.lesson.type) }}</small>
@@ -559,3 +742,17 @@ function cancelPage() {
     </aside>
   </div>
 </template>
+
+<style scoped>
+.progress-sync-status { margin: 10px 0 0; color: #365b91; font-size: .84rem; font-weight: 700; }
+.progress-sync-navigation { display: grid; gap: 8px; margin-top: 10px; padding: 12px; color: #6e4c1d;
+  background: #fff8e8; border: 1px solid #efd69d; border-radius: 9px; }
+.progress-sync-navigation p { margin: 0; }
+.progress-sync-navigation div { display: flex; flex-wrap: wrap; gap: 8px; }
+.progress-sync-navigation button, .panel-error button { min-height: 36px; padding: 0 12px; color: inherit;
+  background: #fff; border: 1px solid currentColor; border-radius: 8px; cursor: pointer; }
+@media (max-width: 640px) {
+  .progress-sync-navigation div { width: 100%; }
+  .progress-sync-navigation button { flex: 1 1 140px; }
+}
+</style>

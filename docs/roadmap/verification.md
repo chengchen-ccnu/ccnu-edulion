@@ -702,3 +702,43 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据边界：只确认/使用本任务所属 Learning V13 和本轮随机 UUID 进度记录；没有创建其他领域表、Seed、OSS 对象或 MQ 消息。真实用例结束后 MySQL `lesson_progress_event`/`lesson_progress`、Redis Hash、dirty 成员和租约均按 run ID 精确清理为零。T12G.2 浏览器播放器验收未执行。
 - 当前实现仍未引入 RabbitMQ、Redis Stream、DLQ 或 Vue 业务改动；需在实现提交后补跑 `pnpm.cmd --dir web-apps run check:api` 并记录 CI/PR 结果。
 - 实现提交：`a48a334`，分支 `codex/t12g1-progress-buffer-contract` 已推送；Ready PR 为 [#45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45)，`check:api` 在提交后通过。PR 最新 CI 全绿：两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 均通过；未合并。
+
+## 2026-09-05 T12G.1 合并与 T12G.2 前置审计
+
+- 合并与清理：[PR #45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45) 保持 Ready、`MERGEABLE/CLEAN`，两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 共 8 项检查全部成功后，以普通 merge 合并为 `main@aebc942`。本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12g1-progress-buffer-contract` 本地和远端分支均已精确删除。
+- 契约前置：OpenAPI 0.20.0、生成 `schema.d.ts`、Learning V13、五类事件、`BUFFERED/PERSISTED/PERSISTED_ONLY`、Redis 缓冲、强制检查点和学生读合并均已进入 `main`。现有 `HlsVideoPlayer`、领域中立播放采样器、`progress-sync.ts`、`CourseLearningPage.vue` 及其测试提供唯一前端改造落点；当前仍是 15 秒无事件类型串行上报并在离页直接丢弃队列，恰好属于 T12G.2 要替换的任务内容，不是前置阻塞。
+- 数据前置：通过正在运行的正常公共 Course API 只读查询，唯一命中课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”，当前发布版本 `v4`、访问类型 PUBLIC；第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a` 为 VIDEO“第 2 课 行列式的定义”。T12G.2 启动真实学生会话后仍须通过受保护内容接口复核视频 READY、报名/访问和播放授权；若失败应停止验收，不得替换课程或操作 OSS。
+- T12G.2 结论：Git、契约、生成客户端、固定页面/播放器落点和真实课程目录前置满足，已从最新 `main` 创建 `codex/t12g2-progress-sync-web`。任务只允许显式五类事件、最多 5 秒心跳、页面内存合并/有限重试、强制检查点约 3 秒等待及离页确认、keepalive/beacon 尽力提交和三态反馈；不得修改 OpenAPI/Java/Flyway、复制学习页/播放器、持久化未保存进度或把标签关闭描述为可靠送达。
+- 数据与代码：本次总控只执行 GitHub 合并、Git 同步、分支清理、正常 Course API 只读查询和状态/前置文档更新；没有修改 Vue、TypeScript、OpenAPI、Java、Flyway、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，没有创建、修改或清理 Schema、表、Seed、报名、进度、Key、租约、消息、对象或伪数据。
+
+## 2026-09-05 T12G.2 播放进度同步前端实现
+
+- 范围与实现：分支 `codex/t12g2-progress-sync-web` 基于 `HEAD` 包含的 `2e51ade` 与 `main@aebc942` 实现。只修改既有 `HlsVideoPlayer`、`playback-progress`、学生端 `progress-sync`、`CourseLearningPage`、学习 API keepalive 适配及前端测试/交付文档；未修改 Java、Flyway、OpenAPI、事件 Schema、生成客户端、路由职责或 ARTICLE 独立完成命令。
+- 事件语义：共享播放器默认按真实墙钟每 5 秒采样，暂停和自然结束分别产生中立 `PAUSE`/`ENDED` 原因；学生页把播放器样本映射为 `HEARTBEAT`、`PAUSE`、`ENDED`，页面路由守卫把切课映射为 `LESSON_SWITCH`、主动退出映射为 `LEAVE`。只有 `ENDED` 发送 `completed=true`，拖动不增加 watchedSeconds，倍速仍按墙钟累计。
+- 可靠性与反馈：控制器只保留一个活动请求和一个合并快照，失败 watchedSeconds/最远位置/时间在内存中合并；网络、超时、429、5xx 最多三次有限重试，重试复用相同 clientEventId/请求体，逻辑保存成功后才生成新 ID。强制检查点最多等待约 3 秒，失败显示“进度尚未同步”并提供“重试/仍然离开”；`BUFFERED` 显示“正在同步”，`PERSISTED` 显示“已保存”，读取 `PERSISTED_ONLY` 显示“当前显示最近已保存进度”。
+- 离页边界：SPA 路由由 `onBeforeRouteLeave` 统一拦截；`pagehide` 通过认证头和 `fetch keepalive` 一次性尽力发送 LEAVE，`beforeunload` 仅在确有未保存内存快照时启用。没有 localStorage、sessionStorage、IndexedDB、Cookie 进度写入，也没有卸载后的无限重试。
+- 自动化结果：`pnpm.cmd --dir web-apps run check:api` 通过且生成客户端无漂移；`pnpm.cmd --dir web-apps run typecheck` 通过（8 workspace）；`pnpm.cmd --dir web-apps run test` 通过（36 个测试文件、236 项）；`pnpm.cmd --dir web-apps run build` 通过（三端构建，保留既有大 chunk 警告）；专项覆盖 5 秒采样、五类事件、完成门禁、失败合并、有限重试/稳定 ID、检查点超时、keepalive 认证头、dispose 清理和浏览器存储边界。
+- 阶段性浏览器记录（已由下方最终真实验收覆盖）：当时通过正常 Course API 和课程详情页唯一核对课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”、发布版本 `v4`、第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a`“第 2 课 行列式的定义”、VIDEO；因当时浏览器为匿名会话而停止，未发送真实进度或触碰 OSS/媒体数据。最终受保护学生会话、五类事件、Redis 故障恢复、刷新恢复和精确清理结果见下方最终真实验收。
+- 数据边界：本轮未连接或修改 `edu_platform_learning_dev`、Redis DB 4、Course/Media/OSS、RabbitMQ；未创建数据库、表、伪数据、进度事件、Redis Key、租约或 OSS 对象，故无本轮清理项。独立交付说明见 [`docs/delivery/T12G.2-progress-sync-web.md`](../delivery/T12G.2-progress-sync-web.md)。
+
+## 2026-09-05 T12G.2 真实浏览器复核
+
+- 学生测试账号登录成功，目标课时受保护内容加载成功；课程“线性代数”v4、第 2 课“行列式的定义”通过报名/访问事实、视频 READY 和播放授权门禁，视频实际时长约 12.2 秒。
+- 播放约 1 秒后暂停以及自然播放结束均触发前端进度请求，但两者都返回 422；页面正确保持“进度尚未同步”，点击重试仍失败。真实 `PAUSE`/`ENDED` 持久化未通过，故不宣称五类事件链路验收成功。
+- 点击退出学习后，路由守卫正确展示“重试/仍然离开”；选择“仍然离开”成功返回课程详情，失败检查点不会阻止用户明确离开。
+- 只读核对专用 `edu_platform_learning_dev` 的目标课程/课时，验收后为 1 条聚合行（position 8、watched 8、completed false）和 1 条 `NULL` 事件类型记录；未观察到本轮新增的已接受 PAUSE/ENDED 事件。未创建数据库、表、伪数据、Redis Key、租约或 OSS 对象，无清理项。
+- 结论：前置访问与前端失败反馈/离页分支通过；进度请求 422 是当前发布阻塞问题，需定位实际请求字段与服务端校验后重新验收。教师账号未用于本次学生端 T12G.2 复核，教师端不在本任务页面范围内。
+
+## 2026-09-05 T12G.2 422 修复后复核
+
+- 首轮 422 未能从浏览器诊断中取得可重复响应体；代码检查确认请求字段已按 OpenAPI 0.20.0 生成，页面此前只丢弃了服务端 `code`/`fieldErrors`。现已保留这些稳定诊断信息，并用稳定路由名和课程参数识别 `LESSON_SWITCH`。
+- 重新打开同一学生会话后，暂停约 1 秒触发 PAUSE 并显示“已保存”；自然播放结束触发 ENDED，页面显示 100% 和“已保存”。专用 `edu_platform_learning_dev` 只读核对目标课时聚合为 `position=12`、`watched=21`、`completed=1`，事件表存在 PAUSE/ENDED；未创建伪数据或修改其他领域数据。
+- 切课路由可正常切换；本阶段尚未覆盖的事件、刷新和 Redis 故障项已在下方最终真实验收中补齐。播放器提示在该阶段仅作现象记录，最终结论见下方。
+
+## 2026-09-05 T12G.2 最终真实验收
+
+- 固定验收对象：既有课程“线性代数”v4、第 2 课“行列式的定义”，未替换课程、课时或 OSS。真实浏览器开发日志逐项确认 `HEARTBEAT → 200/BUFFERED`、`PAUSE → 200/PERSISTED`、`LESSON_SWITCH → 200/PERSISTED`、`LEAVE → 200/PERSISTED`、`ENDED → 200/PERSISTED`。
+- 切课初次未出现 `LESSON_SWITCH` 的原因已定位为动态路由复用同一记录，`onBeforeRouteLeave` 不会处理参数更新；前端改为 `onBeforeRouteUpdate` 后，路由守卫日志和服务端网络日志均确认 `LESSON_SWITCH`。真正离开学习空间的 `LEAVE` 也返回 `PERSISTED`。
+- 强制检查点刷新：`ENDED/PERSISTED` 成功后刷新同一深链接，进度读取日志为 `200/PERSISTED`，页面恢复已保存进度。Redis 故障采用 Learning `18084` 的 Redis 端口 `1` 隔离实例，未执行 `FLUSHDB`；浏览器 `HEARTBEAT` 返回 `503/LEARNING.PROGRESS_BUFFER_UNAVAILABLE`，页面没有虚假成功，刷新读取为 `200/PERSISTED_ONLY` 并显示最近已保存进度；恢复正常 Redis 后有限重试再次得到 `200/BUFFERED`。
+- 播放器提示复核：结束后曾出现“无法播放媒体”的瞬态提示；同期媒体元素 `readyState=4`、`error=null`，刷新后可重新从起点播放，且 `ENDED/PERSISTED` 正常。证据表明这是既有 HLS 结束态展示，不由 T12G.2 生命周期改动引入，也不影响重播。
+- 数据审计与清理：验收前后目标聚合均为 `position=8`、`watched=8`、`completed=false`、`revision=1`、`buffer_version=0`，`last_event_at` 与原基线一致；事件表仅保留原有 `NULL` 事件。目标 Redis Hash 不存在、dirty ZSet 无目标成员，dirty cardinality 验收前后均为 0。未创建数据库、表、伪数据、OSS 对象或消息。
