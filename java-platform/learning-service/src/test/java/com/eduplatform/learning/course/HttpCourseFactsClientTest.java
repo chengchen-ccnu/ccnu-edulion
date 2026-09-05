@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 class HttpCourseFactsClientTest {
     private HttpServer server;
     private HttpCourseFactsClient client;
+    private final AtomicInteger publishedRequests = new AtomicInteger();
 
     @BeforeEach
     void start() throws Exception {
@@ -27,7 +29,8 @@ class HttpCourseFactsClientTest {
         client = new HttpCourseFactsClient(new LearningProperties(
                 new LearningProperties.Media("http://media", Duration.ofSeconds(1), "edu-learning-service",
                         "edu-media-service", Duration.ofSeconds(30), "test-assessment-media-secret-32-bytes-minimum"),
-                new LearningProperties.Course("http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(1)),
+                new LearningProperties.Course("http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(1),
+                        Duration.ZERO),
                 new LearningProperties.ImportSettings(1024, Duration.ofHours(1), false,
                         Duration.ofSeconds(1), Duration.ofSeconds(1), 3)));
     }
@@ -44,6 +47,22 @@ class HttpCourseFactsClientTest {
     }
 
     @Test
+    void configuredShortCacheCoalescesPublishedFactReads() {
+        client = new HttpCourseFactsClient(new LearningProperties(
+                new LearningProperties.Media("http://media", Duration.ofSeconds(1), "edu-learning-service",
+                        "edu-media-service", Duration.ofSeconds(30), "test-assessment-media-secret-32-bytes-minimum"),
+                new LearningProperties.Course("http://127.0.0.1:" + server.getAddress().getPort(),
+                        Duration.ofSeconds(1), Duration.ofSeconds(1)),
+                new LearningProperties.ImportSettings(1024, Duration.ofHours(1), false,
+                        Duration.ofSeconds(1), Duration.ofSeconds(1), 3)));
+
+        client.requirePublished("ok", "trace-cache-1");
+        client.requirePublished("ok", "trace-cache-2");
+
+        assertThat(publishedRequests).hasValue(1);
+    }
+
+    @Test
     void missingIs404AndDependencyFailureIs503() {
         assertThatThrownBy(() -> client.requirePublished("missing", "trace-missing"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
@@ -55,6 +74,7 @@ class HttpCourseFactsClientTest {
         String path = exchange.getRequestURI().getPath();
         if (path.endsWith("/missing")) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
         if (path.endsWith("/failed")) { exchange.sendResponseHeaders(500, -1); exchange.close(); return; }
+        publishedRequests.incrementAndGet();
         byte[] body = ("{\"id\":\"00000000-0000-4000-8000-000000000100\",\"publishedVersion\":\"v8\","
                 + "\"accessType\":\"ENROLLMENT_REQUIRED\",\"teacher\":{\"id\":\"00000000-0000-4000-8000-000000000101\"},"
                 + "\"chapters\":[{\"lessons\":[{\"id\":\"00000000-0000-4000-8000-000000000102\"}]}]}")

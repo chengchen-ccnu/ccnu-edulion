@@ -667,3 +667,38 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实本地人工验收：用户已在专用本地环境确认固定 Seed 的教师保存含 `ARTICLE_IMAGE` 正文后硬刷新、重新进入课时，正文图片成功显示；非 owner 无法读取；过期授权通过再次请求 `article-content` 恢复；loading、401、403、404、409、429、503、离线和图片加载失败均有可见处理；离页请求和 Blob URL 已释放；控制台无错误，页面/存储/日志未泄露 Bucket、Object Key、永久 URL 或 Token。该条为用户人工验收结论，不冒充自动化浏览器观测。
 - 临时数据清理：人工验收使用固定课程 `00000000-0000-4000-8000-00000000f201`、ARTICLE 课时 `00000000-0000-4000-8000-00000000f232` 和图片 `00000000-0000-4000-8000-00000000f103`，仅涉及专用 `edu_platform_media_dev`、`edu_platform_course_dev`、`edu_platform_learning_dev` 三个开发 Schema 的既有 T12F.1 固定 Seed。验收结束后已按 `scripts/Invoke-T12F1CourseContentDemoSeed.ps1 -Action Cleanup` 成功清理，停止 5173/5174、8080–8084 验收进程；临时验收日志已清空，未改动本地凭据、仓库环境配置或非本任务数据。
 - PR 状态：已准备将本次提交推送到既有 [Ready/Open PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43)，不合并；推送后等待该 PR 最新 8 项 CI 全部成功再交付。
+
+## 2026-09-05 T12F.2 合并与 T12G 前置审计
+
+- 合并与清理：[PR #43](https://github.com/chengchen-ccnu/ccnu-edulion/pull/43) 在真实教师正文图片终验完成、Ready、`MERGEABLE/CLEAN` 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后，以普通 merge 合并为 `main@96b58dc`；本地 `main` 已快进同步并与 `origin/main` 一致，`codex/t12f2-course-content-player` 本地和远端分支均已精确删除。
+- T12G 前置结论：T02 已提供本地 Redis/健康配置，T11 已提供 `progress-events` 契约、MySQL `lesson_progress_event` 幂等事实、`lesson_progress` 单调聚合和课程访问校验，T12A/T12F.2 已提供播放器定时采样、暂停/结束触发、有限前端队列及既有学习页。`learning-service` 已包含 Spring Data Redis 与 Spring AMQP 依赖，并为 local profile 约定独立 Redis DB 4 和 RabbitMQ 连接。因此 Git、领域归属、基础设施、现有 API/数据事实和页面落点均满足，已从最新 `main` 创建 `codex/t12g-progress-buffer`。
+- 实施前必须冻结的语义：当前 `ReportProgressRequest` 只有位置、增量观看时长、完成标记和时间，无法可靠区分周期心跳与暂停、离开、切课、结束等强制检查点。T12G 应先以兼容方式定义事件种类/持久性结果，再让普通心跳写 Redis、强制检查点形成 MySQL 可恢复事实；读取需合并两层最新值并保持位置/完成单调。不能根据请求间隔猜类型，不能在 Redis 故障时返回虚假成功，也不能同时引入 Redis Stream 与 RabbitMQ 两套生产落库链路。
+- 范围与验证边界：T12G 只修改 Learning 进度契约/实现、必要的播放器上报标记、Redis/可靠落库配置与测试，不重做页面、不缓存作答/成绩/ARTICLE 完成事实、不使用 Redis 分布式锁替代 MySQL 事务和唯一约束。实现验收必须覆盖多实例并发、乱序/重复、Redis 重启或不可用、消费者重试/DLQ 或待恢复记录、强制检查点、读合并、最终落库、积压恢复和精确测试数据/Key/消息清理。
+- 本次数据与代码：总控只执行 GitHub 合并、Git 同步/分支清理、只读代码/配置审计和上述文档状态更新；没有修改 OpenAPI、Java、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg，没有创建、修改或清理 Schema、表、Seed、Key、消息、对象或伪数据。
+
+## 2026-09-05 T12G 拆分规划与 T12G.1 分支准备
+
+- 拆分结论：经产品和可靠性规则确认，原 T12G 拆为顺序实施的 T12G.1“进度缓冲、强制检查点与可靠落库后端契约”和 T12G.2“播放进度同步前端”。此前前置审计中仍待选择的 MQ/Stream、消费者 DLQ 和单任务前后端范围由本节取代：T12G.1 只采用 Redis Hash＋dirty ZSet＋Lua 与 Learning 内部 Worker，不使用 RabbitMQ、Redis Stream 或 DLQ；T12G.2 必须等待其合并。
+- 契约冻结：T12G.1 目标为 OpenAPI 0.20.0、Learning V13 和重新生成的客户端。新增可选 `eventType=HEARTBEAT|PAUSE|LESSON_SWITCH|LEAVE|ENDED`；缺失字段的旧客户端继续同步写 MySQL，不能按间隔猜类型。HEARTBEAT 成功缓冲返回 `BUFFERED`，四类强制检查点直写 MySQL 返回 `PERSISTED`，学生读降级可标记 `PERSISTED_ONLY`；只有 ENDED 能请求完成。
+- 存储与故障冻结：每个学习者/课程/课时只合并最新普通心跳，Worker 约 5 秒批量 UPSERT；MySQL 是聚合、完成和教师/报表的事实源，不保存逐心跳历史。多实例以租约/版本领取，提交成功后只清理未变化 dirty；MySQL 故障时保留并退避，积压超过阈值后普通心跳返回 503。Redis 故障时普通心跳同样 503，强制检查点仍直接尝试 MySQL，不返回虚假成功，不用 Redis 锁替代事务/唯一约束。
+- 前端冻结：T12G.2 在既有播放器最多每 5 秒发送 HEARTBEAT，并对暂停、切课、主动退出、结束发送强制检查点。普通失败只在页面内存合并观看秒数并有限重试；强制检查点最多等待约 3 秒，失败后允许重试或明确仍然离开。刷新/关闭/崩溃只做 keepalive/beacon 尽力提交，不承诺必达，不使用 localStorage/IndexedDB 保存未提交进度，也不无限重试。
+- 并发、指标和容量：允许多设备，最远位置/完成单调并按服务端时间窗口限制观看秒数叠加。Micrometer/Actuator 覆盖心跳、强制检查点、dirty 年龄/数量、批次/冲突、Redis/MySQL 降级和 Worker 健康且不记录敏感值。容量门槛固定为 1,000 模拟学习者、约 200 心跳请求/秒、至少 10 分钟、普通心跳 p95 小于 200ms、正常最老未落库约 5 秒以内；只压进度接口。
+- 演示数据边界：T12G.2 使用本地“线性代数”第 2 课“行列式定义”，但必须经正常 Course API 解析稳定 ID 并核对已发布、视频 READY 和访问事实，不能只按标题或临时替换。一个真实浏览器播放既有视频，负载测试不拉取视频；不上传、复制、转码或删除 OSS 对象。临时进度、Redis Key 和租约按 run ID 精确清理并恢复验收前进度；目标不明确属于本地开发数据时停止。
+- 分支与数据：原本地未开发分支 `codex/t12g-progress-buffer` 已重命名为 `codex/t12g1-progress-buffer-contract`，仍基于最新 `main` 且没有远端同名分支。本次只修改规划、页面规格、验收和环境文档，不修改 OpenAPI、Java、Vue、Flyway、生成客户端或运行配置，不连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，不创建、修改或清理 Schema、表、Seed、进度、Key、消息、对象或伪数据。
+
+## 2026-09-05 T12G.1 进度缓冲、强制检查点与可靠落库后端实现
+
+- 契约与边界：OpenAPI 从 0.19.1 向前演进到 0.20.0，`eventType` 保持可选以兼容旧客户端；缺失字段同步写 MySQL，显式 `HEARTBEAT` 返回 `BUFFERED`，`PAUSE`/`LESSON_SWITCH`/`LEAVE`/`ENDED` 返回 `PERSISTED`，只有 `ENDED` 可设置完成。`LessonProgress.persistenceStatus` 支持 `PERSISTED_ONLY` 读降级。未修改页面路由、播放器、题目/成绩/ARTICLE 事实或教师 MySQL 只读投影。
+- 后端实现：Learning V13 新增 `lesson_progress.buffer_version` 和检查点 `lesson_progress_event.event_type`；Redis 使用 Hash＋dirty ZSet＋Lua 原子合并，不使用 Redis Stream/RabbitMQ/DLQ。内部 Worker 以 Hash 租约领取、按版本幂等 UPSERT，MySQL 失败保留 dirty 并延后；成功且版本未变化才清理 Hash。Redis 故障时普通心跳返回 503，强制检查点仍直接尝试 MySQL，不返回虚假成功。
+- 自动化结果：`learning-service` 编译通过；全量 Learning 测试 64 项通过、6 项真实环境测试按条件跳过；`LearningAssessmentIntegrationTest` 16/16 通过，覆盖 V13 H2 迁移、旧兼容路径、显式强制检查点、`ENDED` 完成门禁和 Redis 未配置时 HEARTBEAT 503；`pnpm.cmd --dir web-apps run generate:api`、workspace typecheck（8 个 workspace）和 Vitest 35 文件/228 项通过。`check:api` 在未提交工作树上按脚本设计检测到本次预期生成文件 diff，不能报告为 clean。真实 Redis Lua/多实例租约、MySQL 故障恢复、积压保护实机、1,000 学习者/约 200 请求每秒/10 分钟容量门槛和 T12G.2 浏览器流程本轮未执行。
+- 配置与数据：新增五项非敏感进度缓冲配置并同步 `.env.example`、local/test 配置和本地环境文档；没有连接或修改 `edu_platform_learning_dev`、Redis DB 4、RabbitMQ、OSS/FFmpeg，没有创建或清理真实 Schema、表、Seed、进度、Key、租约、消息或对象。自动化仅使用隔离 H2 内存库，随测试销毁。
+- 可读性与交付：新增 Redis/Lua/Worker/故障边界、V13 SQL、测试和配置均有中文说明；生成 `schema.d.ts` 未手改。独立交付说明见 [`docs/delivery/T12G.1-progress-buffer-contract.md`](../delivery/T12G.1-progress-buffer-contract.md)。当前分支为 `codex/t12g1-progress-buffer-contract`，尚未创建提交或 PR。
+
+## 2026-09-05 T12G.1 收尾真实验收与容量结果
+
+- 真实环境：通过 `scripts/Invoke-T12G1RealAcceptance.ps1`，脚本经 `scripts/Invoke-WithLocalEnvironment.ps1` 注入本地 DPAPI 凭据，并校验 MySQL `edu_platform_learning_dev`、Learning Redis DB 4；V13 已应用且 Flyway 校验通过。1/1 用例通过，覆盖 Redis Hash、dirty ZSet、Lua 原子合并、双实例租约竞争、旧 Worker 版本 ACK 保护、Worker 实际 MySQL 落库、Redis/MySQL 暂时不可用和恢复、有限退避、强制检查点、503 积压保护、`PERSISTED_ONLY` 读降级及精确清理。
+- 容量环境：通过 `scripts/Invoke-T12G1CapacityAcceptance.ps1`，持续 600 秒、1,000 个模拟学习者、120,000 个 HEARTBEAT（约 200 req/s），只请求进度接口，不请求 OSS/HLS。成功 120,000、失败 0；p50 1.75ms、p95 4.17ms、p99 83.13ms；最老 dirty 5.682 秒，最终 dirty 0，满足 p95 <200ms 和约 5 秒落库年龄目标。
+- 容量缺陷闭环：首轮真实容量暴露 course-service 同步放大和单线程/小批次 Worker 瓶颈；T12G.1 内已加入 1 秒课程事实短缓存、1000 批次及 16 路受控 Worker 并行，修复后重新执行完整 10 分钟验收通过。独立清理测试输出 `learners=1000 mysqlRows=0 redisKeys=0`。
+- 数据边界：只确认/使用本任务所属 Learning V13 和本轮随机 UUID 进度记录；没有创建其他领域表、Seed、OSS 对象或 MQ 消息。真实用例结束后 MySQL `lesson_progress_event`/`lesson_progress`、Redis Hash、dirty 成员和租约均按 run ID 精确清理为零。T12G.2 浏览器播放器验收未执行。
+- 当前实现仍未引入 RabbitMQ、Redis Stream、DLQ 或 Vue 业务改动；需在实现提交后补跑 `pnpm.cmd --dir web-apps run check:api` 并记录 CI/PR 结果。
+- 实现提交：`a48a334`，分支 `codex/t12g1-progress-buffer-contract` 已推送；Ready PR 为 [#45](https://github.com/chengchen-ccnu/ccnu-edulion/pull/45)，`check:api` 在提交后通过。PR 最新 CI 全绿：两组 Frontend / Node 20.19、Java / JDK 17、OpenAPI generated source、Python / 3.9 均通过；未合并。

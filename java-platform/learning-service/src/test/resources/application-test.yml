@@ -14,6 +14,12 @@ spring:
 
 platform:
   learning:
+    progress-buffer:
+      enabled: false
+      worker-delay: 1h
+      batch-size: 10
+      lease-duration: 15s
+      backlog-threshold: 10000
     # 集成测试显式调用单批结算，避免后台调度与断言争抢同一份固定测试数据。
     assessment-settlement-poll-delay: 1h
     media:
@@ -26,6 +32,7 @@ platform:
     course:
       base-url: http://127.0.0.1:8082
       request-timeout: 1s
+      fact-cache-ttl: 0s
     import:
       max-source-bytes: 1048576
       retention: 1h

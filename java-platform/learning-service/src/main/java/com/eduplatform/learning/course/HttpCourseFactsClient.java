@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -17,17 +19,45 @@ import org.springframework.web.client.RestClientResponseException;
 /** 通过 course-service JSON API 取得发布/owner 事实；超时与 5xx 统一为可安全重试的 503。 */
 @Component
 public class HttpCourseFactsClient implements CourseFactsClient {
+    private static final int MAX_CACHED_COURSES = 256;
     private final RestClient course;
+    private final Duration factCacheTtl;
+    private final ConcurrentHashMap<String, CachedFact> publishedFacts = new ConcurrentHashMap<>();
+    private final Object cacheLock = new Object();
 
     public HttpCourseFactsClient(LearningProperties properties) {
         HttpClient client = HttpClient.newBuilder().connectTimeout(properties.course().requestTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
         factory.setReadTimeout(properties.course().requestTimeout());
         this.course = RestClient.builder().baseUrl(properties.course().baseUrl()).requestFactory(factory).build();
+        this.factCacheTtl = properties.course().factCacheTtl();
     }
 
     @Override
     public CourseFact requirePublished(String courseId, String traceId) {
+        CachedFact cached = publishedFacts.get(courseId);
+        if (cached != null && cached.expiresAt().isAfter(java.time.Instant.now())) return cached.value();
+        if (!factCacheTtl.isZero() && !factCacheTtl.isNegative()) {
+            synchronized (cacheLock) {
+                cached = publishedFacts.get(courseId);
+                if (cached != null && cached.expiresAt().isAfter(java.time.Instant.now())) return cached.value();
+                CourseFact fact = fetchPublished(courseId, traceId);
+                if (publishedFacts.size() >= MAX_CACHED_COURSES) {
+                    java.time.Instant now = java.time.Instant.now();
+                    publishedFacts.entrySet().removeIf(entry -> !entry.getValue().expiresAt().isAfter(now));
+                    if (publishedFacts.size() >= MAX_CACHED_COURSES) {
+                        publishedFacts.keySet().stream().findFirst().ifPresent(publishedFacts::remove);
+                    }
+                }
+                publishedFacts.put(courseId, new CachedFact(fact,
+                        java.time.Instant.now().plus(factCacheTtl)));
+                return fact;
+            }
+        }
+        return fetchPublished(courseId, traceId);
+    }
+
+    private CourseFact fetchPublished(String courseId, String traceId) {
         try {
             Published response = course.get().uri("/api/v1/courses/{courseId}", courseId)
                     .header("X-Trace-Id", traceId).retrieve().body(Published.class);
@@ -89,4 +119,5 @@ public class HttpCourseFactsClient implements CourseFactsClient {
     private record Teacher(String id) {}
     private record Chapter(List<Lesson> lessons) {}
     private record Lesson(String id, String type) {}
+    private record CachedFact(CourseFact value, java.time.Instant expiresAt) {}
 }

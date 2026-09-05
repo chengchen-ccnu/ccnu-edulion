@@ -19,6 +19,14 @@ management:
 platform:
   learning:
     assessment-settlement-poll-delay: ${LEARNING_ASSESSMENT_SETTLEMENT_POLL_DELAY:2s}
+    progress-buffer:
+      # 默认构建不启用 Redis 缓冲；local profile 由 application-local.yml 显式开启并要求 Redis。
+      enabled: ${LEARNING_PROGRESS_BUFFER_ENABLED:false}
+      worker-delay: ${LEARNING_PROGRESS_BUFFER_WORKER_DELAY:5s}
+      batch-size: ${LEARNING_PROGRESS_BUFFER_BATCH_SIZE:1000}
+      worker-concurrency: ${LEARNING_PROGRESS_BUFFER_WORKER_CONCURRENCY:16}
+      lease-duration: ${LEARNING_PROGRESS_BUFFER_LEASE_DURATION:15s}
+      backlog-threshold: ${LEARNING_PROGRESS_BUFFER_BACKLOG_THRESHOLD:10000}
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${LEARNING_MEDIA_REQUEST_TIMEOUT:5s}
@@ -29,6 +37,8 @@ platform:
     course:
       base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
       request-timeout: ${LEARNING_COURSE_REQUEST_TIMEOUT:3s}
+      # 进度心跳只需短时复用已发布课程事实，减少高频请求对 course-service 的同步放大；发布变化最多滞后该 TTL。
+      fact-cache-ttl: ${LEARNING_COURSE_FACT_CACHE_TTL:1s}
     import:
       max-source-bytes: ${QUESTION_IMPORT_MAX_SOURCE_BYTES:104857600}
       retention: ${QUESTION_IMPORT_RETENTION:7d}

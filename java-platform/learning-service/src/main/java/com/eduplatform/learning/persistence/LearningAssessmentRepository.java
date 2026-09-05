@@ -23,6 +23,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
@@ -78,17 +79,32 @@ public class LearningAssessmentRepository {
     /** 先记录业务幂等键；主键冲突表示相同 clientEventId 已处理，调用方直接返回当前进度。 */
     public boolean insertProgressEvent(String eventId, String learnerId, String courseId, String lessonId,
             Instant occurredAt, long position, int watched, boolean completed, Instant now) {
+        return insertProgressEvent(eventId, learnerId, courseId, lessonId, occurredAt, position, watched, completed,
+                null, now);
+    }
+
+    /** 强制检查点保留稳定 clientEventId 幂等事实；普通 HEARTBEAT 不调用此方法。 */
+    public boolean insertProgressEvent(String eventId, String learnerId, String courseId, String lessonId,
+            Instant occurredAt, long position, int watched, boolean completed, LearningDtos.ProgressEventType eventType,
+            Instant now) {
         try {
-            jdbc.update("INSERT INTO lesson_progress_event(client_event_id,learner_id,course_id,lesson_id,occurred_at,position_seconds,watched_seconds,completed,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    eventId, learnerId, courseId, lessonId, ts(occurredAt), position, watched, completed, ts(now));
+            jdbc.update("INSERT INTO lesson_progress_event(client_event_id,learner_id,course_id,lesson_id,occurred_at,position_seconds,watched_seconds,completed,event_type,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    eventId, learnerId, courseId, lessonId, ts(occurredAt), position, watched, completed,
+                    eventType == null ? null : eventType.name(), ts(now));
             return true;
         } catch (DuplicateKeyException duplicate) {
             return false;
         }
     }
     public void ensureProgress(String id, String learnerId, String courseId, String lessonId, Instant eventAt, Instant now) {
-        jdbc.update("INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,position_seconds,watched_seconds,completed,last_event_at,revision,created_at,updated_at) VALUES(?,?,?,?,0,0,FALSE,?,0,?,?) ON DUPLICATE KEY UPDATE id=id",
+        jdbc.update("INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,position_seconds,watched_seconds,completed,last_event_at,revision,buffer_version,created_at,updated_at) VALUES(?,?,?,?,0,0,FALSE,?,0,0,?,?) ON DUPLICATE KEY UPDATE id=id",
                 id, learnerId, courseId, lessonId, ts(eventAt), ts(now), ts(now));
+    }
+
+    /** 非加锁读取 MySQL 基线，供 Redis Lua 在首次心跳时避免把已有观看时长重置为零。 */
+    public Optional<ProgressRow> findProgress(String learnerId, String courseId, String lessonId) {
+        return jdbc.query("SELECT * FROM lesson_progress WHERE learner_id=? AND course_id=? AND lesson_id=?",
+                this::progress, learnerId, courseId, lessonId).stream().findFirst();
     }
     public ProgressRow lockProgress(String learnerId, String courseId, String lessonId) {
         return jdbc.query("SELECT * FROM lesson_progress WHERE learner_id=? AND course_id=? AND lesson_id=? FOR UPDATE",
@@ -107,6 +123,28 @@ public class LearningAssessmentRepository {
         Instant mergedEventAt = eventAt.isAfter(current.lastEventAt()) ? eventAt : current.lastEventAt();
         jdbc.update("UPDATE lesson_progress SET position_seconds=?,watched_seconds=?,completed=?,last_event_at=?,revision=revision+1,updated_at=? WHERE id=?",
                 mergedPosition, mergedWatched, mergedCompleted, ts(mergedEventAt), ts(now), current.id());
+    }
+
+    /**
+     * 以 Redis 快照幂等更新 MySQL 聚合。快照中的 watchedSeconds 已是累计值，因此这里取最大值而不是再次相加；
+     * buffer_version 防止 MySQL 已提交但 Redis ACK 失败后的重试重复增加 revision。
+     */
+    @Transactional
+    public void applyBufferedProgress(String learnerId, String courseId, String lessonId, long position,
+            long watched, boolean completed, Instant eventAt, long bufferVersion, Instant now) {
+        ensureProgress(java.util.UUID.randomUUID().toString(), learnerId, courseId, lessonId, eventAt, now);
+        ProgressRow current = lockProgress(learnerId, courseId, lessonId);
+        if (bufferVersion <= current.bufferVersion()) return;
+        long mergedPosition = Math.max(current.positionSeconds(), position);
+        long mergedWatched = Math.max(current.watchedSeconds(), watched);
+        boolean mergedCompleted = current.completed() || completed;
+        Instant mergedEventAt = eventAt.isAfter(current.lastEventAt()) ? eventAt : current.lastEventAt();
+        boolean changed = current.revision() == 0 || mergedPosition != current.positionSeconds()
+                || mergedWatched != current.watchedSeconds()
+                || mergedCompleted != current.completed() || !mergedEventAt.equals(current.lastEventAt());
+        jdbc.update("UPDATE lesson_progress SET position_seconds=?,watched_seconds=?,completed=?,last_event_at=?,buffer_version=?,revision=revision+?,updated_at=? WHERE id=?",
+                mergedPosition, mergedWatched, mergedCompleted, ts(mergedEventAt), bufferVersion,
+                changed ? 1 : 0, ts(now), current.id());
     }
     public List<ProgressRow> progress(String learnerId, String courseId) {
         return jdbc.query("SELECT * FROM lesson_progress WHERE learner_id=? AND course_id=? ORDER BY updated_at,id",
@@ -526,7 +564,7 @@ public class LearningAssessmentRepository {
     }
 
     private EnrollmentRow enrollment(ResultSet rs, int row) throws SQLException { return new EnrollmentRow(rs.getString("id"), rs.getString("learner_id"), rs.getString("course_id"), rs.getString("course_version_id"), EnrollmentStatus.valueOf(rs.getString("status")), instant(rs,"enrolled_at"), instantNullable(rs,"canceled_at"), instant(rs,"created_at"), instant(rs,"updated_at")); }
-    private ProgressRow progress(ResultSet rs, int row) throws SQLException { return new ProgressRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getLong("position_seconds"),rs.getLong("watched_seconds"),rs.getBoolean("completed"),instant(rs,"last_event_at"),rs.getLong("revision"),instant(rs,"created_at"),instant(rs,"updated_at")); }
+    private ProgressRow progress(ResultSet rs, int row) throws SQLException { return new ProgressRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getLong("position_seconds"),rs.getLong("watched_seconds"),rs.getBoolean("completed"),instant(rs,"last_event_at"),rs.getLong("revision"),rs.getLong("buffer_version"),instant(rs,"created_at"),instant(rs,"updated_at")); }
     private NoteRow note(ResultSet rs, int row) throws SQLException { long p=rs.getLong("position_seconds"); return new NoteRow(rs.getString("id"),rs.getString("learner_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("content"),rs.wasNull()?null:p,rs.getLong("revision"),instant(rs,"created_at"),instant(rs,"updated_at")); }
     private IdempotencyRow idempotency(ResultSet rs,int row)throws SQLException{return new IdempotencyRow(rs.getString("owner_id"),rs.getString("client_request_id"),rs.getString("request_fingerprint"),rs.getString("resource_type"),rs.getString("resource_id"),instant(rs,"created_at"));}
     private AssessmentRow mapAssessment(ResultSet rs,int row)throws SQLException{return new AssessmentRow(rs.getString("id"),rs.getString("owner_teacher_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("title"),rs.getString("description"),AssessmentType.valueOf(rs.getString("assessment_type")),AssessmentStatus.valueOf(rs.getString("status")),GradePublicationPolicy.valueOf(rs.getString("grade_publication_policy")),AnswerPublicationPolicy.valueOf(rs.getString("answer_release_policy")),AssessmentCloseStatus.valueOf(rs.getString("close_status")),AssessmentSettlementStatus.valueOf(rs.getString("settlement_status")),instantNullable(rs,"closed_at"),rs.getInt("close_affected_attempt_count"),rs.getInt("settlement_attempts"),instantNullable(rs,"settlement_next_attempt_at"),rs.getString("settlement_last_error"),ResultPublicationStatus.valueOf(rs.getString("grade_publication_status")),ResultPublicationStatus.valueOf(rs.getString("answer_publication_status")),instantNullable(rs,"grade_published_at"),instantNullable(rs,"answer_published_at"),instantNullable(rs,"opens_at"),instantNullable(rs,"closes_at"),(Integer)rs.getObject("time_limit_seconds"),rs.getLong("revision"),instantNullable(rs,"published_at"),instantNullable(rs,"archived_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
@@ -550,7 +588,7 @@ public class LearningAssessmentRepository {
     private static Instant instantNullable(ResultSet rs,String name)throws SQLException{Timestamp value=rs.getTimestamp(name);return value==null?null:value.toInstant();}
 
     public record EnrollmentRow(String id,String learnerId,String courseId,String courseVersionId,EnrollmentStatus status,Instant enrolledAt,Instant canceledAt,Instant createdAt,Instant updatedAt){}
-    public record ProgressRow(String id,String learnerId,String courseId,String lessonId,long positionSeconds,long watchedSeconds,boolean completed,Instant lastEventAt,long revision,Instant createdAt,Instant updatedAt){}
+    public record ProgressRow(String id,String learnerId,String courseId,String lessonId,long positionSeconds,long watchedSeconds,boolean completed,Instant lastEventAt,long revision,long bufferVersion,Instant createdAt,Instant updatedAt){}
     public record ArticleCompletionRow(String id, String learnerId, String courseId, String lessonId,
             Instant completedAt, long revision) {
         public ArticleCompletionRow(String id, String learnerId, String courseId, String lessonId, Instant completedAt) {

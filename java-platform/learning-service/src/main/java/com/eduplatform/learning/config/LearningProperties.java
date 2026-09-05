@@ -16,7 +16,7 @@ public record LearningProperties(Media media, Course course, @Name("import") Imp
     /** 学习域不持有 OSS 参数；只用短时服务令牌向 media-service 换取单资产授权。 */
     public record Media(String baseUrl, Duration requestTimeout, String authorizationIssuer,
             String authorizationAudience, Duration authorizationTokenTtl, String authorizationSecret) {}
-    public record Course(String baseUrl, Duration requestTimeout) {}
+    public record Course(String baseUrl, Duration requestTimeout, Duration factCacheTtl) {}
     public record ImportSettings(long maxSourceBytes, Duration retention, boolean messagingEnabled,
             Duration outboxPollDelay, Duration confirmTimeout, int maxPublishAttempts) {}
 }

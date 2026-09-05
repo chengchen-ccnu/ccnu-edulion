@@ -38,6 +38,10 @@ public final class LearningDtos {
     public enum LearnerAssessmentState { NOT_OPEN, AVAILABLE, IN_PROGRESS, SUBMITTED, PARTIALLY_GRADED, GRADED, CLOSED }
     public enum WrongQuestionMasteryStatus { LEARNING, MASTERED }
     public enum MediaDisposition { INLINE, ATTACHMENT }
+    /** 播放器明确声明本次上报是普通心跳还是必须形成 MySQL 恢复事实的检查点。 */
+    public enum ProgressEventType { HEARTBEAT, PAUSE, LESSON_SWITCH, LEAVE, ENDED }
+    /** 返回值说明当前进度来自缓冲层、MySQL，还是 Redis 不可用时的 MySQL 降级读。 */
+    public enum ProgressPersistenceStatus { BUFFERED, PERSISTED, PERSISTED_ONLY }
 
     public record CreateEnrollmentRequest(@NotNull UUID courseId) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -47,9 +51,23 @@ public final class LearningDtos {
 
     public record ReportProgressRequest(@NotNull UUID clientEventId, @NotNull Instant occurredAt,
             @Min(0) @Max(28800) long positionSeconds, @Min(0) @Max(300) int watchedSeconds,
-            boolean completed) {}
+            boolean completed, ProgressEventType eventType) {
+        /** 兼容 T11/T12A 旧调用方：缺少 eventType 时仍同步写 MySQL，不按请求间隔猜事件类型。 */
+        public ReportProgressRequest(UUID clientEventId, Instant occurredAt, long positionSeconds,
+                int watchedSeconds, boolean completed) {
+            this(clientEventId, occurredAt, positionSeconds, watchedSeconds, completed, null);
+        }
+    }
     public record LessonProgress(String courseId, String lessonId, long positionSeconds, long watchedSeconds,
-            boolean completed, Instant lastEventAt, long revision, boolean replayed) {}
+            boolean completed, Instant lastEventAt, long revision, boolean replayed,
+            ProgressPersistenceStatus persistenceStatus) {
+        /** 兼容既有 Java 测试/调用点；新 HTTP 响应明确返回持久化结果。 */
+        public LessonProgress(String courseId, String lessonId, long positionSeconds, long watchedSeconds,
+                boolean completed, Instant lastEventAt, long revision, boolean replayed) {
+            this(courseId, lessonId, positionSeconds, watchedSeconds, completed, lastEventAt, revision,
+                    replayed, ProgressPersistenceStatus.PERSISTED);
+        }
+    }
     public record CompleteArticleLessonRequest(@NotNull UUID clientRequestId) {}
     /** ARTICLE 的独立 0→100 单调完成事实，不复用视频位置或观看时长字段。 */
     public record ArticleLessonCompletion(String courseId, String lessonId, int completionPercent,
