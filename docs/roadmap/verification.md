@@ -710,3 +710,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据前置：通过正在运行的正常公共 Course API 只读查询，唯一命中课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”，当前发布版本 `v4`、访问类型 PUBLIC；第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a` 为 VIDEO“第 2 课 行列式的定义”。T12G.2 启动真实学生会话后仍须通过受保护内容接口复核视频 READY、报名/访问和播放授权；若失败应停止验收，不得替换课程或操作 OSS。
 - T12G.2 结论：Git、契约、生成客户端、固定页面/播放器落点和真实课程目录前置满足，已从最新 `main` 创建 `codex/t12g2-progress-sync-web`。任务只允许显式五类事件、最多 5 秒心跳、页面内存合并/有限重试、强制检查点约 3 秒等待及离页确认、keepalive/beacon 尽力提交和三态反馈；不得修改 OpenAPI/Java/Flyway、复制学习页/播放器、持久化未保存进度或把标签关闭描述为可靠送达。
 - 数据与代码：本次总控只执行 GitHub 合并、Git 同步、分支清理、正常 Course API 只读查询和状态/前置文档更新；没有修改 Vue、TypeScript、OpenAPI、Java、Flyway、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，没有创建、修改或清理 Schema、表、Seed、报名、进度、Key、租约、消息、对象或伪数据。
+
+## 2026-09-05 T12G.2 播放进度同步前端实现
+
+- 范围与实现：分支 `codex/t12g2-progress-sync-web` 基于 `HEAD` 包含的 `2e51ade` 与 `main@aebc942` 实现。只修改既有 `HlsVideoPlayer`、`playback-progress`、学生端 `progress-sync`、`CourseLearningPage`、学习 API keepalive 适配及前端测试/交付文档；未修改 Java、Flyway、OpenAPI、事件 Schema、生成客户端、路由职责或 ARTICLE 独立完成命令。
+- 事件语义：共享播放器默认按真实墙钟每 5 秒采样，暂停和自然结束分别产生中立 `PAUSE`/`ENDED` 原因；学生页把播放器样本映射为 `HEARTBEAT`、`PAUSE`、`ENDED`，页面路由守卫把切课映射为 `LESSON_SWITCH`、主动退出映射为 `LEAVE`。只有 `ENDED` 发送 `completed=true`，拖动不增加 watchedSeconds，倍速仍按墙钟累计。
+- 可靠性与反馈：控制器只保留一个活动请求和一个合并快照，失败 watchedSeconds/最远位置/时间在内存中合并；网络、超时、429、5xx 最多三次有限重试，重试复用相同 clientEventId/请求体，逻辑保存成功后才生成新 ID。强制检查点最多等待约 3 秒，失败显示“进度尚未同步”并提供“重试/仍然离开”；`BUFFERED` 显示“正在同步”，`PERSISTED` 显示“已保存”，读取 `PERSISTED_ONLY` 显示“当前显示最近已保存进度”。
+- 离页边界：SPA 路由由 `onBeforeRouteLeave` 统一拦截；`pagehide` 通过认证头和 `fetch keepalive` 一次性尽力发送 LEAVE，`beforeunload` 仅在确有未保存内存快照时启用。没有 localStorage、sessionStorage、IndexedDB、Cookie 进度写入，也没有卸载后的无限重试。
+- 自动化结果：`pnpm.cmd --dir web-apps run check:api` 通过且生成客户端无漂移；`pnpm.cmd --dir web-apps run typecheck` 通过（8 workspace）；`pnpm.cmd --dir web-apps run test` 通过（36 个测试文件、236 项）；`pnpm.cmd --dir web-apps run build` 通过（三端构建，保留既有大 chunk 警告）；专项覆盖 5 秒采样、五类事件、完成门禁、失败合并、有限重试/稳定 ID、检查点超时、keepalive 认证头、dispose 清理和浏览器存储边界。
+- 真实浏览器门禁：通过正常 Course API 和课程详情页唯一核对课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057`“线性代数”、发布版本 `v4`、第 2 课 `f13f712f-b7d8-49c1-804f-58bded4e1c5a`“第 2 课 行列式的定义”、VIDEO。in-app 浏览器当前为匿名会话并停留在统一登录页，无法确认受保护内容的 READY、报名/访问事实和播放授权；按规则停止，没有替换课程、发送真实进度或触碰 OSS/媒体数据。因此真实五类事件、Redis 故障恢复、刷新恢复和真实清理仍标为待补验。
+- 数据边界：本轮未连接或修改 `edu_platform_learning_dev`、Redis DB 4、Course/Media/OSS、RabbitMQ；未创建数据库、表、伪数据、进度事件、Redis Key、租约或 OSS 对象，故无本轮清理项。独立交付说明见 [`docs/delivery/T12G.2-progress-sync-web.md`](../delivery/T12G.2-progress-sync-web.md)。

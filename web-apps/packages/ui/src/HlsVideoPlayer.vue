@@ -2,7 +2,7 @@
 /**
  * 短期授权 HLS 播放器；输入是一次性授权获取函数和可选业务错误映射，输出是原生 video 播放体验。
  * 组件优先使用浏览器原生 HLS，其他支持 MSE 的浏览器使用 hls.js；授权 URL、请求头仅保存在内存。
- * 共享组件不判断教师或学生权限；403 等角色语义由调用页面传入，并只向外发出领域中立播放样本。
+ * 共享组件不判断教师或学生权限；403 等角色语义由调用页面传入，并只向外发出带生命周期原因的领域中立播放样本。
  * 切换资源或卸载时会中止授权请求、清理刷新定时器、销毁播放器并移除 video 的临时地址。
  */
 import type { CourseMediaAccessGrant, CourseMediaPlaybackGrant } from "@edu/api-client";
@@ -221,7 +221,13 @@ function seekTo(positionSeconds: number) {
   emit("positionChange", video.value.currentTime);
 }
 
-defineExpose({ seekTo });
+/** 离页前同步抓取尚未到下一个采样周期的墙钟观看时长；调用方随后决定发送哪类业务事件。 */
+function flushProgress() {
+  progressTracker.flush();
+  if (video.value && !video.value.paused && !video.value.ended) progressTracker.play(video.value.currentTime);
+}
+
+defineExpose({ seekTo, flushProgress });
 
 function clearRuntime(removeSource: boolean) {
   clearGrantRequest();

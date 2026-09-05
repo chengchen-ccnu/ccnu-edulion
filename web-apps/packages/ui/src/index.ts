@@ -10,6 +10,6 @@ export type { AssessmentContentMedia, AssessmentMediaGrant, AssessmentMediaResol
 export { renderAssessmentContent } from "./render-assessment-content";
 export { playbackErrorMessage } from "./playback-runtime";
 export { createPlaybackProgressTracker } from "./playback-progress";
-export type { PlaybackProgressSample, PlaybackProgressTracker } from "./playback-progress";
+export type { PlaybackProgressKind, PlaybackProgressSample, PlaybackProgressTracker } from "./playback-progress";
 export { buildAccountTools } from "./shell-model";
 export type { AccountToolInput, ShellAccountTool, ShellNavigationItem, ShellNavigationState } from "./shell-model";
