@@ -34,5 +34,12 @@ describe("T12G.2 playback progress boundaries", () => {
     expect(learning).toContain("当前显示最近已保存进度");
     expect(learning).toContain("进度尚未保存");
     expect(learning).toContain("仍然离开");
+    expect(learning).toContain('to.name === "course-learning"');
+  });
+
+  it("keeps stable 422 diagnostics visible for progress validation failures", () => {
+    expect(learning).toContain("Object.entries(error.fieldErrors)");
+    expect(learning).toContain("error.code");
+    expect(learning).toContain("error.message || \"提交内容不符合要求\"");
   });
 });

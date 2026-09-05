@@ -98,7 +98,10 @@ onBeforeRouteLeave(async to => {
   }
   if (pendingNavigation.value) return false;
   if (!progressSync || !learningFactsAllowed.value || content.value?.type !== "VIDEO") return true;
-  const eventType = to.path.startsWith(`/learn/${String(route.params.courseId)}/`) ? "LESSON_SWITCH" : "LEAVE";
+  // 用稳定路由名和课程参数识别同一学习空间，避免基路径或编码差异把切课误记为离页。
+  const sameCourseLearningSpace = to.name === "course-learning"
+    && String(to.params.courseId) === String(route.params.courseId);
+  const eventType = sameCourseLearningSpace ? "LESSON_SWITCH" : "LEAVE";
   const label = eventType === "LESSON_SWITCH" ? "切换课时" : "退出学习";
   if (navigationBusy.value) return false;
   navigationBusy.value = true;
@@ -524,7 +527,13 @@ function learningErrorMessage(error: unknown, fallback: string): string {
   if (error.status === 403) return "当前账号没有访问该学习事实的权限，或尚未报名。";
   if (error.status === 404) return "课程、课时或学习记录不存在、已下架或不可见。";
   if (error.status === 409) return "学习状态已被其他请求更新，请刷新后重试。";
-  if (error.status === 422) return "提交内容不符合要求，请修正后重试。";
+  if (error.status === 422) {
+    const fieldErrors = Object.entries(error.fieldErrors)
+      .map(([field, reason]) => `${field}: ${reason}`)
+      .join("；");
+    const detail = fieldErrors ? `（${fieldErrors}）` : "";
+    return `${error.message || "提交内容不符合要求"}${detail} [${error.code}]`;
+  }
   if (error.status === 429) return "请求过于频繁，有限重试仍未成功，请稍后手动重试。";
   if (error.status === 503) return "课程或学习服务暂时不可用，请稍后重试。";
   return error.message || fallback;
