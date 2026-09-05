@@ -675,3 +675,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 实施前必须冻结的语义：当前 `ReportProgressRequest` 只有位置、增量观看时长、完成标记和时间，无法可靠区分周期心跳与暂停、离开、切课、结束等强制检查点。T12G 应先以兼容方式定义事件种类/持久性结果，再让普通心跳写 Redis、强制检查点形成 MySQL 可恢复事实；读取需合并两层最新值并保持位置/完成单调。不能根据请求间隔猜类型，不能在 Redis 故障时返回虚假成功，也不能同时引入 Redis Stream 与 RabbitMQ 两套生产落库链路。
 - 范围与验证边界：T12G 只修改 Learning 进度契约/实现、必要的播放器上报标记、Redis/可靠落库配置与测试，不重做页面、不缓存作答/成绩/ARTICLE 完成事实、不使用 Redis 分布式锁替代 MySQL 事务和唯一约束。实现验收必须覆盖多实例并发、乱序/重复、Redis 重启或不可用、消费者重试/DLQ 或待恢复记录、强制检查点、读合并、最终落库、积压恢复和精确测试数据/Key/消息清理。
 - 本次数据与代码：总控只执行 GitHub 合并、Git 同步/分支清理、只读代码/配置审计和上述文档状态更新；没有修改 OpenAPI、Java、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、FFmpeg，没有创建、修改或清理 Schema、表、Seed、Key、消息、对象或伪数据。
+
+## 2026-09-05 T12G 拆分规划与 T12G.1 分支准备
+
+- 拆分结论：经产品和可靠性规则确认，原 T12G 拆为顺序实施的 T12G.1“进度缓冲、强制检查点与可靠落库后端契约”和 T12G.2“播放进度同步前端”。此前前置审计中仍待选择的 MQ/Stream、消费者 DLQ 和单任务前后端范围由本节取代：T12G.1 只采用 Redis Hash＋dirty ZSet＋Lua 与 Learning 内部 Worker，不使用 RabbitMQ、Redis Stream 或 DLQ；T12G.2 必须等待其合并。
+- 契约冻结：T12G.1 目标为 OpenAPI 0.20.0、Learning V13 和重新生成的客户端。新增可选 `eventType=HEARTBEAT|PAUSE|LESSON_SWITCH|LEAVE|ENDED`；缺失字段的旧客户端继续同步写 MySQL，不能按间隔猜类型。HEARTBEAT 成功缓冲返回 `BUFFERED`，四类强制检查点直写 MySQL 返回 `PERSISTED`，学生读降级可标记 `PERSISTED_ONLY`；只有 ENDED 能请求完成。
+- 存储与故障冻结：每个学习者/课程/课时只合并最新普通心跳，Worker 约 5 秒批量 UPSERT；MySQL 是聚合、完成和教师/报表的事实源，不保存逐心跳历史。多实例以租约/版本领取，提交成功后只清理未变化 dirty；MySQL 故障时保留并退避，积压超过阈值后普通心跳返回 503。Redis 故障时普通心跳同样 503，强制检查点仍直接尝试 MySQL，不返回虚假成功，不用 Redis 锁替代事务/唯一约束。
+- 前端冻结：T12G.2 在既有播放器最多每 5 秒发送 HEARTBEAT，并对暂停、切课、主动退出、结束发送强制检查点。普通失败只在页面内存合并观看秒数并有限重试；强制检查点最多等待约 3 秒，失败后允许重试或明确仍然离开。刷新/关闭/崩溃只做 keepalive/beacon 尽力提交，不承诺必达，不使用 localStorage/IndexedDB 保存未提交进度，也不无限重试。
+- 并发、指标和容量：允许多设备，最远位置/完成单调并按服务端时间窗口限制观看秒数叠加。Micrometer/Actuator 覆盖心跳、强制检查点、dirty 年龄/数量、批次/冲突、Redis/MySQL 降级和 Worker 健康且不记录敏感值。容量门槛固定为 1,000 模拟学习者、约 200 心跳请求/秒、至少 10 分钟、普通心跳 p95 小于 200ms、正常最老未落库约 5 秒以内；只压进度接口。
+- 演示数据边界：T12G.2 使用本地“线性代数”第 2 课“行列式定义”，但必须经正常 Course API 解析稳定 ID 并核对已发布、视频 READY 和访问事实，不能只按标题或临时替换。一个真实浏览器播放既有视频，负载测试不拉取视频；不上传、复制、转码或删除 OSS 对象。临时进度、Redis Key 和租约按 run ID 精确清理并恢复验收前进度；目标不明确属于本地开发数据时停止。
+- 分支与数据：原本地未开发分支 `codex/t12g-progress-buffer` 已重命名为 `codex/t12g1-progress-buffer-contract`，仍基于最新 `main` 且没有远端同名分支。本次只修改规划、页面规格、验收和环境文档，不修改 OpenAPI、Java、Vue、Flyway、生成客户端或运行配置，不连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，不创建、修改或清理 Schema、表、Seed、进度、Key、消息、对象或伪数据。

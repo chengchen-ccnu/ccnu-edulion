@@ -507,6 +507,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-Knowled
 
 V7 是导入完成后的平台启用策略迁移：只把所有来源图谱的 `PRIMARY/JUNIOR` 节点设为启用，并确保 `SENIOR` 禁用；不写 `parent_id`/`taxonomy_parent_id`，也不新增、删除或重排先修关系。教师题目接口由 OpenAPI 0.13.0 支持小学一至六年级和初中七至九年级，高中仍不进入题目写契约；同版本增加 SYSTEM/TEACHER 来源和公共题只读访问。专用开发库可通过上文 MySQL 验收命令幂等应用并验证该策略。
 
+## T12G.1 进度缓冲与可靠落库环境
+
+T12G.1 复用现有 MySQL 和 Redis，不新增 RabbitMQ 队列、Redis Stream、独立 Worker 微服务或其他基础软件。`learning-service` 在 local profile 中继续使用用途明确的 `edu_platform_learning_dev` 和 `LEARNING_REDIS_DATABASE=4`；OpenAPI 计划向前演进到 0.20.0，Learning Flyway 只能从现有版本正常向前增加 V13，不得修改历史迁移或创建数据库。
+
+本地单机 Redis 可以继续用于功能验收，但真实可靠性验收必须确认：
+
+- Redis 服务启用持久化；生产建议 AOF `everysec`，不可随意淘汰的进度缓冲使用 `noeviction`，不能与可淘汰页面缓存共用会驱逐数据的资源池；
+- 普通 `HEARTBEAT` 使用 Hash＋dirty ZSet＋Lua 原子合并，Learning 内部多实例定时 Worker 领取并落库；不需要 RabbitMQ、DLQ 或单独启动另一个 Java 服务；
+- 正常批量落库目标约 5 秒；MySQL 不可用时保留 dirty 状态并有限退避，积压超过配置阈值后普通心跳明确返回 503；暂停、切课、主动离开和结束继续直接尝试 MySQL；
+- 真实验收覆盖 Redis 不可用/重启、MySQL 短暂不可用、多实例竞争、重复和乱序、版本变化时不误清 dirty、强制检查点、学生读合并、教师/报表只读 MySQL、积压恢复和精确 Key/Fixture 清理；
+- 容量验收只请求进度 API：1,000 个模拟学习者、约 200 请求/秒、至少 10 分钟，普通心跳 p95 小于 200ms，正常最老未落库年龄不超过约 5 秒。该负载不得同时打开 1,000 路 OSS/HLS 视频。
+
+T12G.2 的真实浏览器验收使用本地“线性代数”课程第 2 课“行列式定义”。验收前必须通过正常 Course API 解析并核对稳定课程/课时 ID、已发布版本、`READY` 视频和当前学生访问事实，不能只按标题命中或在缺失时替换其他课程。只播放现有低成本视频，不上传、复制、转码或删除其 OSS 对象。临时进度、Redis Key 和 Worker 租约必须带本轮 run ID 并在结束后精确清理，同时保留课程、媒体及验收前原始进度；若对象并非明确本地开发数据，应停止并报告。
+
+T12G.1 实现时应把批次大小、刷新间隔、租约、积压阈值、去重保留期等非敏感调优项做成配置，并在其交付文档和 `.env.example` 记录真实变量名与默认值。当前规划任务不预先发明未实现变量，也不需要向仓库外 `local.env` 增加密码、Token 或新秘密。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。
