@@ -5699,7 +5699,7 @@ components:
     CreateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [clientRequestId, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds]
+      required: [clientRequestId, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         clientRequestId: {type: string, format: uuid}
         courseId: {type: string, format: uuid}
@@ -5726,8 +5726,7 @@ components:
           type: integer
           minimum: 1
           maximum: 5
-          default: 1
-          description: HOMEWORK formal submission limit. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one.
+          description: HOMEWORK formal submission limit. Omitted values default to 1. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one.
         timeLimitSeconds:
           type: [integer, 'null']
           minimum: 60
@@ -5736,7 +5735,7 @@ components:
     UpdateAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [expectedRevision, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds]
+      required: [expectedRevision, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds]
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         title: {type: string, minLength: 1, maxLength: 160}
@@ -5748,7 +5747,7 @@ components:
         closesAt: {type: [string, 'null'], format: date-time}
         latePolicy: {$ref: '#/components/schemas/HomeworkLatePolicy'}
         lateUntil: {type: [string, 'null'], format: date-time}
-        maxAttempts: {type: integer, minimum: 1, maximum: 5, default: 1}
+        maxAttempts: {type: integer, minimum: 1, maximum: 5, description: Omitted values default to 1.}
         timeLimitSeconds: {type: [integer, 'null'], minimum: 60, maximum: 28800}
     UpdateAssessmentDeadlineRequest:
       type: object

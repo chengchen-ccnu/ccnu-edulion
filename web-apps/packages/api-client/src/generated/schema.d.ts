@@ -3623,17 +3623,14 @@ export interface components {
              * @description Required for HOMEWORK and must be later than opensAt when both are present; EXAM keeps its existing close-time rule; PRACTICE must omit it.
              */
             closesAt: string | null;
-            latePolicy: components["schemas"]["HomeworkLatePolicy"];
+            latePolicy?: components["schemas"]["HomeworkLatePolicy"];
             /**
              * Format: date-time
              * @description Required at least one hour after closesAt for ALLOW_UNTIL; null for DISALLOW and non-HOMEWORK.
              */
-            lateUntil: string | null;
-            /**
-             * @description HOMEWORK formal submission limit. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one.
-             * @default 1
-             */
-            maxAttempts: number;
+            lateUntil?: string | null;
+            /** @description HOMEWORK formal submission limit. Omitted values default to 1. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one. */
+            maxAttempts?: number;
             /** @description EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt; HOMEWORK and PRACTICE must omit it. */
             timeLimitSeconds: number | null;
         };
@@ -3649,11 +3646,11 @@ export interface components {
             opensAt: string | null;
             /** Format: date-time */
             closesAt: string | null;
-            latePolicy: components["schemas"]["HomeworkLatePolicy"];
+            latePolicy?: components["schemas"]["HomeworkLatePolicy"];
             /** Format: date-time */
-            lateUntil: string | null;
-            /** @default 1 */
-            maxAttempts: number;
+            lateUntil?: string | null;
+            /** @description Omitted values default to 1. */
+            maxAttempts?: number;
             timeLimitSeconds: number | null;
         };
         UpdateAssessmentDeadlineRequest: {
