@@ -837,4 +837,5 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 交互与响应式：任务页键盘 Tab 可到达导航、返回课程详情、重试按钮，焦点轮廓可见。内置浏览器尝试 1440×900、768×1024、390×844 三组 viewport 时实际有效宽度均被固定为 473px；在该有效宽度下 `scrollWidth === clientWidth`，未观察到横向溢出，但不能据此替代三个目标宽度的完整验收。页面离开后未做成功作答/CSV 请求场景下的 AbortController、计时器和 Blob URL 实测。
 - HTTP/自动化与构建：`generate:api`、`check:api`、`typecheck` 均通过；全量 Vitest 39 个文件/255 项通过，路由/导航/T11C.2 边界专项 3 个文件/47 项通过；student/teacher/admin 三端 build 通过，仅保留既有大 chunk 警告；`git diff --check` 通过。真实 HTTP 继续确认公共课程 200、未知课程 404、未认证课程任务/成绩册 401 统一错误信封。
 - 数据与清理：没有创建数据库、表、临时 Schema、账号、CSV 文件、Redis Key、RabbitMQ 消息或 OSS 对象。只复用明确的 `edu_platform_learning_dev` 既有 T11C.1 2 场演示 Seed；本轮没有新增验收数据，Seed 最终状态保持不变，未产生需要额外清理的临时数据。没有重复 T11C.1.1 已通过的 5,000×100 容量验收。
+- 提交与 CI：路由顺序、回归测试和文档已提交为 `051e864 fix(web): resolve course task route precedence` 并推送到 PR #50；最新两组 GitHub CI 的 Frontend、Java、Python、OpenAPI generated source 共 8/8 检查成功，PR 仍 OPEN 且未合并。
 - 结论：内置浏览器问题已解除，路由冲突已修复并有真实浏览器与自动化证据；T11C.2 仍不能标记为全绿，当前未完成项由任务 API 503 后端适配故障和教师会话缺失造成。应先修复/确认后端适配实现并提供安全教师 local/test 会话，再从任务成功链路和成绩册 CSV 流程继续验收。
