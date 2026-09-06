@@ -774,14 +774,22 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-06 T11C.1.1 成绩册应交名单批量投影与容量修复
 
-- 分支与范围：当前分支已调整为 `codex/t11c1.1-gradebook-roster-batch`，提交 `89effa5`，已创建 [PR #49](https://github.com/chengchen-ccnu/ccnu-edulion/pull/49)，等待 CI。没有实现 T11C.2 Vue 页面、路由或前端业务代码；没有使用 Redis、RabbitMQ、分布式锁、OSS、生产数据或新增微服务。V14 文件保持未修改，本任务没有保留新的数据库迁移。
+- 分支与范围：实施分支为 `codex/t11c1.1-gradebook-roster-batch`，关键提交 `89effa5`；[PR #49](https://github.com/chengchen-ccnu/ccnu-edulion/pull/49) 的 Java、Frontend、Python 与 OpenAPI 共 8 项 CI 全部成功，并以普通 merge 合并到 `main@87bbfa6`。没有实现 T11C.2 Vue 页面、路由或前端业务代码；没有使用 Redis、RabbitMQ、分布式锁、OSS、生产数据或新增微服务。V14 文件保持未修改，本任务没有保留新的数据库迁移。
 - 写路径：移除成绩册读取阶段的 `synchronizeCourseGradebook` 写入。测评发布、课程报名/重新报名、退课和最终关闭分别在现有 Learning 事务中使用 JDBC Batch/集合式 SQL 维护 HOMEWORK/EXAM 参与者。唯一键吸收重复初始化；已为 ACTIVE 的参与者不更新 revision；只恢复 WITHDRAWN 行；关闭后的名单不再因退课或重新报名改变，关闭事务在冻结前补齐名单。
 - 查询路径：`teacherGradebook` 使用只读事务；学生分页只查询当前页课程编号和当前页参与者/最终 attempt，筛选、排序和总数由 SQL 完成，成绩册统计和 HOMEWORK/EXAM 平均分使用数据库聚合。昵称关键词只在确需搜索时调用一次 IAM 批量投影，普通分页不读取页外昵称。
 - CSV 路径：导出通过 `StreamingResponseBody` 写入 UTF-8 BOM，按每批 250 名学生读取、组装和刷新，未构造 5,000×100 完整成绩格集合或完整 `byte[]`。导出审计记录总行数 5,000 和 100 场测评。
 - 回归结果：`LearningAssessmentIntegrationTest` 25/25 通过，覆盖读路径无写、发布/报名/退课/重报/关闭冻结、ACTIVE revision 稳定、并发批量幂等、当前页昵称搜索、BOM 和 `=SUM(A1)`/`@cmd` 公式注入防护。真实 IAM HTTP 验收返回已知昵称 `测试学生`、未知 ID 省略，错误 caller/token 均 403；Learning 客户端的部分降级和 100ms 超时降级通过，超时返回空昵称映射并标记 `dependencyFailed=true`。
 - 真实容量结果：干净构建后在专用 local/test MySQL Schema 创建 5,000 条报名/课程学生编号、100 场 HOMEWORK/EXAM 和 500,000 条参与者；幂等初始化重复执行通过。成绩册耗时 31,017ms，JVM 堆峰值 196.6MiB，总数 5,000，当前页 100 行，100 场生成 304 列；页外 4,999 名学生没有进入响应对象。CSV 流式耗时 190,014ms，JVM 堆峰值 366.5MiB，5,001 行（表头+5,000 学生）和 304 列，UTF-8 BOM 通过。H2 公式注入回归确认危险昵称单元格均加单引号；owner 越权返回 404/不可见。
 - 清理：容量测试只允许 `edu_platform_learning_t11c1_acceptance`、`_v2`、`_v3`、`_v4`、`_v5` 五个明确专用 Schema，使用固定前缀/ID、幂等初始化和精确逆外键清理；最终每个 Schema 均 DROP 并确认不存在。`edu_platform_learning_dev` 中已明确标记的 T11C.1 演示 Seed 保留，未清理、未覆盖；没有创建其他领域数据。
-- 下一步门禁：T11C.1.1 已满足 T11C.2 的后端契约与容量前置，但本任务仅负责创建 PR 和等待 CI；T11C.2 页面仍待独立任务实施。
+- 下一步门禁：T11C.1.1 已合并并满足 T11C.2 的后端契约与容量前置；T11C.2 页面仍待独立任务实施。
+
+## 2026-09-06 T11C.1.1 合并与 T11C.2 前置审计
+
+- 合并与清理：[PR #49](https://github.com/chengchen-ccnu/ccnu-edulion/pull/49) 已以普通 merge 合并，合并提交为 `87bbfa6`；本地 `main` 已快进同步到同一提交。用户明确指定的 `codex/t11c1.1-gradebook-roster-batch`、`codex/t11c1-homework-gradebook-contract` 和 `codex/t11c1-merge-record` 本地及远端分支均已删除。
+- 契约门禁：`main` 已包含 OpenAPI 0.21.0、对应生成客户端、课程任务列表/详情/开始/最后结果接口，以及教师成绩册分页和流式 CSV 接口。T11C.1.1 的只读成绩册、名单冻结、真实 IAM HTTP 和 5,000×100 容量验收均已有证据；T11C.2 无需新增或猜测 DTO。
+- 页面与复用门禁：完整复核 `docs/frontend/page-specs.md` 后确认 `/courses/:courseId`、`/learn/:courseId/tasks`、`/learn/:courseId/tasks/:assessmentId`、其 `/result`、当前课时任务区、`/practice` 和 `/teacher/gradebook` 的职责已经冻结。现有 T12B 答题、结果、媒体解析和教师批改面板可复用；T11C.2 只能增加课程任务编排与成绩册页面，不复制答题器、结果页或批改器。
+- 数据与范围：本次总控只执行 GitHub 合并、Git 同步/分支清理、只读前置审计和状态文档更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
+- 准备结论：T11C.2 前置条件满足，已从 `main@87bbfa6` 准备 `codex/t11c2-homework-gradebook-web`。后续功能任务必须先保持 `/practice` 仅含 PRACTICE，再实现课程任务深链、当前课时精确过滤、最后 attempt 结果和教师成绩册的 URL 恢复/部分错误/安全导出；不得扩大到后端契约、历史 attempt、附件作业、免交/个别延期、排名或异步 XLSX。
 
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
