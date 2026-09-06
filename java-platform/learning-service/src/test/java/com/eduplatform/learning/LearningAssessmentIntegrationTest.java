@@ -19,6 +19,7 @@ import com.eduplatform.learning.service.LearningAssessmentService;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.learning.web.QuestionDtos;
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -384,6 +385,7 @@ class LearningAssessmentIntegrationTest {
         repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
         addQuestion("00000000-0000-4000-8000-000000016001", 1, QuestionModels.Type.SINGLE_CHOICE,
                 List.of("A"), "不得公开的考试解析");
+        repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, now);
 
         var notOpen = service.learnerAssessments(LEARNER, COURSE, 1, 20).items().get(0);
         assertThat(notOpen.learnerState()).isEqualTo(LearningDtos.LearnerAssessmentState.NOT_OPEN);
@@ -839,8 +841,8 @@ class LearningAssessmentIntegrationTest {
         assertThat(gradebook.assessments().get(0).resultsReady()).isFalse();
         assertThat(gradebook.assessments().get(0).stats().gradedStudentAverage()).isNull();
         assertThat(gradebook.rows().get(0).assessments().get(ASSESSMENT).scorePercent()).isNull();
-        assertThatThrownBy(() -> service.exportGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
-                null, UUID.randomUUID(), "trace-t11c1-pending-export"))
+        assertThatThrownBy(() -> service.streamGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
+                null, UUID.randomUUID(), "trace-t11c1-pending-export", new ByteArrayOutputStream()))
                 .isInstanceOfSatisfying(QuestionException.class,
                         error -> assertThat(error.code()).isEqualTo("LEARNING.GRADEBOOK_EXPORT_NOT_READY"));
     }
@@ -870,11 +872,113 @@ class LearningAssessmentIntegrationTest {
                 .isEqualByComparingTo("0");
         assertThat(gradebook.assessments().get(0).stats().allStudentAverage()).isEqualByComparingTo("50.00");
 
-        String csv = new String(service.exportGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
+        // 导出前把昵称替换为公式样式值，验证 CSV 单元格会加单引号而不是把输入交给表格执行。
+        when(directory.nicknames(anyList(), anyString())).thenReturn(new LearnerDirectoryClient.NicknameLookup(
+                Map.of(LEARNER, "=SUM(A1)", OTHER, "@cmd"), false));
+        String csv = new String(captureCsv(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
                 null, UUID.randomUUID(), "trace-t11c1-gradebook-export"), StandardCharsets.UTF_8);
         assertThat(csv).startsWith("\uFEFF");
-        assertThat(csv).contains("课程学生编号", "student_test_01", "是否迟交", "作业平均分");
+        assertThat(csv).contains("课程学生编号", "是否迟交", "作业平均分");
+        assertThat(csv).contains("\"'=SUM(A1)\"", "\"'@cmd\"");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gradebook_export_audit", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 昵称关键词先由 IAM 投影收敛候选 ID，再由数据库完成成绩册分页和总数统计。 */
+    void gradebookNicknameKeywordKeepsSearchSemanticsWithoutLoadingCells() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-nickname-enroll-1");
+        service.enroll(OTHER, COURSE, "trace-t11c1-nickname-enroll-2");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+
+        var gradebook = service.teacherGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
+                "student_test_02", 1, 20, LearningDtos.GradebookSortField.STUDENT_NUMBER, false,
+                "trace-t11c1-nickname-search");
+        assertThat(gradebook.total()).isEqualTo(1);
+        assertThat(gradebook.rows()).extracting(LearningDtos.GradebookRow::courseStudentNumber)
+                .containsExactly("0002");
+    }
+
+    @Test
+    /** 成绩册查询只读当前已有投影；重复批量确保不会让 ACTIVE 参与者的 revision 变化。 */
+    void gradebookReadDoesNotMutateParticipantProjection() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-read-only-enroll");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        long before = jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, LEARNER);
+        service.teacherGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null, null,
+                1, 20, LearningDtos.GradebookSortField.STUDENT_NUMBER, false, "trace-t11c1-read-only");
+        repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, Instant.now());
+        long after = jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, LEARNER);
+        assertThat(after).isEqualTo(before);
+    }
+
+    @Test
+    /** 退课/重报只影响未关闭名单；关闭后名单、状态和 revision 均被冻结。 */
+    void closedRosterRemainsFrozenAcrossWithdrawalAndReenrollment() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-freeze-enroll-1");
+        var otherEnrollment = service.enroll(OTHER, COURSE, "trace-t11c1-freeze-enroll-2").enrollment();
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+
+        service.cancelEnrollment(OTHER, otherEnrollment.id(), "trace-t11c1-freeze-withdraw-open");
+        assertThat(jdbc.queryForObject("SELECT enrollment_status FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                String.class, ASSESSMENT, OTHER)).isEqualTo("WITHDRAWN");
+        long withdrawnRevision = jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, OTHER);
+        service.enroll(OTHER, COURSE, "trace-t11c1-freeze-reenroll-open");
+        assertThat(jdbc.queryForObject("SELECT enrollment_status FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                String.class, ASSESSMENT, OTHER)).isEqualTo("ACTIVE");
+        long activeRevision = jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, OTHER);
+        assertThat(activeRevision).isEqualTo(withdrawnRevision + 1);
+
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+        long closedRevision = jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, OTHER);
+        service.cancelEnrollment(OTHER,
+                service.enrollments(OTHER, LearningDtos.EnrollmentStatus.ACTIVE, 1, 20).items().get(0).id(),
+                "trace-t11c1-freeze-withdraw-closed");
+        service.enroll(OTHER, COURSE, "trace-t11c1-freeze-reenroll-closed");
+        assertThat(jdbc.queryForObject("SELECT enrollment_status FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                String.class, ASSESSMENT, OTHER)).isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("SELECT revision FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
+                Long.class, ASSESSMENT, OTHER)).isEqualTo(closedRevision);
+    }
+
+    @Test
+    /** 两个并发批量确保共享唯一键；最终只有一条 ACTIVE 名单且 revision 不因重试膨胀。 */
+    void concurrentParticipantEnsureIsIdempotent() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-concurrent-roster-enroll-1");
+        service.enroll(OTHER, COURSE, "trace-t11c1-concurrent-roster-enroll-2");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var first = executor.submit(() -> {
+                ready.countDown();
+                start.await(5, TimeUnit.SECONDS);
+                return repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, Instant.now());
+            });
+            var second = executor.submit(() -> {
+                ready.countDown();
+                start.await(5, TimeUnit.SECONDS);
+                return repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, Instant.now());
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            first.get(5, TimeUnit.SECONDS);
+            second.get(5, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_participant WHERE assessment_id=?",
+                Integer.class, ASSESSMENT)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT MAX(revision) FROM assessment_participant WHERE assessment_id=?",
+                Long.class, ASSESSMENT)).isZero();
     }
 
     @Test
@@ -897,6 +1001,16 @@ class LearningAssessmentIntegrationTest {
                 "trace-t11c1-deadline-invalid"))
                 .isInstanceOfSatisfying(QuestionException.class,
                         error -> assertThat(error.code()).isEqualTo("LEARNING.DEADLINE_TOO_SOON"));
+    }
+
+    private byte[] captureCsv(String teacherId, String courseId, String assessmentId,
+            LearningDtos.AssessmentType type, LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword, UUID requestId,
+            String traceId) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        service.streamGradebook(teacherId, courseId, assessmentId, type, submissionStatus, gradingStatus, late,
+                keyword, requestId, traceId, output);
+        return output.toByteArray();
     }
 
     private void seedPublishedAssessment() {
@@ -927,6 +1041,11 @@ class LearningAssessmentIntegrationTest {
                 List.of("a b"), "填空解析");
         addQuestion("00000000-0000-4000-8000-000000014005", 5, QuestionModels.Type.SHORT_ANSWER,
                 List.of("标准过程"), "解答解析");
+        if (type == LearningDtos.AssessmentType.PRACTICE) {
+            repository.insertParticipant(UUID.randomUUID().toString(), ASSESSMENT, LEARNER, now);
+        } else {
+            repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, now);
+        }
     }
 
     private void seedHomeworkAssessment(int maxAttempts, QuestionModels.Type questionType) {
@@ -942,6 +1061,7 @@ class LearningAssessmentIntegrationTest {
         repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
         List<String> answers = questionType == QuestionModels.Type.SHORT_ANSWER ? List.of("标准答案") : List.of("A");
         addQuestion("00000000-0000-4000-8000-000000014001", 1, questionType, answers, "作业解析");
+        repository.ensureParticipantsForAssessment(COURSE, ASSESSMENT, now);
     }
 
     private static List<LearningDtos.AnswerInput> completeFixtureAnswers() {
@@ -1006,6 +1126,7 @@ class LearningAssessmentIntegrationTest {
         repository.insertAssessmentQuestion(new AssessmentQuestionRow(
                 "00000000-0000-4000-8000-000000017001", ASSESSMENT, UUID.randomUUID().toString(),
                 snapshot.id(), 1, BigDecimal.ONE, snapshot, now));
+        repository.insertParticipant(UUID.randomUUID().toString(), ASSESSMENT, LEARNER, now);
     }
 
     private void addQuestion(String id, int sequence, QuestionModels.Type type, List<String> answers,

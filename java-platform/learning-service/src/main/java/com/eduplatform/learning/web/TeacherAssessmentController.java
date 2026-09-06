@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 /** 教学端测评、批改和学情查询边界；访问能力与课程 owner 均由服务端校验。 */
 @RestController
@@ -207,8 +208,8 @@ public class TeacherAssessmentController {
     }
 
     @GetMapping(value = "/api/v1/teacher/gradebook/export", produces = "text/csv")
-    /** 同步下载带 UTF-8 BOM 的成绩册 CSV，文件名只含课程 ID 和日期，不含学生隐私。 */
-    public ResponseEntity<byte[]> exportGradebook(@RequestHeader("X-User-Id") String userId,
+    /** 按学生批次流式下载带 UTF-8 BOM 的成绩册 CSV，文件名只含课程 ID 和日期，不含学生隐私。 */
+    public ResponseEntity<StreamingResponseBody> exportGradebook(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @RequestParam String courseId, @RequestParam java.util.UUID clientRequestId,
@@ -218,8 +219,9 @@ public class TeacherAssessmentController {
             @RequestParam(required = false) LearningDtos.AssessmentGradingStatus gradingStatus,
             @RequestParam(required = false) Boolean late, @RequestParam(required = false) String keyword,
             HttpServletRequest servlet) {
-        byte[] csv = learning.exportGradebook(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
-                assessmentId, type, submissionStatus, gradingStatus, late, keyword, clientRequestId, trace(servlet));
+        String teacherId = LearningIdentity.teaching(userId, roles, permissions).userId();
+        StreamingResponseBody csv = output -> learning.streamGradebook(teacherId, courseId, assessmentId, type,
+                submissionStatus, gradingStatus, late, keyword, clientRequestId, trace(servlet), output);
         String filename = "gradebook-" + courseId + "-" + LocalDate.now(ZoneOffset.UTC) + ".csv";
         return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/csv"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")

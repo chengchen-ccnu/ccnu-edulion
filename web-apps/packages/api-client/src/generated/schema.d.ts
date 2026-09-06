@@ -1939,7 +1939,7 @@ export interface paths {
         };
         /**
          * Query a safe course HOMEWORK and EXAM gradebook matrix
-         * @description Requires teaching access and course ownership. Before every selected assessment is closed, settled and fully graded, the aggregate is PENDING and all score cells and numeric statistics are null. PRACTICE is rejected by the type filter and never included.
+         * @description Requires teaching access and course ownership. The response contains only the requested page of students; totals and assessment statistics are database aggregates. Before every selected assessment is closed, settled and fully graded, the aggregate is PENDING and all score cells and numeric statistics are null. PRACTICE is rejected by the type filter and never included.
          */
         get: operations["getTeacherGradebook"];
         put?: never;
@@ -1958,8 +1958,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download a synchronized UTF-8 BOM gradebook CSV
-         * @description The selected course must have at most 5000 students and 100 closed, settled and fully graded HOMEWORK/EXAM assessments. The response is a synchronous dynamic-column CSV and contains no answers, comments, contact information or historical attempts.
+         * Stream a UTF-8 BOM gradebook CSV
+         * @description The selected course must have at most 5000 students and 100 closed, settled and fully graded HOMEWORK/EXAM assessments. The response is a synchronous dynamic-column CSV streamed by bounded student batches; the server does not construct the complete matrix or byte array in memory. It contains no answers, comments, contact information or historical attempts.
          */
         get: operations["exportTeacherGradebookCsv"];
         put?: never;

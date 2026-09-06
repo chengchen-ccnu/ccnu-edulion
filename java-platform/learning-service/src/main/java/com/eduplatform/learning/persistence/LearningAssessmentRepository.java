@@ -17,11 +17,16 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.type.TypeReference;
@@ -504,6 +509,56 @@ public class LearningAssessmentRepository {
         jdbc.update("INSERT INTO assessment_participant(id,assessment_id,learner_id,enrollment_status,submission_status,grading_status,attempts_used,final_attempt_id,last_submitted_at,late_submission,revision,created_at,updated_at) VALUES(?,?,?,'ACTIVE','NOT_STARTED','NOT_REQUIRED',0,NULL,NULL,FALSE,0,?,?) ON DUPLICATE KEY UPDATE id=id",
                 id, assessmentId, learnerId, ts(now), ts(now));
     }
+
+    /**
+     * 在测评发布或关闭前批量建立课程当前 ACTIVE 报名的应交名单。
+     * 输入是课程和测评稳定 ID，输出是实际插入的行数；唯一键吸收重试，已有 ACTIVE 行保持 revision 不变，
+     * 已关闭测评直接跳过，避免任何读取路径重新修复名单。
+     */
+    public int ensureParticipantsForAssessment(String courseId, String assessmentId, Instant now) {
+        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id=? AND course_id=? "
+                + "AND status='PUBLISHED' AND close_status='OPEN'",
+                Integer.class, assessmentId, courseId);
+        if (open == null || open == 0) return 0;
+        List<Object[]> arguments = activeEnrollments(courseId).stream()
+                .map(enrollment -> new Object[]{UUID.randomUUID().toString(), assessmentId,
+                        enrollment.learnerId(), ts(now), ts(now)})
+                .toList();
+        int inserted = arguments.isEmpty() ? 0 : java.util.Arrays.stream(jdbc.batchUpdate(
+                "INSERT INTO assessment_participant(id,assessment_id,learner_id,enrollment_status,submission_status,"
+                        + "grading_status,attempts_used,final_attempt_id,last_submitted_at,late_submission,revision,created_at,updated_at) "
+                        + "VALUES(?,?,?,'ACTIVE','NOT_STARTED','NOT_REQUIRED',0,NULL,NULL,FALSE,0,?,?) "
+                        + "ON DUPLICATE KEY UPDATE id=id", arguments)).sum();
+        // 退课后重新报名时，只有 WITHDRAWN 行需要推进；ACTIVE 行绝不重复增加 revision。
+        int reactivated = jdbc.update("UPDATE assessment_participant p SET enrollment_status='ACTIVE',"
+                + "submission_status=CASE WHEN p.final_attempt_id IS NULL THEN 'NOT_STARTED' ELSE 'SUBMITTED' END,"
+                + "updated_at=?,revision=revision+1 WHERE p.assessment_id=? AND p.enrollment_status='WITHDRAWN' "
+                + "AND p.learner_id IN (SELECT e.learner_id FROM enrollment e WHERE e.course_id=? AND e.status='ACTIVE')",
+                ts(now), assessmentId, courseId);
+        return inserted + reactivated;
+    }
+
+    /** 在报名/重报名事务中批量建立或恢复该学习者在所有未关闭正式测评中的名单行。 */
+    public int ensureOpenParticipantsForLearner(String courseId, String learnerId, Instant now) {
+        List<AssessmentRow> assessments = openPublishedCourseAssessments(courseId);
+        if (assessments.isEmpty()) return 0;
+        List<Object[]> arguments = assessments.stream()
+                .map(assessment -> new Object[]{UUID.randomUUID().toString(), assessment.id(), learnerId,
+                        ts(now), ts(now)})
+                .toList();
+        int inserted = java.util.Arrays.stream(jdbc.batchUpdate(
+                "INSERT INTO assessment_participant(id,assessment_id,learner_id,enrollment_status,submission_status,"
+                        + "grading_status,attempts_used,final_attempt_id,last_submitted_at,late_submission,revision,created_at,updated_at) "
+                        + "VALUES(?,?,?,'ACTIVE','NOT_STARTED','NOT_REQUIRED',0,NULL,NULL,FALSE,0,?,?) "
+                        + "ON DUPLICATE KEY UPDATE id=id", arguments)).sum();
+        int reactivated = jdbc.update("UPDATE assessment_participant p SET enrollment_status='ACTIVE',"
+                + "submission_status=CASE WHEN p.final_attempt_id IS NULL THEN 'NOT_STARTED' ELSE 'SUBMITTED' END,"
+                + "updated_at=?,revision=revision+1 WHERE p.learner_id=? AND p.enrollment_status='WITHDRAWN' "
+                + "AND p.assessment_id IN (SELECT a.id FROM assessment a WHERE a.course_id=? "
+                + "AND a.status='PUBLISHED' AND a.close_status='OPEN' AND a.assessment_type IN ('HOMEWORK','EXAM'))",
+                ts(now), learnerId, courseId);
+        return inserted + reactivated;
+    }
     public Optional<ParticipantRow> participant(String assessmentId, String learnerId) {
         return jdbc.query("SELECT * FROM assessment_participant WHERE assessment_id=? AND learner_id=?",
                 this::participant, assessmentId, learnerId).stream().findFirst();
@@ -527,12 +582,20 @@ public class LearningAssessmentRepository {
                 ts(now), assessmentId, learnerId);
     }
     public int markParticipantWithdrawn(String assessmentId, String learnerId, Instant now) {
-        return jdbc.update("UPDATE assessment_participant SET enrollment_status='WITHDRAWN',submission_status='WITHDRAWN',updated_at=?,revision=revision+1 WHERE assessment_id=? AND learner_id=?",
+        return jdbc.update("UPDATE assessment_participant p SET enrollment_status='WITHDRAWN',submission_status='WITHDRAWN',updated_at=?,revision=revision+1 WHERE p.assessment_id=? AND p.learner_id=? AND p.enrollment_status='ACTIVE' AND EXISTS (SELECT 1 FROM assessment a WHERE a.id=p.assessment_id AND a.status='PUBLISHED' AND a.close_status='OPEN')",
                 ts(now), assessmentId, learnerId);
     }
     public int reactivateParticipant(String assessmentId, String learnerId, Instant now) {
-        return jdbc.update("UPDATE assessment_participant SET enrollment_status='ACTIVE',submission_status=CASE WHEN final_attempt_id IS NULL THEN 'NOT_STARTED' ELSE 'SUBMITTED' END,updated_at=?,revision=revision+1 WHERE assessment_id=? AND learner_id=?",
+        return jdbc.update("UPDATE assessment_participant p SET enrollment_status='ACTIVE',submission_status=CASE WHEN p.final_attempt_id IS NULL THEN 'NOT_STARTED' ELSE 'SUBMITTED' END,updated_at=?,revision=revision+1 WHERE p.assessment_id=? AND p.learner_id=? AND p.enrollment_status='WITHDRAWN' AND EXISTS (SELECT 1 FROM assessment a WHERE a.id=p.assessment_id AND a.status='PUBLISHED' AND a.close_status='OPEN')",
                 ts(now), assessmentId, learnerId);
+    }
+    /** 退课只撤销尚未关闭测评的名单；关闭后的名单冻结，避免历史成绩随报名状态改变。 */
+    public int withdrawOpenParticipantsForLearner(String courseId, String learnerId, Instant now) {
+        return jdbc.update("UPDATE assessment_participant p SET enrollment_status='WITHDRAWN',submission_status='WITHDRAWN',updated_at=?,revision=revision+1 "
+                + "WHERE p.learner_id=? AND p.enrollment_status='ACTIVE' AND p.assessment_id IN "
+                + "(SELECT a.id FROM assessment a WHERE a.course_id=? AND a.status='PUBLISHED' "
+                + "AND a.close_status='OPEN' AND a.assessment_type IN ('HOMEWORK','EXAM'))",
+                ts(now), learnerId, courseId);
     }
     /** 关闭时把所有还没有草稿/最终 attempt 的应交人确定为 MISSING，退课者保持 WITHDRAWN。 */
     public int markUnsubmittedParticipantsMissing(String assessmentId, Instant now) {
@@ -549,6 +612,10 @@ public class LearningAssessmentRepository {
     }
     public List<AssessmentRow> publishedCourseAssessments(String courseId) {
         return jdbc.query("SELECT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id WHERE a.course_id=? AND a.status='PUBLISHED' AND a.assessment_type IN ('HOMEWORK','EXAM') ORDER BY a.published_at,a.id",
+                this::mapAssessment, courseId);
+    }
+    public List<AssessmentRow> openPublishedCourseAssessments(String courseId) {
+        return jdbc.query("SELECT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id WHERE a.course_id=? AND a.status='PUBLISHED' AND a.close_status='OPEN' AND a.assessment_type IN ('HOMEWORK','EXAM') ORDER BY a.published_at,a.id",
                 this::mapAssessment, courseId);
     }
     /** 教师成绩册只读取本人创建的非草稿 HOMEWORK/EXAM，避免同课程其他教师的测评越权。 */
@@ -590,6 +657,212 @@ public class LearningAssessmentRepository {
     public long countCourseStudentNumbers(String courseId) {
         Long value = jdbc.queryForObject("SELECT COUNT(*) FROM course_student_number WHERE course_id=?", Long.class, courseId);
         return value == null ? 0 : value;
+    }
+
+    /**
+     * 只读取成绩册当前页的课程学生编号。状态筛选使用 EXISTS，排序和总数均由数据库完成，避免把全课程
+     * 5,000 名学生及其测评矩阵装入 JVM；昵称筛选由 IAM 投影层另行处理，数据库不跨 Schema 查询。
+     */
+    public List<CourseStudentNumberRow> gradebookStudentNumbers(String courseId, List<String> assessmentIds,
+            LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword, int page, int size,
+            LearningDtos.GradebookSortField sort, boolean descending) {
+        return gradebookStudentNumbers(courseId, assessmentIds, submissionStatus, gradingStatus, late, keyword,
+                null, page, size, sort, descending);
+    }
+
+    /** 只读取当前页；昵称筛选的候选 learnerId 由 IAM 投影得到，仍不跨 Schema 查询。 */
+    public List<CourseStudentNumberRow> gradebookStudentNumbers(String courseId, List<String> assessmentIds,
+            LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword,
+            List<String> candidateLearnerIds, int page, int size,
+            LearningDtos.GradebookSortField sort, boolean descending) {
+        GradebookNumberQuery query = gradebookNumberQuery(courseId, assessmentIds, submissionStatus, gradingStatus,
+                late, keyword, candidateLearnerIds);
+        StringBuilder sql = new StringBuilder("SELECT n.* FROM course_student_number n").append(query.whereSql());
+        appendGradebookOrder(sql, query.arguments(), assessmentIds, sort);
+        sql.append(descending ? " DESC" : " ASC").append(",n.student_number ASC LIMIT ? OFFSET ?");
+        query.arguments().add(size);
+        query.arguments().add((page - 1) * size);
+        return jdbc.query(sql.toString(), this::courseStudentNumber, query.arguments().toArray());
+    }
+
+    /** 返回和成绩册当前筛选一致的学生总数，不读取学生测评单元格。 */
+    public long countGradebookStudentNumbers(String courseId, List<String> assessmentIds,
+            LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword) {
+        return countGradebookStudentNumbers(courseId, assessmentIds, submissionStatus, gradingStatus, late, keyword,
+                null);
+    }
+
+    /** 按当前筛选候选集聚合学生总数，不读取学生测评单元格。 */
+    public long countGradebookStudentNumbers(String courseId, List<String> assessmentIds,
+            LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword,
+            List<String> candidateLearnerIds) {
+        GradebookNumberQuery query = gradebookNumberQuery(courseId, assessmentIds, submissionStatus, gradingStatus,
+                late, keyword, candidateLearnerIds);
+        Long value = jdbc.queryForObject("SELECT COUNT(*) FROM course_student_number n" + query.whereSql(), Long.class,
+                query.arguments().toArray());
+        return value == null ? 0 : value;
+    }
+
+    /** 一次读取当前页涉及的参与者及最终 attempt 投影；每页最多 size×测评数，而不是全课程矩阵。 */
+    public List<GradebookParticipantRow> gradebookParticipantRows(List<String> assessmentIds, List<String> learnerIds) {
+        if (assessmentIds.isEmpty() || learnerIds.isEmpty()) return List.of();
+        String assessmentPlaceholders = placeholders(assessmentIds.size());
+        String learnerPlaceholders = placeholders(learnerIds.size());
+        List<Object> arguments = new ArrayList<>(assessmentIds.size() + learnerIds.size());
+        arguments.addAll(assessmentIds);
+        arguments.addAll(learnerIds);
+        return jdbc.query("SELECT p.*,t.id AS final_attempt_record_id,t.score AS final_score,t.total_points AS final_total_points "
+                        + "FROM assessment_participant p LEFT JOIN assessment_attempt t ON t.id=p.final_attempt_id "
+                        + "WHERE p.assessment_id IN (" + assessmentPlaceholders + ") AND p.learner_id IN ("
+                        + learnerPlaceholders + ") ORDER BY p.learner_id,p.assessment_id",
+                (rs, row) -> new GradebookParticipantRow(participant(rs, row), rs.getString("final_attempt_record_id"),
+                        rs.getBigDecimal("final_score"), rs.getBigDecimal("final_total_points")),
+                arguments.toArray());
+    }
+
+    /** 由数据库聚合每场测评的应交、缺交、待批改、提交率、分数和分布；服务层只组装稳定 DTO。 */
+    public Map<String, GradebookAggregateRow> gradebookAggregates(List<String> assessmentIds) {
+        if (assessmentIds.isEmpty()) return Map.of();
+        String placeholders = placeholders(assessmentIds.size());
+        String score = "t.score * 100 / NULLIF(t.total_points,0)";
+        String scored = "p.enrollment_status='ACTIVE' AND p.submission_status='SUBMITTED' "
+                + "AND t.score IS NOT NULL AND t.total_points<>0";
+        String sql = "SELECT p.assessment_id,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' THEN 1 ELSE 0 END) expected_count,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' AND p.submission_status='MISSING' THEN 1 ELSE 0 END) missing_count,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' AND p.submission_status<>'MISSING' "
+                + "AND p.grading_status<>'GRADED' THEN 1 ELSE 0 END) pending_count,"
+                + "SUM(CASE WHEN " + scored + " THEN 1 ELSE 0 END) scored_count,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' AND p.submission_status='SUBMITTED' THEN 1 ELSE 0 END) submitted_count,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' AND p.submission_status='SUBMITTED' "
+                + "AND p.late_submission=FALSE THEN 1 ELSE 0 END) on_time_count,"
+                + "SUM(CASE WHEN " + scored + " THEN " + score + " ELSE 0 END) score_sum,"
+                + "MAX(CASE WHEN " + scored + " THEN " + score + " ELSE NULL END) highest_score,"
+                + "MIN(CASE WHEN " + scored + " THEN " + score + " ELSE NULL END) lowest_score,"
+                + "SUM(CASE WHEN " + scored + " AND " + score + " < 60 THEN 1 ELSE 0 END) band_0_59,"
+                + "SUM(CASE WHEN " + scored + " AND " + score + " >= 60 AND " + score + " < 70 THEN 1 ELSE 0 END) band_60_69,"
+                + "SUM(CASE WHEN " + scored + " AND " + score + " >= 70 AND " + score + " < 80 THEN 1 ELSE 0 END) band_70_79,"
+                + "SUM(CASE WHEN " + scored + " AND " + score + " >= 80 AND " + score + " < 90 THEN 1 ELSE 0 END) band_80_89,"
+                + "SUM(CASE WHEN " + scored + " AND " + score + " >= 90 THEN 1 ELSE 0 END) band_90_100 "
+                + "FROM assessment_participant p LEFT JOIN assessment_attempt t ON t.id=p.final_attempt_id "
+                + "WHERE p.assessment_id IN (" + placeholders + ") GROUP BY p.assessment_id";
+        Map<String, GradebookAggregateRow> result = new LinkedHashMap<>();
+        jdbc.query(sql, (rs, row) -> new GradebookAggregateRow(rs.getString("assessment_id"),
+                rs.getInt("expected_count"), rs.getInt("missing_count"), rs.getInt("pending_count"),
+                rs.getInt("scored_count"), rs.getInt("submitted_count"), rs.getInt("on_time_count"),
+                rs.getBigDecimal("score_sum"), rs.getBigDecimal("highest_score"), rs.getBigDecimal("lowest_score"),
+                rs.getInt("band_0_59"), rs.getInt("band_60_69"), rs.getInt("band_70_79"),
+                rs.getInt("band_80_89"), rs.getInt("band_90_100")), assessmentIds.toArray())
+                .forEach(value -> result.put(value.assessmentId(), value));
+        return result;
+    }
+
+    /** 聚合所有学生的课程级 HOMEWORK/EXAM 平均分，避免把全量学生行加载后再由 JVM 统计。 */
+    public Map<AssessmentType, GradebookTypeAverageRow> gradebookTypeAverages(String courseId,
+            List<String> assessmentIds) {
+        if (assessmentIds.isEmpty()) return Map.of();
+        String placeholders = placeholders(assessmentIds.size());
+        String score = "t.score * 100 / NULLIF(t.total_points,0)";
+        String sql = "SELECT a.assessment_type,SUM(CASE WHEN p.enrollment_status='ACTIVE' AND "
+                + "(p.submission_status='MISSING' OR (p.grading_status='GRADED' AND t.score IS NOT NULL "
+                + "AND t.total_points<>0)) THEN CASE WHEN p.submission_status='MISSING' THEN 0 ELSE " + score
+                + " END ELSE 0 END) score_sum,"
+                + "SUM(CASE WHEN p.enrollment_status='ACTIVE' AND (p.submission_status='MISSING' OR "
+                + "(p.grading_status='GRADED' AND t.score IS NOT NULL AND t.total_points<>0)) THEN 1 ELSE 0 END) score_count "
+                + "FROM assessment a LEFT JOIN assessment_participant p ON p.assessment_id=a.id "
+                + "LEFT JOIN assessment_attempt t ON t.id=p.final_attempt_id WHERE a.course_id=? AND a.id IN ("
+                + placeholders + ") GROUP BY a.assessment_type";
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(courseId);
+        arguments.addAll(assessmentIds);
+        Map<AssessmentType, GradebookTypeAverageRow> result = new LinkedHashMap<>();
+        jdbc.query(sql, (RowCallbackHandler) rs -> result.put(AssessmentType.valueOf(rs.getString("assessment_type")),
+                new GradebookTypeAverageRow(rs.getBigDecimal("score_sum"), rs.getInt("score_count"))),
+                arguments.toArray());
+        return result;
+    }
+
+    private GradebookNumberQuery gradebookNumberQuery(String courseId, List<String> assessmentIds,
+            LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword,
+            List<String> candidateLearnerIds) {
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(courseId);
+        StringBuilder where = new StringBuilder(" WHERE n.course_id=?");
+        if (candidateLearnerIds != null) {
+            if (candidateLearnerIds.isEmpty()) {
+                where.append(" AND 1=0");
+            } else {
+                where.append(" AND n.learner_id IN (").append(placeholders(candidateLearnerIds.size())).append(')');
+                arguments.addAll(candidateLearnerIds);
+            }
+        }
+        if (candidateLearnerIds == null && keyword != null && !keyword.isBlank()) {
+            where.append(" AND LPAD(CAST(n.student_number AS CHAR),4,'0') LIKE ?");
+            arguments.add("%" + keyword + "%");
+        }
+        if (submissionStatus != null || gradingStatus != null || late != null) {
+            if (assessmentIds.isEmpty()) {
+                where.append(" AND 1=0");
+            } else {
+                where.append(" AND EXISTS (SELECT 1 FROM assessment_participant fp WHERE fp.learner_id=n.learner_id")
+                        .append(" AND fp.assessment_id IN (").append(placeholders(assessmentIds.size())).append(')');
+                arguments.addAll(assessmentIds);
+                if (submissionStatus != null) {
+                    where.append(" AND fp.submission_status=?");
+                    arguments.add(submissionStatus.name());
+                }
+                if (gradingStatus != null) {
+                    where.append(" AND fp.grading_status=?");
+                    arguments.add(gradingStatus.name());
+                }
+                if (late != null) {
+                    where.append(" AND fp.late_submission=?");
+                    arguments.add(late);
+                }
+                where.append(')');
+            }
+        }
+        return new GradebookNumberQuery(where.toString(), arguments);
+    }
+
+    private void appendGradebookOrder(StringBuilder sql, List<Object> arguments, List<String> assessmentIds,
+            LearningDtos.GradebookSortField sort) {
+        LearningDtos.GradebookSortField effective = sort == null
+                ? LearningDtos.GradebookSortField.STUDENT_NUMBER : sort;
+        if (assessmentIds.isEmpty() || effective == LearningDtos.GradebookSortField.STUDENT_NUMBER) {
+            sql.append(" ORDER BY n.student_number");
+            return;
+        }
+        String ids = placeholders(assessmentIds.size());
+        switch (effective) {
+            case LAST_SUBMITTED_AT -> sql.append(" ORDER BY (SELECT MAX(fp.last_submitted_at) FROM assessment_participant fp "
+                    + "WHERE fp.learner_id=n.learner_id AND fp.assessment_id IN (").append(ids).append("))");
+            case SCORE -> sql.append(" ORDER BY (SELECT AVG(CASE WHEN fp.enrollment_status='ACTIVE' "
+                    + "AND fp.grading_status='GRADED' AND ft.score IS NOT NULL AND ft.total_points<>0 "
+                    + "THEN ft.score*100/NULLIF(ft.total_points,0) END) FROM assessment_participant fp "
+                    + "LEFT JOIN assessment_attempt ft ON ft.id=fp.final_attempt_id WHERE fp.learner_id=n.learner_id "
+                    + "AND fp.assessment_id IN (").append(ids).append("))");
+            case SUBMISSION_STATUS -> sql.append(" ORDER BY (SELECT fp.submission_status FROM assessment_participant fp "
+                    + "WHERE fp.learner_id=n.learner_id AND fp.assessment_id=? LIMIT 1)");
+            case GRADING_STATUS -> sql.append(" ORDER BY (SELECT fp.grading_status FROM assessment_participant fp "
+                    + "WHERE fp.learner_id=n.learner_id AND fp.assessment_id=? LIMIT 1)");
+            default -> sql.append(" ORDER BY n.student_number");
+        }
+        if (effective == LearningDtos.GradebookSortField.SUBMISSION_STATUS
+                || effective == LearningDtos.GradebookSortField.GRADING_STATUS) {
+            arguments.add(assessmentIds.get(0));
+        } else {
+            arguments.addAll(assessmentIds);
+        }
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",", java.util.Collections.nCopies(count, "?"));
     }
     /** 记录同步成绩册导出审计，不保存 CSV 内容、答案或学生联系方式。 */
     public void insertGradebookExportAudit(String id, String clientRequestId, String operatorId, String courseId,
@@ -846,6 +1119,17 @@ public class LearningAssessmentRepository {
             String finalAttemptId,Instant lastSubmittedAt,boolean lateSubmission,long revision,
             Instant createdAt,Instant updatedAt) {}
     public record CourseStudentNumberRow(String id,String courseId,String learnerId,int studentNumber,Instant createdAt) {}
+    /** 当前成绩册页所需的最小参与者/最终 attempt 投影，不携带答案或历史 attempt。 */
+    public record GradebookParticipantRow(ParticipantRow participant, String finalAttemptId,
+            BigDecimal finalScore, BigDecimal finalTotalPoints) {}
+    /** 一场测评的数据库聚合结果，服务层只负责按就绪状态包装公开统计。 */
+    public record GradebookAggregateRow(String assessmentId, int expectedCount, int missingCount, int pendingCount,
+            int scoredCount, int submittedCount, int onTimeCount, BigDecimal scoreSum, BigDecimal highestScore,
+            BigDecimal lowestScore, int band0To59, int band60To69, int band70To79, int band80To89,
+            int band90To100) {}
+    /** 课程级类型平均分的数据库聚合结果。 */
+    public record GradebookTypeAverageRow(BigDecimal scoreSum, int scoreCount) {}
+    private record GradebookNumberQuery(String whereSql, List<Object> arguments) {}
 
     private static AnswerPublicationPolicy canonicalAnswerPolicy(AnswerPublicationPolicy value) {
         return value == AnswerPublicationPolicy.AFTER_GRADED
