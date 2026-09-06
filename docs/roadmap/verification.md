@@ -822,4 +822,5 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 内置浏览器结果：按用户要求重试内置浏览器，仍在内核资源初始化阶段失败：`failed to write kernel assets: 系统找不到指定的路径。 (os error 3)`。因此以下认证态项目保持明确未验收，未用脚本、假 Token 或猜测密码替代：已报名课程详情进入任务总览、任务深链刷新/返回、作答保存/刷新恢复/提交/最后结果、多次提交只显示最后有效 attempt、未公布信息防泄露、PRACTICE 过滤、PENDING/READY 成绩册、昵称部分失败、批改跳转、CSV BOM/字段/取消、403/409/422/429/offline、响应式、键盘焦点、控制台和离页资源释放。
 - 自动化结果：`pnpm.cmd --dir web-apps run generate:api`、`check:api`、`typecheck` 通过；全量 Vitest 39 个文件/251 项通过；受影响 8 个文件/62 项通过；student/teacher/admin 三端 `build` 均通过，仅有既有大 chunk 警告；`git diff --check` 通过。
 - 数据与清理：只使用 `edu_platform_learning_dev` 这一明确 local/test Schema。为分离两个既有 Seed 的固定断言，执行 T11C.1 Initialize → T12B Initialize → T12B Cleanup → T11C.1 Initialize；没有创建临时 Schema、CSV 文件、Redis Key、RabbitMQ 消息、OSS 对象或其他伪数据。最终保留 T11C.1 2 场幂等演示 Seed；T12B 6 场 Seed 脚本及其 Initialize/Cleanup/Rebuild 机制保留，未删除项目既有数据脚本。
+- 提交与 CI：导航修复及文档提交为 `0aee0f8`，已推送到 [PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50)；最新 Java、Python、Frontend、OpenAPI generated source 共 8/8 CI 检查成功，PR 仍 OPEN 且未合并。
 - 结论：前端实现、导航修复、契约生成、自动化和构建通过；本次“最终真实浏览器验收”不能标记为全绿，阻塞点是内置浏览器初始化错误以及认证 Seed 密码未进入当前安全进程。该阻塞解除后应从上述未验收清单继续，不应重复 T11C.1.1 的 5,000×100 后端容量测试。
