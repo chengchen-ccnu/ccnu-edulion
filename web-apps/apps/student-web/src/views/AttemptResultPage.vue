@@ -17,18 +17,27 @@ const route = useRoute(); const router = useRouter();
 const result = ref<AttemptResult | null>(null); const loading = ref(true); const errorMessage = ref("");
 let controller: AbortController | null = null;
 const view = computed(() => route.query.view === "single" ? "single" : "all");
+const isCourseTask = computed(() => route.name === "course-task-result");
 const questionIndex = computed(() => clampQuestionIndex(route.query.question,
   result.value?.assessment.questions.length ?? 0));
 const disclosure = computed(() => result.value ? resultDisclosure(result.value) : null);
 const visibleQuestions = computed(() => !result.value ? [] : view.value === "single"
   ? [result.value.assessment.questions[questionIndex.value]].filter(Boolean) : result.value.assessment.questions);
 
-watch(() => route.params.attemptId, load, { immediate: true });
+watch(() => [route.name, route.params.courseId, route.params.assessmentId, route.params.attemptId], load, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
 
 async function load() {
   controller?.abort(); controller = new AbortController(); loading.value = true; errorMessage.value = "";
-  try { result.value = await studentAssessmentApi.result(String(route.params.attemptId), controller.signal); }
+  try {
+    result.value = isCourseTask.value
+      ? await studentAssessmentApi.courseTaskResult(String(route.params.courseId ?? ""), String(route.params.assessmentId ?? ""), controller.signal)
+      : await studentAssessmentApi.result(String(route.params.attemptId), controller.signal);
+    if (!isCourseTask.value && result.value.assessment.type !== "PRACTICE") {
+      await router.replace(`/learn/${result.value.assessment.courseId}/tasks/${result.value.assessment.id}/result`);
+      return;
+    }
+  }
   catch (error) { if (!controller.signal.aborted) errorMessage.value = messageFor(error); }
   finally { if (!controller.signal.aborted) loading.value = false; }
 }
@@ -59,7 +68,7 @@ function messageFor(error: unknown) {
     <section v-else-if="errorMessage" class="practice-empty" role="alert"><h2>无法查看结果</h2><p>{{ errorMessage }}</p>
       <button class="button button--quiet" type="button" @click="load">重新加载</button></section>
     <template v-else-if="result">
-      <header class="result-heading"><div><RouterLink to="/practice">← 返回练习中心</RouterLink><h2>{{ result.assessment.title }}</h2>
+      <header class="result-heading"><div><RouterLink :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">← {{ isCourseTask ? '返回课程任务' : '返回练习中心' }}</RouterLink><h2>{{ result.assessment.title }}</h2>
         <p>提交于 {{ result.submittedAt ? new Date(result.submittedAt).toLocaleString('zh-CN') : '提交时间同步中' }}</p></div>
         <div v-if="disclosure?.showTotalScore" class="result-score"><span>最新成绩</span><strong>{{ result.score }} / {{ result.totalPoints }}</strong>
           <small v-if="result.gradeUpdatedAt">最后更新 {{ new Date(result.gradeUpdatedAt).toLocaleString('zh-CN') }}</small></div>

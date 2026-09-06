@@ -64,6 +64,23 @@ describe("student application routes", () => {
     expect(route?.meta?.requiredRole).toBeUndefined();
   });
 
+  it.each([
+    ["/learn/:courseId/tasks", "course-tasks"],
+    ["/learn/:courseId/tasks/:assessmentId", "course-task-attempt"],
+    ["/learn/:courseId/tasks/:assessmentId/result", "course-task-result"]
+  ])("protects the T11C.2 course task route %s without a parallel role boundary", (path, name) => {
+    const route = studentRoutes.find(item => item.path === path);
+    expect(route?.name).toBe(name);
+    expect(route?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
+    expect(route?.meta?.requiredRole).toBeUndefined();
+  });
+
+  it("keeps HOMEWORK and EXAM outside the legacy practice route surface", () => {
+    const source = readFileSync(new URL("./views/PracticeCenterPage.vue", import.meta.url), "utf8");
+    expect(source).toContain('item.type === "PRACTICE"');
+    expect(source).not.toContain("/learn/:courseId/tasks");
+  });
+
   it("keeps playback implementation out of the public course detail component", () => {
     const detailSource = readFileSync(new URL("./views/CourseDetailPage.vue", import.meta.url), "utf8");
     const learningSource = readFileSync(new URL("./views/CourseLearningPage.vue", import.meta.url), "utf8");

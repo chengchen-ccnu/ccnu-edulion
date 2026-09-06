@@ -30,3 +30,16 @@ describe("T12B teacher assessment route", () => {
     expect(block).not.toContain("PlaceholderPage");
   });
 });
+
+describe("T11C.2 teacher gradebook route", () => {
+  const source = readFileSync(fileURLToPath(new URL("./router.ts", import.meta.url)), "utf8");
+
+  it("registers the gradebook matrix route with teaching capability protection", () => {
+    const start = source.indexOf('path: "/teacher/gradebook"');
+    const block = source.slice(start, source.indexOf("\n  { path:", start + 1));
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain('name: "teacher-gradebook"');
+    expect(block).toContain('requiredPermission: "teaching:access"');
+    expect(block).toContain("TeacherGradebookPage.vue");
+  });
+});

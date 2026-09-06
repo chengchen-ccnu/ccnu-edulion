@@ -250,7 +250,7 @@ const panelLabels: Record<Panel, string> = { basic: "基本信息", questions: "
 
 <template>
   <main class="teacher-assessment-page"><header class="assessment-admin-heading"><div><span class="section-kicker">ASSESSMENT MANAGEMENT</span><h2>测评管理</h2>
-    <p>唯一管理入口；关闭、成绩和答案公布均以服务端事实为准。</p></div><button class="button button--primary" type="button" @click="setQuery({ assessmentId: undefined, panel: 'basic' })">新建草稿</button></header>
+    <p>唯一管理入口；关闭、成绩和答案公布均以服务端事实为准。</p></div><div class="heading-actions"><RouterLink v-if="queryString('courseId')" class="button button--quiet" :to="`/teacher/gradebook?courseId=${queryString('courseId')}`">查看成绩册</RouterLink><button class="button button--primary" type="button" @click="setQuery({ assessmentId: undefined, panel: 'basic' })">新建草稿</button></div></header>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p><p v-if="successMessage" class="feedback feedback--success" role="status">{{ successMessage }}</p>
     <p v-if="conflictMessage" class="feedback feedback--warning" role="alert">{{ conflictMessage }} <button type="button" @click="reloadLatestPreservingInput">载入最新 revision（保留输入）</button></p>
     <div class="assessment-admin-layout"><aside class="assessment-list-panel"><form @submit.prevent><label>课程 ID<input :value="route.query.courseId ?? ''" @change="setQuery({ courseId: ($event.target as HTMLInputElement).value.trim(), page: 1 })"></label>

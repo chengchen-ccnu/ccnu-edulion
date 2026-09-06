@@ -5,7 +5,7 @@
  * 切换课时或离页会中止目录/学习请求、丢弃旧进度队列；播放器继续销毁 HLS、定时器和短期 URL。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { CourseDetail, CourseProgress, Enrollment, LearnerAssessmentSummary, LearningNote, LessonContent,
+import type { CourseDetail, CourseProgress, Enrollment, LearnerCourseTaskSummary, LearningNote, LessonContent,
   LessonContentResource, LessonProgress } from "@edu/api-client";
 import { createResourceActionController, HlsVideoPlayer, playbackErrorMessage, SafeArticleContent } from "@edu/ui";
 import type { PlaybackProgressSample } from "@edu/ui";
@@ -29,7 +29,7 @@ const enrollment = ref<Enrollment | null>(null);
 const progress = ref<CourseProgress | null>(null);
 const reportedProgress = ref<LessonProgress | null>(null);
 const notes = ref<LearningNote[]>([]);
-const lessonAssessments = ref<LearnerAssessmentSummary[]>([]);
+const lessonAssessments = ref<LearnerCourseTaskSummary[]>([]);
 const loading = ref(false);
 const errorMessage = ref("");
 const enrollmentMessage = ref("");
@@ -185,7 +185,7 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
   const [progressResult, notesResult, assessmentsResult] = await Promise.allSettled([
     studentLearningApi.progress(detail.id, controller.signal),
     studentLearningApi.notes(detail.id, lessonId, controller.signal),
-    studentAssessmentApi.list({ page: 1, size: 100, courseId: detail.id }, controller.signal)
+    studentAssessmentApi.listCourseTasks(detail.id, { page: 1, size: 100, currentLessonId: lessonId }, controller.signal)
   ]);
   if (stale(controller, generation)) return;
   if (progressResult.status === "fulfilled") {
@@ -200,7 +200,7 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
   if (notesResult.status === "fulfilled") notes.value = notesResult.value;
   else notesError.value = learningErrorMessage(notesResult.reason, "本课笔记暂时无法读取。");
   if (assessmentsResult.status === "fulfilled") {
-    lessonAssessments.value = assessmentsResult.value.items.filter(item => item.lessonId === lessonId);
+    lessonAssessments.value = assessmentsResult.value.items;
   } else assessmentsError.value = learningErrorMessage(assessmentsResult.reason, "本课练习暂时无法读取。");
   if (content.value?.type === "VIDEO") startProgressSync(detail.id, lessonId);
 }
@@ -704,12 +704,12 @@ function cancelPage() {
       </section>
 
       <section class="lesson-assessments-panel" aria-labelledby="lesson-assessments-heading">
-        <header><div><span class="section-kicker">ASSESSMENTS</span><h3 id="lesson-assessments-heading">本课练习</h3></div>
-          <RouterLink to="/practice">查看练习中心</RouterLink></header>
+        <header><div><span class="section-kicker">COURSE TASKS</span><h3 id="lesson-assessments-heading">本课作业与考试</h3></div></header>
         <p v-if="assessmentsError" class="panel-error" role="alert">{{ assessmentsError }}</p>
         <ul v-if="lessonAssessments.length"><li v-for="item in lessonAssessments" :key="item.id"><div><strong>{{ item.title }}</strong>
-          <small>{{ item.type }} · {{ item.learnerState }}</small></div><RouterLink :to="`/practice/${item.id}`">进入测评</RouterLink></li></ul>
-        <p v-else-if="!assessmentsError" class="empty-inline">当前课时没有已发布测评。</p>
+          <small>{{ item.type === 'HOMEWORK' ? '作业' : '考试' }} · {{ item.timeState }}</small></div><RouterLink
+            :to="{ path: `/learn/${course.id}/tasks/${item.id}`, query: { currentLessonId: current.lesson.id } }">进入任务</RouterLink></li></ul>
+        <p v-else-if="!assessmentsError" class="empty-inline">当前课时没有已发布作业或考试。</p>
       </section>
 
       <nav class="lesson-navigation" aria-label="课时导航">

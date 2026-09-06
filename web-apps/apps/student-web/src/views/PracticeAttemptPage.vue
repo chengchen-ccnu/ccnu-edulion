@@ -4,18 +4,20 @@
  * 草稿通过 AttemptSaveController 防抖/定时保存；截止仅使用服务端校准时间，归零后锁定输入并提交最后成功草稿。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { AttemptAnswerInput, AttemptDraft, LearnerAssessment, LearnerAssessmentQuestion, SubmitAttemptRequest } from "@edu/api-client";
+import type { AttemptAnswerInput, AttemptDraft, LearnerAssessment, LearnerAssessmentQuestion, LearnerCourseTask,
+  SubmitAttemptRequest } from "@edu/api-client";
 import { SafeAssessmentContent } from "@edu/ui";
 import type { AssessmentMediaResolver } from "@edu/ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 
 import { studentAssessmentApi } from "../assessment-api";
 import { AttemptSaveController, ServerDeadlineClock } from "../attempt-session";
 import type { AttemptSaveSnapshot } from "../attempt-session";
 
 const route = useRoute(); const router = useRouter();
-const assessment = ref<LearnerAssessment | null>(null);
+type AttemptAssessment = LearnerAssessment | LearnerCourseTask;
+const assessment = ref<AttemptAssessment | null>(null);
 const draft = ref<AttemptDraft | null>(null);
 const answers = ref<Record<string, string[]>>({});
 const currentIndex = ref(0);
@@ -33,11 +35,22 @@ let submitBody: SubmitAttemptRequest | null = null;
 const questions = computed(() => assessment.value?.questions ?? []);
 const currentQuestion = computed(() => questions.value[currentIndex.value] ?? null);
 const answeredCount = computed(() => questions.value.filter(question => isAnswered(question)).length);
+const isCourseTask = computed(() => route.name === "course-task-attempt");
+const courseTask = computed(() => isCourseTask.value ? assessment.value as LearnerCourseTask | null : null);
+const taskIsLate = computed(() => courseTask.value?.timeState === "LATE_WINDOW");
+const totalPoints = computed(() => assessment.value && "totalPoints" in assessment.value
+  ? assessment.value.totalPoints : questions.value.reduce((sum, question) => sum + question.points, 0));
 
-onMounted(() => { void load(); document.addEventListener("visibilitychange", recalibrateWhenVisible); });
+onMounted(() => { document.addEventListener("visibilitychange", recalibrateWhenVisible); });
 onBeforeUnmount(dispose);
+watch(() => [route.name, route.params.courseId, route.params.assessmentId, route.params.attemptId], load, { immediate: true });
 onBeforeRouteLeave(() => !saveSnapshot.value?.dirty || submitting.value
   || window.confirm("仍有未保存答案，确认离开作答页？"));
+onBeforeRouteUpdate(to => {
+  if (to.name === route.name && saveSnapshot.value?.dirty && !submitting.value
+      && !window.confirm("仍有未保存答案，确认切换任务？")) return false;
+  return true;
+});
 
 watch(answers, () => {
   if (!locked.value) saveController?.change(toAnswerInputs());
@@ -49,14 +62,39 @@ async function load() {
   const assessmentId = String(route.params.assessmentId ?? "");
   pageAbort = new AbortController();
   try {
-    const detail = await studentAssessmentApi.detail(assessmentId, pageAbort.signal);
+    const detail = isCourseTask.value
+      ? await studentAssessmentApi.courseTask(String(route.params.courseId ?? ""), assessmentId,
+        currentLessonQuery(), pageAbort.signal)
+      : await studentAssessmentApi.detail(assessmentId, pageAbort.signal);
     assessment.value = detail;
-    if (detail.currentAttempt && detail.currentAttempt.status !== "DRAFT") {
+    if (!isCourseTask.value && detail.type !== "PRACTICE") {
+      if (detail.type === "HOMEWORK" || detail.type === "EXAM") {
+        await router.replace(`/learn/${detail.courseId}/tasks/${detail.id}`);
+      } else {
+        errorMessage.value = "练习中心只支持普通练习。";
+      }
+      return;
+    }
+    const existingAttempt = "currentAttempt" in detail ? detail.currentAttempt : detail.finalAttempt;
+    const taskDetail = isCourseTask.value ? detail as LearnerCourseTask : null;
+    if (taskDetail && taskDetail.questions.length === 0) {
+      errorMessage.value = taskDetail.timeState === "NOT_OPEN" ? "该任务尚未开放，题目内容不会提前展示。"
+        : "该任务当前不可作答，服务端未返回题目内容。";
+      return;
+    }
+    if (taskDetail && existingAttempt && existingAttempt.status !== "DRAFT"
+        && (taskDetail.attemptsUsed >= taskDetail.maxAttempts || taskDetail.timeState === "CLOSED")) {
+      await router.replace(courseTaskResultRoute()); return;
+    }
+    if (!isCourseTask.value && "currentAttempt" in detail && detail.currentAttempt && detail.currentAttempt.status !== "DRAFT") {
       await router.replace(`/attempt/${detail.currentAttempt.id}/result`); return;
     }
-    const restored = detail.currentAttempt
-      ? await studentAssessmentApi.draft(detail.currentAttempt.id, pageAbort.signal)
-      : await studentAssessmentApi.start(assessmentId, { clientRequestId: crypto.randomUUID() }, pageAbort.signal);
+    const restored = existingAttempt?.status === "DRAFT"
+      ? await studentAssessmentApi.draft(existingAttempt.id, pageAbort.signal)
+      : isCourseTask.value
+        ? await studentAssessmentApi.startCourseTask(String(route.params.courseId ?? ""), assessmentId,
+          { clientRequestId: crypto.randomUUID() }, pageAbort.signal)
+        : await studentAssessmentApi.start(assessmentId, { clientRequestId: crypto.randomUUID() }, pageAbort.signal);
     initializeDraft(restored);
   } catch (error) {
     if (!pageAbort.signal.aborted) errorMessage.value = messageFor(error);
@@ -94,9 +132,13 @@ function tickClock() {
 async function recalibrateWhenVisible() {
   if (document.visibilityState !== "visible" || !assessment.value || locked.value || !pageAbort) return;
   try {
-    const fresh = await studentAssessmentApi.detail(assessment.value.id, pageAbort.signal);
+    const fresh = isCourseTask.value
+      ? await studentAssessmentApi.courseTask(String(route.params.courseId ?? ""), assessment.value.id,
+        currentLessonQuery(), pageAbort.signal)
+      : await studentAssessmentApi.detail(assessment.value.id, pageAbort.signal);
     assessment.value = fresh;
-    clock.calibrate(fresh.serverTime, fresh.currentAttempt?.deadlineAt ?? draft.value?.deadlineAt ?? null);
+    const freshAttempt = "currentAttempt" in fresh ? fresh.currentAttempt : fresh.finalAttempt;
+    clock.calibrate(fresh.serverTime, freshAttempt?.deadlineAt ?? draft.value?.deadlineAt ?? null);
     tickClock();
   } catch (error) {
     if (!pageAbort.signal.aborted) errorMessage.value = messageFor(error);
@@ -111,7 +153,8 @@ async function confirmSubmit() {
   if (!saved || !snapshot || snapshot.dirty) {
     errorMessage.value = "最后一次草稿尚未成功保存，请恢复网络或手动重试保存后再提交。"; return;
   }
-  if (!window.confirm(`确认提交？当前已答 ${answeredCount.value}/${questions.value.length} 题；提交后不能修改。`)) return;
+  const lateWarning = taskIsLate.value ? "本次迟交提交将成为最终版本并保留迟交标记。" : "";
+  if (!window.confirm(`${lateWarning ? `${lateWarning}\n` : ""}确认提交？当前已答 ${answeredCount.value}/${questions.value.length} 题；提交后不能修改。`)) return;
   locked.value = true; saveController?.dispose();
   submitBody = { clientRequestId: crypto.randomUUID(), expectedRevision: snapshot.revision,
     answers: snapshot.lastSavedAnswers };
@@ -124,7 +167,7 @@ async function submitWithFiniteRetry() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       await studentAssessmentApi.submit(draft.value.id, submitBody, pageAbort?.signal);
-      await router.replace(`/attempt/${draft.value.id}/result`); return;
+      await router.replace(isCourseTask.value ? courseTaskResultRoute() : `/attempt/${draft.value.id}/result`); return;
     } catch (error) {
       if (!retryable(error) || attempt === 2) {
         errorMessage.value = `作答已保持只读锁定。${messageFor(error)} 请稍后使用同一页面重试提交。`;
@@ -194,6 +237,13 @@ function messageFor(error: unknown) {
   const labels: Record<number, string> = { 401: "登录状态已失效。", 403: "当前账号无权访问该测评。", 404: "测评或作答不存在、未发布或不可见。", 409: "测评、截止时间或作答 revision 已变化。", 422: error.message, 429: "请求过于频繁。", 503: "学习或媒体依赖暂时不可用。" };
   return labels[error.status] ?? error.message;
 }
+function courseTaskResultRoute() {
+  return `/learn/${String(route.params.courseId ?? "")}/tasks/${String(route.params.assessmentId ?? "")}/result`;
+}
+function currentLessonQuery() {
+  const currentLessonId = typeof route.query.currentLessonId === "string" ? route.query.currentLessonId : undefined;
+  return currentLessonId ? { currentLessonId } : undefined;
+}
 function formatRemaining(value: number | null) { if (value === null) return "不限时"; const seconds = Math.ceil(value / 1000); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
 </script>
 
@@ -202,9 +252,11 @@ function formatRemaining(value: number | null) { if (value === null) return "不
     <div v-if="loading" class="practice-loading" role="status">正在恢复试卷与服务端草稿…</div>
     <section v-else-if="errorMessage && !assessment" class="practice-empty" role="alert"><h2>无法打开测评</h2><p>{{ errorMessage }}</p>
       <button class="button button--quiet" type="button" @click="load">重新加载</button></section>
+    <section v-else-if="errorMessage && !draft" class="practice-empty" role="alert"><h2>当前不能作答</h2><p>{{ errorMessage }}</p>
+      <RouterLink class="button button--quiet" :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">返回</RouterLink></section>
     <template v-else-if="assessment && draft">
-      <header class="attempt-header"><div><RouterLink to="/practice">← 返回练习中心</RouterLink><h2>{{ assessment.title }}</h2>
-        <p>{{ answeredCount }}/{{ questions.length }} 已答 · {{ assessment.totalPoints }} 分</p></div>
+      <header class="attempt-header"><div><RouterLink :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">← {{ isCourseTask ? '返回课程任务' : '返回练习中心' }}</RouterLink><h2>{{ assessment.title }}</h2>
+        <p>{{ answeredCount }}/{{ questions.length }} 已答 · {{ totalPoints }} 分</p></div>
         <div class="attempt-status"><strong :class="{ 'is-urgent': remainingMs !== null && remainingMs < 60_000 }">{{ formatRemaining(remainingMs) }}</strong>
           <span role="status">{{ saveSnapshot?.status === 'saving' ? '保存中…' : saveSnapshot?.status === 'failed' ? '保存失败' : saveSnapshot?.dirty ? '等待保存' : '已保存' }}</span></div></header>
       <p v-if="submitMessage" class="feedback feedback--warning" role="status">{{ submitMessage }}</p>

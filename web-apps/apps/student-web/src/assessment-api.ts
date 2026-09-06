@@ -1,6 +1,7 @@
 import { createGatewayClient, gatewayRequestError } from "@edu/api-client";
 import type {
   AttemptDraft, AttemptResult, GatewayClient, LearnerAssessment, LearnerAssessmentPage,
+  LearnerCourseTask, LearnerCourseTaskPage, GetLearnerCourseTaskQuery, ListLearnerCourseTasksQuery,
   ListLearnerAssessmentsQuery, ListWrongQuestionsQuery, MediaAccessGrant, RedoWrongQuestionRequest,
   SaveAttemptDraftRequest, StartAttemptRequest, SubmitAttemptRequest, UpdateWrongQuestionMasteryRequest,
   WrongQuestion, WrongQuestionPage, WrongQuestionRedoResult
@@ -13,6 +14,12 @@ import { authStore } from "./auth";
 export interface StudentAssessmentApi {
   list(query: ListLearnerAssessmentsQuery, signal?: AbortSignal): Promise<LearnerAssessmentPage>;
   detail(assessmentId: string, signal?: AbortSignal): Promise<LearnerAssessment>;
+  listCourseTasks(courseId: string, query: ListLearnerCourseTasksQuery, signal?: AbortSignal): Promise<LearnerCourseTaskPage>;
+  courseTask(courseId: string, assessmentId: string, query?: GetLearnerCourseTaskQuery,
+    signal?: AbortSignal): Promise<LearnerCourseTask>;
+  startCourseTask(courseId: string, assessmentId: string, body: StartAttemptRequest,
+    signal?: AbortSignal): Promise<AttemptDraft>;
+  courseTaskResult(courseId: string, assessmentId: string, signal?: AbortSignal): Promise<AttemptResult>;
   start(assessmentId: string, body: StartAttemptRequest, signal?: AbortSignal): Promise<AttemptDraft>;
   draft(attemptId: string, signal?: AbortSignal): Promise<AttemptDraft>;
   save(attemptId: string, body: SaveAttemptDraftRequest, signal?: AbortSignal): Promise<AttemptDraft>;
@@ -45,6 +52,26 @@ export function createStudentAssessmentApi(store: AuthStore = authStore,
     detail(assessmentId, signal) {
       return request(Authorization => client.GET("/api/v1/learning/assessments/{assessmentId}", {
         headers: { Authorization }, params: { path: { assessmentId } }, signal
+      }));
+    },
+    listCourseTasks(courseId, query, signal) {
+      return request(Authorization => client.GET("/api/v1/learning/courses/{courseId}/tasks", {
+        headers: { Authorization }, params: { path: { courseId }, query }, signal
+      }));
+    },
+    courseTask(courseId, assessmentId, query, signal) {
+      return request(Authorization => client.GET("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}", {
+        headers: { Authorization }, params: { path: { courseId, assessmentId }, query }, signal
+      }));
+    },
+    startCourseTask(courseId, assessmentId, body, signal) {
+      return request(Authorization => client.POST("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/attempts", {
+        headers: { Authorization }, params: { path: { courseId, assessmentId } }, body, signal
+      }));
+    },
+    courseTaskResult(courseId, assessmentId, signal) {
+      return request(Authorization => client.GET("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result", {
+        headers: { Authorization }, params: { path: { courseId, assessmentId } }, signal
       }));
     },
     start(assessmentId, body, signal) {

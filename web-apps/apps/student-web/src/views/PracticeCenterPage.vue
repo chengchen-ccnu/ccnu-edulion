@@ -20,7 +20,10 @@ const startingId = ref<string | null>(null);
 let controller: AbortController | null = null;
 
 const stateFilter = computed(() => typeof route.query.state === "string" ? route.query.state : "all");
-const visibleItems = computed(() => (data.value?.items ?? []).filter(item => matchesState(item, stateFilter.value)));
+/** 练习中心是 PRACTICE 的唯一入口；课程作业/考试即使被旧列表接口返回也不能渲染或导航。 */
+const visibleItems = computed(() => (data.value?.items ?? [])
+  .filter(item => item.type === "PRACTICE")
+  .filter(item => matchesState(item, stateFilter.value)));
 
 watch(() => route.query, load, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
@@ -42,6 +45,7 @@ async function load() {
 }
 
 async function open(item: LearnerAssessmentSummary) {
+  if (item.type !== "PRACTICE") return;
   const action = learnerAssessmentAction(item);
   if (action === "result" && item.currentAttempt) {
     await router.push(`/attempt/${item.currentAttempt.id}/result`); return;
