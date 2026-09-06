@@ -814,7 +814,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 初始实现阶段自动化结果：`pnpm.cmd --dir web-apps install --frozen-lockfile` 通过；`generate:api`、`check:api`、`typecheck` 通过；Vitest 全量 39 个文件/248 个测试通过；`pnpm.cmd --dir web-apps run build` 三端通过，仅保留既有 student/teacher 大 chunk 警告；新增成绩册 API/URL 状态、课程任务 API、路由边界和 PRACTICE 过滤测试通过；`git diff --check` 通过。最终复核补充导航回归后，测试总数变为 251 项。
 - 初始实现阶段真实验收边界：当时未启动或连接 Gateway、IAM、Course、Learning、Teacher Web，未创建/修改/清理数据库、表、Seed、Redis Key、RabbitMQ 消息、OSS 对象或 CSV 文件；本次最终复核已补做公共 HTTP/401/404 探针和既有 Seed 切换收口。认证浏览器项目的当前状态见下方“最终真实验收复核”。
 
-## 2026-09-06 T11C.2 最终真实验收复核
+## 2026-09-06 T11C.2 最终真实验收复核（首次尝试，内置浏览器初始化阻塞）
 
 - 分支与范围：继续在 `codex/t11c2-homework-gradebook-web`、现有 [PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50) 上工作，没有创建新分支、没有合并 PR。确认 PR 仍为 OPEN，head/base 正确，复核前工作树只有本轮导航修复两处前端修改。没有改动 Java、Python、OpenAPI、Flyway、事件、全局页面规格或后端契约。
 - 导航缺陷修复：`course-tasks`、`course-task-attempt`、`course-task-result` 全部归入“我的学习”高亮组；HOMEWORK/EXAM 不再进入“练习中心”高亮组；全局导航标签、顺序和槽位未改变。新增参数化回归覆盖 3 个路由。
@@ -824,3 +824,17 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与清理：只使用 `edu_platform_learning_dev` 这一明确 local/test Schema。为分离两个既有 Seed 的固定断言，执行 T11C.1 Initialize → T12B Initialize → T12B Cleanup → T11C.1 Initialize；没有创建临时 Schema、CSV 文件、Redis Key、RabbitMQ 消息、OSS 对象或其他伪数据。最终保留 T11C.1 2 场幂等演示 Seed；T12B 6 场 Seed 脚本及其 Initialize/Cleanup/Rebuild 机制保留，未删除项目既有数据脚本。
 - 提交与 CI：导航修复及文档提交为 `0aee0f8`，已推送到 [PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50)；最新 Java、Python、Frontend、OpenAPI generated source 共 8/8 CI 检查成功，PR 仍 OPEN 且未合并。
 - 结论：前端实现、导航修复、契约生成、自动化和构建通过；本次“最终真实浏览器验收”不能标记为全绿，阻塞点是内置浏览器初始化错误以及认证 Seed 密码未进入当前安全进程。该阻塞解除后应从上述未验收清单继续，不应重复 T11C.1.1 的 5,000×100 后端容量测试。
+
+## 2026-09-06 T11C.2 重新执行未完成的真实浏览器验收
+
+- 分支与 PR：继续使用 `codex/t11c2-homework-gradebook-web` 和现有 [PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50)，没有创建新分支、没有合并 PR。开始前 `git status` 为干净；本轮只产生学生端路由顺序、路由回归测试和三份 T11C.2 文档修改。
+- 内置浏览器：上一轮 `failed to write kernel assets: 系统找不到指定的路径 (os error 3)` 本轮没有复现。通过内置浏览器复用既有学生 local/test 会话，未读取、猜测或输入密码，也未绕过 Gateway。真实页面控制台 `error/warning` 日志均为空，没有观察到新增敏感信息。
+- 导航与学生入口：从 `/courses/00000000-0000-4000-8000-000000000201` 的已报名课程详情进入“课程作业与考试”后，浏览器到达 `/learn/00000000-0000-4000-8000-000000000201/tasks`；“我的学习”具有 `aria-current="page"`，“练习中心”没有高亮。原缺陷是通用 `/learn/:courseId/:lessonId` 排在三个静态课程任务路由之前，`tasks` 被当作课时 ID 并显示“课时不存在”；现已将三个静态路由前移，并以参数化路由匹配测试固定回归。
+- 学生路由恢复：课程任务总览、课程任务作答和最后结果深链接分别命中 `course-tasks`、`course-task-attempt`、`course-task-result`；普通 `/learn/:courseId/:lessonId` 仍命中 `course-learning`。任务总览刷新后 URL/标题保持；浏览器返回可回到课程详情；当前课时页只显示“本课作业与考试”区域，不再提供练习中心入口。
+- 学生安全边界：`/practice` 实际页面只显示 PRACTICE，固定 T11C.1 Seed 中的 HOMEWORK/EXAM 没有泄露到练习中心。任务总览、作答和结果页面均能显示服务错误态，但三个真实任务接口都返回前端“服务暂时不可用”，因此不能宣称作答开始、答案保存/刷新恢复、提交、最后有效 attempt、多次提交收敛、结果公布门禁或未公布成绩/答案防泄露已通过。
+- 503 根因证据：Course 实际发布 JSON 的章节/课时包含 `id`、`title`、`sequence`、`previewable` 等字段；Learning `HttpCourseFactsClient` 的严格适配记录只声明 `Chapter(List<Lesson>)` 和 `Lesson(String id, String type)`，且严格 Jackson 开关开启。真实课程任务请求因此被适配器转为 `503 LEARNING.COURSE_DEPENDENCY_UNAVAILABLE`。这是既有 Learning→Course 后端适配实现问题，本轮按范围没有修改 Java、OpenAPI 或后端契约。
+- 教师端：在同一学生会话访问 `/teacher/gradebook?courseId=00000000-0000-4000-8000-000000000201`，真实导航到 `/forbidden` 并显示 403 权限提示。没有可安全注入的教师密码，因此没有伪造 PENDING/READY、昵称降级、批改深链或 CSV 验收结论；相应成功链路仍是阻塞项。
+- 交互与响应式：任务页键盘 Tab 可到达导航、返回课程详情、重试按钮，焦点轮廓可见。内置浏览器尝试 1440×900、768×1024、390×844 三组 viewport 时实际有效宽度均被固定为 473px；在该有效宽度下 `scrollWidth === clientWidth`，未观察到横向溢出，但不能据此替代三个目标宽度的完整验收。页面离开后未做成功作答/CSV 请求场景下的 AbortController、计时器和 Blob URL 实测。
+- HTTP/自动化与构建：`generate:api`、`check:api`、`typecheck` 均通过；全量 Vitest 39 个文件/255 项通过，路由/导航/T11C.2 边界专项 3 个文件/47 项通过；student/teacher/admin 三端 build 通过，仅保留既有大 chunk 警告；`git diff --check` 通过。真实 HTTP 继续确认公共课程 200、未知课程 404、未认证课程任务/成绩册 401 统一错误信封。
+- 数据与清理：没有创建数据库、表、临时 Schema、账号、CSV 文件、Redis Key、RabbitMQ 消息或 OSS 对象。只复用明确的 `edu_platform_learning_dev` 既有 T11C.1 2 场演示 Seed；本轮没有新增验收数据，Seed 最终状态保持不变，未产生需要额外清理的临时数据。没有重复 T11C.1.1 已通过的 5,000×100 容量验收。
+- 结论：内置浏览器问题已解除，路由冲突已修复并有真实浏览器与自动化证据；T11C.2 仍不能标记为全绿，当前未完成项由任务 API 503 后端适配故障和教师会话缺失造成。应先修复/确认后端适配实现并提供安全教师 local/test 会话，再从任务成功链路和成绩册 CSV 流程继续验收。
