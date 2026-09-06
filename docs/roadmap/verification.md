@@ -791,7 +791,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化结果：HttpCourseFactsClientTest 与 LearningCourseFactsHttpAcceptanceTest 定向 6/6 通过；整个 learning-service 测试 88 项执行、0 失败、16 项既有条件测试按开关跳过。HTTP 验收通过随机端口 Learning 任务列表真实入口调用 Course 形状响应，返回 200，任务/课程/课时 ID 和任务类型正确，Course 请求一次完成。
 - 数据边界：未连接或修改 MySQL、Redis、RabbitMQ、OSS 或生产数据；测试只在临时 H2 learning_course_facts_http 中应用既有 V1～V14 迁移，创建一条合成报名、一条已发布 HOMEWORK、一条课程分配和一条参与者并按精确 ID 清理；没有新增 Flyway 迁移、持久 Seed 或隐私数据。
 - 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块全部成功；Learning 88 项执行、0 失败、16 项既有条件测试按开关跳过。
-- 交付状态：已完成本地验证，提交、推送、Ready PR 和 CI 结果待补记；未执行合并。
+- 交付状态：提交 `cc32a41` 已推送到 `codex/t11c1.2-course-facts-forward-compat`；Ready PR 为 [#51](https://github.com/chengchen-ccnu/ccnu-edulion/pull/51)，等待 CI；未执行合并。
 
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
