@@ -774,7 +774,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-06 T11C.1.1 成绩册应交名单批量投影与容量修复
 
-- 分支与范围：当前分支已调整为 `codex/t11c1.1-gradebook-roster-batch`。没有实现 T11C.2 Vue 页面、路由或前端业务代码；没有使用 Redis、RabbitMQ、分布式锁、OSS、生产数据或新增微服务。V14 文件保持未修改，本任务没有保留新的数据库迁移。
+- 分支与范围：当前分支已调整为 `codex/t11c1.1-gradebook-roster-batch`，提交 `89effa5`，已创建 [PR #49](https://github.com/chengchen-ccnu/ccnu-edulion/pull/49)，等待 CI。没有实现 T11C.2 Vue 页面、路由或前端业务代码；没有使用 Redis、RabbitMQ、分布式锁、OSS、生产数据或新增微服务。V14 文件保持未修改，本任务没有保留新的数据库迁移。
 - 写路径：移除成绩册读取阶段的 `synchronizeCourseGradebook` 写入。测评发布、课程报名/重新报名、退课和最终关闭分别在现有 Learning 事务中使用 JDBC Batch/集合式 SQL 维护 HOMEWORK/EXAM 参与者。唯一键吸收重复初始化；已为 ACTIVE 的参与者不更新 revision；只恢复 WITHDRAWN 行；关闭后的名单不再因退课或重新报名改变，关闭事务在冻结前补齐名单。
 - 查询路径：`teacherGradebook` 使用只读事务；学生分页只查询当前页课程编号和当前页参与者/最终 attempt，筛选、排序和总数由 SQL 完成，成绩册统计和 HOMEWORK/EXAM 平均分使用数据库聚合。昵称关键词只在确需搜索时调用一次 IAM 批量投影，普通分页不读取页外昵称。
 - CSV 路径：导出通过 `StreamingResponseBody` 写入 UTF-8 BOM，按每批 250 名学生读取、组装和刷新，未构造 5,000×100 完整成绩格集合或完整 `byte[]`。导出审计记录总行数 5,000 和 100 场测评。
