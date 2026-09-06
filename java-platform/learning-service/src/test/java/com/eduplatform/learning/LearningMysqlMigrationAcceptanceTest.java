@@ -7,6 +7,7 @@ import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.service.QuestionService;
 import com.eduplatform.learning.service.LegacyQuestionImportService;
 import com.eduplatform.learning.importing.LegacyQuestionJsonParser;
+import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -50,13 +51,16 @@ class LearningMysqlMigrationAcceptanceTest {
             "enrollment", "lesson_progress", "lesson_progress_event", "learning_note", "assessment",
             "assessment_question", "assessment_assignment", "assessment_attempt", "assessment_answer",
             "manual_grading_record", "wrong_question", "wrong_question_occurrence", "wrong_question_redo",
-            "learning_idempotency_request");
+            "learning_idempotency_request", "assessment_participant", "course_student_number",
+            "course_student_number_counter", "assessment_deadline_audit", "assessment_settlement_audit",
+            "gradebook_export_audit");
 
     @Autowired JdbcTemplate jdbc;
     @Autowired QuestionService questions;
     @Autowired LegacyQuestionImportService legacyImports;
     @Autowired LegacyQuestionJsonParser legacyParser;
     @Autowired ObjectMapper mapper;
+    @Autowired LearningAssessmentRepository assessments;
 
     /** 在 Spring 建立连接前拒绝错误或不明确的目标 Schema。 */
     @DynamicPropertySource
@@ -67,7 +71,7 @@ class LearningMysqlMigrationAcceptanceTest {
     }
 
     /**
-     * 验证真实开发库按 V8 -> V9 -> V10 -> V11 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
+     * 验证真实开发库按 V8 -> V9 -> V10 -> V11 -> V14 正常向前演进，且没有用补写 V4 或 baseline 绕过顺序。
      * 该断言只读 Flyway 历史与表元数据，不创建任何 Fixture。
      */
     @Test
@@ -75,10 +79,156 @@ class LearningMysqlMigrationAcceptanceTest {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
                 String.class);
-        assertThat(versions).contains("8", "9", "10", "11").doesNotContain("4");
+        assertThat(versions).contains("8", "9", "10", "11", "14").doesNotContain("4");
         List<String> actual = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class);
         assertThat(actual).containsAll(TABLES);
+    }
+
+    /**
+     * 在真实 MySQL 上验证 V14 的 HOMEWORK 字段、旧 attempt 默认 sequence=1、第二次 sequence 和课程编号唯一约束。
+     * 所有行都使用本次随机 ID，finally 按外键逆序删除，不会修改存量报名或测评。
+     */
+    @Test
+    void v14HomeworkAttemptParticipantAndStudentNumberFactsWorkOnMysqlAndFixtureIsPreciselyRemoved() {
+        assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_learning_dev");
+        String assessmentId = UUID.randomUUID().toString();
+        String learnerId = UUID.randomUUID().toString();
+        String attemptId = UUID.randomUUID().toString();
+        String secondAttemptId = UUID.randomUUID().toString();
+        String participantId = UUID.randomUUID().toString();
+        String courseId = UUID.randomUUID().toString();
+        String nowValue = UUID.randomUUID().toString();
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        try {
+            jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,"
+                            + "assessment_type,status,answer_publication_policy,answer_release_policy,"
+                            + "grade_publication_policy,close_status,settlement_status,late_policy,late_until,"
+                            + "max_attempts,opens_at,closes_at,time_limit_seconds,revision,published_at,archived_at,created_at,updated_at) "
+                            + "VALUES(?,?,?,?,?,'T11C.1 MySQL migration acceptance','HOMEWORK','PUBLISHED','NEVER','NEVER',"
+                    + "'MANUAL','OPEN','NOT_STARTED','ALLOW_UNTIL',?,?,?,?,?,?,NULL,?,?,?)",
+                    assessmentId, UUID.randomUUID().toString(), courseId, null, "T11C.1 MySQL HOMEWORK",
+                    Timestamp.from(now.plusSeconds(7200)), 3, Timestamp.from(now.minusSeconds(60)),
+                    Timestamp.from(now.plusSeconds(3600)), null, 0, Timestamp.from(now), Timestamp.from(now),
+                    Timestamp.from(now));
+            jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,total_points,"
+                            + "started_at,deadline_at,submitted_at,graded_at,grade_updated_at,created_at,updated_at) "
+                            + "VALUES(?,?,?,'GRADED',0,2.00,?,?,?,?,?,?,?)",
+                    attemptId, assessmentId, learnerId, Timestamp.from(now), Timestamp.from(now.plusSeconds(100)),
+                    Timestamp.from(now.plusSeconds(100)), Timestamp.from(now.plusSeconds(120)),
+                    Timestamp.from(now.plusSeconds(120)), Timestamp.from(now), Timestamp.from(now));
+            jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,total_points,"
+                            + "started_at,deadline_at,created_at,updated_at,attempt_sequence) VALUES(?,?,?,'DRAFT',0,2.00,?,?,?,?,2)",
+                    secondAttemptId, assessmentId, learnerId, Timestamp.from(now), Timestamp.from(now.plusSeconds(300)),
+                    Timestamp.from(now), Timestamp.from(now));
+            jdbc.update("INSERT INTO assessment_participant(id,assessment_id,learner_id,enrollment_status,"
+                            + "submission_status,grading_status,attempts_used,final_attempt_id,last_submitted_at,"
+                            + "late_submission,revision,created_at,updated_at) VALUES(?,?,?,'ACTIVE','SUBMITTED',"
+                            + "'GRADED',1,?,?,FALSE,0,?,?)",
+                    participantId, assessmentId, learnerId, attemptId, Timestamp.from(now.plusSeconds(100)),
+                    Timestamp.from(now), Timestamp.from(now));
+            jdbc.update("INSERT INTO course_student_number(id,course_id,learner_id,student_number,created_at) VALUES(?,?,?,?,?)",
+                    UUID.randomUUID().toString(), courseId, learnerId, 1, Timestamp.from(now));
+            jdbc.update("INSERT INTO course_student_number_counter(course_id,next_number) VALUES(?,2)", courseId);
+
+            assertThat(jdbc.queryForObject("SELECT late_policy FROM assessment WHERE id=?", String.class, assessmentId))
+                    .isEqualTo("ALLOW_UNTIL");
+            assertThat(jdbc.queryForObject("SELECT max_attempts FROM assessment WHERE id=?", Integer.class, assessmentId))
+                    .isEqualTo(3);
+            assertThat(jdbc.queryForObject("SELECT attempt_sequence FROM assessment_attempt WHERE id=?", Integer.class,
+                    attemptId)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT final_attempt_id FROM assessment_participant WHERE id=?", String.class,
+                    participantId)).isEqualTo(attemptId);
+            assertThat(jdbc.queryForObject("SELECT next_number FROM course_student_number_counter WHERE course_id=?",
+                    Integer.class, courseId)).isEqualTo(2);
+            assertThatThrownBy(() -> jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,"
+                            + "revision,total_points,started_at,created_at,updated_at,attempt_sequence) "
+                            + "VALUES(?,?,?,'DRAFT',0,2.00,?,?,?,1)", nowValue, assessmentId, learnerId,
+                    Timestamp.from(now), Timestamp.from(now), Timestamp.from(now)))
+                    .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        } finally {
+            jdbc.update("DELETE FROM assessment_participant WHERE id=?", participantId);
+            jdbc.update("DELETE FROM assessment_attempt WHERE id IN (?,?)", attemptId, secondAttemptId);
+            jdbc.update("DELETE FROM assessment_assignment WHERE assessment_id=?", assessmentId);
+            jdbc.update("DELETE FROM assessment_question WHERE assessment_id=?", assessmentId);
+            jdbc.update("DELETE FROM assessment WHERE id=?", assessmentId);
+            jdbc.update("DELETE FROM course_student_number WHERE course_id=? AND learner_id=?", courseId, learnerId);
+            jdbc.update("DELETE FROM course_student_number_counter WHERE course_id=?", courseId);
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id=?", Integer.class, assessmentId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_attempt WHERE id IN (?,?)", Integer.class,
+                attemptId, secondAttemptId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_participant WHERE id=?", Integer.class,
+                participantId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM course_student_number_counter WHERE course_id=?",
+                Integer.class, courseId)).isZero();
+    }
+
+    /**
+     * 在真实 MySQL 上模拟两个 Learning 实例同时领取到期场次，并验证瞬时失败只留下可恢复的 PENDING 事实。
+     * 并发调用使用独立 JDBC 连接，成功关闭只能有一个；故障恢复只操作本次随机 assessment，不触碰演示数据。
+     */
+    @Test
+    void mysqlConcurrentCloseAndSettlementFailureRecoveryAreBounded() throws Exception {
+        assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("edu_platform_learning_dev");
+        String assessmentId = UUID.randomUUID().toString();
+        String ownerId = UUID.randomUUID().toString();
+        String courseId = UUID.randomUUID().toString();
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        try {
+            jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,"
+                            + "assessment_type,status,answer_publication_policy,answer_release_policy,"
+                            + "grade_publication_policy,close_status,settlement_status,late_policy,late_until,"
+                            + "max_attempts,opens_at,closes_at,time_limit_seconds,revision,published_at,archived_at,created_at,updated_at) "
+                            + "VALUES(?,?,?,?,?,'T11C.1 MySQL concurrency acceptance','HOMEWORK','PUBLISHED','NEVER','NEVER',"
+                            + "'MANUAL','OPEN','NOT_STARTED','DISALLOW',?,?,?,?,?,?,NULL,?,?,?)",
+                    assessmentId, ownerId, courseId, null, "T11C.1 MySQL concurrency",
+                    null, 1, Timestamp.from(now.minusSeconds(3600)), Timestamp.from(now.minusSeconds(30)),
+                    null, 0, Timestamp.from(now.minusSeconds(3600)), Timestamp.from(now.minusSeconds(3600)),
+                    Timestamp.from(now));
+            var ready = new CountDownLatch(2);
+            var start = new CountDownLatch(1);
+            var executor = Executors.newFixedThreadPool(2);
+            try {
+                var first = executor.submit(() -> closeFromConcurrentInstance(assessmentId, ready, start));
+                var second = executor.submit(() -> closeFromConcurrentInstance(assessmentId, ready, start));
+                assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                int wins = first.get(10, TimeUnit.SECONDS) + second.get(10, TimeUnit.SECONDS);
+                assertThat(wins).isEqualTo(1);
+            } finally {
+                executor.shutdownNow();
+            }
+            assertThat(jdbc.queryForObject("SELECT close_status FROM assessment WHERE id=?", String.class, assessmentId))
+                    .isEqualTo("CLOSED");
+            assertThat(jdbc.queryForObject("SELECT revision FROM assessment WHERE id=?", Long.class, assessmentId))
+                    .isEqualTo(1L);
+
+            // 用安全异常类型模拟 MySQL 短暂不可用：不删除草稿、不转 MISSING，恢复写入才能完成状态。
+            jdbc.update("UPDATE assessment SET settlement_status='PENDING',settlement_attempts=0,"
+                            + "settlement_next_attempt_at=?,settlement_last_error=NULL WHERE id=?", Timestamp.from(now), assessmentId);
+            assessments.markSettlementBatchFailed(assessmentId, 1, now.plusSeconds(1),
+                    "TransientDataAccessException", now);
+            assertThat(jdbc.queryForObject("SELECT settlement_status FROM assessment WHERE id=?", String.class, assessmentId))
+                    .isEqualTo("PENDING");
+            assertThat(jdbc.queryForObject("SELECT settlement_attempts FROM assessment WHERE id=?", Integer.class, assessmentId))
+                    .isEqualTo(1);
+            assessments.markSettlementBatchSucceeded(assessmentId, 0, now.plusSeconds(2));
+            assertThat(jdbc.queryForObject("SELECT settlement_status FROM assessment WHERE id=?", String.class, assessmentId))
+                    .isEqualTo("COMPLETED");
+        } finally {
+            jdbc.update("DELETE FROM assessment_settlement_audit WHERE assessment_id=?", assessmentId);
+            jdbc.update("DELETE FROM assessment WHERE id=?", assessmentId);
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id=?", Integer.class, assessmentId)).isZero();
+    }
+
+    /** 每个并发调用只提交一次自动关闭 UPDATE；返回 1 表示本实例赢得 OPEN→CLOSED 竞争。 */
+    private int closeFromConcurrentInstance(String assessmentId, CountDownLatch ready, CountDownLatch start)
+            throws InterruptedException {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("concurrency start timed out");
+        return assessments.closeAssessmentAutomatically(assessmentId, 0, Instant.now());
     }
 
     /**

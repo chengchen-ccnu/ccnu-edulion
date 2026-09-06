@@ -14,6 +14,7 @@ $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
+$learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
 $commandExitCode = 0
 $iamSmtpCredential = $null
@@ -33,6 +34,10 @@ if (-not (Test-Path -LiteralPath $serviceCredentialPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $iamSecurityCredentialPath -PathType Leaf)) {
     throw "Missing encrypted IAM security secrets. Run scripts/Initialize-LocalEnvironment.ps1 to add them."
+}
+
+if (-not (Test-Path -LiteralPath $learningIamCredentialPath -PathType Leaf)) {
+    throw "Missing encrypted Learning-to-IAM service secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
 }
 
 $originalEnvironment = @{}
@@ -109,6 +114,16 @@ try {
     Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_HMAC_SECRET" -Value $iamSecurityPayload.verificationHmacSecret
     Set-ScopedEnvironmentVariable -Name "IAM_VERIFICATION_FIXED_CODE" -Value $iamSecurityPayload.localVerificationCode
 
+    $learningIamCredential = Import-Clixml -LiteralPath $learningIamCredentialPath
+    if ($learningIamCredential -isnot [PSCredential] -or $learningIamCredential.UserName -ne "learning-iam-service") {
+        throw "The encrypted Learning-to-IAM service credential has an unexpected format."
+    }
+    $learningIamNetworkCredential = $learningIamCredential.GetNetworkCredential()
+    if ($learningIamNetworkCredential.Password.Length -lt 32) {
+        throw "The encrypted Learning-to-IAM service credential is incomplete."
+    }
+    Set-ScopedEnvironmentVariable -Name "IAM_INTERNAL_SERVICE_TOKEN" -Value $learningIamNetworkCredential.Password
+
     if ($env:IAM_VERIFICATION_DELIVERY_MODE -eq "smtp") {
         if (-not (Test-Path -LiteralPath $iamSmtpCredentialPath -PathType Leaf)) {
             throw "SMTP mode requires the DPAPI-encrypted IAM SMTP credential. Run scripts/Initialize-LocalSmtp.ps1."
@@ -145,6 +160,8 @@ finally {
     $iamSecurityPayload = $null
     $iamSecurityNetworkCredential = $null
     $iamSecurityCredential = $null
+    $learningIamNetworkCredential = $null
+    $learningIamCredential = $null
     $iamSmtpNetworkCredential = $null
     $iamSmtpCredential = $null
 }

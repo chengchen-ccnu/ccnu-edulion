@@ -19,11 +19,18 @@ public class AssessmentSettlementProcessor {
     }
 
     /**
-     * 处理一轮到期任务。单场失败不会阻塞其他场次，并由独立事务记录最多五次有限退避；
-     * 日志/失败事实只保存异常类型，不保存学生答案或请求内容。
+     * 先有界扫描最终截止节点，再有界处理草稿结算。单场失败不会阻塞其他场次，并由独立事务记录
+     * 最多五次有限退避；日志/失败事实只保存异常类型，不保存学生答案或请求内容。
      */
     @Scheduled(fixedDelayString = "${platform.learning.assessment-settlement-poll-delay:2s}")
     public void settleDueAssessments() {
+        for (String assessmentId : learning.dueAssessmentCloseIds(ASSESSMENTS_PER_RUN)) {
+            try {
+                learning.autoCloseAssessment(assessmentId);
+            } catch (RuntimeException ignored) {
+                // 下一轮继续扫描；关闭没有写入成功事实时，不得把场次当成已结算。
+            }
+        }
         for (String assessmentId : learning.dueSettlementAssessments(ASSESSMENTS_PER_RUN)) {
             try {
                 learning.processSettlementBatch(assessmentId, ATTEMPTS_PER_BATCH);

@@ -742,3 +742,39 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 强制检查点刷新：`ENDED/PERSISTED` 成功后刷新同一深链接，进度读取日志为 `200/PERSISTED`，页面恢复已保存进度。Redis 故障采用 Learning `18084` 的 Redis 端口 `1` 隔离实例，未执行 `FLUSHDB`；浏览器 `HEARTBEAT` 返回 `503/LEARNING.PROGRESS_BUFFER_UNAVAILABLE`，页面没有虚假成功，刷新读取为 `200/PERSISTED_ONLY` 并显示最近已保存进度；恢复正常 Redis 后有限重试再次得到 `200/BUFFERED`。
 - 播放器提示复核：结束后曾出现“无法播放媒体”的瞬态提示；同期媒体元素 `readyState=4`、`error=null`，刷新后可重新从起点播放，且 `ENDED/PERSISTED` 正常。证据表明这是既有 HLS 结束态展示，不由 T12G.2 生命周期改动引入，也不影响重播。
 - 数据审计与清理：验收前后目标聚合均为 `position=8`、`watched=8`、`completed=false`、`revision=1`、`buffer_version=0`，`last_event_at` 与原基线一致；事件表仅保留原有 `NULL` 事件。目标 Redis Hash 不存在、dirty ZSet 无目标成员，dirty cardinality 验收前后均为 0。未创建数据库、表、伪数据、OSS 对象或消息。
+
+## 2026-09-05 T12G.2 合并与 T11C 前置审计
+
+- 合并与清理：[PR #46](https://github.com/chengchen-ccnu/ccnu-edulion/pull/46) 在 Ready、可合并且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全部成功后，以普通 merge 合并为 `main@accec558b4d94e7e26c3caa5576203fe988c04aa`；本地 `main` 已快进同步，`codex/t12g2-progress-sync-web` 本地和远端分支均已清理。
+- 优先级结论：下一任务选择 T11C。它的显式依赖 T11B、T12B 已合并，并直接阻塞 T18 发布前集成；T12C 和 T12H 在 backlog 中仍明确后移。T13 虽已满足独立前置并可与无冲突任务并行，但当前总控按单任务顺序先补齐学习测评主链的作业与成绩册缺口。
+- 现状与缺口：OpenAPI 0.20.0、Learning V13、既有测评状态机、不可变试卷、作答/批改/关闭/公布与教师结果分页均可复用；`HOMEWORK` 已是合法类型。但现行 `opensAt`/`closesAt` 明确只允许 EXAM，作答仍是单一当前 attempt，且没有迟交策略、作答次数、跨测评成绩册、安全导出契约；教师端也尚未注册 `/teacher/gradebook` 实现路由。因此 T11C 需要先向前演进契约，再实现后端和冻结页面，不得由前端猜测字段。
+- 前置结论：Git、T11B/T12B 领域能力、题目/媒体复用边界、固定 `/teacher/gradebook` 页面职责及生成客户端流程均满足；后续 grill 已完成 HOMEWORK 开放/截止、迟交、次数、成绩册人口、统一显示和导出安全的产品决策，原准备分支已改名为 `codex/t11c1-homework-gradebook-contract`。
+- 数据与代码：本次总控只执行 GitHub 合并、Git 同步/分支清理、只读契约与代码审计及状态文档更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
+
+## 2026-09-05 T11C.1 作业规则、成绩册与 CSV 导出后端实施验证
+
+- 门禁：在 `codex/t11c1-homework-gradebook-contract` 分支确认工作区初始干净，保留 `18cb028` 与 `9f31943` 规划提交；完整阅读 T11C 所需页面规格、路线图、OpenAPI、T11/T11A/T11B/T12B 交付文档。未修改其他功能分支或已合并 V1～V13 迁移。
+- 契约：先将 `docs/api/openapi.yaml` 从 0.20.0 演进到 0.21.0，再生成 `web-apps/packages/api-client/src/generated/schema.d.ts`。新增学生课程任务/结果/开始入口、教师截止调整、成绩册矩阵和同步 CSV 下载契约；没有新增 Vue、页面路由、历史 attempt 查询、异步 XLSX 或 OSS 报表。
+- Learning V14：只新增 `late_policy/late_until/max_attempts`、`attempt_sequence/late_submission`、`assessment_participant`、`course_student_number`、`course_student_number_counter`、截止/结算/导出审计表和必要唯一约束/索引。V14 向前替换 V10 的 EXAM-only 时间约束，保留既有 T11B 结果公布和旧 HOMEWORK 无时间节点数据的兼容读取；新 API 仍强制 HOMEWORK `closesAt`。
+- 服务实现：HOMEWORK 迟交窗口、1～5 次不可变 attempt、最终 attempt 指针、开放/迟交期/关闭状态、报名/退课/重新报名投影、课程学生编号、自动关闭和有界结算已接入现有 Learning 测评模型。教师成绩册只读取本人 owner 的 HOMEWORK/EXAM，按最终 attempt 计算统计和分类汇总；未结算/待批时分数与数值统计为空，CSV 带 UTF-8 BOM、动态列、公式注入防护和导出审计。
+- IAM 依赖：新增 `/internal/v1/users/nicknames` 批量投影，只返回 ID→昵称；Learning 使用超时和 DPAPI 注入的 `IAM_INTERNAL_SERVICE_TOKEN` 调用，IAM 不可用时保留课程编号与成绩事实并标记 `nicknameDependencyFailed`，不把昵称复制到 Learning Schema，不跨库 Join。新增令牌由既有本地初始化/加载脚本加密管理，不进入仓库。
+- 自动化结果：V14 H2 Flyway 迁移通过；Learning `LearningAssessmentIntegrationTest` 21/21、IAM 定向测试 10/10 通过，覆盖时间/迟交、草稿不计次、最终 attempt/旧 attempt 404、统一成绩册门禁、编号/统计/CSV、截止调整和并发关闭；此前 T11B 16/16 回归也在新增迁移调整后复跑通过。`pnpm ... generate:api`、`check:api`、`typecheck` 通过，Vitest 36 文件 237 项通过。
+- 真实验收：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 在既有 `edu_platform_learning_dev` 执行 `LearningMysqlMigrationAcceptanceTest`，6 项中 5 项通过、1 项既有条件测试跳过；确认 V13→V14、旧 attempt `sequence=1`、V14 约束、两连接并发自动关闭一胜一负、PENDING 失败事实恢复为 COMPLETED，并按随机 ID 精确清理。T11C.1 Seed `Initialize` 1/1 和幂等重跑 1/1 通过，固定演示数据留在该开发库供演示。
+- 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块成功；Learning 76 项（12 项真实环境按开关跳过）、IAM 30 项（1 项真实环境按开关跳过），其他受影响模块无失败。`pnpm.cmd --dir web-apps run build` 通过，admin/student/teacher 三端生产构建成功，仅有既有大 chunk 警告。
+- 未执行验收：真实 IAM HTTP 联调、真实 5,000/100 上限压测，以及停止/恢复 MySQL 进程期间的网络级故障验收尚未执行；本轮没有连接 Redis、RabbitMQ、OSS，未生成 CSV 文件或临时外部对象。演示 Seed 只写 Learning 固定测试数据，H2 Fixture 随进程释放。
+- 交付状态：分支为 `codex/t11c1-homework-gradebook-contract`，关键提交为契约 `148ffd4`、兼容性修正 `f19f13e`、实现 `a7d94d5`；已创建 Ready [PR #47](https://github.com/chengchen-ccnu/ccnu-edulion/pull/47)，GitHub Java、Frontend、Python 和 OpenAPI generated source 共 8 项检查全部通过。没有实现 T11C.2 Vue 页面或路由。剩余风险是完整多进程部署、IAM HTTP 联调和网络级数据库故障需要发布环境验证。
+
+## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
+
+- 拆分结论：经完整产品规则访谈，原 T11C 拆为顺序实施的 T11C.1“作业规则、成绩册与 CSV 导出后端契约”和 T11C.2“课程作业/考试与教师成绩册前端”。T11C.1 先演进 OpenAPI、Learning 数据与服务端状态机并重新生成客户端；T11C.2 只能在其合并后消费生成契约，不得并行猜测 DTO。
+- 作业规则：HOMEWORK 复用现有测评模型，`opensAt` 可空、`closesAt` 必填；迟交仅支持默认 `DISALLOW` 和带 `lateUntil` 的 `ALLOW_UNTIL`，不自动扣分。教师可提前或延后尚未关闭任务的截止节点，但下一有效节点距服务端当前时间至少一小时，迟交窗口至少一小时；写入须审计并使用 revision/`409`。关闭或归档后不可重开，发布后题目、分值、次数和迟交策略不可改。
+- 作答与关闭：HOMEWORK 最多提交 1～5 次、默认一次；草稿不计次，每次正式提交产生不可变 attempt，学生无需等待主观题批改即可在有效窗口开始下一次，最后一次才是唯一有效版本。旧 attempt 只保留内部审计，普通学生/教师接口均不可枚举。`ALLOW_UNTIL.closesAt` 只开启迟交期，最终 `lateUntil`、`DISALLOW.closesAt` 或不可撤销的教师立即结束才锁定并结算最后非空草稿；空白草稿记缺交。
+- 自动补偿：截止前已有成功保存的非空草稿立即投影为“已交，系统处理中”，绝不能因结算故障显示缺交；系统后台有限重试并持续自动补偿，不要求教师操作。处理完成前禁止人工批改、成绩/统计、公布和导出。服务恢复后仍按原服务端截止裁决，不给学生补时或接受截止后的答案。
+- 应交人口：作业开放时以课程报名事实建立应交名单，开放期新报名者加入，最终关闭后冻结；退课保留历史并标记 `WITHDRAWN`，不计缺交或平均分，有效窗口内重新报名恢复应交。首期不做免交或个别延期。每门课程分配不回收的四位课程学生编号，既有报名按首次报名时间及 learnerId 稳定回填，新报名原子领取，重新报名沿用。
+- 批改与可见性：客观题提交时仍可自动判分，但 HOMEWORK/EXAM 最终关闭前教师只能看提交进度、次数、时间和迟交事实，不能看答案、正确性或分数。关闭且结算完成后只批改最终 attempt；批改器允许查看正在处理的答卷和已保存单题分数，但结果列表、成绩册、统计和导出必须等单场所有最终提交 `GRADED` 后一次性显示。后续改分保留审计和 revision/`409`，不重新隐藏，原子更新最新成绩、时间和统计；学生可见性继续由 T11B 独立公布事实控制。
+- 成绩册口径：只包含 HOMEWORK/EXAM，按提交状态、批改状态和迟交事实分别建模；默认课程学生编号稳定排序，支持课程/测评/类型/状态/迟交/昵称或编号/分页 URL 筛选。存在待结算、异常、待批或部分批改时不返回均分、极值或分布。完成后同时给出已批平均、缺交按零的所有学生平均、应交/准时提交/最终提交/缺交/待批、最高/最低及区间分布；退课排除。课程作业与考试分别百分制等权平均，只纳入已关闭且完成批改的任务，PRACTICE 永不进入正式成绩。
+- 身份与降级：成绩册显示 IAM 昵称和 Learning 课程学生编号，不展示完整联系方式；跨域读取只能走内部 API，不得跨 Schema Join。IAM 暂不可用时保留编号和成绩事实、昵称显示部分失败，并使用有限超时与短 TTL 缓存，不复制 IAM 事实到 Learning。
+- CSV：同步 UTF-8 BOM 宽表，一次一门课程、最多 5,000 名学生和 100 场已完成 HOMEWORK/EXAM。固定编号/昵称列，每场生成数值成绩、提交状态、迟交三列，并附作业/考试平均分；缺交写零，退课或非应交留空。只导出当前筛选，防公式注入，服务端复核 owner 并记录不含内容的审计；不包含联系方式、题目、答案、解析或评语，不使用 OSS、`REPORT_EXPORT`、RabbitMQ 或异步 XLSX。
+- 页面边界：PRACTICE 保留 `/practice`，HOMEWORK/EXAM 移至课程上下文。已报名用户从公共课程详情进入 `/learn/:courseId/tasks`；当前 `/learn/:courseId/:lessonId` 只展示当前课时任务且不提供总览链接。课程任务作答与最终结果使用 `/learn/:courseId/tasks/:assessmentId` 及其 `/result`，内部复用既有组件。教师 `/teacher/gradebook` 只做矩阵/统计/导出，答卷深链回 `/teacher/assessments`，不复制批改器。
+- 前置与验收：T11B、T12B 已合并，OpenAPI 0.20.0、Learning V13、题目快照、作答/批改/关闭/公布、报名事实、生成客户端和固定页面职责可复用；现行 EXAM-only 时间、每学习者/测评唯一 attempt、仅已有 attempt 的教师结果分页和缺失 gradebook/export 正是 T11C.1 的任务缺口。后端真实验收须覆盖多次提交、迟交、时间调整、自动/立即关闭、多实例单次结算、MySQL 故障恢复、报名/退课/重新报名、旧 attempt 404、统一显示门禁、统计/CSV 安全、owner/越权及 409/422/429/503；不需要 OSS、FFmpeg 或 RabbitMQ。
+- 分支与数据：从 `main@accec558b4d94e7e26c3caa5576203fe988c04aa` 准备 `codex/t11c1-homework-gradebook-contract`。本次总控只修改规划文档，没有修改 OpenAPI、Java、Python、Vue、Flyway、生成客户端或配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象或缓存 Key。

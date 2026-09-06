@@ -1,5 +1,6 @@
 package com.eduplatform.learning.web;
 
+import com.eduplatform.learning.config.TraceFilter;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.service.LearningAssessmentService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -7,7 +8,11 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.net.URI;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -106,6 +111,17 @@ public class TeacherAssessmentController {
                 request, trace(servlet));
     }
 
+    @PutMapping("/api/v1/teacher/assessments/{assessmentId}/deadline")
+    /** 按 owner 和 expectedRevision 调整截止节点，并记录旧值、新值、原因和 traceId 审计。 */
+    public LearningDtos.TeacherAssessment deadline(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, @Valid @RequestBody LearningDtos.UpdateAssessmentDeadlineRequest request,
+            HttpServletRequest servlet) {
+        return learning.updateAssessmentDeadline(LearningIdentity.teaching(userId, roles, permissions).userId(),
+                assessmentId, request, trace(servlet));
+    }
+
     @PostMapping("/api/v1/teacher/assessments/{assessmentId}/closure")
     /** 不可撤销结束本人测评，冻结受影响草稿数并启动有界结算；重复相同请求返回原关闭事实。 */
     public LearningDtos.CloseAssessmentResult close(@RequestHeader("X-User-Id") String userId,
@@ -171,8 +187,47 @@ public class TeacherAssessmentController {
                 page, size, trace(servlet));
     }
 
+    @GetMapping("/api/v1/teacher/gradebook")
+    /** 查询课程成绩册矩阵；服务层在每次请求验证 teaching 能力、课程 owner 和 Learning 数据范围。 */
+    public LearningDtos.Gradebook gradebook(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @RequestParam String courseId, @RequestParam(required = false) String assessmentId,
+            @RequestParam(required = false) LearningDtos.AssessmentType type,
+            @RequestParam(required = false) LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            @RequestParam(required = false) LearningDtos.AssessmentGradingStatus gradingStatus,
+            @RequestParam(required = false) Boolean late, @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @RequestParam(defaultValue = "STUDENT_NUMBER") LearningDtos.GradebookSortField sort,
+            @RequestParam(defaultValue = "asc") String direction, HttpServletRequest servlet) {
+        return learning.teacherGradebook(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
+                assessmentId, type, submissionStatus, gradingStatus, late, keyword, page, size, sort,
+                "desc".equalsIgnoreCase(direction), trace(servlet));
+    }
+
+    @GetMapping(value = "/api/v1/teacher/gradebook/export", produces = "text/csv")
+    /** 同步下载带 UTF-8 BOM 的成绩册 CSV，文件名只含课程 ID 和日期，不含学生隐私。 */
+    public ResponseEntity<byte[]> exportGradebook(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @RequestParam String courseId, @RequestParam java.util.UUID clientRequestId,
+            @RequestParam(required = false) String assessmentId,
+            @RequestParam(required = false) LearningDtos.AssessmentType type,
+            @RequestParam(required = false) LearningDtos.AssessmentSubmissionStatus submissionStatus,
+            @RequestParam(required = false) LearningDtos.AssessmentGradingStatus gradingStatus,
+            @RequestParam(required = false) Boolean late, @RequestParam(required = false) String keyword,
+            HttpServletRequest servlet) {
+        byte[] csv = learning.exportGradebook(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
+                assessmentId, type, submissionStatus, gradingStatus, late, keyword, clientRequestId, trace(servlet));
+        String filename = "gradebook-" + courseId + "-" + LocalDate.now(ZoneOffset.UTC) + ".csv";
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/csv"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(csv);
+    }
+
     private static String trace(HttpServletRequest request) {
-        Object value = request.getAttribute("traceId");
+        Object value = request.getAttribute(TraceFilter.ATTRIBUTE);
         return value == null ? "00000000-0000-0000-0000-000000000000" : value.toString();
     }
 }

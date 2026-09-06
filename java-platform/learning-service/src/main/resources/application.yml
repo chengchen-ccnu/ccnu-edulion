@@ -39,6 +39,10 @@ platform:
       request-timeout: ${LEARNING_COURSE_REQUEST_TIMEOUT:3s}
       # 进度心跳只需短时复用已发布课程事实，减少高频请求对 course-service 的同步放大；发布变化最多滞后该 TTL。
       fact-cache-ttl: ${LEARNING_COURSE_FACT_CACHE_TTL:1s}
+    iam:
+      base-url: ${IAM_SERVICE_BASE_URL:http://127.0.0.1:8081}
+      request-timeout: ${LEARNING_IAM_REQUEST_TIMEOUT:1s}
+      service-token: ${IAM_INTERNAL_SERVICE_TOKEN:}
     import:
       max-source-bytes: ${QUESTION_IMPORT_MAX_SOURCE_BYTES:104857600}
       retention: ${QUESTION_IMPORT_RETENTION:7d}

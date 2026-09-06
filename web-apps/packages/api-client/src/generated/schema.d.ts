@@ -1648,6 +1648,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/learning/courses/{courseId}/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List enrolled learner HOMEWORK and EXAM tasks
+         * @description Returns published course tasks visible to the enrolled learner. Course-level NOT_OPEN tasks expose only safe metadata; lesson-level NOT_OPEN tasks require the optional currentLessonId to match. PRACTICE never enters this contract.
+         */
+        get: operations["listLearnerCourseTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/tasks/{assessmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one safe learner course task */
+        get: operations["getLearnerCourseTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start or resume the current learner task attempt */
+        post: operations["startLearnerCourseTaskAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the learner's final valid task result
+         * @description Resolves the server-side final attempt pointer and never accepts a historical attempt identifier.
+         */
+        get: operations["getLearnerCourseTaskResult"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/assessments": {
         parameters: {
             query?: never;
@@ -1765,6 +1839,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/assessments/{assessmentId}/deadline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Adjust an owned published assessment deadline with an audit record
+         * @description Only an open, unpublished assessment can be adjusted. The new final deadline must be at least one hour after server time; expectedRevision protects concurrent changes and prior late submissions are reclassified from the new close time.
+         */
+        put: operations["updateTeacherAssessmentDeadline"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/assessments/{assessmentId}/answer-publication": {
         parameters: {
             query?: never;
@@ -1828,6 +1922,46 @@ export interface paths {
         };
         /** Page enrollment, progress and grading projections within the current teacher's owned course */
         get: operations["listCourseStudentLearning"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/gradebook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query a safe course HOMEWORK and EXAM gradebook matrix
+         * @description Requires teaching access and course ownership. Before every selected assessment is closed, settled and fully graded, the aggregate is PENDING and all score cells and numeric statistics are null. PRACTICE is rejected by the type filter and never included.
+         */
+        get: operations["getTeacherGradebook"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/gradebook/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a synchronized UTF-8 BOM gradebook CSV
+         * @description The selected course must have at most 5000 students and 100 closed, settled and fully graded HOMEWORK/EXAM assessments. The response is a synchronous dynamic-column CSV and contains no answers, comments, contact information or historical attempts.
+         */
+        get: operations["exportTeacherGradebookCsv"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3427,6 +3561,21 @@ export interface components {
         };
         /** @enum {string} */
         AssessmentType: "PRACTICE" | "HOMEWORK" | "EXAM";
+        /**
+         * @description HOMEWORK only. DISALLOW closes at closesAt; ALLOW_UNTIL records late submissions without an automatic score penalty and closes at lateUntil.
+         * @enum {string}
+         */
+        HomeworkLatePolicy: "DISALLOW" | "ALLOW_UNTIL";
+        /** @enum {string} */
+        AssessmentTimeState: "NOT_OPEN" | "OPEN" | "LATE_WINDOW" | "CLOSED";
+        /** @enum {string} */
+        AssessmentSubmissionStatus: "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "MISSING" | "WITHDRAWN";
+        /** @enum {string} */
+        AssessmentGradingStatus: "NOT_REQUIRED" | "PENDING" | "PARTIALLY_GRADED" | "GRADED";
+        /** @enum {string} */
+        GradebookAggregateStatus: "READY" | "PENDING";
+        /** @enum {string} */
+        GradebookSortField: "STUDENT_NUMBER" | "LAST_SUBMITTED_AT" | "SCORE" | "SUBMISSION_STATUS" | "GRADING_STATUS";
         /** @enum {string} */
         AssessmentStatus: "DRAFT" | "PUBLISHED" | "ARCHIVED";
         /** @enum {string} */
@@ -3466,15 +3615,23 @@ export interface components {
             answerPublicationPolicy: components["schemas"]["AnswerPublicationPolicy"];
             /**
              * Format: date-time
-             * @description Optional server-enforced EXAM open time. Must be null for other assessment types.
+             * @description HOMEWORK may omit this and then opens immediately after publication; EXAM keeps its existing server-enforced open-time rule; PRACTICE must omit it.
              */
             opensAt: string | null;
             /**
              * Format: date-time
-             * @description Optional server-enforced EXAM close time and must be later than opensAt when both are present. Must be null for other types.
+             * @description Required for HOMEWORK and must be later than opensAt when both are present; EXAM keeps its existing close-time rule; PRACTICE must omit it.
              */
             closesAt: string | null;
-            /** @description Optional EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt. Must be null for other types. */
+            latePolicy?: components["schemas"]["HomeworkLatePolicy"];
+            /**
+             * Format: date-time
+             * @description Required at least one hour after closesAt for ALLOW_UNTIL; null for DISALLOW and non-HOMEWORK.
+             */
+            lateUntil?: string | null;
+            /** @description HOMEWORK formal submission limit. Omitted values default to 1. Draft creation and autosave do not consume this count; EXAM and PRACTICE use one. */
+            maxAttempts?: number;
+            /** @description EXAM duration in seconds. The effective deadline is frozen by the server at attempt start and cannot exceed closesAt; HOMEWORK and PRACTICE must omit it. */
             timeLimitSeconds: number | null;
         };
         UpdateAssessmentRequest: {
@@ -3489,7 +3646,21 @@ export interface components {
             opensAt: string | null;
             /** Format: date-time */
             closesAt: string | null;
+            latePolicy?: components["schemas"]["HomeworkLatePolicy"];
+            /** Format: date-time */
+            lateUntil?: string | null;
+            /** @description Omitted values default to 1. */
+            maxAttempts?: number;
             timeLimitSeconds: number | null;
+        };
+        UpdateAssessmentDeadlineRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            /** Format: date-time */
+            closesAt: string;
+            /** Format: date-time */
+            lateUntil: string | null;
+            reason: string;
         };
         AssessmentQuestionInput: {
             /** Format: uuid */
@@ -3557,6 +3728,10 @@ export interface components {
             opensAt: string | null;
             /** Format: date-time */
             closesAt: string | null;
+            latePolicy: components["schemas"]["HomeworkLatePolicy"];
+            /** Format: date-time */
+            lateUntil: string | null;
+            maxAttempts: number;
             timeLimitSeconds: number | null;
             questionCount: number;
             totalPoints: number;
@@ -3590,6 +3765,9 @@ export interface components {
             submittedAt: string | null;
             /** Format: date-time */
             gradedAt: string | null;
+            attemptSequence: number;
+            finalAttempt: boolean;
+            lateSubmission: boolean;
         };
         LearnerAssessmentSummary: components["schemas"]["AssessmentSummary"] & {
             learnerState: components["schemas"]["LearnerAssessmentState"];
@@ -3699,6 +3877,10 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            attemptSequence: number;
+            attemptsUsed: number;
+            maxAttempts: number;
+            lateSubmission: boolean;
         };
         AttemptAnswerResult: {
             /** Format: uuid */
@@ -3739,6 +3921,9 @@ export interface components {
             gradeUpdatedAt: string | null;
             assessment: components["schemas"]["AttemptResultAssessment"];
             answers: components["schemas"]["AttemptAnswerResult"][];
+            attemptSequence: number;
+            finalAttempt: boolean;
+            lateSubmission: boolean;
         };
         /** @description Immutable self-contained assessment projection read from the frozen paper snapshot, never from the question bank current pointer or published-only list. */
         AttemptResultAssessment: {
@@ -3860,6 +4045,136 @@ export interface components {
             page: number;
             size: number;
             /** Format: int64 */
+            total: number;
+        };
+        LearnerCourseTaskSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            /** @enum {string} */
+            type: "HOMEWORK" | "EXAM";
+            timeState: components["schemas"]["AssessmentTimeState"];
+            submissionStatus: components["schemas"]["AssessmentSubmissionStatus"];
+            gradingStatus: components["schemas"]["AssessmentGradingStatus"];
+            lateSubmission: boolean;
+            attemptsUsed: number;
+            maxAttempts: number;
+            /** Format: date-time */
+            opensAt: string | null;
+            /** Format: date-time */
+            closesAt: string | null;
+            /** Format: date-time */
+            lateUntil: string | null;
+            /** Format: date-time */
+            lastSubmittedAt: string | null;
+            finalAttempt: components["schemas"]["AttemptSummary"] | null;
+            questionContentAvailable: boolean;
+        };
+        LearnerCourseTaskPage: {
+            items: components["schemas"]["LearnerCourseTaskSummary"][];
+            page: number;
+            size: number;
+            total: number;
+            /** Format: date-time */
+            serverTime: string;
+        };
+        LearnerCourseTask: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            /** @enum {string} */
+            type: "HOMEWORK" | "EXAM";
+            timeState: components["schemas"]["AssessmentTimeState"];
+            submissionStatus: components["schemas"]["AssessmentSubmissionStatus"];
+            gradingStatus: components["schemas"]["AssessmentGradingStatus"];
+            lateSubmission: boolean;
+            attemptsUsed: number;
+            maxAttempts: number;
+            /** Format: date-time */
+            opensAt: string | null;
+            /** Format: date-time */
+            closesAt: string | null;
+            /** Format: date-time */
+            lateUntil: string | null;
+            /** Format: date-time */
+            lastSubmittedAt: string | null;
+            description: string;
+            questions: components["schemas"]["LearnerAssessmentQuestion"][];
+            /** Format: date-time */
+            serverTime: string;
+            finalAttempt: components["schemas"]["AttemptSummary"] | null;
+        };
+        GradebookCell: {
+            scorePercent: number | null;
+            submissionStatus: components["schemas"]["AssessmentSubmissionStatus"];
+            gradingStatus: components["schemas"]["AssessmentGradingStatus"];
+            lateSubmission: boolean;
+            /** Format: uuid */
+            attemptId: string | null;
+            /** Format: uuid */
+            learnerId: string | null;
+        };
+        AssessmentStats: {
+            gradedStudentAverage: number | null;
+            allStudentAverage: number | null;
+            expectedCount: number;
+            onTimeSubmissionRate: number | null;
+            finalSubmissionRate: number | null;
+            missingCount: number;
+            pendingCount: number;
+            highestScore: number | null;
+            lowestScore: number | null;
+            scoreDistribution: {
+                [key: string]: number;
+            };
+        };
+        GradebookAssessment: {
+            /** Format: uuid */
+            assessmentId: string;
+            title: string;
+            /** @enum {string} */
+            type: "HOMEWORK" | "EXAM";
+            closeStatus: components["schemas"]["AssessmentCloseStatus"];
+            settlementStatus: components["schemas"]["AssessmentSettlementStatus"];
+            aggregateStatus: components["schemas"]["GradebookAggregateStatus"];
+            participantCount: number;
+            missingCount: number;
+            pendingCount: number;
+            resultsReady: boolean;
+            stats: components["schemas"]["AssessmentStats"];
+        };
+        GradebookRow: {
+            /** Format: uuid */
+            learnerId: string;
+            courseStudentNumber: string;
+            nickname: string | null;
+            nicknameAvailable: boolean;
+            nicknameDependencyFailed: boolean;
+            assessments: {
+                [key: string]: components["schemas"]["GradebookCell"];
+            };
+            homeworkAverage: number | null;
+            examAverage: number | null;
+        };
+        Gradebook: {
+            /** Format: uuid */
+            courseId: string;
+            aggregateStatus: components["schemas"]["GradebookAggregateStatus"];
+            assessments: components["schemas"]["GradebookAssessment"][];
+            rows: components["schemas"]["GradebookRow"][];
+            homeworkAverage: number | null;
+            examAverage: number | null;
+            nicknameDependencyFailed: boolean;
+            page: number;
+            size: number;
             total: number;
         };
         ExternalImageTransferRequest: {
@@ -7445,6 +7760,140 @@ export interface operations {
             503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
+    listLearnerCourseTasks: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                currentLessonId?: string | null;
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe learner task summaries with server time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerCourseTaskPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getLearnerCourseTask: {
+        parameters: {
+            query?: {
+                currentLessonId?: string | null;
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe task detail; NOT_OPEN tasks contain no questions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerCourseTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    startLearnerCourseTaskAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing draft returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            /** @description Current draft created or resumed. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptDraft"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLearnerCourseTaskResult: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe final task result following T11B publication visibility. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listTeacherAssessments: {
         parameters: {
             query?: {
@@ -7719,6 +8168,39 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    updateTeacherAssessmentDeadline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAssessmentDeadlineRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated teacher assessment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherAssessment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
     publishAssessmentAnswers: {
         parameters: {
             query?: never;
@@ -7838,6 +8320,84 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherGradebook: {
+        parameters: {
+            query: {
+                courseId: string;
+                assessmentId?: string;
+                type?: "HOMEWORK" | "EXAM";
+                submissionStatus?: components["schemas"]["AssessmentSubmissionStatus"];
+                gradingStatus?: components["schemas"]["AssessmentGradingStatus"];
+                late?: boolean;
+                keyword?: string;
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                sort?: components["schemas"]["GradebookSortField"];
+                direction?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Course gradebook matrix and safe aggregate state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Gradebook"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    exportTeacherGradebookCsv: {
+        parameters: {
+            query: {
+                courseId: string;
+                clientRequestId: string;
+                assessmentId?: string;
+                type?: "HOMEWORK" | "EXAM";
+                submissionStatus?: components["schemas"]["AssessmentSubmissionStatus"];
+                gradingStatus?: components["schemas"]["AssessmentGradingStatus"];
+                late?: boolean;
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description UTF-8 CSV with BOM; file name is stable and contains no student identity. */
+            200: {
+                headers: {
+                    /** @description Attachment file name for the generated CSV. */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };

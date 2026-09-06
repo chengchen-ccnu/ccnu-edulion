@@ -238,6 +238,10 @@ class T12BAssessmentDemoSeedTest {
                 + "WHERE t.learner_id=? AND t.assessment_id IN (" + placeholders() + ")", prepend(STUDENT, ids));
         jdbc.update("DELETE a FROM assessment_answer a JOIN assessment_attempt t ON t.id=a.attempt_id "
                 + "WHERE t.learner_id=? AND t.assessment_id IN (" + placeholders() + ")", prepend(STUDENT, ids));
+        jdbc.update("DELETE FROM assessment_participant WHERE learner_id=? AND assessment_id IN (" + placeholders() + ")",
+                prepend(STUDENT, ids));
+        jdbc.update("DELETE FROM assessment_deadline_audit WHERE assessment_id IN (" + placeholders() + ")", ids);
+        jdbc.update("DELETE FROM assessment_settlement_audit WHERE assessment_id IN (" + placeholders() + ")", ids);
         jdbc.update("DELETE FROM assessment_attempt WHERE learner_id=? AND assessment_id IN (" + placeholders() + ")",
                 prepend(STUDENT, ids));
         jdbc.update("DELETE FROM assessment_assignment WHERE assessment_id IN (" + placeholders() + ")", ids);

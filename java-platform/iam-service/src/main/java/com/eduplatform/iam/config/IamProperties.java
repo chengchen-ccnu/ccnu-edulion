@@ -2,6 +2,7 @@ package com.eduplatform.iam.config;
 
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /**
  * IAM 令牌时限、登录限流与 local/test seed 配置。
@@ -9,7 +10,28 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "platform.iam")
 public record IamProperties(Jwt jwt, Refresh refresh, LoginRateLimit loginRateLimit,
-        Verification verification, Captcha captcha, SessionCache sessionCache, Media media, Seed seed) {
+        Verification verification, Captcha captcha, SessionCache sessionCache, Media media, Seed seed,
+        Internal internal) {
+    @ConstructorBinding
+    public IamProperties(Jwt jwt, Refresh refresh, LoginRateLimit loginRateLimit,
+            Verification verification, Captcha captcha, SessionCache sessionCache, Media media, Seed seed,
+            Internal internal) {
+        this.jwt = jwt;
+        this.refresh = refresh;
+        this.loginRateLimit = loginRateLimit;
+        this.verification = verification;
+        this.captcha = captcha;
+        this.sessionCache = sessionCache;
+        this.media = media;
+        this.seed = seed;
+        this.internal = internal == null ? new Internal("") : internal;
+    }
+
+    /** 兼容既有 IAM 单元测试构造器；内部服务令牌必须由运行环境注入。 */
+    public IamProperties(Jwt jwt, Refresh refresh, LoginRateLimit loginRateLimit,
+            Verification verification, Captcha captcha, SessionCache sessionCache, Media media, Seed seed) {
+        this(jwt, refresh, loginRateLimit, verification, captcha, sessionCache, media, seed, new Internal(""));
+    }
     public record Jwt(String issuer, String audience, String secret, Duration accessTtl) {}
     public record Refresh(Duration ttl, boolean cookieSecure) {}
     public record LoginRateLimit(int attempts, Duration window) {}
@@ -23,4 +45,6 @@ public record IamProperties(Jwt jwt, Refresh refresh, LoginRateLimit loginRateLi
     /** IAM 仅调用 media-service JSON 绑定验证，不持有 OSS 参数。 */
     public record Media(String baseUrl, Duration requestTimeout) {}
     public record Seed(boolean enabled, String password) {}
+    /** Learning 访问 IAM 内部昵称投影时使用的高熵服务令牌，不得写入仓库或日志。 */
+    public record Internal(String serviceToken) {}
 }
