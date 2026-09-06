@@ -1,5 +1,6 @@
 package com.eduplatform.learning.course;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.eduplatform.learning.config.LearningProperties;
 import com.eduplatform.learning.service.QuestionException;
 import java.net.http.HttpClient;
@@ -15,6 +16,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.JsonNode;
 
 /** 通过 course-service JSON API 取得发布/owner 事实；超时与 5xx 统一为可安全重试的 503。 */
 @Component
@@ -94,17 +96,55 @@ public class HttpCourseFactsClient implements CourseFactsClient {
         }
     }
 
+    /**
+     * 将 Course 发布详情裁剪为 Learning 所需的稳定事实，并拒绝缺失、空白或未知枚举值。
+     * @param value Course HTTP 响应的 Learning 局部读取投影
+     * @return 课程 ID、发布版本、访问类型、owner、课时 ID 与课时类型
+     * @throws QuestionException 响应不完整或不符合 Learning 读取边界时返回安全 503
+     */
     private static CourseFact fact(Published value) {
+        if (value == null) throw unavailable();
+        String courseId = strictText(value.id());
+        String publishedVersion = strictText(value.publishedVersion());
+        String accessType = strictText(value.accessType());
+        String ownerTeacherId = value.teacher() == null ? null : strictText(value.teacher().id());
+        if (isBlank(courseId) || isBlank(publishedVersion) || !isSupportedAccessType(accessType)
+                || isBlank(ownerTeacherId) || value.chapters() == null) {
+            throw unavailable();
+        }
         Set<String> lessonIds = new LinkedHashSet<>();
         Map<String, String> lessonTypes = new LinkedHashMap<>();
-        if (value.chapters() != null) for (Chapter chapter : value.chapters()) {
-            if (chapter.lessons() != null) for (Lesson lesson : chapter.lessons()) {
-                lessonIds.add(lesson.id());
-                if (lesson.type() != null) lessonTypes.put(lesson.id(), lesson.type());
+        for (Chapter chapter : value.chapters()) {
+            if (chapter == null || chapter.lessons() == null) throw unavailable();
+            for (Lesson lesson : chapter.lessons()) {
+                String lessonId = lesson == null ? null : strictText(lesson.id());
+                String lessonType = lesson == null ? null : strictText(lesson.type());
+                if (isBlank(lessonId) || !isSupportedLessonType(lessonType)) {
+                    throw unavailable();
+                }
+                lessonIds.add(lessonId);
+                lessonTypes.put(lessonId, lessonType);
             }
         }
-        return new CourseFact(value.id(), value.publishedVersion(), value.accessType(), value.teacher().id(),
+        return new CourseFact(courseId, publishedVersion, accessType, ownerTeacherId,
                 Set.copyOf(lessonIds), Map.copyOf(lessonTypes));
+    }
+
+    /** 只接受 JSON 字符串，避免 Jackson 对数字等标量的默认字符串强制转换掩盖错误响应。 */
+    private static String strictText(JsonNode value) {
+        return value == null || !value.isTextual() ? null : value.asText();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static boolean isSupportedAccessType(String value) {
+        return "PUBLIC".equals(value) || "ENROLLMENT_REQUIRED".equals(value);
+    }
+
+    private static boolean isSupportedLessonType(String value) {
+        return "VIDEO".equals(value) || "ARTICLE".equals(value) || "ASSESSMENT".equals(value);
     }
 
     private static QuestionException notFound() {
@@ -115,9 +155,21 @@ public class HttpCourseFactsClient implements CourseFactsClient {
         return new QuestionException(HttpStatus.SERVICE_UNAVAILABLE, "LEARNING.COURSE_DEPENDENCY_UNAVAILABLE", "课程服务暂时不可用，请稍后重试");
     }
 
-    private record Published(String id, String publishedVersion, String accessType, Teacher teacher, List<Chapter> chapters) {}
-    private record Teacher(String id) {}
+    /**
+     * Learning 只读取稳定事实；Course 的公开投影可新增展示字段而不破坏本适配器。
+     * 必需字段仍由 fact(Published) 做完整性和枚举校验，异常响应统一转为安全 503。
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Published(JsonNode id, JsonNode publishedVersion, JsonNode accessType, Teacher teacher,
+            List<Chapter> chapters) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Teacher(JsonNode id) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private record Chapter(List<Lesson> lessons) {}
-    private record Lesson(String id, String type) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Lesson(JsonNode id, JsonNode type) {}
     private record CachedFact(CourseFact value, java.time.Instant expiresAt) {}
 }
