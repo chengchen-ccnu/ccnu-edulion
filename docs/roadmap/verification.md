@@ -764,6 +764,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 未执行验收：真实 IAM HTTP 联调、真实 5,000/100 上限压测，以及停止/恢复 MySQL 进程期间的网络级故障验收尚未执行；本轮没有连接 Redis、RabbitMQ、OSS，未生成 CSV 文件或临时外部对象。演示 Seed 只写 Learning 固定测试数据，H2 Fixture 随进程释放。
 - 交付状态：实施分支为 `codex/t11c1-homework-gradebook-contract`，关键提交为契约 `148ffd4`、兼容性修正 `f19f13e`、实现 `a7d94d5`；[PR #47](https://github.com/chengchen-ccnu/ccnu-edulion/pull/47) 已以普通 merge 合并，合并提交为 `ae628d0`，GitHub Java、Frontend、Python 和 OpenAPI generated source 共 8 项检查全部通过。没有实现 T11C.2 Vue 页面或路由。剩余风险是完整多进程部署、IAM HTTP 联调和网络级数据库故障需要发布环境验证。
 
+## 2026-09-06 T11C.1 合并后真实验收与容量缺陷
+
+- 真实 IAM HTTP：在当前 main 构建的 IAM jar、local profile、隔离 18081 端口和 `edu_platform_iam_dev` 上，`POST /internal/v1/users/nicknames` 对一个已知合成学习者和一个未知 ID 返回 200；响应只包含已知 ID→`测试学生`。错误 `X-Internal-Caller` 和错误 `X-Internal-Service-Token` 均返回 403。Learning `HttpLearnerDirectoryClientRealAcceptanceTest` 真实联调 2/2 通过：部分结果保留已知昵称并省略未知 ID；100ms HTTP 超时在有界时间内降级为空映射并标记 `dependencyFailed=true`。
+- CSV 安全回归：`LearningAssessmentIntegrationTest#completedGradebookUsesStableNumbersAndExportsSafeWideCsv` 1/1 通过，实测覆盖 UTF-8 BOM，以及 `=SUM(A1)`、`@cmd` 昵称被加单引号后写入 CSV；没有生成文件或外部对象。
+- 容量验收：在仅 Learning 的专用 local/test Schema（`edu_platform_learning_t11c1_acceptance`、`_v2`、`_v3`，均已在测试后 DROP 且确认不存在）创建固定 5,000 条报名/课程学生编号和 100 场 HOMEWORK/EXAM。成绩册请求未进入 CSV 或堆峰值统计，而是在 `LearningAssessmentService.synchronizeCourseGradebook` 中为每个学生×测评逐条执行 `reactivateParticipant`，形成约 500,000 次 N+1 参与者写入；线程栈和 MySQL 事务状态均确认该路径。容量验收因此阻塞，不能记录 gradebook/CSV 响应时间、内存、行列数或 owner 越权的“通过”结果。
+- 数据清理：容量 Fixture 使用确定性 ID、local/test Schema 和 `finally`/显式清理入口；三套临时 Schema 删除测试均 1/1 通过。`edu_platform_learning_dev` 的明确演示 Seed 未清理；未操作生产数据、OSS、RabbitMQ 或 Redis Key。验收中断产生的 dev 回滚事务由 MySQL 自动处理，没有强杀数据库或用户进程。
+- 结论：已发现 T11C.1 后端业务缺陷——成绩册读取阶段的应交参与者补齐是逐学生×测评的 N+1 写入，不能用 Redis 昵称缓存规避。修复应先考虑批量/集合式参与者投影或在作业开放时批量建应交名单，再重新执行 5,000×100 gradebook/CSV 上限测试；T11C.2 前置条件未满足，本轮不清理 T11C.1 分支、不创建 `codex/t11c2-homework-gradebook-web`，也不实现前端业务代码。
+
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
 - 拆分结论：经完整产品规则访谈，原 T11C 拆为顺序实施的 T11C.1“作业规则、成绩册与 CSV 导出后端契约”和 T11C.2“课程作业/考试与教师成绩册前端”。T11C.1 先演进 OpenAPI、Learning 数据与服务端状态机并重新生成客户端；T11C.2 只能在其合并后消费生成契约，不得并行猜测 DTO。

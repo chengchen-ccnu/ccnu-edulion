@@ -870,10 +870,14 @@ class LearningAssessmentIntegrationTest {
                 .isEqualByComparingTo("0");
         assertThat(gradebook.assessments().get(0).stats().allStudentAverage()).isEqualByComparingTo("50.00");
 
+        // 导出前把昵称替换为公式样式值，验证 CSV 单元格会加单引号而不是把输入交给表格执行。
+        when(directory.nicknames(anyList(), anyString())).thenReturn(new LearnerDirectoryClient.NicknameLookup(
+                Map.of(LEARNER, "=SUM(A1)", OTHER, "@cmd"), false));
         String csv = new String(service.exportGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
                 null, UUID.randomUUID(), "trace-t11c1-gradebook-export"), StandardCharsets.UTF_8);
         assertThat(csv).startsWith("\uFEFF");
-        assertThat(csv).contains("课程学生编号", "student_test_01", "是否迟交", "作业平均分");
+        assertThat(csv).contains("课程学生编号", "是否迟交", "作业平均分");
+        assertThat(csv).contains("\"'=SUM(A1)\"", "\"'@cmd\"");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gradebook_export_audit", Integer.class)).isEqualTo(1);
     }
 
