@@ -36,6 +36,14 @@ public record LearningProperties(Media media, Course course, Iam iam, @Name("imp
     public record Course(String baseUrl, Duration requestTimeout, Duration factCacheTtl) {}
     /** IAM 仅提供内部昵称投影；Learning 不保存其返回值，也不依赖该调用完成成绩册查询。 */
     public record Iam(String baseUrl, Duration requestTimeout, String serviceToken) {
+        /** 显式指定配置绑定构造器，避免兼容旧测试的重载构造器让 Spring 回退到默认 8081。 */
+        @ConstructorBinding
+        public Iam(String baseUrl, Duration requestTimeout, String serviceToken) {
+            this.baseUrl = baseUrl;
+            this.requestTimeout = requestTimeout;
+            this.serviceToken = serviceToken;
+        }
+
         /** 兼容旧客户端测试；生产服务令牌必须通过本地秘密环境注入。 */
         public Iam(String baseUrl, Duration requestTimeout) {
             this(baseUrl, requestTimeout, "");

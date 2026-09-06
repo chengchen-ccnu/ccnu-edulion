@@ -5,6 +5,8 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -14,14 +16,17 @@ import org.springframework.web.client.RestClient;
  */
 @Component
 public class HttpLearnerDirectoryClient implements LearnerDirectoryClient {
+    private static final Logger LOG = LoggerFactory.getLogger(HttpLearnerDirectoryClient.class);
     private final RestClient iam;
+    private final String baseUrl;
     private final String serviceToken;
 
     public HttpLearnerDirectoryClient(LearningProperties properties) {
         HttpClient client = HttpClient.newBuilder().connectTimeout(properties.iam().requestTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
         factory.setReadTimeout(properties.iam().requestTimeout());
-        this.iam = RestClient.builder().baseUrl(properties.iam().baseUrl()).requestFactory(factory).build();
+        this.baseUrl = properties.iam().baseUrl();
+        this.iam = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
         this.serviceToken = properties.iam().serviceToken();
     }
 
@@ -38,6 +43,8 @@ public class HttpLearnerDirectoryClient implements LearnerDirectoryClient {
             if (response == null) return new NicknameLookup(Map.of(), true);
             return new NicknameLookup(response.nicknames(), false);
         } catch (RuntimeException unavailable) {
+            LOG.warn("IAM nickname projection unavailable: traceId={}, baseUrl={}, failureType={}", traceId, baseUrl,
+                    unavailable.getClass().getSimpleName());
             return new NicknameLookup(Map.of(), true);
         }
     }

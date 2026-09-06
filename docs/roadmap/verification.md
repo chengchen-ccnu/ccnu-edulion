@@ -770,7 +770,18 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - CSV 安全回归：`LearningAssessmentIntegrationTest#completedGradebookUsesStableNumbersAndExportsSafeWideCsv` 1/1 通过，实测覆盖 UTF-8 BOM，以及 `=SUM(A1)`、`@cmd` 昵称被加单引号后写入 CSV；没有生成文件或外部对象。
 - 容量验收：在仅 Learning 的专用 local/test Schema（`edu_platform_learning_t11c1_acceptance`、`_v2`、`_v3`，均已在测试后 DROP 且确认不存在）创建固定 5,000 条报名/课程学生编号和 100 场 HOMEWORK/EXAM。成绩册请求未进入 CSV 或堆峰值统计，而是在 `LearningAssessmentService.synchronizeCourseGradebook` 中为每个学生×测评逐条执行 `reactivateParticipant`，形成约 500,000 次 N+1 参与者写入；线程栈和 MySQL 事务状态均确认该路径。容量验收因此阻塞，不能记录 gradebook/CSV 响应时间、内存、行列数或 owner 越权的“通过”结果。
 - 数据清理：容量 Fixture 使用确定性 ID、local/test Schema 和 `finally`/显式清理入口；三套临时 Schema 删除测试均 1/1 通过。`edu_platform_learning_dev` 的明确演示 Seed 未清理；未操作生产数据、OSS、RabbitMQ 或 Redis Key。验收中断产生的 dev 回滚事务由 MySQL 自动处理，没有强杀数据库或用户进程。
-- 结论：已发现 T11C.1 后端业务缺陷——成绩册读取阶段的应交参与者补齐是逐学生×测评的 N+1 写入，不能用 Redis 昵称缓存规避。修复应先考虑批量/集合式参与者投影或在作业开放时批量建应交名单，再重新执行 5,000×100 gradebook/CSV 上限测试；T11C.2 前置条件未满足，本轮不清理 T11C.1 分支、不创建 `codex/t11c2-homework-gradebook-web`，也不实现前端业务代码。
+- 结论：这是 T11C.1.1 修复前的历史缺陷记录，已由下一节的批量名单投影和容量复验 supersede；当时不能进入 T11C.2，也没有实现前端业务代码。
+
+## 2026-09-06 T11C.1.1 成绩册应交名单批量投影与容量修复
+
+- 分支与范围：当前分支已调整为 `codex/t11c1.1-gradebook-roster-batch`。没有实现 T11C.2 Vue 页面、路由或前端业务代码；没有使用 Redis、RabbitMQ、分布式锁、OSS、生产数据或新增微服务。V14 文件保持未修改，本任务没有保留新的数据库迁移。
+- 写路径：移除成绩册读取阶段的 `synchronizeCourseGradebook` 写入。测评发布、课程报名/重新报名、退课和最终关闭分别在现有 Learning 事务中使用 JDBC Batch/集合式 SQL 维护 HOMEWORK/EXAM 参与者。唯一键吸收重复初始化；已为 ACTIVE 的参与者不更新 revision；只恢复 WITHDRAWN 行；关闭后的名单不再因退课或重新报名改变，关闭事务在冻结前补齐名单。
+- 查询路径：`teacherGradebook` 使用只读事务；学生分页只查询当前页课程编号和当前页参与者/最终 attempt，筛选、排序和总数由 SQL 完成，成绩册统计和 HOMEWORK/EXAM 平均分使用数据库聚合。昵称关键词只在确需搜索时调用一次 IAM 批量投影，普通分页不读取页外昵称。
+- CSV 路径：导出通过 `StreamingResponseBody` 写入 UTF-8 BOM，按每批 250 名学生读取、组装和刷新，未构造 5,000×100 完整成绩格集合或完整 `byte[]`。导出审计记录总行数 5,000 和 100 场测评。
+- 回归结果：`LearningAssessmentIntegrationTest` 25/25 通过，覆盖读路径无写、发布/报名/退课/重报/关闭冻结、ACTIVE revision 稳定、并发批量幂等、当前页昵称搜索、BOM 和 `=SUM(A1)`/`@cmd` 公式注入防护。真实 IAM HTTP 验收返回已知昵称 `测试学生`、未知 ID 省略，错误 caller/token 均 403；Learning 客户端的部分降级和 100ms 超时降级通过，超时返回空昵称映射并标记 `dependencyFailed=true`。
+- 真实容量结果：干净构建后在专用 local/test MySQL Schema 创建 5,000 条报名/课程学生编号、100 场 HOMEWORK/EXAM 和 500,000 条参与者；幂等初始化重复执行通过。成绩册耗时 31,017ms，JVM 堆峰值 196.6MiB，总数 5,000，当前页 100 行，100 场生成 304 列；页外 4,999 名学生没有进入响应对象。CSV 流式耗时 190,014ms，JVM 堆峰值 366.5MiB，5,001 行（表头+5,000 学生）和 304 列，UTF-8 BOM 通过。H2 公式注入回归确认危险昵称单元格均加单引号；owner 越权返回 404/不可见。
+- 清理：容量测试只允许 `edu_platform_learning_t11c1_acceptance`、`_v2`、`_v3`、`_v4`、`_v5` 五个明确专用 Schema，使用固定前缀/ID、幂等初始化和精确逆外键清理；最终每个 Schema 均 DROP 并确认不存在。`edu_platform_learning_dev` 中已明确标记的 T11C.1 演示 Seed 保留，未清理、未覆盖；没有创建其他领域数据。
+- 下一步门禁：T11C.1.1 已满足 T11C.2 的后端契约与容量前置，但本任务仅负责创建 PR 和等待 CI；T11C.2 页面仍待独立任务实施。
 
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 

@@ -2,7 +2,8 @@
 param(
     [int]$Port = 18081,
     [switch]$RunLearningClientTest,
-    [switch]$RunCapacityTest
+    [switch]$RunCapacityTest,
+    [switch]$RunCapacityIamProbe
 )
 
 Set-StrictMode -Version Latest
@@ -125,11 +126,29 @@ try {
             "-pl", "learning-service",
             "-am",
             "-Dsurefire.failIfNoSpecifiedTests=false",
+            "-Dplatform.learning.iam.base-url=http://127.0.0.1:$Port",
             "-Dtest=T11C1GradebookCapacityAcceptanceTest",
             "test"
         )
         & mvn @mavenArguments
         if ($LASTEXITCODE -ne 0) { throw "Gradebook capacity acceptance failed." }
+    }
+
+    if ($RunCapacityIamProbe) {
+        $env:IAM_SERVICE_BASE_URL = "http://127.0.0.1:$Port"
+        $env:T11C1_GRADEBOOK_CAPACITY_ENABLED = "true"
+        $mavenArguments = @(
+            "-Dmaven.repo.local=.m2/repository",
+            "-f", "java-platform/pom.xml",
+            "-pl", "learning-service",
+            "-am",
+            "-Dsurefire.failIfNoSpecifiedTests=false",
+            "-Dplatform.learning.iam.base-url=http://127.0.0.1:$Port",
+            "-Dtest=T11C1GradebookCapacityAcceptanceTest#realIamSpringBeanUsesConfiguredEndpoint",
+            "test"
+        )
+        & mvn @mavenArguments
+        if ($LASTEXITCODE -ne 0) { throw "Real IAM Spring binding probe failed." }
     }
 }
 finally {

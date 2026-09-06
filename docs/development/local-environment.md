@@ -398,7 +398,7 @@ T11C.1 提供独立的 Learning 演示 Seed，但不会随应用启动自动运�
 & .\scripts\Invoke-T11C1HomeworkGradebookDemoSeed.ps1 -Action Rebuild
 ```
 
-Seed 在同一测试课程下保留一场已结算 HOMEWORK 和一场含待批主观题的 EXAM，覆盖三次/一次上限、准时/迟交/缺交/退课、客观自动判分、主观人工批改、课程学生编号和固定合成昵称。它只写 Learning Schema 的固定测试 UUID，不创建或复制 IAM、Course、题库、Media 数据；`Initialize` 可幂等重跑，`Cleanup` 只按固定 ID/前缀逆序清理。H2 集成测试使用进程内 V14 数据库并在进程结束时释放；真实临时验收必须使用随机 ID、精确逆外键清理，并只允许访问 `edu_platform_learning_dev`。CSV 是同步响应，不写 OSS、本机临时文件、RabbitMQ 或 `REPORT_EXPORT`。
+Seed 在同一测试课程下保留一场已结算 HOMEWORK 和一场含待批主观题的 EXAM，覆盖三次/一次上限、准时/迟交/缺交/退课、客观自动判分、主观人工批改、课程学生编号和固定合成昵称。它只写 Learning Schema 的固定测试 UUID，不创建或复制 IAM、Course、题库、Media 数据；`Initialize` 可幂等重跑，`Cleanup` 只按固定 ID/前缀逆序清理。H2 集成测试使用进程内 V14 数据库并在进程结束时释放；演示 Seed 只允许访问 `edu_platform_learning_dev`，真实容量验收必须使用显式、专用的 local/test Schema，并在完成后精确清理。CSV 是同步响应，不写 OSS、本机临时文件、RabbitMQ 或 `REPORT_EXPORT`。
 
 ### T12B 测评闭环前端演示数据
 

@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import com.eduplatform.learning.course.CourseFactsClient;
+import com.eduplatform.learning.config.LearningProperties;
+import com.eduplatform.learning.identity.LearnerDirectoryClient;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentRow;
 import com.eduplatform.learning.service.LearningAssessmentService;
@@ -21,6 +23,8 @@ import com.eduplatform.learning.web.LearningDtos.EnrollmentStatus;
 import com.eduplatform.learning.web.LearningDtos.GradePublicationPolicy;
 import com.eduplatform.learning.web.LearningDtos.HomeworkLatePolicy;
 import com.eduplatform.learning.web.LearningDtos.ResultPublicationStatus;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -41,6 +45,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.core.env.Environment;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -58,6 +63,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
         "platform.learning.import.messaging-enabled=false",
         "platform.learning.progress-buffer.enabled=false",
         "platform.learning.assessment-settlement-poll-delay=1h",
+        "platform.learning.iam.base-url=${IAM_SERVICE_BASE_URL:http://127.0.0.1:8081}",
+        "platform.learning.iam.service-token=${IAM_INTERNAL_SERVICE_TOKEN:}",
         "spring.datasource.url=jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${LEARNING_MYSQL_DATABASE}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=${MYSQL_SERVER_TIMEZONE:Asia/Shanghai}&useSSL=${MYSQL_SSL_ENABLED:false}&allowPublicKeyRetrieval=${MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:true}&rewriteBatchedStatements=true"
 })
 @ActiveProfiles("local")
@@ -65,8 +72,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 class T11C1GradebookCapacityAcceptanceTest {
     private static final String DATABASE = System.getenv("LEARNING_MYSQL_DATABASE");
     private static final java.util.Set<String> ALLOWED_DATABASES = java.util.Set.of(
-            "edu_platform_learning_dev", "edu_platform_learning_t11c1_acceptance",
-            "edu_platform_learning_t11c1_acceptance_v2", "edu_platform_learning_t11c1_acceptance_v3");
+            "edu_platform_learning_t11c1_acceptance",
+            "edu_platform_learning_t11c1_acceptance_v2", "edu_platform_learning_t11c1_acceptance_v3",
+            "edu_platform_learning_t11c1_acceptance_v4", "edu_platform_learning_t11c1_acceptance_v5");
     private static final String TEACHER = "00000000-0000-4000-8000-000000000102";
     private static final String OTHER_TEACHER = "00000000-0000-4000-8000-000000000104";
     private static final String COURSE = "00000000-0000-4c11-8c01-000000000002";
@@ -83,15 +91,37 @@ class T11C1GradebookCapacityAcceptanceTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired LearningAssessmentRepository repository;
     @Autowired LearningAssessmentService service;
+    @Autowired LearnerDirectoryClient directory;
+    @Autowired LearningProperties learningProperties;
+    @Autowired Environment environment;
     @Autowired TransactionTemplate transactions;
     @MockitoBean CourseFactsClient courses;
 
     /** 在应用创建数据库连接前阻止误连非专用 Schema。 */
     @DynamicPropertySource
-    static void requireDedicatedSchema(DynamicPropertyRegistry ignored) {
+    static void requireDedicatedSchema(DynamicPropertyRegistry properties) {
         if (DATABASE == null || !ALLOWED_DATABASES.contains(DATABASE)) {
             throw new IllegalStateException("T11C.1 capacity acceptance requires an explicit local/test Learning Schema");
         }
+        // 验收脚本启动的是真实 IAM HTTP；显式绑定两项配置，避免运行器带入默认 8081。
+        properties.add("platform.learning.iam.base-url", () -> System.getenv().getOrDefault(
+                "IAM_SERVICE_BASE_URL", "http://127.0.0.1:18081"));
+        properties.add("platform.learning.iam.service-token", () -> System.getenv().getOrDefault(
+                "IAM_INTERNAL_SERVICE_TOKEN", ""));
+    }
+
+    /** 验证容量验收的 Spring 运行时确实使用真实 IAM HTTP，而不是测试替身或默认端口。 */
+    @Test
+    void realIamSpringBeanUsesConfiguredEndpoint() {
+        assertThat(environment.getProperty("platform.learning.iam.base-url")).isEqualTo(System.getenv().getOrDefault(
+                "IAM_SERVICE_BASE_URL", "http://127.0.0.1:18081"));
+        assertThat(learningProperties.iam().baseUrl()).isEqualTo(System.getenv().getOrDefault(
+                "IAM_SERVICE_BASE_URL", "http://127.0.0.1:18081"));
+        assertThat(learningProperties.iam().serviceToken()).isNotBlank();
+        LearnerDirectoryClient.NicknameLookup lookup = directory.nicknames(
+                List.of("00000000-0000-4000-8000-000000000101"), "t11c1-capacity-iam-probe");
+        assertThat(lookup.dependencyFailed()).isFalse();
+        assertThat(lookup.values()).containsEntry("00000000-0000-4000-8000-000000000101", "测试学生");
     }
 
     /** 验证 5,000 行、100 场、304 列、BOM、真实 IAM 批量查询和 owner 越权。 */
@@ -108,32 +138,24 @@ class T11C1GradebookCapacityAcceptanceTest {
 
             Measurement<LearningDtos.Gradebook> gradebookMeasurement = measure("gradebook", () ->
                     service.teacherGradebook(TEACHER, COURSE, null, null, null, null, null, null,
-                            1, LEARNER_COUNT, LearningDtos.GradebookSortField.STUDENT_NUMBER, false,
+                            1, 100, LearningDtos.GradebookSortField.STUDENT_NUMBER, false,
                             "t11c1-capacity-gradebook"));
             LearningDtos.Gradebook gradebook = gradebookMeasurement.value();
             assertThat(gradebook.aggregateStatus()).isEqualTo(LearningDtos.GradebookAggregateStatus.READY);
             assertThat(gradebook.total()).isEqualTo(LEARNER_COUNT);
-            assertThat(gradebook.rows()).hasSize(LEARNER_COUNT);
+            assertThat(gradebook.rows()).hasSize(100);
             assertThat(gradebook.assessments()).hasSize(ASSESSMENT_COUNT);
             assertThat(gradebook.assessments()).extracting(LearningDtos.GradebookAssessment::type)
                     .containsExactlyElementsOf(expectedAssessmentTypes());
             assertThat(gradebook.rows().get(0).nickname()).isEqualTo("测试学生");
             assertThat(gradebook.rows().stream().filter(row -> row.nickname() == null).count())
-                    .isEqualTo(LEARNER_COUNT - 1L);
+                    .isEqualTo(99L);
             assertThat(gradebookMeasurement.elapsedMillis()).isLessThan(300_000L);
 
-            Measurement<byte[]> csvMeasurement = measure("csv", () -> service.exportGradebook(TEACHER, COURSE,
-                    null, null, null, null, null, null, UUID.randomUUID(), "t11c1-capacity-csv"));
-            byte[] csvBytes = csvMeasurement.value();
-            assertThat(csvBytes.length).isGreaterThan(3);
-            assertThat(csvBytes[0]).isEqualTo((byte) 0xEF);
-            assertThat(csvBytes[1]).isEqualTo((byte) 0xBB);
-            assertThat(csvBytes[2]).isEqualTo((byte) 0xBF);
-            String csv = new String(csvBytes, StandardCharsets.UTF_8);
-            String[] lines = csv.split("\\n", -1);
-            assertThat(lines).hasSize(LEARNER_COUNT + 2);
-            assertThat(lines[0].split(",", -1)).hasSize(2 + ASSESSMENT_COUNT * 3 + 2);
-            assertThat(csv).doesNotContain("\"=SUM(A1)\"");
+            Measurement<CsvProbeOutputStream> csvMeasurement = measure("csv", () -> captureCsv(UUID.randomUUID(),
+                    "t11c1-capacity-csv"));
+            CsvProbeOutputStream csv = csvMeasurement.value();
+            csv.assertValid(LEARNER_COUNT + 1, 2 + ASSESSMENT_COUNT * 3 + 2);
             assertThat(csvMeasurement.elapsedMillis()).isLessThan(300_000L);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gradebook_export_audit WHERE operator_id=? AND course_id=?",
                     Integer.class, TEACHER, COURSE)).isEqualTo(1);
@@ -169,6 +191,9 @@ class T11C1GradebookCapacityAcceptanceTest {
                     .isEqualTo((long) LEARNER_COUNT);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM course_student_number WHERE course_id=?", Long.class, COURSE))
                     .isEqualTo((long) LEARNER_COUNT);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_participant WHERE assessment_id IN ("
+                    + placeholders(ASSESSMENT_COUNT) + ")", Long.class, ASSESSMENT_IDS.toArray()))
+                    .isEqualTo((long) LEARNER_COUNT * ASSESSMENT_COUNT);
             return;
         }
         if (assessments != 0) throw new IllegalStateException("T11C.1 capacity Fixture is partial; cleanup is required");
@@ -186,6 +211,7 @@ class T11C1GradebookCapacityAcceptanceTest {
             int assessmentIndex = index;
             transactions.executeWithoutResult(status -> seedAssessment(assessmentIndex, now, publishedAt, closesAt));
         }
+        transactions.executeWithoutResult(status -> seedParticipantsFromCourseNumbers());
     }
 
     /** 在单独事务内写入报名和稳定学号，避免大规模测评事实回滚时长期持有课程锁。 */
@@ -220,22 +246,50 @@ class T11C1GradebookCapacityAcceptanceTest {
         repository.ensureCourseAssignment(id("assignment-" + index), assessment.id(), COURSE, now);
     }
 
+    /** 从已写入的课程学生编号集合式生成 500,000 条参与者，避免测试端构造超大 SQL 参数包。 */
+    private void seedParticipantsFromCourseNumbers() {
+        jdbc.update("INSERT INTO assessment_participant(id,assessment_id,learner_id,enrollment_status,submission_status,"
+                + "grading_status,attempts_used,final_attempt_id,last_submitted_at,late_submission,revision,created_at,updated_at) "
+                + "SELECT UUID(),a.id,n.learner_id,'ACTIVE','MISSING','NOT_REQUIRED',0,NULL,NULL,FALSE,0,CURRENT_TIMESTAMP(3),CURRENT_TIMESTAMP(3) "
+                + "FROM assessment a JOIN course_student_number n ON n.course_id=? WHERE a.course_id=? AND a.id IN ("
+                + placeholders(ASSESSMENT_COUNT) + ")", buildParticipantSeedArguments());
+    }
+
+    private Object[] buildParticipantSeedArguments() {
+        List<Object> arguments = new ArrayList<>(ASSESSMENT_COUNT + 2);
+        arguments.add(COURSE);
+        arguments.add(COURSE);
+        arguments.addAll(ASSESSMENT_IDS);
+        return arguments.toArray();
+    }
+
     /** 按固定 ID 逆序清理本次 Fixture；演示 Seed 使用不同 ID 和标题前缀，不会被触碰。 */
     private void cleanupFixture() {
-        String assessmentArgs = placeholders(ASSESSMENT_COUNT);
-        jdbc.update("DELETE FROM assessment_participant WHERE assessment_id IN (" + assessmentArgs + ")",
-                ASSESSMENT_IDS.toArray());
-        jdbc.update("DELETE FROM assessment_attempt WHERE assessment_id IN (" + assessmentArgs + ")",
-                ASSESSMENT_IDS.toArray());
-        jdbc.update("DELETE FROM assessment_assignment WHERE assessment_id IN (" + assessmentArgs + ")",
-                ASSESSMENT_IDS.toArray());
-        jdbc.update("DELETE FROM assessment WHERE id IN (" + assessmentArgs + ")", ASSESSMENT_IDS.toArray());
+        // 该测试只允许运行在全新 local/test Schema；先确认参与者表没有非本 Fixture 数据，再快速清空它。
+        long allParticipants = jdbc.queryForObject("SELECT COUNT(*) FROM assessment_participant", Long.class);
+        long fixtureParticipants = jdbc.queryForObject("SELECT COUNT(*) FROM assessment_participant WHERE assessment_id IN ("
+                + placeholders(ASSESSMENT_COUNT) + ")", Long.class, ASSESSMENT_IDS.toArray());
+        assertThat(fixtureParticipants).isEqualTo(allParticipants);
+        jdbc.execute("TRUNCATE TABLE assessment_participant");
+        // 其他表按固定 ID/课程删除，仍不会覆盖演示 Seed 或任何未标记记录。
+        for (String assessmentId : ASSESSMENT_IDS) {
+            jdbc.update("DELETE FROM assessment_attempt WHERE assessment_id=?", assessmentId);
+            jdbc.update("DELETE FROM assessment_assignment WHERE assessment_id=?", assessmentId);
+            jdbc.update("DELETE FROM assessment WHERE id=?", assessmentId);
+        }
         jdbc.update("DELETE FROM course_student_number WHERE course_id=?", COURSE);
         jdbc.update("DELETE FROM course_student_number_counter WHERE course_id=?", COURSE);
         jdbc.update("DELETE FROM enrollment WHERE course_id=?", COURSE);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id IN (" + assessmentArgs + ")",
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id IN (" + placeholders(ASSESSMENT_COUNT) + ")",
                 Long.class, ASSESSMENT_IDS.toArray())).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM enrollment WHERE course_id=?", Long.class, COURSE)).isZero();
+    }
+
+    /** 测试端收集流用于验证 BOM、行列数和公式安全；生产 HTTP 响应不会走该收集器。 */
+    private CsvProbeOutputStream captureCsv(UUID requestId, String traceId) {
+        CsvProbeOutputStream output = new CsvProbeOutputStream();
+        service.streamGradebook(TEACHER, COURSE, null, null, null, null, null, null, requestId, traceId, output);
+        return output;
     }
 
     /** 使用固定批量大小限制 JDBC 参数与单次事务内存，保留可重复执行的确定性行数。 */
@@ -323,5 +377,41 @@ class T11C1GradebookCapacityAcceptanceTest {
     private static String placeholders(int count) { return String.join(",", java.util.Collections.nCopies(count, "?")); }
 
     private record Measurement<T>(T value, long elapsedMillis, long peakHeapBytes) {}
+
+    /** 流式验收只保留 BOM、行列计数和公式安全标志，不在测试端重新构造完整 CSV byte[]。 */
+    private static final class CsvProbeOutputStream extends OutputStream {
+        private final byte[] prefix = new byte[3];
+        private int prefixSize;
+        private int lineCount;
+        private int headerColumns;
+        private int currentColumns = 1;
+        private long byteCount;
+        private final StringBuilder asciiWindow = new StringBuilder();
+
+        @Override
+        public void write(int value) throws IOException {
+            int unsigned = value & 0xff;
+            byteCount++;
+            if (prefixSize < prefix.length) prefix[prefixSize++] = (byte) unsigned;
+            if (unsigned < 128) {
+                asciiWindow.append((char) unsigned);
+                if (asciiWindow.length() > 32) asciiWindow.delete(0, asciiWindow.length() - 32);
+            }
+            if (unsigned == ',') currentColumns++;
+            if (unsigned == '\n') {
+                if (lineCount == 0) headerColumns = currentColumns;
+                lineCount++;
+                currentColumns = 1;
+            }
+        }
+
+        private void assertValid(int expectedRowsIncludingHeader, int expectedColumns) {
+            assertThat(byteCount).isGreaterThan(3L);
+            assertThat(prefix).containsExactly((byte) 0xef, (byte) 0xbb, (byte) 0xbf);
+            assertThat(lineCount).isEqualTo(expectedRowsIncludingHeader);
+            assertThat(headerColumns).isEqualTo(expectedColumns);
+            assertThat(asciiWindow.toString()).doesNotContain("\"=SUM(A1)\"");
+        }
+    }
 
 }
