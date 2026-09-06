@@ -762,7 +762,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实验收：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 在既有 `edu_platform_learning_dev` 执行 `LearningMysqlMigrationAcceptanceTest`，6 项中 5 项通过、1 项既有条件测试跳过；确认 V13→V14、旧 attempt `sequence=1`、V14 约束、两连接并发自动关闭一胜一负、PENDING 失败事实恢复为 COMPLETED，并按随机 ID 精确清理。T11C.1 Seed `Initialize` 1/1 和幂等重跑 1/1 通过，固定演示数据留在该开发库供演示。
 - 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块成功；Learning 76 项（12 项真实环境按开关跳过）、IAM 30 项（1 项真实环境按开关跳过），其他受影响模块无失败。`pnpm.cmd --dir web-apps run build` 通过，admin/student/teacher 三端生产构建成功，仅有既有大 chunk 警告。
 - 未执行验收：真实 IAM HTTP 联调、真实 5,000/100 上限压测，以及停止/恢复 MySQL 进程期间的网络级故障验收尚未执行；本轮没有连接 Redis、RabbitMQ、OSS，未生成 CSV 文件或临时外部对象。演示 Seed 只写 Learning 固定测试数据，H2 Fixture 随进程释放。
-- 交付状态：分支为 `codex/t11c1-homework-gradebook-contract`，契约提交为 `148ffd4`、兼容性修正为 `f19f13e`，实现/文档提交与 PR 在最终交付时补录；没有实现 T11C.2 Vue 页面或路由。剩余风险是完整多进程部署、IAM HTTP 联调和网络级数据库故障需要发布环境验证。
+- 交付状态：分支为 `codex/t11c1-homework-gradebook-contract`，关键提交为契约 `148ffd4`、兼容性修正 `f19f13e`、实现 `a7d94d5`；已创建 Ready [PR #47](https://github.com/chengchen-ccnu/ccnu-edulion/pull/47)，GitHub Java、Frontend、Python 和 OpenAPI generated source 共 8 项检查全部通过。没有实现 T11C.2 Vue 页面或路由。剩余风险是完整多进程部署、IAM HTTP 联调和网络级数据库故障需要发布环境验证。
 
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
