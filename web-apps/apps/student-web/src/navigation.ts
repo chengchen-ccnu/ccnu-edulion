@@ -6,10 +6,10 @@ import type { ShellNavigationItem } from "@edu/ui";
  */
 export function buildStudentNavigation(routeName: string | null | undefined): ShellNavigationItem[] {
   const isCourse = routeName === "courses" || routeName === "course-detail";
-  const isLearning = routeName === "course-learning" || routeName === "my-learning" || routeName === "course-tasks";
-  const isPractice = routeName === "practice" || routeName === "practice-attempt"
-    || routeName === "attempt-result" || routeName === "wrong-questions"
+  const isLearning = routeName === "course-learning" || routeName === "my-learning" || routeName === "course-tasks"
     || routeName === "course-task-attempt" || routeName === "course-task-result";
+  const isPractice = routeName === "practice" || routeName === "practice-attempt"
+    || routeName === "attempt-result" || routeName === "wrong-questions";
   const isAi = routeName === "ai" || routeName === "ai-conversation";
   return [
     { id: "home", label: "首页", state: "coming-soon", current: routeName === "home" },

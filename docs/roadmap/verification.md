@@ -806,10 +806,20 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 前置与验收：T11B、T12B 已合并，OpenAPI 0.20.0、Learning V13、题目快照、作答/批改/关闭/公布、报名事实、生成客户端和固定页面职责可复用；现行 EXAM-only 时间、每学习者/测评唯一 attempt、仅已有 attempt 的教师结果分页和缺失 gradebook/export 正是 T11C.1 的任务缺口。后端真实验收须覆盖多次提交、迟交、时间调整、自动/立即关闭、多实例单次结算、MySQL 故障恢复、报名/退课/重新报名、旧 attempt 404、统一显示门禁、统计/CSV 安全、owner/越权及 409/422/429/503；不需要 OSS、FFmpeg 或 RabbitMQ。
 - 分支与数据：从 `main@accec558b4d94e7e26c3caa5576203fe988c04aa` 准备 `codex/t11c1-homework-gradebook-contract`。本次总控只修改规划文档，没有修改 OpenAPI、Java、Python、Vue、Flyway、生成客户端或配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象或缓存 Key。
 
-## 2026-09-06 T11C.2 课程作业/考试与教师成绩册前端实施验证
+## 2026-09-06 T11C.2 课程作业/考试与教师成绩册前端实施验证（初始实现）
 
 - 门禁：在 `codex/t11c2-homework-gradebook-web` 确认工作区初始干净，保留规划提交 `b068cfe`；复核页面规格、T11/T11A/T11B/T12A/T12B/T12F.2/T12G.2 交付记录及 OpenAPI 0.21.0。没有修改 Java、Python、Flyway、RabbitMQ、Redis、OSS 或 OpenAPI。
 - 学生端：新增 `/learn/:courseId/tasks`、`/learn/:courseId/tasks/:assessmentId` 及 `/result`，课程详情只向已报名且具备 `learning:access` 的用户提供入口；当前学习页调用 `listLearnerCourseTasks` 并传递精确 `currentLessonId`。作答页和结果页复用 T12B 的 `AttemptSaveController`、服务端时间校准、媒体授权和 `resultDisclosure` 安全投影；HOMEWORK/EXAM 不再从练习中心渲染或通过旧练习深链作答，迟交提交前显示最终版本/迟交标记提示。
 - 教师端：新增受 `teaching:access` 保护的 `/teacher/gradebook`，URL 规范化并恢复 `courseId`、`assessmentId`、`type`、`submissionStatus`、`gradingStatus`、`late`、`keyword`、`page`、`size`、`sort`、`direction`；PENDING 阶段隐藏成绩、平均分、极值、分布并禁止成绩排序；IAM 昵称失败保留课程学生编号和成绩事实；记录点击复用 `/teacher/assessments?courseId=&assessmentId=&attemptId=&panel=grading`。CSV 使用生成客户端 text response 封装为 Blob，稳定 `clientRequestId`、当前筛选、可取消长请求、Content-Disposition 文件名和 Object URL finally 清理。
-- 自动化实际结果：`pnpm.cmd --dir web-apps install --frozen-lockfile` 通过；`generate:api`、`check:api`、`typecheck` 通过；Vitest 全量 39 个文件/248 个测试通过；`pnpm.cmd --dir web-apps run build` 三端通过，仅保留既有 student/teacher 大 chunk 警告；新增成绩册 API/URL 状态、课程任务 API、路由边界和 PRACTICE 过滤测试通过；`git diff --check` 通过。
-- 真实验收边界：本轮未启动或连接 Gateway、IAM、Course、Learning、Teacher Web，未创建/修改/清理数据库、表、Seed、Redis Key、RabbitMQ 消息、OSS 对象或 CSV 文件；因此真实报名任务总览、作答/保存/提交/最后结果、PENDING/READY 成绩册、真实 CSV、跨服务 401/403/404/409/422/429/5xx、响应式/键盘浏览器验收仍待本地多服务环境或 T18 执行。没有需要清理的数据。
+- 初始实现阶段自动化结果：`pnpm.cmd --dir web-apps install --frozen-lockfile` 通过；`generate:api`、`check:api`、`typecheck` 通过；Vitest 全量 39 个文件/248 个测试通过；`pnpm.cmd --dir web-apps run build` 三端通过，仅保留既有 student/teacher 大 chunk 警告；新增成绩册 API/URL 状态、课程任务 API、路由边界和 PRACTICE 过滤测试通过；`git diff --check` 通过。最终复核补充导航回归后，测试总数变为 251 项。
+- 初始实现阶段真实验收边界：当时未启动或连接 Gateway、IAM、Course、Learning、Teacher Web，未创建/修改/清理数据库、表、Seed、Redis Key、RabbitMQ 消息、OSS 对象或 CSV 文件；本次最终复核已补做公共 HTTP/401/404 探针和既有 Seed 切换收口。认证浏览器项目的当前状态见下方“最终真实验收复核”。
+
+## 2026-09-06 T11C.2 最终真实验收复核
+
+- 分支与范围：继续在 `codex/t11c2-homework-gradebook-web`、现有 [PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50) 上工作，没有创建新分支、没有合并 PR。确认 PR 仍为 OPEN，head/base 正确，复核前工作树只有本轮导航修复两处前端修改。没有改动 Java、Python、OpenAPI、Flyway、事件、全局页面规格或后端契约。
+- 导航缺陷修复：`course-tasks`、`course-task-attempt`、`course-task-result` 全部归入“我的学习”高亮组；HOMEWORK/EXAM 不再进入“练习中心”高亮组；全局导航标签、顺序和槽位未改变。新增参数化回归覆盖 3 个路由。
+- 真实服务探针：复用现有 Gateway 8080、IAM 8081、Course 8082、Media 8083、Learning 8084、Operation 8085 及 student-web/teacher-web 5173/5174。固定课程公开列表/详情 200，未知公开课程 404，未认证课程任务和教师成绩册 401 且返回统一错误信封；两个前端深链接返回 200 HTML。IAM 健康 503 仅由本地 SMTP 未配置导致，数据库、Redis、ping/readiness 组件正常。
+- 内置浏览器结果：按用户要求重试内置浏览器，仍在内核资源初始化阶段失败：`failed to write kernel assets: 系统找不到指定的路径。 (os error 3)`。因此以下认证态项目保持明确未验收，未用脚本、假 Token 或猜测密码替代：已报名课程详情进入任务总览、任务深链刷新/返回、作答保存/刷新恢复/提交/最后结果、多次提交只显示最后有效 attempt、未公布信息防泄露、PRACTICE 过滤、PENDING/READY 成绩册、昵称部分失败、批改跳转、CSV BOM/字段/取消、403/409/422/429/offline、响应式、键盘焦点、控制台和离页资源释放。
+- 自动化结果：`pnpm.cmd --dir web-apps run generate:api`、`check:api`、`typecheck` 通过；全量 Vitest 39 个文件/251 项通过；受影响 8 个文件/62 项通过；student/teacher/admin 三端 `build` 均通过，仅有既有大 chunk 警告；`git diff --check` 通过。
+- 数据与清理：只使用 `edu_platform_learning_dev` 这一明确 local/test Schema。为分离两个既有 Seed 的固定断言，执行 T11C.1 Initialize → T12B Initialize → T12B Cleanup → T11C.1 Initialize；没有创建临时 Schema、CSV 文件、Redis Key、RabbitMQ 消息、OSS 对象或其他伪数据。最终保留 T11C.1 2 场幂等演示 Seed；T12B 6 场 Seed 脚本及其 Initialize/Cleanup/Rebuild 机制保留，未删除项目既有数据脚本。
+- 结论：前端实现、导航修复、契约生成、自动化和构建通过；本次“最终真实浏览器验收”不能标记为全绿，阻塞点是内置浏览器初始化错误以及认证 Seed 密码未进入当前安全进程。该阻塞解除后应从上述未验收清单继续，不应重复 T11C.1.1 的 5,000×100 后端容量测试。
