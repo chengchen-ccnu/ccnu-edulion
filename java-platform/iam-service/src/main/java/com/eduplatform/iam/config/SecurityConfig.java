@@ -94,6 +94,7 @@ public class SecurityConfig {
                                 "/api/v1/auth/channel-capabilities", "/api/v1/protocols/current",
                                 "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
                                 "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
+                                "/internal/v1/users/nicknames",
                                 "/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/api/v1/admin/users", "/api/v1/admin/users/**")
                                 .hasAuthority("administration:access")

@@ -19,6 +19,7 @@ $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
+$learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 
 function New-ServiceAuthorizationCredential {
     $bytes = New-Object byte[] 32
@@ -63,6 +64,24 @@ function New-IamSecurityCredential {
     }
 }
 
+function New-LearningIamServiceCredential {
+    $bytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+        $secret = [Convert]::ToBase64String($bytes)
+        return [PSCredential]::new(
+            "learning-iam-service",
+            (ConvertTo-SecureString $secret -AsPlainText -Force)
+        )
+    }
+    finally {
+        $generator.Dispose()
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        $secret = $null
+    }
+}
+
 if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $credentialPath))) {
     $existingBaseConfiguration = (Test-Path -LiteralPath $configPath -PathType Leaf) `
         -and (Test-Path -LiteralPath $credentialPath -PathType Leaf)
@@ -103,7 +122,26 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             $existingIamCredential = $null
         }
     }
-    if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid)) {
+    $learningIamCredentialValid = $false
+    if (Test-Path -LiteralPath $learningIamCredentialPath -PathType Leaf) {
+        try {
+            $existingLearningIamCredential = Import-Clixml -LiteralPath $learningIamCredentialPath
+            if ($existingLearningIamCredential -is [PSCredential] `
+                    -and $existingLearningIamCredential.UserName -eq "learning-iam-service") {
+                $existingLearningIamNetworkCredential = $existingLearningIamCredential.GetNetworkCredential()
+                $learningIamCredentialValid = $existingLearningIamNetworkCredential.Password.Length -ge 32
+            }
+        }
+        catch {
+            $learningIamCredentialValid = $false
+        }
+        finally {
+            $existingLearningIamNetworkCredential = $null
+            $existingLearningIamCredential = $null
+        }
+    }
+    if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid `
+            -or -not $learningIamCredentialValid)) {
         New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
         if (-not $serviceCredentialValid) {
             New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
@@ -112,6 +150,10 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
         if (-not $iamSecurityCredentialValid) {
             New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
             Write-Host "Added the DPAPI-encrypted IAM security secrets."
+        }
+        if (-not $learningIamCredentialValid) {
+            New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force
+            Write-Host "Added the DPAPI-encrypted Learning-to-IAM service secret."
         }
         return
     }
@@ -224,10 +266,11 @@ New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
 $credential | Export-Clixml -LiteralPath $credentialPath -Force
 New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
 New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
+New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force
 
 @(
     "# Non-secret local configuration for ccnu-edulion."
-    "# MySQL and course/media service credentials are stored separately with Windows DPAPI."
+    "# MySQL, course/media and Learning-to-IAM service credentials are stored separately with Windows DPAPI."
     "SPRING_PROFILES_ACTIVE=local"
     "MYSQL_HOST=127.0.0.1"
     "MYSQL_PORT=3306"
@@ -254,4 +297,4 @@ New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPat
 ) | Set-Content -LiteralPath $configPath -Encoding UTF8
 
 Write-Host "Local environment initialized in $ConfigDirectory."
-Write-Host "The MySQL password and service authorization secret were encrypted for the current Windows user."
+Write-Host "The MySQL password and service authorization secrets were encrypted for the current Windows user."

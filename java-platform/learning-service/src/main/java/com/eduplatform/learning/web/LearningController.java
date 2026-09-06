@@ -1,5 +1,6 @@
 package com.eduplatform.learning.web;
 
+import com.eduplatform.learning.config.TraceFilter;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.service.LearningAssessmentService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -158,6 +159,52 @@ public class LearningController {
         return learning.learnerAssessment(LearningIdentity.learner(userId, roles, permissions).userId(), assessmentId);
     }
 
+    @GetMapping("/api/v1/learning/courses/{courseId}/tasks")
+    /** 返回已报名学习者可见的 HOMEWORK/EXAM 任务；当前课时只用于安全显示未开放课时任务。 */
+    public LearningDtos.LearnerCourseTaskPage courseTasks(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @RequestParam(required = false) String currentLessonId,
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
+        return learning.learnerCourseTasks(LearningIdentity.learner(userId, roles, permissions).userId(), courseId,
+                currentLessonId, page, size, trace(servlet));
+    }
+
+    @GetMapping("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}")
+    /** 返回单个安全任务；未开放任务不携带题目快照。 */
+    public LearningDtos.LearnerCourseTask courseTask(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @PathVariable String assessmentId,
+            @RequestParam(required = false) String currentLessonId, HttpServletRequest servlet) {
+        return learning.learnerCourseTask(LearningIdentity.learner(userId, roles, permissions).userId(), courseId,
+                assessmentId, currentLessonId, trace(servlet));
+    }
+
+    @PostMapping("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/attempts")
+    /** 复用既有 attempt 状态机开始/恢复课程任务，客户端不能自行指定历史 attempt。 */
+    public ResponseEntity<LearningDtos.AttemptDraft> courseTaskAttempt(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @PathVariable String assessmentId,
+            @Valid @RequestBody LearningDtos.StartAttemptRequest request, HttpServletRequest servlet) {
+        var value = learning.startCourseTaskAttempt(LearningIdentity.learner(userId, roles, permissions).userId(),
+                courseId, assessmentId, request, trace(servlet));
+        return ResponseEntity.status(201).body(value);
+    }
+
+    @GetMapping("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result")
+    /** 解析服务端最终 attempt 指针返回结果，不提供历史 attempt 选择器。 */
+    public LearningDtos.AttemptResult courseTaskResult(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String courseId, @PathVariable String assessmentId, HttpServletRequest servlet) {
+        return learning.learnerCourseTaskResult(LearningIdentity.learner(userId, roles, permissions).userId(),
+                courseId, assessmentId, trace(servlet));
+    }
+
     @PostMapping("/api/v1/learning/assessments/{assessmentId}/attempts")
     /** 开始或幂等恢复本人对该测评的唯一作答。 */
     public ResponseEntity<LearningDtos.AttemptDraft> startAttempt(@RequestHeader("X-User-Id") String userId,
@@ -264,7 +311,7 @@ public class LearningController {
     }
 
     private static String trace(HttpServletRequest request) {
-        Object value = request.getAttribute("traceId");
+        Object value = request.getAttribute(TraceFilter.ATTRIBUTE);
         return value == null ? UUID_FALLBACK : value.toString();
     }
 

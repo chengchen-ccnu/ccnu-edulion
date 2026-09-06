@@ -118,6 +118,7 @@ function draft(revision: number, currentAnswers: AttemptAnswerInput[] = []): Att
   return { id: "00000000-0000-4000-8000-000000000501", assessmentId: "00000000-0000-4000-8000-000000000401",
     status: "DRAFT", revision, answers: currentAnswers, startedAt: "2026-08-28T00:00:00Z",
     deadlineAt: "2026-08-28T00:10:00Z", serverTime: "2026-08-28T00:00:00Z",
+    attemptSequence: 1, attemptsUsed: 0, maxAttempts: 1, lateSubmission: false,
     createdAt: "2026-08-28T00:00:00Z", updatedAt: "2026-08-28T00:00:00Z" };
 }
 

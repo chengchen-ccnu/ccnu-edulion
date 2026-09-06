@@ -26,6 +26,12 @@ public interface IamMapper {
     @Select("SELECT id, account, display_name, password_hash, status, avatar_url, session_version, revision, created_at, updated_at FROM `user` WHERE id = #{id}")
     UserAccount findUserById(String id);
 
+    /** 仅返回成绩册所需的稳定账号标识和昵称，不跨 Schema 暴露密码、身份或权限字段。 */
+    @Select("<script>SELECT id, display_name FROM `user` WHERE id IN <foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
+    List<NicknameRow> findDisplayNames(@Param("ids") List<String> ids);
+
+    record NicknameRow(String id, String displayName) {}
+
     @Select("SELECT id, account, display_name, password_hash, status, avatar_url, session_version, revision, created_at, updated_at FROM `user` WHERE id = #{id} FOR UPDATE")
     UserAccount findUserByIdForUpdate(String id);
 

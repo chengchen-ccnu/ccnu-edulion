@@ -377,6 +377,29 @@ T11B 不创建数据库，只在用途明确的 `edu_platform_learning_dev` 上�
 
 真实 MySQL 验收继续使用上方 `LearningMysqlMigrationAcceptanceTest` 命令。用例会再次拒绝非 `edu_platform_learning_dev` 目标，以随机 UUID 创建最小 assessment/attempt/wrong/redo，验证 V11 关闭、公布、最后成绩时间和有限重试约束，并在 `finally` 中精确逆序删除全部 Fixture。没有 local seed；重复验收直接重跑命令，不会复用或修改现有正式题库。
 
+### T11C.1 作业规则、成绩册与 CSV 导出
+
+T11C.1 只在用途明确的 `edu_platform_learning_dev` 上由 Flyway 从 V13 向前应用 Learning V14。V14 新增 HOMEWORK 迟交/次数、应交名单、课程学生编号、截止调整审计、结算审计和成绩册导出审计；V10 的 EXAM-only 时间约束只通过 V14 向前替换，不改写 V1～V13。PRACTICE 的旧语义和 T11B 的关闭/公布事实保持不变。
+
+| 变量 | 默认值 | 含义 |
+|---|---:|---|
+| `LEARNING_ASSESSMENT_SETTLEMENT_POLL_DELAY` | `2s` | 到期自动关闭和草稿有界结算的轮询间隔；每轮最多 10 场、每场 50 份 |
+| `IAM_SERVICE_BASE_URL` | `http://127.0.0.1:8081` | Learning 调用 IAM 批量昵称投影的地址 |
+| `LEARNING_IAM_REQUEST_TIMEOUT` | `1s` | IAM 昵称批量调用的连接/读取上限；失败只降级昵称，不丢失成绩册事实 |
+| `IAM_INTERNAL_SERVICE_TOKEN` | 无 | Learning→IAM 内部调用令牌；由 `learning-iam-service.credential.clixml` 通过 DPAPI 注入，不能写入 `local.env`、命令参数或日志 |
+
+首次已有本地环境可重新运行 `Initialize-LocalEnvironment.ps1`，脚本只补齐缺失的 `learning-iam-service.credential.clixml`，不会替换已有 MySQL、课程/媒体或 IAM 安全凭据。所有需要该令牌的启动、迁移和真实验收命令必须通过 `Invoke-WithLocalEnvironment.ps1` 执行；IAM 端点还会校验固定调用方 `learning-service` 和令牌，令牌缺失时成绩册保留编号与 Learning 数据并标记昵称依赖失败。
+
+T11C.1 提供独立的 Learning 演示 Seed，但不会随应用启动自动运行。只有在显式设置 `T11C1_DEMO_SEED_ENABLED=true`、profile 为 `local` 且目标严格为 `edu_platform_learning_dev` 时，才可通过以下命令执行：
+
+```powershell
+& .\scripts\Invoke-T11C1HomeworkGradebookDemoSeed.ps1 -Action Initialize
+& .\scripts\Invoke-T11C1HomeworkGradebookDemoSeed.ps1 -Action Cleanup
+& .\scripts\Invoke-T11C1HomeworkGradebookDemoSeed.ps1 -Action Rebuild
+```
+
+Seed 在同一测试课程下保留一场已结算 HOMEWORK 和一场含待批主观题的 EXAM，覆盖三次/一次上限、准时/迟交/缺交/退课、客观自动判分、主观人工批改、课程学生编号和固定合成昵称。它只写 Learning Schema 的固定测试 UUID，不创建或复制 IAM、Course、题库、Media 数据；`Initialize` 可幂等重跑，`Cleanup` 只按固定 ID/前缀逆序清理。H2 集成测试使用进程内 V14 数据库并在进程结束时释放；真实临时验收必须使用随机 ID、精确逆外键清理，并只允许访问 `edu_platform_learning_dev`。CSV 是同步响应，不写 OSS、本机临时文件、RabbitMQ 或 `REPORT_EXPORT`。
+
 ### T12B 测评闭环前端演示数据
 
 T12B 不创建 Schema、表或迁移，只在用途明确的 `edu_platform_learning_dev` 中维护一组生产禁用、固定 ID、幂等的页面演示数据。`T12BAssessmentDemoSeedTest` 会先校验 `T12B_DEMO_SEED_ENABLED=true`、`local` profile 和目标 Schema，再从固定稳定 source ref 解析既有 `SYSTEM` 题版本；题目缺失、数量或类型不符合预期时直接失败，不随机抽题、不复制题干/答案，也不遍历历史 JSON。

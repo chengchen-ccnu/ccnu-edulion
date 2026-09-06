@@ -751,6 +751,19 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 前置结论：Git、T11B/T12B 领域能力、题目/媒体复用边界、固定 `/teacher/gradebook` 页面职责及生成客户端流程均满足；后续 grill 已完成 HOMEWORK 开放/截止、迟交、次数、成绩册人口、统一显示和导出安全的产品决策，原准备分支已改名为 `codex/t11c1-homework-gradebook-contract`。
 - 数据与代码：本次总控只执行 GitHub 合并、Git 同步/分支清理、只读契约与代码审计及状态文档更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
 
+## 2026-09-05 T11C.1 作业规则、成绩册与 CSV 导出后端实施验证
+
+- 门禁：在 `codex/t11c1-homework-gradebook-contract` 分支确认工作区初始干净，保留 `18cb028` 与 `9f31943` 规划提交；完整阅读 T11C 所需页面规格、路线图、OpenAPI、T11/T11A/T11B/T12B 交付文档。未修改其他功能分支或已合并 V1～V13 迁移。
+- 契约：先将 `docs/api/openapi.yaml` 从 0.20.0 演进到 0.21.0，再生成 `web-apps/packages/api-client/src/generated/schema.d.ts`。新增学生课程任务/结果/开始入口、教师截止调整、成绩册矩阵和同步 CSV 下载契约；没有新增 Vue、页面路由、历史 attempt 查询、异步 XLSX 或 OSS 报表。
+- Learning V14：只新增 `late_policy/late_until/max_attempts`、`attempt_sequence/late_submission`、`assessment_participant`、`course_student_number`、`course_student_number_counter`、截止/结算/导出审计表和必要唯一约束/索引。V14 向前替换 V10 的 EXAM-only 时间约束，保留既有 T11B 结果公布和旧 HOMEWORK 无时间节点数据的兼容读取；新 API 仍强制 HOMEWORK `closesAt`。
+- 服务实现：HOMEWORK 迟交窗口、1～5 次不可变 attempt、最终 attempt 指针、开放/迟交期/关闭状态、报名/退课/重新报名投影、课程学生编号、自动关闭和有界结算已接入现有 Learning 测评模型。教师成绩册只读取本人 owner 的 HOMEWORK/EXAM，按最终 attempt 计算统计和分类汇总；未结算/待批时分数与数值统计为空，CSV 带 UTF-8 BOM、动态列、公式注入防护和导出审计。
+- IAM 依赖：新增 `/internal/v1/users/nicknames` 批量投影，只返回 ID→昵称；Learning 使用超时和 DPAPI 注入的 `IAM_INTERNAL_SERVICE_TOKEN` 调用，IAM 不可用时保留课程编号与成绩事实并标记 `nicknameDependencyFailed`，不把昵称复制到 Learning Schema，不跨库 Join。新增令牌由既有本地初始化/加载脚本加密管理，不进入仓库。
+- 自动化结果：V14 H2 Flyway 迁移通过；Learning `LearningAssessmentIntegrationTest` 21/21、IAM 定向测试 10/10 通过，覆盖时间/迟交、草稿不计次、最终 attempt/旧 attempt 404、统一成绩册门禁、编号/统计/CSV、截止调整和并发关闭；此前 T11B 16/16 回归也在新增迁移调整后复跑通过。`pnpm ... generate:api`、`check:api`、`typecheck` 通过，Vitest 36 文件 237 项通过。
+- 真实验收：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 在既有 `edu_platform_learning_dev` 执行 `LearningMysqlMigrationAcceptanceTest`，6 项中 5 项通过、1 项既有条件测试跳过；确认 V13→V14、旧 attempt `sequence=1`、V14 约束、两连接并发自动关闭一胜一负、PENDING 失败事实恢复为 COMPLETED，并按随机 ID 精确清理。T11C.1 Seed `Initialize` 1/1 和幂等重跑 1/1 通过，固定演示数据留在该开发库供演示。
+- 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块成功；Learning 76 项（12 项真实环境按开关跳过）、IAM 30 项（1 项真实环境按开关跳过），其他受影响模块无失败。`pnpm.cmd --dir web-apps run build` 通过，admin/student/teacher 三端生产构建成功，仅有既有大 chunk 警告。
+- 未执行验收：真实 IAM HTTP 联调、真实 5,000/100 上限压测，以及停止/恢复 MySQL 进程期间的网络级故障验收尚未执行；本轮没有连接 Redis、RabbitMQ、OSS，未生成 CSV 文件或临时外部对象。演示 Seed 只写 Learning 固定测试数据，H2 Fixture 随进程释放。
+- 交付状态：分支为 `codex/t11c1-homework-gradebook-contract`，契约提交为 `148ffd4`、兼容性修正为 `f19f13e`，实现/文档提交与 PR 在最终交付时补录；没有实现 T11C.2 Vue 页面或路由。剩余风险是完整多进程部署、IAM HTTP 联调和网络级数据库故障需要发布环境验证。
+
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
 - 拆分结论：经完整产品规则访谈，原 T11C 拆为顺序实施的 T11C.1“作业规则、成绩册与 CSV 导出后端契约”和 T11C.2“课程作业/考试与教师成绩册前端”。T11C.1 先演进 OpenAPI、Learning 数据与服务端状态机并重新生成客户端；T11C.2 只能在其合并后消费生成契约，不得并行猜测 DTO。

@@ -2,6 +2,7 @@ package com.eduplatform.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.eduplatform.learning.course.CourseFactsClient;
 import com.eduplatform.learning.domain.QuestionModels;
+import com.eduplatform.learning.identity.LearnerDirectoryClient;
 import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentQuestionRow;
@@ -18,11 +20,13 @@ import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,6 +58,7 @@ class LearningAssessmentIntegrationTest {
     @Autowired ObjectMapper mapper;
     @MockitoBean CourseFactsClient courses;
     @MockitoBean MediaClient media;
+    @MockitoBean LearnerDirectoryClient directory;
 
     @BeforeEach
     void reset() {
@@ -63,6 +68,10 @@ class LearningAssessmentIntegrationTest {
         jdbc.update("DELETE FROM wrong_question_redo");
         jdbc.update("DELETE FROM wrong_question_occurrence");
         jdbc.update("DELETE FROM wrong_question");
+        jdbc.update("DELETE FROM gradebook_export_audit");
+        jdbc.update("DELETE FROM assessment_settlement_audit");
+        jdbc.update("DELETE FROM assessment_deadline_audit");
+        jdbc.update("DELETE FROM assessment_participant");
         jdbc.update("DELETE FROM assessment_answer");
         jdbc.update("DELETE FROM assessment_attempt");
         jdbc.update("DELETE FROM assessment_assignment");
@@ -72,6 +81,8 @@ class LearningAssessmentIntegrationTest {
         jdbc.update("DELETE FROM lesson_progress_event");
         jdbc.update("DELETE FROM lesson_progress");
         jdbc.update("DELETE FROM learning_idempotency_request");
+        jdbc.update("DELETE FROM course_student_number");
+        jdbc.update("DELETE FROM course_student_number_counter");
         jdbc.update("DELETE FROM enrollment");
         jdbc.update("DELETE FROM learning_outbox_event");
         jdbc.update("DELETE FROM question_version_knowledge_point");
@@ -83,6 +94,8 @@ class LearningAssessmentIntegrationTest {
                 Set.of(LESSON), Map.of(LESSON, "ARTICLE"));
         when(courses.requirePublished(anyString(), anyString())).thenReturn(fact);
         when(courses.requireOwnedPublished(anyString(), anyString(), anyString())).thenReturn(fact);
+        when(directory.nicknames(anyList(), anyString())).thenReturn(new LearnerDirectoryClient.NicknameLookup(
+                Map.of(LEARNER, "student_test_01", OTHER, "student_test_02"), false));
     }
 
     @Test
@@ -734,6 +747,158 @@ class LearningAssessmentIntegrationTest {
         assertThat(service.dueSettlementAssessments(10)).doesNotContain(ASSESSMENT);
     }
 
+    @Test
+    /** 两个调度线程同时关闭同一场到期作业时，只允许一个事务推进 OPEN→CLOSED。 */
+    void concurrentAutomaticCloseHasOneWinnerAndOneSettlementFact() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-concurrent-close-enroll");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        Instant elapsed = Instant.now().minusSeconds(1);
+        jdbc.update("UPDATE assessment SET opens_at=?,closes_at=? WHERE id=?",
+                java.sql.Timestamp.from(elapsed.minusSeconds(60)), java.sql.Timestamp.from(elapsed), ASSESSMENT);
+
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var first = executor.submit(() -> {
+                ready.countDown();
+                start.await(5, TimeUnit.SECONDS);
+                service.autoCloseAssessment(ASSESSMENT);
+                return null;
+            });
+            var second = executor.submit(() -> {
+                ready.countDown();
+                start.await(5, TimeUnit.SECONDS);
+                service.autoCloseAssessment(ASSESSMENT);
+                return null;
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            first.get(10, TimeUnit.SECONDS);
+            second.get(10, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        var closed = repository.assessment(ASSESSMENT).orElseThrow();
+        assertThat(closed.closeStatus()).isEqualTo(LearningDtos.AssessmentCloseStatus.CLOSED);
+        assertThat(closed.closeAffectedAttemptCount()).isZero();
+        assertThat(closed.settlementStatus()).isEqualTo(LearningDtos.AssessmentSettlementStatus.COMPLETED);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment WHERE id=? AND close_status='CLOSED'",
+                Integer.class, ASSESSMENT)).isEqualTo(1);
+    }
+
+    @Test
+    /** 作业草稿不计次数；每次正式提交独立递增，最后一次成为学生结果的唯一有效版本。 */
+    void homeworkRetriesKeepOnlyTheFinalAttemptVisible() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-retry-enroll");
+        seedHomeworkAssessment(2, QuestionModels.Type.SINGLE_CHOICE);
+
+        var first = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-start-first");
+        var saved = service.saveDraft(LEARNER, first.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), first.revision(), List.of()));
+        assertThat(saved.attemptSequence()).isEqualTo(1);
+        assertThat(saved.attemptsUsed()).isZero();
+        var firstResult = service.submit(LEARNER, first.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), saved.revision(), List.of(answer("00000000-0000-4000-8000-000000014001", "A"))));
+        assertThat(firstResult.attemptSequence()).isEqualTo(1);
+
+        var second = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-start-second");
+        assertThat(second.attemptSequence()).isEqualTo(2);
+        assertThat(second.attemptsUsed()).isEqualTo(1);
+        var secondResult = service.submit(LEARNER, second.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), second.revision(), List.of(answer("00000000-0000-4000-8000-000000014001", "B"))));
+        assertThat(secondResult.finalAttempt()).isTrue();
+        assertThat(secondResult.attemptSequence()).isEqualTo(2);
+        assertThatThrownBy(() -> service.learnerResult(LEARNER, first.id()))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThat(service.learnerCourseTaskResult(LEARNER, COURSE, ASSESSMENT, "trace-t11c1-final")
+                .attemptId()).isEqualTo(second.id());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_attempt WHERE assessment_id=?",
+                Integer.class, ASSESSMENT)).isEqualTo(2);
+    }
+
+    @Test
+    /** 未完成主观题批改时，成绩册仅返回事实状态；统计和同步 CSV 均保持不可见。 */
+    void pendingHomeworkHidesGradesAndRejectsGradebookExport() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-pending-enroll");
+        seedHomeworkAssessment(1, QuestionModels.Type.SHORT_ANSWER);
+        var draft = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-pending-start");
+        service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), draft.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001", "待批答案"))));
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+
+        var gradebook = service.teacherGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null, null,
+                1, 20, LearningDtos.GradebookSortField.STUDENT_NUMBER, false, "trace-t11c1-pending-gradebook");
+        assertThat(gradebook.aggregateStatus()).isEqualTo(LearningDtos.GradebookAggregateStatus.PENDING);
+        assertThat(gradebook.assessments().get(0).resultsReady()).isFalse();
+        assertThat(gradebook.assessments().get(0).stats().gradedStudentAverage()).isNull();
+        assertThat(gradebook.rows().get(0).assessments().get(ASSESSMENT).scorePercent()).isNull();
+        assertThatThrownBy(() -> service.exportGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
+                null, UUID.randomUUID(), "trace-t11c1-pending-export"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.GRADEBOOK_EXPORT_NOT_READY"));
+    }
+
+    @Test
+    /** 关闭后的成绩册使用课程内编号和批量昵称，缺交按零计入全体平均且 CSV 带 BOM。 */
+    void completedGradebookUsesStableNumbersAndExportsSafeWideCsv() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-gradebook-enroll-1");
+        service.enroll(OTHER, COURSE, "trace-t11c1-gradebook-enroll-2");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        var draft = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-gradebook-start");
+        service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), draft.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001", "A"))));
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+
+        var gradebook = service.teacherGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null, null,
+                1, 20, LearningDtos.GradebookSortField.STUDENT_NUMBER, false, "trace-t11c1-gradebook");
+        assertThat(gradebook.aggregateStatus()).isEqualTo(LearningDtos.GradebookAggregateStatus.READY);
+        assertThat(gradebook.rows()).extracting(LearningDtos.GradebookRow::courseStudentNumber)
+                .containsExactly("0001", "0002");
+        assertThat(gradebook.rows().get(0).nickname()).isEqualTo("student_test_01");
+        assertThat(gradebook.rows().get(0).assessments().get(ASSESSMENT).scorePercent())
+                .isEqualByComparingTo("100.00");
+        assertThat(gradebook.rows().get(1).assessments().get(ASSESSMENT).scorePercent())
+                .isEqualByComparingTo("0");
+        assertThat(gradebook.assessments().get(0).stats().allStudentAverage()).isEqualByComparingTo("50.00");
+
+        String csv = new String(service.exportGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null,
+                null, UUID.randomUUID(), "trace-t11c1-gradebook-export"), StandardCharsets.UTF_8);
+        assertThat(csv).startsWith("\uFEFF");
+        assertThat(csv).contains("课程学生编号", "student_test_01", "是否迟交", "作业平均分");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gradebook_export_audit", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 作业迟交窗口与一小时边界由服务端校验，不能用不完整时间配置绕过规则。 */
+    void homeworkLateWindowAndDeadlineAdjustmentRespectServerBoundary() {
+        Instant now = Instant.now();
+        assertThatThrownBy(() -> service.createAssessment(TEACHER_AS_LEARNER,
+                new LearningDtos.CreateAssessmentRequest(UUID.randomUUID(), UUID.fromString(COURSE),
+                        UUID.fromString(LESSON), "迟交边界", "", LearningDtos.AssessmentType.HOMEWORK,
+                        LearningDtos.GradePublicationPolicy.MANUAL, LearningDtos.AnswerPublicationPolicy.NEVER,
+                        now, now.plusSeconds(7200), LearningDtos.HomeworkLatePolicy.ALLOW_UNTIL,
+                        now.plusSeconds(3600), 1, null), "trace-t11c1-late-invalid"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.LATE_WINDOW_INVALID"));
+
+        service.enroll(LEARNER, COURSE, "trace-t11c1-deadline-enroll");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        assertThatThrownBy(() -> service.updateAssessmentDeadline(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.UpdateAssessmentDeadlineRequest(0, now.plusSeconds(30 * 60L), null, "缩短测试"),
+                "trace-t11c1-deadline-invalid"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.DEADLINE_TOO_SOON"));
+    }
+
     private void seedPublishedAssessment() {
         seedPublishedAssessment(LearningDtos.AssessmentType.HOMEWORK,
                 LearningDtos.GradePublicationPolicy.MANUAL,
@@ -762,6 +927,21 @@ class LearningAssessmentIntegrationTest {
                 List.of("a b"), "填空解析");
         addQuestion("00000000-0000-4000-8000-000000014005", 5, QuestionModels.Type.SHORT_ANSWER,
                 List.of("标准过程"), "解答解析");
+    }
+
+    private void seedHomeworkAssessment(int maxAttempts, QuestionModels.Type questionType) {
+        Instant now = Instant.now();
+        repository.insertAssessment(new AssessmentRow(ASSESSMENT, TEACHER_AS_LEARNER, COURSE, LESSON,
+                "T11C.1 作业", "作业规则验收", LearningDtos.AssessmentType.HOMEWORK,
+                LearningDtos.AssessmentStatus.PUBLISHED, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.NEVER, LearningDtos.AssessmentCloseStatus.OPEN,
+                LearningDtos.AssessmentSettlementStatus.NOT_STARTED, null, 0, 0, null, null,
+                LearningDtos.ResultPublicationStatus.UNPUBLISHED, LearningDtos.ResultPublicationStatus.UNPUBLISHED,
+                null, null, now.minusSeconds(1), now.plusSeconds(2 * 60 * 60L), null,
+                LearningDtos.HomeworkLatePolicy.DISALLOW, null, maxAttempts, 1, now, null, now, now));
+        repository.ensureCourseAssignment(UUID.randomUUID().toString(), ASSESSMENT, COURSE, now);
+        List<String> answers = questionType == QuestionModels.Type.SHORT_ANSWER ? List.of("标准答案") : List.of("A");
+        addQuestion("00000000-0000-4000-8000-000000014001", 1, questionType, answers, "作业解析");
     }
 
     private static List<LearningDtos.AnswerInput> completeFixtureAnswers() {
