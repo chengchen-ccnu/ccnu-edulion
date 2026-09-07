@@ -29,6 +29,8 @@ describe("teacher assessment lifecycle view model", () => {
     expect(source).toContain("preserveGradeInputs");
     expect(source).toContain("当前得分和评语输入已保留");
     expect(source).toContain("attemptId && panel.value === \"grading\"");
+    expect(source).toContain("getTeacherAttemptResult(attemptId");
+    expect(source).toContain("避免用整场 results 分页查找");
     expect(source).toContain("attemptId: value === \"grading\" ? queryString(\"attemptId\") : undefined");
     expect(source).toContain("resetFeedback()");
     expect(source).toContain("document.removeEventListener");

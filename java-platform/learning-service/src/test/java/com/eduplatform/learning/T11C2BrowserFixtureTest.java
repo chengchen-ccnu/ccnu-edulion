@@ -84,9 +84,11 @@ class T11C2BrowserFixtureTest {
 
     /** 复制已有演示题目的不可变快照，只创建 Learning 任务与应交名单；窗口两小时，考试限时一小时。 */
     private void initialize(String assessmentId, boolean homework) {
-        // 来源通过明确的 owner、课程和演示标题校验；只读现有快照，不读取其他服务数据库。
+        // 来源通过明确的 owner、课程和演示标题校验；作业复制客观题、考试复制主观题，
+        // 这样真实验收可以同时覆盖最后结果和待人工批改，而不改动 T11C.1 固定演示数据。
+        String sourceTitle = homework ? "[T11C.1演示]可导出作业（完整）" : "[T11C.1演示]主观题待批考试（隐藏）";
         List<String> sources = jdbc.queryForList("SELECT id FROM assessment WHERE owner_teacher_id=? AND course_id=? "
-                + "AND title=?", String.class, OWNER, COURSE, "[T11C.1演示]可导出作业（完整）");
+                + "AND title=?", String.class, OWNER, COURSE, sourceTitle);
         assertThat(sources).hasSize(1);
         String source = sources.get(0);
         assertThat(jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,"

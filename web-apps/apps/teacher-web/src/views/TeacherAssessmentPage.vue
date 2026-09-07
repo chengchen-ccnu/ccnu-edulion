@@ -195,9 +195,17 @@ function handleVisibilityChange() {
 
 async function loadResults(preserveGradeInputs = false) {
   if (!assessment.value) return;
-  try { resultPage.value = await teacherAssessmentApi.results(assessment.value.id, { page: positive(route.query.resultPage), size: 20 }, controller?.signal);
+  try {
     const attemptId = queryString("attemptId");
-    if (attemptId && panel.value === "grading") applyAttempt(resultPage.value.items.find(item => item.attemptId === attemptId) ?? null, preserveGradeInputs); }
+    // 批改深链直接读取指定最终 attempt，避免用整场 results 分页查找而命中待批 409 或漏掉第 1 页之外的 attempt。
+    if (attemptId && panel.value === "grading") {
+      applyAttempt(await teacherAssessmentApi.getTeacherAttemptResult(attemptId, controller?.signal), preserveGradeInputs);
+      return;
+    }
+    resultPage.value = await teacherAssessmentApi.results(assessment.value.id, {
+      page: positive(route.query.resultPage), size: 20
+    }, controller?.signal);
+  }
   catch (error) { errorMessage.value = messageFor(error); }
 }
 function selectAttempt(value: AttemptResult | null, preserveInputs = false) {
