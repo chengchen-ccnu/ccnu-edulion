@@ -867,3 +867,33 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 临时数据：未创建数据库/表/迁移/账号/课程/题目。专用 edu_platform_learning_dev 新增两场固定临时任务、2 份题目快照、分配/应交名单及 3 attempt/答案/幂等/截止结算派生行；两次错误答案产生 1 条 wrong_question 累计与 2 条 occurrence。第一次清理因保护断言回滚，核实累计恰好 2 次且无重做后补精确清理。12:29:40 CLEANUP 成功；12:30:50 REPORT 确认临时 assessment=0、attempt/错题/occurrence/本轮审计列表为空，T11C.1 演示仍 2 场。四条本轮 CSV 审计按交付文档 UUID 逐条限定 owner/course 删除，HTTP CSV 本地文件已删除。HTTP 会话正常 logout，限流 Key 自然 60 秒过期，不清除原有账号会话/审计。Fixture INITIALIZE/REPORT/CLEANUP 可复现，无生产自动 Seed。
 - **尚未通过**：READY 作业批改深链已真实通过；待批考试批改深链真实返回 `409 LEARNING.RESULTS_NOT_READY`。教师页依赖分页 results 列表，但该接口要求整场无待批，OpenAPI/Controller 没有教师单 attempt GET；第一页之外 attempt 的定位也尚未完整验证。按契约不足规则停止扩展并报告，未用评分 POST 或虚构 API 绕过。真实 CSV 响应过快，连续并发取消未得到可靠已取消终态；另一次“发起 CSV 后立即跳转课程管理”真实离页无残留下载提示且浏览器 error/warn 为空，但内部请求、计时器、Blob 释放仍待专门网络级观测，组件回归不等同全部真实验收。T11C.2 不标记全验收完成。
 - 完整启动、数据 UUID、复现命令、调用边界及后续依赖已同步 [交付文档](../delivery/T11C.2-homework-gradebook-web.md)、backlog、local-environment。新提交推送后的 CI 以 PR #50 实际检查为准，不沿用旧提交绿色结果。
+## 2026-09-07 T11C.1.3 教师待批答卷读取契约规划与前置审计
+
+- Git 与任务状态：从工作区干净且与 `origin/main` 一致的 `main@711ec6b6cbd3bd779003f134fe96746b8ca4fc0b` 创建 `codex/t11c1.3-teacher-attempt-read`。T11C.1、T11C.1.1、T11C.1.2 已分别通过 PR #47、#49、#51 合并；T11C.2 实现仍位于保持 Open 的 PR #50（head `4669955`），本规划不合并、关闭或修改其业务代码。
+- 真实阻断：T11C.2 真实浏览器验收从成绩册进入待批 HOMEWORK/EXAM 的既有批改面板后，页面调用整场 results 接口；因为仍有待批答案，服务端按既有防泄露规则返回 `409 LEARNING.RESULTS_NOT_READY`，教师因而无法开始第一份人工批改。页面若先拉整场结果分页再按 learner 查找，也无法稳定定位第一页之外的最终 attempt。此前课程任务 503 已由 T11C.1.2 修复，本缺口是独立的读取契约缺失。
+- 新契约：T11C.1.3 将 `docs/api/openapi.yaml` 从 0.21.0 向前升级到 0.21.1，新增 `GET /api/v1/teacher/attempts/{attemptId}`，响应直接复用已有 `AttemptResult`，服务实现复用已有 `LearningAssessmentService.teacherResult`，并重新生成前端客户端。该接口只读取指定的最终有效 attempt，不增加第二套结果 DTO、整场待批列表或历史 attempt 查询。
+- 授权与状态：仅具有教学能力且拥有对应课程/测评的 owner 教师，可在 HOMEWORK/EXAM 整场已经关闭且草稿结算完成后读取最后有效待批 attempt；不要求该场全部人工批改完成。非 owner、旧 attempt、attempt 与课程/测评资源不匹配均安全返回 404。`courseId`、`assessmentId`、`learnerId` 和 `attemptId` 可共同存在于批改深链以恢复页面，但服务端必须从 attempt 和领域事实完成授权，不能信任查询参数。批改写入继续使用既有 revision/`409` 冲突保护。
+- 防泄露边界：原整场 results 接口保持“全部人工批改完成后才返回”的既有门禁，不能因单份批改读取而放宽，避免教师成绩册或结果列表在处理中逐份暴露成绩。T11C.2 恢复后，`panel=grading&attemptId=...` 使用新单份接口，整场结果面板仍使用原 results 接口；发生保存冲突时保留输入并以同一 attempt 重新读取最新 revision。
+- 实施与测试范围：后续实现只允许修改 OpenAPI 0.21.1、Learning 读取 Controller/既有服务接线、Gateway 路由或错误适配（如确有需要）、生成客户端，以及 owner、非 owner、旧 attempt、资源不匹配、整场未关闭、结算未完成、待批可读和 revision/409 回归测试。不得新增数据库迁移、第二套 DTO、Redis、RabbitMQ、OSS、批改页面或其他功能。
+- 克制性判断：具体失败场景是“缺少单份教师读取端点，使受支持的待批状态只能命中必然 409 的整场结果端点”。Git 历史、OpenAPI 版本号、attempt 主键、事务、唯一约束、Java/TypeScript 类型和普通前端测试都不能让一个不存在的 HTTP 读取入口可用，因此本次向前增加最小契约是必要的；不新增 hash、平行 contract、baseline 或 gate。
+- T11C.2 恢复门禁：T11C.1.3 必须先独立实施、真实验收并合并；随后把最新 `main` 以普通 merge 合入 PR #50，只消费重新生成的客户端，完成第一页之外待批 attempt 深链、owner/404、409 输入保留与其余未完成真实验收后再决定是否合并，不扩大页面范围。
+- 数据与外部资源：本次总控只修改 `page-specs`、`backlog` 和 `verification` 三份规划/审计文档并做本地提交，不修改 OpenAPI、Java、Vue、生成客户端、Flyway 或运行配置，不连接或修改 MySQL、Redis、RabbitMQ、OSS，也不创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key；提交不推送。
+
+## 2026-09-07 T11C.1.3 教师待批答卷读取契约实施验证
+
+- 分支与门禁：当前分支为 `codex/t11c1.3-teacher-attempt-read`，保留规划提交 `6ee94cd`，实现提交为 `bd0b2a1`。PR #50 仍保持 Open，未切换、修改、合并或关闭，未修改其 Vue 业务代码。
+- 契约与实现：`docs/api/openapi.yaml` 从 0.21.0 演进至 0.21.1，新增 `GET /api/v1/teacher/attempts/{attemptId}`，响应复用 `AttemptResult`。Learning Controller 只增加最小入口并调用已有 `LearningAssessmentService.teacherResult`；没有重复组装结果、第二套 DTO 或 Gateway 冗余路由。生成客户端已由 `pnpm.cmd --dir web-apps run generate:api` 更新。
+- 授权与门禁：服务端从 attempt 实际关联的 assessment 解析 owner、课程和测评事实，并检查最后有效 attempt；不信任 URL 上的课程/测评/学习者上下文。关闭且结算完成后，单份接口允许 `PARTIALLY_GRADED` 待批答卷读取；非 owner、旧 attempt 和真实资源关系不匹配安全 404；未关闭/未结算仍按 `LEARNING.RESULTS_NOT_READY` 409。原整场 results 的全部人工批改门禁保持不变，人工批改 revision/409 保护保持不变。
+- Learning 自动化：定向 `LearningAssessmentIntegrationTest` 26/26 通过；learning-service 全量 89 项执行、0 失败、16 项既有条件测试按开关跳过。新增/扩展覆盖 owner 单份待批 200 语义、整场 409、最终 attempt、旧 attempt 404、非 owner 404、未关闭/未结算拒绝、已批改读取和 revision/409 回归。
+- Gateway 与前端自动化：Gateway 未修改配置，但全仓 Gateway 测试 21 项执行、0 失败、1 项真实环境测试跳过；`check:api` 通过且生成文件与源码一致；`typecheck` 通过；Vitest 36 文件、237 项通过；admin/student/teacher 三端 `build` 通过，仅有既有 HLS 大 chunk 警告。
+- Maven 验证：标准 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 已尝试，但当前运行中的 Gateway/Learning/Course/IAM 本地 JAR 持有 Windows 文件锁，clean 阶段无法删除 Gateway JAR；不终止用户进程。随后执行 `mvn --% -Dmaven.repo.local=.m2/repository -Dspring-boot.repackage.skip=true -f java-platform/pom.xml verify` 成功，8 个 Reactor 模块全部成功，Learning 89/0/16 skipped，Gateway 21/0/1 skipped，其他模块无失败。
+- 数据边界：没有新增或修改数据库迁移、表、字段、Seed、开发/测试持久数据或外部对象；测试仅使用现有临时 H2 Fixture，进程结束后释放。没有连接 MySQL、Redis、RabbitMQ、OSS，也没有执行真实多服务 HTTP 数据验收，因此不存在需要清理的持久数据。
+- 可读性：Controller 新入口补充中文注释，测试场景补充业务目的注释；生成代码未手工编辑。交付文档已记录接口边界、失败语义、测试结果、数据清理和后续依赖。
+- 当前交付状态：已推送 `codex/t11c1.3-teacher-attempt-read` 并创建 [Ready PR #52](https://github.com/chengchen-ccnu/ccnu-edulion/pull/52)。PR #52 的 Java、Frontend、Python、OpenAPI generated source 检查均已通过，PR 保持 Open/CLEAN、未合并；PR #50 仍保持 Open/CLEAN。CI 已在干净工作区确认标准 Maven reactor 检查通过，本地标准 `clean verify` 仍受运行中 JAR 文件锁限制。
+
+## 2026-09-07 PR #52 合并与 T11C.2 继续验收前置审计
+
+- 合并与清理：[PR #52](https://github.com/chengchen-ccnu/ccnu-edulion/pull/52) 在 Ready、可合并且 Java、Frontend、Python、OpenAPI generated source 检查全部成功后，以普通 merge 合并为 `main@0639dcb0482600587bbf990c5ed54aeb99ebe73b`；本地 `main` 已快进同步，`codex/t11c1.3-teacher-attempt-read` 本地和远端分支均已清理。
+- 分支合流：切回 `codex/t11c2-homework-gradebook-web`，先确认与远端 PR #50 头一致，再以普通 merge 合入最新 `main`。OpenAPI 0.21.1、Learning 单份教师 attempt 读取入口和重新生成客户端已进入该分支；冲突只发生在 `page-specs`、`backlog`、`verification`，按“保留 T11C.2 真实验收记录＋保留 T11C.1.3 契约/实施记录＋更新当前状态”解决，没有改写业务代码。
+- 前置结论：T11C.1～T11C.1.3 均已合并，缺失教师单份待批答卷读取契约的阻断已解除。T11C.2 可以在现有 PR #50 内只消费生成的 `getTeacherAttemptResult`，然后继续待批 attempt 深链、第一页之外定位、owner/404、revision/409 和真实下载/离页资源清理验收；原整场 results 门禁保持不变，不得扩大页面或后端功能范围。
+- 数据与外部资源：本轮只执行 GitHub 合并、Git 同步/分支清理、普通分支合流、文档冲突解决和静态前置审计；没有连接或修改 MySQL、Redis、RabbitMQ、OSS，没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
