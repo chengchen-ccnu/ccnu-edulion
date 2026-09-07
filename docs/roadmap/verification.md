@@ -909,3 +909,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：`pnpm.cmd --dir web-apps run check:api`、`typecheck`、`test`（40 文件/269 项）和 `build`（三端，只有既有大 chunk 警告）均通过；T11C2BrowserFixtureTest `INITIALIZE`、真实流程、`CLEANUP`、`REPORT` 均通过。修改后的 Fixture 测试注释说明输入、输出和精确清理边界，生成代码未手改。
 - 数据清理：Fixture 只使用明确的 `edu_platform_learning_dev`，固定临时 assessment `0c1f5676-7ea0-3ae0-895b-2b64b6cff452`、`4aa3780e-b04a-3e8d-8936-ec353c6ce0c6`，并复制既有 T11C.1 客观/主观题快照；`CLEANUP` 后 `REPORT` 确认临时 assessment、attempt、错题和 occurrence 均为 0，T11C.1 演示 assessment 仍为 2。此前本轮产生的 5 条导出审计 UUID `9019757f-9094-4e42-9cb9-8780634be179`、`456e926d-3b65-446d-ae47-29dceb727f22`、`2ad0d068-4c1d-4684-8492-8090ce9ab4ec`、`491bf992-4b27-4657-b11f-3cc4ca0020ba`、`e8d3e3f7-e9d4-4b20-8e1c-618c9f168c2d` 已按固定 operator/course 条件逐条清理，最终报告为空；没有删除账号、报名、T11C.1 演示或其他领域数据。
 - 结论：T11C.1.3 单份读取契约已在 PR #50 的现有页面真实消费，待批/分页外 attempt/owner 404/整场 409/revision 409 均通过；真实 CSV 取消、离页和组件资源清理也已取得证据。提交 `4297238` 及后续验收文档更新均已推送，PR #50 的 push/PR 两组 Java、Frontend、Python、OpenAPI generated source 共 8/8 检查全部通过，PR 保持 Open、未合并。
+
+## 2026-09-07 PR #50 合并与 T13 前置审计
+
+- 合并与清理：[PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50) 在 Ready、可合并且 Java、Frontend、Python、OpenAPI generated source 共 8 项检查全部成功后，以普通 merge 合并为 `main@685afe8b19b69623006c389d3f0894b2a0c122a0`；本地 `main` 已快进同步，`codex/t11c2-homework-gradebook-web` 本地和远端分支均已清理。
+- T11C.2 结论：课程内 HOMEWORK/EXAM、最后有效 attempt、教师成绩册、待批与分页外批改深链、owner/404、整场 results 409、防并发覆盖 revision/409、CSV 生成/取消/离页清理和三档响应式均已有真实验收与自动化证据，T11C.1～T11C.2 主链现已完整进入 `main`。
+- 优先级比较：T13 的唯一显式依赖 T03 已验收，完成后直接解锁 T14 Java Agent Access，并继续解锁 T15A 独立答疑和 T15B 课程上下文答疑，是当前剩余任务中更长且更核心的关键路径。T12C 的 T11 查询投影、T12B 及此前后移原因 T12D.1/T12E 均已满足，但它只直接阻塞 T17B，继续排在 Agent 主链之后；T12H 仍需与尚未实施的 T16 协调跨领域数据保留、匿名化和审计边界；T16 范围较广，后续再独立冻结互动、运营和审核契约。
+- T13 现状与门禁：现有 `edu_agent_app` 已有请求入口、BM25＋FAISS 混合检索、重排与阈值、非数学问题二次判断、三步教学降级、人工介入以及单步骤/单会话调用上限，可作为基线复用；但当前请求字段、SSE 事件、断连/取消、超时、统一错误和恢复语义尚未作为稳定平台契约完成审计。T13 只负责 Python Agent 接口与行为契约，不实现 T14 的 Java 鉴权、限流、审计和 SSE 代理，也不实现 T15A/T15B 页面。
+- 准备结论：已从干净且与 `origin/main` 一致的 `main@685afe8b19b69623006c389d3f0894b2a0c122a0` 创建 `codex/t13-agent-interface-stabilization`。后续实施前应先审计并冻结最小请求/SSE/错误与终止语义，再修改 Python 实现和测试；不得创建第二套 Agent、重复 Java 领域鉴权或前端 DTO。
+- 数据与外部资源：本轮只执行 GitHub 合并、Git 同步/分支清理、路线图状态更新和只读前置审计；没有连接或修改 MySQL、Redis、RabbitMQ、OSS、向量索引或模型服务，没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象、缓存 Key 或检索索引。
