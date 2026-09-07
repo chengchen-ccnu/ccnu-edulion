@@ -168,6 +168,15 @@ public class TeacherAssessmentController {
                 page, size);
     }
 
+    @GetMapping("/api/v1/teacher/attempts/{attemptId}")
+    /** 返回关闭且结算完成测评中的最后有效单份答卷；不放宽整场结果列表门禁。 */
+    public LearningDtos.AttemptResult attempt(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String attemptId) {
+        return learning.teacherResult(LearningIdentity.teaching(userId, roles, permissions).userId(), attemptId);
+    }
+
     @PostMapping("/api/v1/teacher/attempts/{attemptId}/grades")
     /** 按 attempt revision 人工批改待评分答案，并事务汇总最终成绩。 */
     public LearningDtos.AttemptResult grade(@RequestHeader("X-User-Id") String userId,

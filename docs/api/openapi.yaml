@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.21.0
-  description: T11C.1 forward-compatible contract. Adds HOMEWORK timing, late windows, immutable multiple attempts, learner course tasks, teacher gradebook projections and synchronous UTF-8 CSV export while retaining PRACTICE, EXAM and T11B publication semantics. The contract does not add Vue pages, historical-attempt browsing, async exports, OSS reports or a second assessment service.
+  version: 0.21.1
+  description: T11C.1.3 forward-compatible contract. Adds the owner-teacher single final attempt read needed to grade a closed and settled HOMEWORK/EXAM while retaining the all-attempt results readiness gate, HOMEWORK timing, late windows, immutable multiple attempts, learner course tasks, teacher gradebook projections, synchronous UTF-8 CSV export and T11B publication semantics. The contract does not add Vue pages, historical-attempt browsing, async exports, OSS reports or a second assessment service.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2533,6 +2533,20 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
+  /api/v1/teacher/attempts/{attemptId}:
+    get:
+      tags: [Teacher Assessments]
+      operationId: getTeacherAttemptResult
+      summary: Read one final attempt result for owner-teacher grading
+      description: Returns the requested learner's final valid attempt for an owner teacher after the HOMEWORK or EXAM is closed and draft settlement is complete. The assessment does not need all manual grading to be complete. Historical attempts, non-owner access and inconsistent attempt resources are hidden as 404; this endpoint does not relax the all-attempt results readiness gate.
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+      responses:
+        '200': {description: Single attempt result including grading facts., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
   /api/v1/teacher/attempts/{attemptId}/grades:
     post:
       tags: [Teacher Assessments]
