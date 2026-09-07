@@ -819,3 +819,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 克制性判断：具体失败场景是“缺少单份教师读取端点，使受支持的待批状态只能命中必然 409 的整场结果端点”。Git 历史、OpenAPI 版本号、attempt 主键、事务、唯一约束、Java/TypeScript 类型和普通前端测试都不能让一个不存在的 HTTP 读取入口可用，因此本次向前增加最小契约是必要的；不新增 hash、平行 contract、baseline 或 gate。
 - T11C.2 恢复门禁：T11C.1.3 必须先独立实施、真实验收并合并；随后把最新 `main` 以普通 merge 合入 PR #50，只消费重新生成的客户端，完成第一页之外待批 attempt 深链、owner/404、409 输入保留与其余未完成真实验收后再决定是否合并，不扩大页面范围。
 - 数据与外部资源：本次总控只修改 `page-specs`、`backlog` 和 `verification` 三份规划/审计文档并做本地提交，不修改 OpenAPI、Java、Vue、生成客户端、Flyway 或运行配置，不连接或修改 MySQL、Redis、RabbitMQ、OSS，也不创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key；提交不推送。
+
+## 2026-09-07 T11C.1.3 教师待批答卷读取契约实施验证
+
+- 分支与门禁：当前分支为 `codex/t11c1.3-teacher-attempt-read`，保留规划提交 `6ee94cd`，实现提交为 `bd0b2a1`。PR #50 仍保持 Open，未切换、修改、合并或关闭，未修改其 Vue 业务代码。
+- 契约与实现：`docs/api/openapi.yaml` 从 0.21.0 演进至 0.21.1，新增 `GET /api/v1/teacher/attempts/{attemptId}`，响应复用 `AttemptResult`。Learning Controller 只增加最小入口并调用已有 `LearningAssessmentService.teacherResult`；没有重复组装结果、第二套 DTO 或 Gateway 冗余路由。生成客户端已由 `pnpm.cmd --dir web-apps run generate:api` 更新。
+- 授权与门禁：服务端从 attempt 实际关联的 assessment 解析 owner、课程和测评事实，并检查最后有效 attempt；不信任 URL 上的课程/测评/学习者上下文。关闭且结算完成后，单份接口允许 `PARTIALLY_GRADED` 待批答卷读取；非 owner、旧 attempt 和真实资源关系不匹配安全 404；未关闭/未结算仍按 `LEARNING.RESULTS_NOT_READY` 409。原整场 results 的全部人工批改门禁保持不变，人工批改 revision/409 保护保持不变。
+- Learning 自动化：定向 `LearningAssessmentIntegrationTest` 26/26 通过；learning-service 全量 89 项执行、0 失败、16 项既有条件测试按开关跳过。新增/扩展覆盖 owner 单份待批 200 语义、整场 409、最终 attempt、旧 attempt 404、非 owner 404、未关闭/未结算拒绝、已批改读取和 revision/409 回归。
+- Gateway 与前端自动化：Gateway 未修改配置，但全仓 Gateway 测试 21 项执行、0 失败、1 项真实环境测试跳过；`check:api` 通过且生成文件与源码一致；`typecheck` 通过；Vitest 36 文件、237 项通过；admin/student/teacher 三端 `build` 通过，仅有既有 HLS 大 chunk 警告。
+- Maven 验证：标准 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 已尝试，但当前运行中的 Gateway/Learning/Course/IAM 本地 JAR 持有 Windows 文件锁，clean 阶段无法删除 Gateway JAR；不终止用户进程。随后执行 `mvn --% -Dmaven.repo.local=.m2/repository -Dspring-boot.repackage.skip=true -f java-platform/pom.xml verify` 成功，8 个 Reactor 模块全部成功，Learning 89/0/16 skipped，Gateway 21/0/1 skipped，其他模块无失败。
+- 数据边界：没有新增或修改数据库迁移、表、字段、Seed、开发/测试持久数据或外部对象；测试仅使用现有临时 H2 Fixture，进程结束后释放。没有连接 MySQL、Redis、RabbitMQ、OSS，也没有执行真实多服务 HTTP 数据验收，因此不存在需要清理的持久数据。
+- 可读性：Controller 新入口补充中文注释，测试场景补充业务目的注释；生成代码未手工编辑。交付文档已记录接口边界、失败语义、测试结果、数据清理和后续依赖。
+- 当前交付状态：待推送并创建 Ready PR；创建后补录 PR 编号/链接并等待 CI 全绿，不合并。CI 的干净工作区仍需确认标准 `clean verify`。
