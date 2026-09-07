@@ -1896,6 +1896,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/teacher/attempts/{attemptId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one final attempt result for owner-teacher grading
+         * @description Returns the requested learner's final valid attempt for an owner teacher after the HOMEWORK or EXAM is closed and draft settlement is complete. The assessment does not need all manual grading to be complete. Historical attempts, non-owner access and inconsistent attempt resources are hidden as 404; this endpoint does not relax the all-attempt results readiness gate.
+         */
+        get: operations["getTeacherAttemptResult"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/attempts/{attemptId}/grades": {
         parameters: {
             query?: never;
@@ -8260,6 +8280,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+        };
+    };
+    getTeacherAttemptResult: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: components["parameters"]["AttemptId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Single attempt result including grading facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
         };
     };
     gradeAttemptAnswers: {

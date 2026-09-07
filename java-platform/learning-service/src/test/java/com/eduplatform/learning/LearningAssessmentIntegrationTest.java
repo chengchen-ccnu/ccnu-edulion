@@ -835,6 +835,17 @@ class LearningAssessmentIntegrationTest {
         service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
                 new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
 
+        // 单份最终有效答卷已满足关闭/结算门禁，即使仍有待批答案也能开始人工批改。
+        var single = service.teacherResult(TEACHER_AS_LEARNER, draft.id());
+        assertThat(single.attemptId()).isEqualTo(draft.id());
+        assertThat(single.finalAttempt()).isTrue();
+        assertThat(single.status()).isEqualTo(LearningDtos.AttemptStatus.PARTIALLY_GRADED);
+        assertThatThrownBy(() -> service.teacherResults(TEACHER_AS_LEARNER, ASSESSMENT, 1, 20))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.RESULTS_NOT_READY");
+                });
+
         var gradebook = service.teacherGradebook(TEACHER_AS_LEARNER, COURSE, null, null, null, null, null, null,
                 1, 20, LearningDtos.GradebookSortField.STUDENT_NUMBER, false, "trace-t11c1-pending-gradebook");
         assertThat(gradebook.aggregateStatus()).isEqualTo(LearningDtos.GradebookAggregateStatus.PENDING);
@@ -845,6 +856,56 @@ class LearningAssessmentIntegrationTest {
                 null, UUID.randomUUID(), "trace-t11c1-pending-export", new ByteArrayOutputStream()))
                 .isInstanceOfSatisfying(QuestionException.class,
                         error -> assertThat(error.code()).isEqualTo("LEARNING.GRADEBOOK_EXPORT_NOT_READY"));
+    }
+
+    @Test
+    /** 单份教师读取只接受最终 attempt；关闭/结算前拒绝，非 owner、旧 attempt 和陈旧 revision 均保持安全语义。 */
+    void teacherSingleAttemptReadUsesFinalAttemptAndPreservesGradingConcurrency() {
+        service.enroll(LEARNER, COURSE, "trace-t11c1-single-attempt-enroll");
+        seedHomeworkAssessment(2, QuestionModels.Type.SHORT_ANSWER);
+        var draft = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-single-attempt-start");
+        var saved = service.saveDraft(LEARNER, draft.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), draft.revision(), List.of(answer("00000000-0000-4000-8000-000000014001", "待批草稿"))));
+        assertThatThrownBy(() -> service.teacherResult(TEACHER_AS_LEARNER, draft.id()))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.RESULTS_NOT_READY");
+                });
+        var first = service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), saved.revision(), saved.answers()));
+        var secondDraft = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-t11c1-single-attempt-start-2");
+        var second = service.submit(LEARNER, secondDraft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), secondDraft.revision(), List.of(answer(
+                        "00000000-0000-4000-8000-000000014001", "最终待批答案"))));
+
+        service.closeAssessment(TEACHER_AS_LEARNER, ASSESSMENT,
+                new LearningDtos.CloseAssessmentRequest(UUID.randomUUID(), 1));
+        var finalResult = service.teacherResult(TEACHER_AS_LEARNER, second.attemptId());
+        assertThat(finalResult.finalAttempt()).isTrue();
+        assertThat(finalResult.attemptSequence()).isEqualTo(2);
+        assertThatThrownBy(() -> service.teacherResult(TEACHER_AS_LEARNER, first.attemptId()))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> service.teacherResult(OTHER, second.attemptId()))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+
+        var graded = service.manualGrade(TEACHER_AS_LEARNER, second.attemptId(), new LearningDtos.ManualGradeRequest(
+                UUID.randomUUID(), finalResult.revision(), List.of(new LearningDtos.ManualGradeItem(
+                        UUID.fromString("00000000-0000-4000-8000-000000014001"), new BigDecimal("1.00"), "步骤基本正确"))));
+        assertThat(graded.status()).isEqualTo(LearningDtos.AttemptStatus.GRADED);
+        assertThat(service.teacherResult(TEACHER_AS_LEARNER, second.attemptId()).status())
+                .isEqualTo(LearningDtos.AttemptStatus.GRADED);
+        assertThatThrownBy(() -> service.manualGrade(TEACHER_AS_LEARNER, second.attemptId(),
+                new LearningDtos.ManualGradeRequest(UUID.randomUUID(), finalResult.revision(), List.of(
+                        new LearningDtos.ManualGradeItem(UUID.fromString("00000000-0000-4000-8000-000000014001"),
+                                new BigDecimal("2.00"), "陈旧 revision")))))
+                .isInstanceOfSatisfying(QuestionException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(409);
+                    assertThat(error.code()).isEqualTo("LEARNING.GRADING_REVISION_CONFLICT");
+                });
     }
 
     @Test
