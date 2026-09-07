@@ -807,3 +807,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 页面边界：PRACTICE 保留 `/practice`，HOMEWORK/EXAM 移至课程上下文。已报名用户从公共课程详情进入 `/learn/:courseId/tasks`；当前 `/learn/:courseId/:lessonId` 只展示当前课时任务且不提供总览链接。课程任务作答与最终结果使用 `/learn/:courseId/tasks/:assessmentId` 及其 `/result`，内部复用既有组件。教师 `/teacher/gradebook` 只做矩阵/统计/导出，答卷深链回 `/teacher/assessments`，不复制批改器。
 - 前置与验收：T11B、T12B 已合并，OpenAPI 0.20.0、Learning V13、题目快照、作答/批改/关闭/公布、报名事实、生成客户端和固定页面职责可复用；现行 EXAM-only 时间、每学习者/测评唯一 attempt、仅已有 attempt 的教师结果分页和缺失 gradebook/export 正是 T11C.1 的任务缺口。后端真实验收须覆盖多次提交、迟交、时间调整、自动/立即关闭、多实例单次结算、MySQL 故障恢复、报名/退课/重新报名、旧 attempt 404、统一显示门禁、统计/CSV 安全、owner/越权及 409/422/429/503；不需要 OSS、FFmpeg 或 RabbitMQ。
 - 分支与数据：从 `main@accec558b4d94e7e26c3caa5576203fe988c04aa` 准备 `codex/t11c1-homework-gradebook-contract`。本次总控只修改规划文档，没有修改 OpenAPI、Java、Python、Vue、Flyway、生成客户端或配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理 Schema、表、Seed、伪数据、消息、对象或缓存 Key。
+
+## 2026-09-07 T11C.1.3 教师待批答卷读取契约规划与前置审计
+
+- Git 与任务状态：从工作区干净且与 `origin/main` 一致的 `main@711ec6b6cbd3bd779003f134fe96746b8ca4fc0b` 创建 `codex/t11c1.3-teacher-attempt-read`。T11C.1、T11C.1.1、T11C.1.2 已分别通过 PR #47、#49、#51 合并；T11C.2 实现仍位于保持 Open 的 PR #50（head `4669955`），本规划不合并、关闭或修改其业务代码。
+- 真实阻断：T11C.2 真实浏览器验收从成绩册进入待批 HOMEWORK/EXAM 的既有批改面板后，页面调用整场 results 接口；因为仍有待批答案，服务端按既有防泄露规则返回 `409 LEARNING.RESULTS_NOT_READY`，教师因而无法开始第一份人工批改。页面若先拉整场结果分页再按 learner 查找，也无法稳定定位第一页之外的最终 attempt。此前课程任务 503 已由 T11C.1.2 修复，本缺口是独立的读取契约缺失。
+- 新契约：T11C.1.3 将 `docs/api/openapi.yaml` 从 0.21.0 向前升级到 0.21.1，新增 `GET /api/v1/teacher/attempts/{attemptId}`，响应直接复用已有 `AttemptResult`，服务实现复用已有 `LearningAssessmentService.teacherResult`，并重新生成前端客户端。该接口只读取指定的最终有效 attempt，不增加第二套结果 DTO、整场待批列表或历史 attempt 查询。
+- 授权与状态：仅具有教学能力且拥有对应课程/测评的 owner 教师，可在 HOMEWORK/EXAM 整场已经关闭且草稿结算完成后读取最后有效待批 attempt；不要求该场全部人工批改完成。非 owner、旧 attempt、attempt 与课程/测评资源不匹配均安全返回 404。`courseId`、`assessmentId`、`learnerId` 和 `attemptId` 可共同存在于批改深链以恢复页面，但服务端必须从 attempt 和领域事实完成授权，不能信任查询参数。批改写入继续使用既有 revision/`409` 冲突保护。
+- 防泄露边界：原整场 results 接口保持“全部人工批改完成后才返回”的既有门禁，不能因单份批改读取而放宽，避免教师成绩册或结果列表在处理中逐份暴露成绩。T11C.2 恢复后，`panel=grading&attemptId=...` 使用新单份接口，整场结果面板仍使用原 results 接口；发生保存冲突时保留输入并以同一 attempt 重新读取最新 revision。
+- 实施与测试范围：后续实现只允许修改 OpenAPI 0.21.1、Learning 读取 Controller/既有服务接线、Gateway 路由或错误适配（如确有需要）、生成客户端，以及 owner、非 owner、旧 attempt、资源不匹配、整场未关闭、结算未完成、待批可读和 revision/409 回归测试。不得新增数据库迁移、第二套 DTO、Redis、RabbitMQ、OSS、批改页面或其他功能。
+- 克制性判断：具体失败场景是“缺少单份教师读取端点，使受支持的待批状态只能命中必然 409 的整场结果端点”。Git 历史、OpenAPI 版本号、attempt 主键、事务、唯一约束、Java/TypeScript 类型和普通前端测试都不能让一个不存在的 HTTP 读取入口可用，因此本次向前增加最小契约是必要的；不新增 hash、平行 contract、baseline 或 gate。
+- T11C.2 恢复门禁：T11C.1.3 必须先独立实施、真实验收并合并；随后把最新 `main` 以普通 merge 合入 PR #50，只消费重新生成的客户端，完成第一页之外待批 attempt 深链、owner/404、409 输入保留与其余未完成真实验收后再决定是否合并，不扩大页面范围。
+- 数据与外部资源：本次总控只修改 `page-specs`、`backlog` 和 `verification` 三份规划/审计文档并做本地提交，不修改 OpenAPI、Java、Vue、生成客户端、Flyway 或运行配置，不连接或修改 MySQL、Redis、RabbitMQ、OSS，也不创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key；提交不推送。
