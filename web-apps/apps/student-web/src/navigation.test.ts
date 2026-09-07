@@ -31,6 +31,13 @@ describe("student fixed navigation", () => {
     expect(items.map(item => item.label).filter(label => label === "学生学习中心")).toEqual([]);
   });
 
+  it.each(["course-tasks", "course-task-attempt", "course-task-result"])(
+    "keeps %s in the my-learning highlight group", routeName => {
+      const items = buildStudentNavigation(routeName);
+
+      expect(items.filter(item => item.current).map(item => item.label)).toEqual(["我的学习"]);
+    });
+
   it.each(["courses", "course-detail"])("highlights only course center on %s", routeName => {
     expect(buildStudentNavigation(routeName).filter(item => item.current).map(item => item.label))
       .toEqual(["课程中心"]);

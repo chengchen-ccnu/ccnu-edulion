@@ -32,7 +32,7 @@ spring:
             - id: learning-service
               uri: ${LEARNING_SERVICE_URL:http://localhost:8084}
               predicates:
-                - Path=/api/v1/teacher/questions/**,/api/v1/teacher/knowledge-points/**,/api/v1/teacher/question-imports/**,/api/v1/teacher/assessments/**,/api/v1/teacher/attempts/**,/api/v1/teacher/learning/**,/api/v1/admin/knowledge-points/**,/api/v1/admin/knowledge-graph-imports/**,/api/v1/admin/question-imports/**,/api/v1/admin/legacy-question-imports/**,/api/v1/learning/**
+                - Path=/api/v1/teacher/questions/**,/api/v1/teacher/knowledge-points/**,/api/v1/teacher/question-imports/**,/api/v1/teacher/assessments/**,/api/v1/teacher/attempts/**,/api/v1/teacher/learning/**,/api/v1/teacher/gradebook,/api/v1/teacher/gradebook/export,/api/v1/admin/knowledge-points/**,/api/v1/admin/knowledge-graph-imports/**,/api/v1/admin/question-imports/**,/api/v1/admin/legacy-question-imports/**,/api/v1/learning/**
             - id: operation-service
               uri: ${OPERATION_SERVICE_URL:http://localhost:8085}
               predicates:

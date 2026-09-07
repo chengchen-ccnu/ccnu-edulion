@@ -22,6 +22,10 @@ describe("student assessment API", () => {
 
     await api.list({ page: 2, size: 12, courseId: "course-1" });
     await api.detail("assessment-1");
+    await api.listCourseTasks("course-1", { page: 1, size: 20, currentLessonId: "lesson-1" });
+    await api.courseTask("course-1", "assessment-1", { currentLessonId: "lesson-1" });
+    await api.startCourseTask("course-1", "assessment-1", body);
+    await api.courseTaskResult("course-1", "assessment-1");
     await api.start("assessment-1", body);
     await api.draft("attempt-1");
     await api.save("attempt-1", revisionBody);
@@ -35,6 +39,9 @@ describe("student assessment API", () => {
 
     expect(calls.map(item => `${item.method} ${item.url.pathname}`)).toEqual([
       "GET /api/v1/learning/assessments", "GET /api/v1/learning/assessments/assessment-1",
+      "GET /api/v1/learning/courses/course-1/tasks", "GET /api/v1/learning/courses/course-1/tasks/assessment-1",
+      "POST /api/v1/learning/courses/course-1/tasks/assessment-1/attempts",
+      "GET /api/v1/learning/courses/course-1/tasks/assessment-1/result",
       "POST /api/v1/learning/assessments/assessment-1/attempts", "GET /api/v1/learning/attempts/attempt-1/draft",
       "PUT /api/v1/learning/attempts/attempt-1/draft", "POST /api/v1/learning/attempts/attempt-1/submission",
       "GET /api/v1/learning/attempts/attempt-1/result", "GET /api/v1/learning/wrong-questions",
@@ -43,6 +50,7 @@ describe("student assessment API", () => {
       "POST /api/v1/learning/assessments/assessment-1/media/media-1/access-grants"
     ]);
     expect(Object.fromEntries(calls[0].url.searchParams)).toEqual({ page: "2", size: "12", courseId: "course-1" });
+    expect(Object.fromEntries(calls[2].url.searchParams)).toEqual({ page: "1", size: "20", currentLessonId: "lesson-1" });
     expect(calls.at(-1)?.body).toEqual({ variant: "ORIGINAL", disposition: "INLINE" });
   });
 

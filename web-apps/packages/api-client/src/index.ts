@@ -139,6 +139,9 @@ export type LearnerAssessmentSummary = components["schemas"]["LearnerAssessmentS
 export type LearnerAssessmentPage = components["schemas"]["LearnerAssessmentPage"];
 export type LearnerAssessmentQuestion = components["schemas"]["LearnerAssessmentQuestion"];
 export type LearnerAssessment = components["schemas"]["LearnerAssessment"];
+export type LearnerCourseTaskSummary = components["schemas"]["LearnerCourseTaskSummary"];
+export type LearnerCourseTaskPage = components["schemas"]["LearnerCourseTaskPage"];
+export type LearnerCourseTask = components["schemas"]["LearnerCourseTask"];
 export type AttemptStatus = components["schemas"]["AttemptStatus"];
 export type AttemptAnswerInput = components["schemas"]["AttemptAnswerInput"];
 export type AttemptDraft = components["schemas"]["AttemptDraft"];
@@ -165,6 +168,16 @@ export type PublishAssessmentResultRequest = components["schemas"]["PublishAsses
 export type AssessmentPublicationCommandResult = components["schemas"]["AssessmentPublicationCommandResult"];
 export type TeacherAttemptResultPage = components["schemas"]["TeacherAttemptResultPage"];
 export type ManualGradeRequest = components["schemas"]["ManualGradeRequest"];
+export type GradebookCell = components["schemas"]["GradebookCell"];
+export type AssessmentStats = components["schemas"]["AssessmentStats"];
+export type GradebookAssessment = components["schemas"]["GradebookAssessment"];
+export type GradebookRow = components["schemas"]["GradebookRow"];
+export type Gradebook = components["schemas"]["Gradebook"];
+export type AssessmentTimeState = components["schemas"]["AssessmentTimeState"];
+export type AssessmentSubmissionStatus = components["schemas"]["AssessmentSubmissionStatus"];
+export type AssessmentGradingStatus = components["schemas"]["AssessmentGradingStatus"];
+export type GradebookSortField = components["schemas"]["GradebookSortField"];
+export type GradebookAggregateStatus = components["schemas"]["GradebookAggregateStatus"];
 export type ListCoursesQuery = NonNullable<paths["/api/v1/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherCoursesQuery = NonNullable<paths["/api/v1/teacher/courses"]["get"]["parameters"]["query"]>;
 export type ListTeacherQuestionsQuery = NonNullable<paths["/api/v1/teacher/questions"]["get"]["parameters"]["query"]>;
@@ -178,6 +191,10 @@ export type ListLearnerAssessmentsQuery = NonNullable<paths["/api/v1/learning/as
 export type ListWrongQuestionsQuery = NonNullable<paths["/api/v1/learning/wrong-questions"]["get"]["parameters"]["query"]>;
 export type ListTeacherAssessmentsQuery = NonNullable<paths["/api/v1/teacher/assessments"]["get"]["parameters"]["query"]>;
 export type ListAssessmentResultsQuery = NonNullable<paths["/api/v1/teacher/assessments/{assessmentId}/results"]["get"]["parameters"]["query"]>;
+export type ListLearnerCourseTasksQuery = NonNullable<paths["/api/v1/learning/courses/{courseId}/tasks"]["get"]["parameters"]["query"]>;
+export type GetLearnerCourseTaskQuery = NonNullable<paths["/api/v1/learning/courses/{courseId}/tasks/{assessmentId}"]["get"]["parameters"]["query"]>;
+export type GetTeacherGradebookQuery = NonNullable<paths["/api/v1/teacher/gradebook"]["get"]["parameters"]["query"]>;
+export type ExportTeacherGradebookCsvQuery = NonNullable<paths["/api/v1/teacher/gradebook/export"]["get"]["parameters"]["query"]>;
 
 /** Gateway HTTP 状态、稳定错误码和按字段错误的人工维护异常投影。 */
 export class GatewayRequestError extends Error {

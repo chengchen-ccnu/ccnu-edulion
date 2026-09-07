@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { readFileSync } from "node:fs";
 
 import { studentRoutes } from "./routes";
@@ -62,6 +63,34 @@ describe("student application routes", () => {
     expect(route?.name).toBe(name);
     expect(route?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
     expect(route?.meta?.requiredRole).toBeUndefined();
+  });
+
+  it.each([
+    ["/learn/:courseId/tasks", "course-tasks"],
+    ["/learn/:courseId/tasks/:assessmentId", "course-task-attempt"],
+    ["/learn/:courseId/tasks/:assessmentId/result", "course-task-result"]
+  ])("protects the T11C.2 course task route %s without a parallel role boundary", (path, name) => {
+    const route = studentRoutes.find(item => item.path === path);
+    expect(route?.name).toBe(name);
+    expect(route?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
+    expect(route?.meta?.requiredRole).toBeUndefined();
+  });
+
+  it.each([
+    ["/learn/course-1/tasks", "course-tasks"],
+    ["/learn/course-1/tasks/assessment-1", "course-task-attempt"],
+    ["/learn/course-1/tasks/assessment-1/result", "course-task-result"],
+    ["/learn/course-1/lesson-1", "course-learning"]
+  ])("resolves the concrete T11C.2 path %s before the generic lesson route", (path, name) => {
+    const router = createRouter({ history: createMemoryHistory(), routes: studentRoutes });
+
+    expect(router.resolve(path).name).toBe(name);
+  });
+
+  it("keeps HOMEWORK and EXAM outside the legacy practice route surface", () => {
+    const source = readFileSync(new URL("./views/PracticeCenterPage.vue", import.meta.url), "utf8");
+    expect(source).toContain('item.type === "PRACTICE"');
+    expect(source).not.toContain("/learn/:courseId/tasks");
   });
 
   it("keeps playback implementation out of the public course detail component", () => {

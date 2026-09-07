@@ -346,6 +346,24 @@ class GatewayRouteSecurityTest {
                 .exchange().expectStatus().isForbidden();
     }
 
+    /** 成绩册及 CSV 必须经过教学能力校验并转发 Learning，不能落入无路由的 404。 */
+    @Test
+    void gradebookRoutesRequireTeachingCapabilityAndReachLearning() {
+        Instant now = Instant.now();
+        for (String path : List.of("/api/v1/teacher/gradebook", "/api/v1/teacher/gradebook/export")) {
+            client.get().uri(path).exchange().expectStatus().isUnauthorized();
+            client.get().uri(path)
+                    .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STUDENT", "learning:access")))
+                    .exchange().expectStatus().isForbidden();
+            client.get().uri(path).header("Origin", "http://localhost:5174")
+                    .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "STAFF", "teaching:access")))
+                    .exchange().expectStatus().isOk()
+                    .expectHeader().value("Access-Control-Expose-Headers", value -> assertThat(value).contains("Content-Disposition"))
+                    .expectBody().jsonPath("$.route").isEqualTo("learning")
+                    .jsonPath("$.permissions").isEqualTo("teaching:access");
+        }
+    }
+
     private String token(Instant issuedAt, Instant expiresAt) {
         return token(issuedAt, expiresAt, "STUDENT", "learning:access");
     }

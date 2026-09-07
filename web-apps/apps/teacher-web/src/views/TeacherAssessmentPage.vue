@@ -195,9 +195,17 @@ function handleVisibilityChange() {
 
 async function loadResults(preserveGradeInputs = false) {
   if (!assessment.value) return;
-  try { resultPage.value = await teacherAssessmentApi.results(assessment.value.id, { page: positive(route.query.resultPage), size: 20 }, controller?.signal);
+  try {
     const attemptId = queryString("attemptId");
-    if (attemptId && panel.value === "grading") applyAttempt(resultPage.value.items.find(item => item.attemptId === attemptId) ?? null, preserveGradeInputs); }
+    // 批改深链直接读取指定最终 attempt，避免用整场 results 分页查找而命中待批 409 或漏掉第 1 页之外的 attempt。
+    if (attemptId && panel.value === "grading") {
+      applyAttempt(await teacherAssessmentApi.getTeacherAttemptResult(attemptId, controller?.signal), preserveGradeInputs);
+      return;
+    }
+    resultPage.value = await teacherAssessmentApi.results(assessment.value.id, {
+      page: positive(route.query.resultPage), size: 20
+    }, controller?.signal);
+  }
   catch (error) { errorMessage.value = messageFor(error); }
 }
 function selectAttempt(value: AttemptResult | null, preserveInputs = false) {
@@ -250,7 +258,7 @@ const panelLabels: Record<Panel, string> = { basic: "基本信息", questions: "
 
 <template>
   <main class="teacher-assessment-page"><header class="assessment-admin-heading"><div><span class="section-kicker">ASSESSMENT MANAGEMENT</span><h2>测评管理</h2>
-    <p>唯一管理入口；关闭、成绩和答案公布均以服务端事实为准。</p></div><button class="button button--primary" type="button" @click="setQuery({ assessmentId: undefined, panel: 'basic' })">新建草稿</button></header>
+    <p>唯一管理入口；关闭、成绩和答案公布均以服务端事实为准。</p></div><div class="heading-actions"><RouterLink v-if="queryString('courseId')" class="button button--quiet" :to="`/teacher/gradebook?courseId=${queryString('courseId')}`">查看成绩册</RouterLink><button class="button button--primary" type="button" @click="setQuery({ assessmentId: undefined, panel: 'basic' })">新建草稿</button></div></header>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p><p v-if="successMessage" class="feedback feedback--success" role="status">{{ successMessage }}</p>
     <p v-if="conflictMessage" class="feedback feedback--warning" role="alert">{{ conflictMessage }} <button type="button" @click="reloadLatestPreservingInput">载入最新 revision（保留输入）</button></p>
     <div class="assessment-admin-layout"><aside class="assessment-list-panel"><form @submit.prevent><label>课程 ID<input :value="route.query.courseId ?? ''" @change="setQuery({ courseId: ($event.target as HTMLInputElement).value.trim(), page: 1 })"></label>

@@ -103,7 +103,8 @@ public class GatewaySecurityConfig {
                                 "/api/v1/teacher/knowledge-points", "/api/v1/teacher/knowledge-points/**",
                                 "/api/v1/teacher/question-imports", "/api/v1/teacher/question-imports/**").hasRole("TEACHER")
                         .pathMatchers("/api/v1/teacher/assessments", "/api/v1/teacher/assessments/**",
-                                "/api/v1/teacher/attempts/**", "/api/v1/teacher/learning/**")
+                                "/api/v1/teacher/attempts/**", "/api/v1/teacher/learning/**",
+                                "/api/v1/teacher/gradebook", "/api/v1/teacher/gradebook/export")
                         .hasAuthority("teaching:access")
                         .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/admin/users", "/api/v1/admin/users/**").hasAuthority("administration:access")
@@ -125,7 +126,8 @@ public class GatewaySecurityConfig {
         configuration.setAllowedOrigins(properties.allowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Trace-Id"));
-        configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After"));
+        // 成绩册下载需要读取安全文件名；只暴露响应头，不放宽来源、Cookie 或教学权限。
+        configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After", "Content-Disposition"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

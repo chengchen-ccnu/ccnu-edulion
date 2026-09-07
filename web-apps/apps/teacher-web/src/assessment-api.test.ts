@@ -30,6 +30,7 @@ describe("teacher assessment API", () => {
     await api.publishGrades("assessment-1", { clientRequestId: "request-3", expectedRevision: 4 });
     await api.publishAnswers("assessment-1", { clientRequestId: "request-4", expectedRevision: 5 });
     await api.results("assessment-1", { page: 2, size: 20 });
+    await api.getTeacherAttemptResult("attempt-2");
     await api.grade("attempt-1", { clientRequestId: "request-5", expectedRevision: 6, grades: [] });
 
     expect(calls).toEqual([
@@ -39,7 +40,8 @@ describe("teacher assessment API", () => {
       "PUT /api/v1/teacher/assessments/assessment-1/publication", "POST /api/v1/teacher/assessments/assessment-1/closure",
       "POST /api/v1/teacher/assessments/assessment-1/grade-publication",
       "POST /api/v1/teacher/assessments/assessment-1/answer-publication",
-      "GET /api/v1/teacher/assessments/assessment-1/results", "POST /api/v1/teacher/attempts/attempt-1/grades"
+      "GET /api/v1/teacher/assessments/assessment-1/results", "GET /api/v1/teacher/attempts/attempt-2",
+      "POST /api/v1/teacher/attempts/attempt-1/grades"
     ]);
   });
 });

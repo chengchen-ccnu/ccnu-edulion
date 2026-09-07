@@ -21,6 +21,7 @@ import PracticeAttemptPage from "./views/PracticeAttemptPage.vue";
 import PracticeCenterPage from "./views/PracticeCenterPage.vue";
 import AttemptResultPage from "./views/AttemptResultPage.vue";
 import WrongQuestionsPage from "./views/WrongQuestionsPage.vue";
+import CourseTasksPage from "./views/CourseTasksPage.vue";
 
 /** 实际交给 Vue Router 的路由记录，也是公共/受保护边界测试的唯一来源。 */
 export const studentRoutes: RouteRecordRaw[] = [
@@ -32,6 +33,12 @@ export const studentRoutes: RouteRecordRaw[] = [
   { path: "/courses/:courseId", name: "course-detail", component: CourseDetailPage,
     meta: { restoreSession: true } },
   { path: "/my-learning", name: "my-learning", component: MyLearningPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/learn/:courseId/tasks", name: "course-tasks", component: CourseTasksPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/learn/:courseId/tasks/:assessmentId", name: "course-task-attempt", component: PracticeAttemptPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/learn/:courseId/tasks/:assessmentId/result", name: "course-task-result", component: AttemptResultPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/learn/:courseId/:lessonId", name: "course-learning", component: CourseLearningPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },

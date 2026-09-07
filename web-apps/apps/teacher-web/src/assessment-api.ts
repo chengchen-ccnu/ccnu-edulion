@@ -27,6 +27,8 @@ export interface TeacherAssessmentApi {
     signal?: AbortSignal): Promise<AssessmentPublicationCommandResult>;
   results(assessmentId: string, query: ListAssessmentResultsQuery,
     signal?: AbortSignal): Promise<TeacherAttemptResultPage>;
+  /** 读取批改深链指定的最终有效 attempt；不经过整场 results 分页门禁。 */
+  getTeacherAttemptResult(attemptId: string, signal?: AbortSignal): Promise<AttemptResult>;
   grade(attemptId: string, body: ManualGradeRequest, signal?: AbortSignal): Promise<AttemptResult>;
 }
 
@@ -83,6 +85,10 @@ export function createTeacherAssessmentApi(store: AuthStore = authStore,
     results: (assessmentId, query, signal) => request(Authorization => client.GET(
       "/api/v1/teacher/assessments/{assessmentId}/results", {
         headers: { Authorization }, params: { path: { assessmentId }, query }, signal
+      })),
+    getTeacherAttemptResult: (attemptId, signal) => request(Authorization => client.GET(
+      "/api/v1/teacher/attempts/{attemptId}", {
+        headers: { Authorization }, params: { path: { attemptId } }, signal
       })),
     grade: (attemptId, body, signal) => request(Authorization => client.POST(
       "/api/v1/teacher/attempts/{attemptId}/grades", {
