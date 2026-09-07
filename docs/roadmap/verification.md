@@ -791,6 +791,17 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与范围：本次总控只执行 GitHub 合并、Git 同步/分支清理、只读前置审计和状态文档更新；没有修改 OpenAPI、Java、Python、Vue、Flyway、事件 Schema、生成客户端或运行配置，没有连接或修改 MySQL、Redis、RabbitMQ、OSS/FFmpeg，也没有创建、修改或清理数据库、表、Seed、伪数据、消息、对象或缓存 Key。
 - 准备结论：T11C.2 前置条件满足，已从 `main@87bbfa6` 准备 `codex/t11c2-homework-gradebook-web`。后续功能任务必须先保持 `/practice` 仅含 PRACTICE，再实现课程任务深链、当前课时精确过滤、最后 attempt 结果和教师成绩册的 URL 恢复/部分错误/安全导出；不得扩大到后端契约、历史 attempt、附件作业、免交/个别延期、排名或异步 XLSX。
 
+## 2026-09-06 T11C.1.2 Learning Course 事实适配器向前兼容修复
+
+- 分支与范围：从最新 origin/main@87bbfa6f 创建 codex/t11c1.2-course-facts-forward-compat；初始工作树干净。只修改 Learning Course 事实适配器、对应回归测试、T11C.1.2 交付文档和路线图记录；T11C.2 PR #50 保持 Open，未修改、合并或关闭。
+- 实现：HttpCourseFactsClient 的 Published、Teacher、Chapter、Lesson 私有响应 DTO 局部增加 JsonIgnoreProperties(ignoreUnknown=true)，允许 Course 合法新增 title、sequence、previewable 等展示字段。Learning 读取的必需标量改为严格文本节点，并在裁剪事实前校验非空、访问类型、课时类型、章节/课时结构；全局 Jackson 未知字段失败配置保持开启。
+- 语义：Course 公开 404 继续映射 Learning 404；公开读取 403、依赖 5xx、超时和无效响应继续安全返回 503；owner 接口 404/403 继续不可枚举为 Learning 404。没有改 Course 响应、OpenAPI、页面规格、接口版本或 T11C.2。
+- 自动化结果：HttpCourseFactsClientTest 与 LearningCourseFactsHttpAcceptanceTest 定向 6/6 通过；整个 learning-service 测试 88 项执行、0 失败、16 项既有条件测试按开关跳过。HTTP 验收通过随机端口 Learning 任务列表真实入口调用 Course 形状响应，返回 200，任务/课程/课时 ID 和任务类型正确，Course 请求一次完成。
+- 数据边界：未连接或修改 MySQL、Redis、RabbitMQ、OSS 或生产数据；测试只在临时 H2 learning_course_facts_http 中应用既有 V1～V14 迁移，创建一条合成报名、一条已发布 HOMEWORK、一条课程分配和一条参与者并按精确 ID 清理；没有新增 Flyway 迁移、持久 Seed 或隐私数据。
+- 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块全部成功；Learning 88 项执行、0 失败、16 项既有条件测试按开关跳过。
+- 交付状态：提交 `cc32a41` 已由 [PR #51](https://github.com/chengchen-ccnu/ccnu-edulion/pull/51) 以普通 merge 合并，合并提交为 `711ec6b`；Java、Frontend、Python、OpenAPI generated source 共 8 项 CI 检查全部通过。本地 `main` 已快进同步，本地和远端 `codex/t11c1.2-course-facts-forward-compat` 均已删除。
+- T11C.2 恢复门禁：最新 `main` 已以普通 merge 合入 `codex/t11c2-homework-gradebook-web`；此前课程任务 503 的已知反序列化根因已经进入该分支。PR #50 仍保持 Open，下一步只继续真实 Course 任务成功链路、教师会话成绩册/CSV、目标宽度响应式和离页清理验收，不扩大产品、OpenAPI 或后端范围。
+
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
 - 拆分结论：经完整产品规则访谈，原 T11C 拆为顺序实施的 T11C.1“作业规则、成绩册与 CSV 导出后端契约”和 T11C.2“课程作业/考试与教师成绩册前端”。T11C.1 先演进 OpenAPI、Learning 数据与服务端状态机并重新生成客户端；T11C.2 只能在其合并后消费生成契约，不得并行猜测 DTO。
