@@ -830,4 +830,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Maven 验证：标准 `mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 已尝试，但当前运行中的 Gateway/Learning/Course/IAM 本地 JAR 持有 Windows 文件锁，clean 阶段无法删除 Gateway JAR；不终止用户进程。随后执行 `mvn --% -Dmaven.repo.local=.m2/repository -Dspring-boot.repackage.skip=true -f java-platform/pom.xml verify` 成功，8 个 Reactor 模块全部成功，Learning 89/0/16 skipped，Gateway 21/0/1 skipped，其他模块无失败。
 - 数据边界：没有新增或修改数据库迁移、表、字段、Seed、开发/测试持久数据或外部对象；测试仅使用现有临时 H2 Fixture，进程结束后释放。没有连接 MySQL、Redis、RabbitMQ、OSS，也没有执行真实多服务 HTTP 数据验收，因此不存在需要清理的持久数据。
 - 可读性：Controller 新入口补充中文注释，测试场景补充业务目的注释；生成代码未手工编辑。交付文档已记录接口边界、失败语义、测试结果、数据清理和后续依赖。
-- 当前交付状态：已推送 `codex/t11c1.3-teacher-attempt-read` 并创建 [Ready PR #52](https://github.com/chengchen-ccnu/ccnu-edulion/pull/52)，等待 CI 全绿，不合并。PR #50 仍保持 Open/CLEAN；CI 的干净工作区仍需确认标准 `clean verify`。
+- 当前交付状态：已推送 `codex/t11c1.3-teacher-attempt-read` 并创建 [Ready PR #52](https://github.com/chengchen-ccnu/ccnu-edulion/pull/52)。PR #52 的 Java、Frontend、Python、OpenAPI generated source 检查均已通过，PR 保持 Open/CLEAN、未合并；PR #50 仍保持 Open/CLEAN。CI 已在干净工作区确认标准 Maven reactor 检查通过，本地标准 `clean verify` 仍受运行中 JAR 文件锁限制。
