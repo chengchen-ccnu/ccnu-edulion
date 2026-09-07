@@ -15,6 +15,7 @@ export interface TeacherGradebookApi {
   exportCsv(query: ExportTeacherGradebookCsvQuery, signal?: AbortSignal): Promise<GradebookCsv>;
 }
 
+/** 使用当前教师会话访问 Gateway；失败保留统一错误，导出返回可下载的 UTF-8 BOM 文件。 */
 export function createTeacherGradebookApi(store: AuthStore = authStore,
     client: GatewayClient = createGatewayClient()): TeacherGradebookApi {
   async function jsonRequest<T>(call: (authorization: string) => Promise<{ data?: T; error?: unknown; response: Response }>) {
@@ -33,7 +34,8 @@ export function createTeacherGradebookApi(store: AuthStore = authStore,
         headers: { Authorization }, params: { query }, parseAs: "text", signal
       }));
       if (result.data === undefined) throw gatewayRequestError(result.response, result.error as never);
-      const body = new Blob([result.data], { type: "text/csv;charset=utf-8" });
+      // Fetch text 解码会消费响应的 BOM，重新编码下载文件时补回且避免重复前缀。
+      const body = new Blob(["\uFEFF", result.data.replace(/^\uFEFF/, "")], { type: "text/csv;charset=utf-8" });
       return { blob: body, filename: filenameFrom(result.response.headers.get("Content-Disposition")) };
     }
   };

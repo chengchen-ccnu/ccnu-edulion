@@ -29,6 +29,7 @@ const displaySort = computed(() => !ready.value && state.value.sort === "SCORE" 
 watch(() => route.query, restoreFromUrl, { immediate: true });
 onBeforeUnmount(() => { controller?.abort(); cancelExport(); });
 
+/** 规范化 URL 后恢复筛选；课程清空时中止旧读取，避免迟到响应重新显示上一课程。 */
 async function restoreFromUrl() {
   const canonical = toGradebookQuery(state.value);
   if (!sameQuery(route.query, canonical)) {
@@ -36,6 +37,8 @@ async function restoreFromUrl() {
     return;
   }
   if (!state.value.courseId) {
+    controller?.abort();
+    loading.value = false;
     data.value = null;
     errorMessage.value = "请在 URL 中提供课程 ID，成绩册只读取本人拥有课程。";
     return;
@@ -43,6 +46,7 @@ async function restoreFromUrl() {
   await load();
 }
 
+/** 读取当前筛选的服务端事实；首次 SCORE 深链先确认 READY，再按 URL 成绩顺序重读。 */
 async function load() {
   controller?.abort();
   const active = new AbortController();
@@ -50,10 +54,17 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const value = await teacherGradebookApi.get(gradebookRequestQuery({
-      ...state.value, sort: displaySort.value
+    const snapshot = state.value;
+    const requestedSort = displaySort.value;
+    let value = await teacherGradebookApi.get(gradebookRequestQuery({
+      ...snapshot, sort: requestedSort
     }), active.signal);
     if (active.signal.aborted) return;
+    // PENDING 不能按成绩排序；确认当前范围 READY 后才恢复初始 URL 的 SCORE，避免页面与实际顺序不一致。
+    if (value.aggregateStatus === "READY" && snapshot.sort === "SCORE" && requestedSort !== "SCORE") {
+      value = await teacherGradebookApi.get(gradebookRequestQuery(snapshot), active.signal);
+      if (active.signal.aborted) return;
+    }
     data.value = value;
     if (value.aggregateStatus === "PENDING" && state.value.sort === "SCORE") {
       await router.replace({ query: toGradebookQuery({ ...state.value, sort: "STUDENT_NUMBER" }) });
@@ -65,6 +76,7 @@ async function load() {
   }
 }
 
+/** 导出当前 URL 筛选；每次操作使用独立请求，取消后旧响应不得覆盖新下载状态或生成文件。 */
 async function downloadCsv() {
   if (downloadStatus.value === "downloading") return;
   const active = new AbortController();
@@ -85,6 +97,7 @@ async function downloadCsv() {
     downloadStatus.value = "success";
     downloadMessage.value = "CSV 已开始下载。";
   } catch (error) {
+    if (exportController !== active) return;
     if (isAbort(error) || active.signal.aborted) {
       downloadStatus.value = "cancelled";
       downloadMessage.value = "CSV 下载已取消。";
@@ -93,14 +106,22 @@ async function downloadCsv() {
       downloadMessage.value = exportMessageFor(error);
     }
   } finally {
-    revokeObjectUrl();
-    exportController = null;
+    if (exportController === active) {
+      revokeObjectUrl();
+      exportController = null;
+    }
   }
 }
 
+/** 用户取消或离页立即结束本地下载状态并中止请求，不依赖网络何时兑现 AbortError。 */
 function cancelExport() {
   exportController?.abort();
+  exportController = null;
   revokeObjectUrl();
+  if (downloadStatus.value === "downloading") {
+    downloadStatus.value = "cancelled";
+    downloadMessage.value = "CSV 下载已取消。";
+  }
 }
 
 async function openRecord(row: GradebookRow, assessmentId: string) {
@@ -167,7 +188,7 @@ function exportMessageFor(error: unknown) {
       <label>批改状态<select :value="state.gradingStatus ?? ''" @change="setQuery({ gradingStatus: ($event.target as HTMLSelectElement).value || undefined, page: 1 })"><option value="">全部</option><option v-for="value in ['NOT_REQUIRED','PENDING','PARTIALLY_GRADED','GRADED']" :key="value" :value="value">{{ statusLabel(value) }}</option></select></label>
       <label>迟交<select :value="selectedLate()" @change="setQuery({ late: normalizeLate(($event.target as HTMLSelectElement).value), page: 1 })"><option value="">全部</option><option value="true">迟交</option><option value="false">准时/无迟交</option></select></label>
       <label class="gradebook-filter-wide">关键词<input :value="state.keyword ?? ''" maxlength="120" placeholder="课程学生编号或昵称" @change="setQuery({ keyword: ($event.target as HTMLInputElement).value.trim() || undefined, page: 1 })"></label>
-      <label>排序<select :value="displaySort" :disabled="!ready" @change="setQuery({ sort: ($event.target as HTMLSelectElement).value, page: 1 })"><option value="STUDENT_NUMBER">课程学生编号</option><option value="LAST_SUBMITTED_AT">最后提交时间</option><option value="SCORE" :disabled="!ready">成绩</option><option value="SUBMISSION_STATUS">提交状态</option><option value="GRADING_STATUS">批改状态</option></select></label>
+      <label>排序<select :value="displaySort" @change="setQuery({ sort: ($event.target as HTMLSelectElement).value, page: 1 })"><option value="STUDENT_NUMBER">课程学生编号</option><option value="LAST_SUBMITTED_AT">最后提交时间</option><option value="SCORE" :disabled="!ready">成绩</option><option value="SUBMISSION_STATUS">提交状态</option><option value="GRADING_STATUS">批改状态</option></select></label>
       <label>方向<select :value="state.direction" @change="setQuery({ direction: ($event.target as HTMLSelectElement).value, page: 1 })"><option value="asc">升序</option><option value="desc">降序</option></select></label>
     </form>
     <div v-if="loading && !data" class="teacher-loading" role="status">正在读取成绩册…</div>

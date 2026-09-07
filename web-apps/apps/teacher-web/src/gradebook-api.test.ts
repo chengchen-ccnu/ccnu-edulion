@@ -31,6 +31,8 @@ describe("teacher gradebook API", () => {
       "/api/v1/teacher/gradebook/export?courseId=course-1&clientRequestId=request-1&type=HOMEWORK&keyword=student"
     ]);
     expect(csv.filename).toBe("gradebook.csv");
+    // Fetch 的 text 解码会移除服务端 BOM；验证最终下载字节，避免中文 CSV 在 Excel 中乱码。
+    expect(Array.from(new Uint8Array(await csv.blob.arrayBuffer()).slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
     expect(await csv.blob.text()).toContain("0001,90");
   });
 });

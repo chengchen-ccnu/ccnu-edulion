@@ -850,3 +850,20 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与清理：没有创建数据库、表、临时 Schema、账号、CSV 文件、Redis Key、RabbitMQ 消息或 OSS 对象。只复用明确的 `edu_platform_learning_dev` 既有 T11C.1 2 场演示 Seed；本轮没有新增验收数据，Seed 最终状态保持不变，未产生需要额外清理的临时数据。没有重复 T11C.1.1 已通过的 5,000×100 容量验收。
 - 提交与 CI：路由顺序、回归测试和文档已提交为 `051e864 fix(web): resolve course task route precedence` 并推送到 PR #50；最新两组 GitHub CI 的 Frontend、Java、Python、OpenAPI generated source 共 8/8 检查成功，PR 仍 OPEN 且未合并。
 - 结论：内置浏览器问题已解除，路由冲突已修复并有真实浏览器与自动化证据；T11C.2 仍不能标记为全绿，当前未完成项由任务 API 503 后端适配故障和教师会话缺失造成。应先修复/确认后端适配实现并提供安全教师 local/test 会话，再从任务成功链路和成绩册 CSV 流程继续验收。
+
+## 2026-09-07 T11C.2 最新代码真实验收与范围内修复
+
+- 分支/PR：`codex/t11c2-homework-gradebook-web`、[PR #50](https://github.com/chengchen-ccnu/ccnu-edulion/pull/50)，开始时干净；保留 `ed1323c` 普通合入 T11C.1.2，不创建分支或合并 PR。
+- 已重新阅读 AGENTS、完整 page-specs、交付文档、backlog、verification 与注释规范。只修改成绩册、必要 Gateway 路由/教学能力、测试 Fixture 和对应文档，未修改 OpenAPI、生成类型、领域生产逻辑或迁移。
+- 旧 Learning PID 28108（9 月 5 日）已停止；包装脚本构建最新 jar 后于 09:32:13 启动 PID 86468。teacher-web 5174 启动；Gateway/IAM/Course 也重新构建并通过包装脚本启动。解决本地旧 JWT 配置及 Gateway/IAM Redis DB 不一致，不关闭会话版本校验/限流。Course 曾不可达，恢复后真实 Gateway→Learning→Course 任务列表 200。
+- 学生浏览器：临时作业 A 保存、刷新恢复、09:37:44 提交；第二次从空白草稿选 B 保存、09:38:33 提交，结果刷新只显示 B。考试 C 保存、刷新继续倒计时（58:55，不重置），09:42:02 提交成功。旧 attempt API 404；最后结果 200，gradeVisible/answerVisible=false，score/correctAnswer/analysis=null，页面不泄露成绩或参考答案。
+- 教师浏览器：正常登录 `teacher1@example.invalid` 显示测试教师一，学生进入真实 403；全范围 PENDING 隐藏分数及统计，HOMEWORK 为 READY。刷新恢复完整查询筛选，keyword=0005 组合筛选只剩 1 行。修复 SCORE URL 与实际排序不一致，回归先失败后通过，真实刷新显示成绩排序。
+- IAM 昵称故障：暂时停止当前 IAM，真实成绩册 200、nicknameDependencyFailed=true；页面提示部分昵称不可用，编号/成绩保留。恢复后真实请求标记 false，昵称重新显示。最终 IAM PID 81992、Gateway PID 85188、Course PID 92712、Learning PID 86468；故障注入均已恢复。
+- CSV：浏览器实际点击显示生成及下载开始；教师正常会话经 Gateway 下载的文件为 200、674 字节、EF BB BF、1 数据行、10 个中文字段，Content-Disposition 正常。修复 text 解码丢 BOM 的 Blob 重编码缺陷，字节回归通过。下载过快，浏览器取消没有取得可靠终态；组件测试覆盖取消 abort、迟到成功不创建文件、卸载中止和 Object URL revoke，不冒充真实内部清理观测。
+- 错误：真实匿名成绩册 401；学生成绩册 403；未知课程及旧 attempt 404；已提交 draft 409；成绩册 size=0 为 422；对本轮已提交 attempt 有界 21 次提交（前 20 次冲突 409、第 21 次 429 GATEWAY.RATE_LIMITED、Retry-After=60），未新增有效提交。Course 不可达阶段 503，恢复后 200。暂停 Gateway 造成实际网络不可达，浏览器显示离线且保留矩阵，恢复后重试成功；不是设备系统离线开关测试。
+- 响应式：真实浏览器读取 window.innerWidth=390、768、1440，学生考试/结果和教师成绩册按实际宽度复核。教师文档 clientWidth/scrollWidth 分别 375/375、753/753、1425/1425；没有页面横向溢出，矩阵在容器内滚动。临时 viewport 已 reset；没有用旧固定 473px 结果替代。
+- 范围内修复：Gateway 补两个精确 gradebook 路由、teaching:access 与 Content-Disposition；CSV 单 BOM；取消时立即收口、迟到请求不覆盖新状态；SCORE 深链确认 READY 后重读，PENDING 保留非成绩排序，清空课程中止旧请求。新增实际 Vue 组件测试并恢复 URL mocks，注释人工检查通过。
+- 测试命令：`pnpm.cmd --dir web-apps run typecheck`、`run test`、`run build`、`run check:api` 全通过；40 文件/269 项、三端类型/生产构建、客户端无漂移，仅既有大 chunk 警告。包装脚本内 `mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl learning-service,gateway-service -am verify` 通过；Gateway 22 项含 1 跳过、Learning 89 项含 17 跳过、shared-kernel 1 项，零失败。显式 Fixture 初始化/报告/清理单独通过。没有重复容量压测。
+- 临时数据：未创建数据库/表/迁移/账号/课程/题目。专用 edu_platform_learning_dev 新增两场固定临时任务、2 份题目快照、分配/应交名单及 3 attempt/答案/幂等/截止结算派生行；两次错误答案产生 1 条 wrong_question 累计与 2 条 occurrence。第一次清理因保护断言回滚，核实累计恰好 2 次且无重做后补精确清理。12:29:40 CLEANUP 成功；12:30:50 REPORT 确认临时 assessment=0、attempt/错题/occurrence/本轮审计列表为空，T11C.1 演示仍 2 场。四条本轮 CSV 审计按交付文档 UUID 逐条限定 owner/course 删除，HTTP CSV 本地文件已删除。HTTP 会话正常 logout，限流 Key 自然 60 秒过期，不清除原有账号会话/审计。Fixture INITIALIZE/REPORT/CLEANUP 可复现，无生产自动 Seed。
+- **尚未通过**：待批考试批改深链真实返回 `409 LEARNING.RESULTS_NOT_READY`。教师页依赖分页 results 列表，但该接口要求整场无待批，OpenAPI/Controller 没有教师单 attempt GET；第一页之外 attempt 的定位也尚未完整验证。按契约不足规则停止扩展并报告，未用评分 POST 或虚构 API 绕过。真实取消/离页内部请求、计时器、Blob 释放仍待补证，组件回归不等同真实验收。T11C.2 不标记全验收完成。
+- 完整启动、数据 UUID、复现命令、调用边界及后续依赖已同步 [交付文档](../delivery/T11C.2-homework-gradebook-web.md)、backlog、local-environment。新提交推送后的 CI 以 PR #50 实际检查为准，不沿用旧提交绿色结果。

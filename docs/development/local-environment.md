@@ -548,6 +548,14 @@ T12G.1 已将批次大小、刷新间隔、租约、Worker 并发、课程事实
 
 真实验收入口为 `scripts/Invoke-T12G1RealAcceptance.ps1` 和 `scripts/Invoke-T12G1CapacityAcceptance.ps1`，两者都通过 `scripts/Invoke-WithLocalEnvironment.ps1` 注入凭据并强制校验 `LEARNING_MYSQL_DATABASE=edu_platform_learning_dev`、`LEARNING_REDIS_DATABASE=4`。容量脚本使用独立随机 run ID、1,000 个合成 UUID 学习者和独立清理测试；不得在生产配置或未明确标识的数据库中运行。故障场景使用错误连接/隔离测试实例，不停止或重启共享 MySQL/Redis 服务；清理断言必须显示本轮 MySQL 行数和 Redis key 数为 0。
 
+## T11C.2 本地真实浏览器启动复核
+
+验收前必须通过 `Invoke-WithLocalEnvironment.ps1` 从当前分支重新构建 Learning，并先核对监听 PID/启动时间再停止对应旧 Java 进程；不要继续使用合入后端修复前启动的 jar。Gateway、IAM、Course 也必须与同一包装脚本提供的本地配置一致。后台启动用 `Start-Process -WindowStyle Hidden`，IAM 使用 `IAM_SEED_ENABLED=false`，测试账号从统一登录门户正常登录，不在命令、文档或仓库保存密码。
+
+2026-09-07 发现本机 `GATEWAY_REDIS_DATABASE` 与 `IAM_REDIS_DATABASE` 不一致，导致 Gateway 查不到 IAM sessionVersion。当前 Gateway 只使用一个 Redis 连接读取会话缓存；本地启动时可在包装脚本的 ScriptBlock 内设置 `$env:GATEWAY_REDIS_DATABASE=$env:IAM_REDIS_DATABASE`，再启动 Gateway。该设置仅影响子进程，不改共享 local.env；不能通过关闭 session-validation 或 rate-limit 规避 503。正常登录及课程事实请求须重新确认 200。
+
+T11C.2 专用浏览器 Fixture 及 INITIALIZE/REPORT/CLEANUP 命令见 [交付文档](../delivery/T11C.2-homework-gradebook-web.md)。它只允许 `edu_platform_learning_dev`，不创建数据库/账号/课程/题目；清理必须限定本轮测评、错题派生和明确记录的导出审计 UUID，不得运行按整个课程删除审计的清理替代。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。
