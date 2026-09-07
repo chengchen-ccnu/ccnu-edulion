@@ -783,6 +783,16 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 清理：容量测试只允许 `edu_platform_learning_t11c1_acceptance`、`_v2`、`_v3`、`_v4`、`_v5` 五个明确专用 Schema，使用固定前缀/ID、幂等初始化和精确逆外键清理；最终每个 Schema 均 DROP 并确认不存在。`edu_platform_learning_dev` 中已明确标记的 T11C.1 演示 Seed 保留，未清理、未覆盖；没有创建其他领域数据。
 - 下一步门禁：T11C.1.1 已满足 T11C.2 的后端契约与容量前置，但本任务仅负责创建 PR 和等待 CI；T11C.2 页面仍待独立任务实施。
 
+## 2026-09-06 T11C.1.2 Learning Course 事实适配器向前兼容修复
+
+- 分支与范围：从最新 origin/main@87bbfa6f 创建 codex/t11c1.2-course-facts-forward-compat；初始工作树干净。只修改 Learning Course 事实适配器、对应回归测试、T11C.1.2 交付文档和路线图记录；T11C.2 PR #50 保持 Open，未修改、合并或关闭。
+- 实现：HttpCourseFactsClient 的 Published、Teacher、Chapter、Lesson 私有响应 DTO 局部增加 JsonIgnoreProperties(ignoreUnknown=true)，允许 Course 合法新增 title、sequence、previewable 等展示字段。Learning 读取的必需标量改为严格文本节点，并在裁剪事实前校验非空、访问类型、课时类型、章节/课时结构；全局 Jackson 未知字段失败配置保持开启。
+- 语义：Course 公开 404 继续映射 Learning 404；公开读取 403、依赖 5xx、超时和无效响应继续安全返回 503；owner 接口 404/403 继续不可枚举为 Learning 404。没有改 Course 响应、OpenAPI、页面规格、接口版本或 T11C.2。
+- 自动化结果：HttpCourseFactsClientTest 与 LearningCourseFactsHttpAcceptanceTest 定向 6/6 通过；整个 learning-service 测试 88 项执行、0 失败、16 项既有条件测试按开关跳过。HTTP 验收通过随机端口 Learning 任务列表真实入口调用 Course 形状响应，返回 200，任务/课程/课时 ID 和任务类型正确，Course 请求一次完成。
+- 数据边界：未连接或修改 MySQL、Redis、RabbitMQ、OSS 或生产数据；测试只在临时 H2 learning_course_facts_http 中应用既有 V1～V14 迁移，创建一条合成报名、一条已发布 HOMEWORK、一条课程分配和一条参与者并按精确 ID 清理；没有新增 Flyway 迁移、持久 Seed 或隐私数据。
+- 完整验证：`mvn --% -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 通过，8 个 Reactor 模块全部成功；Learning 88 项执行、0 失败、16 项既有条件测试按开关跳过。
+- 交付状态：提交 `cc32a41` 已推送到 `codex/t11c1.2-course-facts-forward-compat`；Ready PR 为 [#51](https://github.com/chengchen-ccnu/ccnu-edulion/pull/51)，Java / Frontend / Python / OpenAPI 共 4 项 CI 检查全部通过；未执行合并。
+
 ## 2026-09-05 T11C 拆分规划与 T11C.1 前置审计
 
 - 拆分结论：经完整产品规则访谈，原 T11C 拆为顺序实施的 T11C.1“作业规则、成绩册与 CSV 导出后端契约”和 T11C.2“课程作业/考试与教师成绩册前端”。T11C.1 先演进 OpenAPI、Learning 数据与服务端状态机并重新生成客户端；T11C.2 只能在其合并后消费生成契约，不得并行猜测 DTO。
