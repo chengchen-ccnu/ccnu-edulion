@@ -16,6 +16,8 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.exc.UnrecognizedPropertyException;
 
@@ -45,6 +47,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException exception, HttpServletRequest request) {
         return invalid(request, List.of(new FieldError(unreadableField(exception), "请求体字段格式或枚举值不合法")));
+    }
+
+    /** 查询参数枚举转换和方法级分页约束失败时统一返回 422，不把框架异常暴露为 500。 */
+    @ExceptionHandler({HandlerMethodValidationException.class, MethodArgumentTypeMismatchException.class})
+    ResponseEntity<ApiError> handleRequestParameterValidation(Exception exception, HttpServletRequest request) {
+        String field = exception instanceof MethodArgumentTypeMismatchException mismatch
+                && SAFE_FIELD.matcher(mismatch.getName()).matches() ? mismatch.getName() : "request";
+        return invalid(request, List.of(new FieldError(field, "查询参数格式、枚举值或范围不合法")));
     }
 
     @ExceptionHandler(Exception.class)

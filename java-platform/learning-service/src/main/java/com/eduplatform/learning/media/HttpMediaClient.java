@@ -122,13 +122,26 @@ public class HttpMediaClient implements MediaClient {
     @Override
     public LearningDtos.MediaAccessGrant issueAssessmentAccess(String mediaId, String learnerId, String purpose,
             LearningDtos.MediaDisposition disposition, String traceId) {
+        return issueQuestionAccess(mediaId, learnerId, purpose, disposition, traceId, "ASSESSMENT_QUESTION");
+    }
+
+    /** 公共题正文授权复用已有短期令牌传输和错误映射，令牌明确区分正文来源。 */
+    @Override
+    public LearningDtos.MediaAccessGrant issueSystemQuestionAccess(String mediaId, String learnerId, String purpose,
+            LearningDtos.MediaDisposition disposition, String traceId) {
+        return issueQuestionAccess(mediaId, learnerId, purpose, disposition, traceId, "SYSTEM_QUESTION_CONTENT");
+    }
+
+    /** 已裁决的单资产经一次性 JWT 换取短期 URL；内部认证失败按依赖故障处理，不输出服务令牌。 */
+    private LearningDtos.MediaAccessGrant issueQuestionAccess(String mediaId, String learnerId, String purpose,
+            LearningDtos.MediaDisposition disposition, String traceId, String accessType) {
         try {
-            String token = authorizationIssuer.issue(learnerId, mediaId, purpose, disposition.name(), traceId);
+            String token = authorizationIssuer.issue(learnerId, mediaId, purpose, disposition.name(), traceId, accessType);
             Grant grant = media.post().uri("/internal/v1/media/{mediaId}/access-grants", mediaId)
                     .header("Authorization", "Bearer " + token)
                     .header("X-Trace-Id", traceId)
                     .body(Map.of("visitorId", learnerId, "purpose", purpose,
-                            "accessType", "ASSESSMENT_QUESTION", "variant", "ORIGINAL",
+                            "accessType", accessType, "variant", "ORIGINAL",
                             "disposition", disposition.name()))
                     .retrieve().body(Grant.class);
             if (grant == null || !"GET".equals(grant.method()) || grant.expiresAt() == null) throw unavailable();

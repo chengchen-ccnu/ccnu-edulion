@@ -289,7 +289,9 @@ public class MediaAssetService {
      */
     public MediaDtos.AccessGrant access(String mediaId, String ownerId,
             MediaDtos.CreateAccessGrantRequest request, String traceId) {
-        MediaAsset asset = requireAssetReadable(mediaId, ownerId);
+        // 通用授权始终只认 uploader；公共题和测评的其他访问者必须经过 Learning 领域裁决。
+        MediaAsset asset = repository.findAsset(mediaId).orElseThrow(this::notFound);
+        if (!asset.ownerId().equals(ownerId)) throw notFound();
         return issueAccess(asset, ownerId, request, traceId);
     }
 

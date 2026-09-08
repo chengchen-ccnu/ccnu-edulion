@@ -698,12 +698,20 @@ public class LearningAssessmentService {
     /** 为 T11C.2 返回课程级任务清单；未开放课时任务只有在显式当前课时匹配时才可见。 */
     public LearningDtos.LearnerCourseTaskPage learnerCourseTasks(String learnerId, String courseId,
             String currentLessonId, int page, int size, String traceId) {
+        return learnerCourseTasks(learnerId, courseId, currentLessonId, null, page, size, traceId);
+    }
+
+    /** 按明确课程和可选类型返回安全任务；空类型兼容旧 HOMEWORK/EXAM，读取不创建名单或 attempt。 */
+    public LearningDtos.LearnerCourseTaskPage learnerCourseTasks(String learnerId, String courseId,
+            String currentLessonId, LearningDtos.AssessmentType type, int page, int size, String traceId) {
         CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
+        if (currentLessonId != null) requireLesson(course, currentLessonId);
         Instant now = Instant.now();
-        List<LearningDtos.LearnerCourseTaskSummary> all = repository.publishedCourseAssessments(courseId).stream()
+        List<LearningDtos.LearnerCourseTaskSummary> all = repository.publishedCourseAssessments(courseId, type).stream()
+                .filter(assessment -> course.ownerTeacherId().equals(assessment.ownerTeacherId()))
                 .map(assessment -> taskSummary(learnerId, assessment, currentLessonId, now))
                 .filter(value -> value != null).toList();
-        int from = Math.min((page - 1) * size, all.size());
+        int from = (int) Math.min(((long) page - 1) * size, all.size());
         int to = Math.min(from + size, all.size());
         return new LearningDtos.LearnerCourseTaskPage(all.subList(from, to), page, size, all.size(), now);
     }
@@ -711,8 +719,9 @@ public class LearningAssessmentService {
     /** 返回单场任务安全投影；未开放时不返回题目快照，错课时/错课程/非应交人统一隐藏。 */
     public LearningDtos.LearnerCourseTask learnerCourseTask(String learnerId, String courseId,
             String assessmentId, String currentLessonId, String traceId) {
-        requireEnrolledCourse(learnerId, courseId, traceId);
-        AssessmentRow assessment = learnerTaskAssessment(learnerId, courseId, assessmentId);
+        CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
+        if (currentLessonId != null) requireLesson(course, currentLessonId);
+        AssessmentRow assessment = learnerTaskAssessment(learnerId, course, assessmentId);
         Instant now = Instant.now();
         LearningDtos.LearnerCourseTaskSummary summary = taskSummary(learnerId, assessment, currentLessonId, now);
         if (summary == null) throw notFound();
@@ -723,24 +732,37 @@ public class LearningAssessmentService {
                 assessment.title(), assessment.type(), summary.timeState(), summary.submissionStatus(),
                 summary.gradingStatus(), summary.lateSubmission(), summary.attemptsUsed(), summary.maxAttempts(),
                 assessment.opensAt(), assessment.closesAt(), assessment.lateUntil(), summary.lastSubmittedAt(),
-                assessment.description(), safe, now, summary.finalAttempt());
+                summary.questionContentAvailable() ? assessment.description() : "", safe, now, summary.finalAttempt());
+    }
+
+    /** 旧练习深链只取得经报名、当前课程 owner 和发布分配复核的安全归属；关闭不等于重新开放。 */
+    public LearningDtos.LearnerCourseTaskSummary learnerAssessmentEntry(String learnerId, String assessmentId,
+            String traceId) {
+        AssessmentRow stored = repository.assessment(assessmentId).orElseThrow(this::notFound);
+        if (stored.status() != AssessmentStatus.PUBLISHED) throw notFound();
+        CourseFact course = requireEnrolledCourse(learnerId, stored.courseId(), traceId);
+        AssessmentRow assessment = learnerTaskAssessment(learnerId, course, assessmentId);
+        var value = taskSummary(learnerId, assessment, null, Instant.now());
+        if (value == null) throw notFound();
+        return value;
     }
 
     /** T11C.2 的稳定开始入口只绑定 courseId/assessmentId，实际写入仍复用既有 attempt 状态机。 */
     @Transactional
     public LearningDtos.AttemptDraft startCourseTaskAttempt(String learnerId, String courseId, String assessmentId,
             LearningDtos.StartAttemptRequest input, String traceId) {
-        requireEnrolledCourse(learnerId, courseId, traceId);
-        learnerTaskAssessment(learnerId, courseId, assessmentId);
+        CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
+        learnerTaskAssessment(learnerId, course, assessmentId);
         return startAttempt(learnerId, assessmentId, input);
     }
 
     /** 只解析 participant.finalAttemptId，避免客户端通过旧 attemptId 切换历史提交。 */
     public LearningDtos.AttemptResult learnerCourseTaskResult(String learnerId, String courseId, String assessmentId,
             String traceId) {
-        requireEnrolledCourse(learnerId, courseId, traceId);
-        learnerTaskAssessment(learnerId, courseId, assessmentId);
-        AttemptRow finalAttempt = repository.finalAttemptForLearner(assessmentId, learnerId).orElseThrow(this::notFound);
+        CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
+        AssessmentRow assessment = learnerTaskAssessment(learnerId, course, assessmentId);
+        AttemptRow finalAttempt = finalTaskAttempt(assessment, learnerId);
+        if (finalAttempt == null) throw notFound();
         return result(finalAttempt.id(), learnerId, false);
     }
 
@@ -752,13 +774,14 @@ public class LearningAssessmentService {
         return course;
     }
 
-    private AssessmentRow learnerTaskAssessment(String learnerId, String courseId, String assessmentId) {
+    /** 当前课程事实、持久归属和分配必须同时匹配；PRACTICE 无应交名单也可浏览，正式任务保留名单门禁。 */
+    private AssessmentRow learnerTaskAssessment(String learnerId, CourseFact course, String assessmentId) {
         AssessmentRow assessment = repository.assessment(assessmentId).orElseThrow(this::notFound);
-        if (assessment.status() != AssessmentStatus.PUBLISHED || !assessment.courseId().equals(courseId)
-                || !repository.isAssignedToCourse(assessmentId, courseId)
-                || (assessment.type() != LearningDtos.AssessmentType.HOMEWORK
-                        && assessment.type() != LearningDtos.AssessmentType.EXAM)
-                || repository.participant(assessmentId, learnerId).isEmpty()) throw notFound();
+        if (assessment.status() != AssessmentStatus.PUBLISHED || !assessment.courseId().equals(course.courseId())
+                || !course.ownerTeacherId().equals(assessment.ownerTeacherId())
+                || !repository.isAssignedToCourse(assessmentId, course.courseId())
+                || (assessment.type() != LearningDtos.AssessmentType.PRACTICE
+                        && repository.participant(assessmentId, learnerId).isEmpty())) throw notFound();
         return assessment;
     }
 
@@ -766,7 +789,10 @@ public class LearningAssessmentService {
             String currentLessonId, Instant now) {
         LearningDtos.AssessmentTimeState timeState = timeState(assessment, now);
         if (timeState == LearningDtos.AssessmentTimeState.NOT_OPEN
-                && (assessment.lessonId() == null || !assessment.lessonId().equals(currentLessonId))) return null;
+                && assessment.lessonId() != null && !assessment.lessonId().equals(currentLessonId)) return null;
+        if (assessment.type() == LearningDtos.AssessmentType.PRACTICE) {
+            return practiceTaskSummary(learnerId, assessment, timeState);
+        }
         var participant = repository.participant(assessment.id(), learnerId).orElse(null);
         if (participant == null) return null;
         AttemptRow latest = repository.attemptForLearner(assessment.id(), learnerId).orElse(null);
@@ -779,7 +805,34 @@ public class LearningAssessmentService {
                 participant.gradingStatus(), participant.lateSubmission(), participant.attemptsUsed(),
                 assessment.maxAttempts(), assessment.opensAt(), assessment.closesAt(), assessment.lateUntil(),
                 participant.lastSubmittedAt(), attemptSummary(projected,
-                        assessment.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED, finalProjection), content);
+                assessment.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED, finalProjection), content);
+    }
+
+    /** 课程练习以已有单次 attempt 投影参与状态，不伪造正式应交/缺交事实，也不在 GET 中修复数据。 */
+    private LearningDtos.LearnerCourseTaskSummary practiceTaskSummary(String learnerId, AssessmentRow assessment,
+            LearningDtos.AssessmentTimeState state) {
+        AttemptRow latest = repository.attemptForLearner(assessment.id(), learnerId).orElse(null);
+        boolean submitted = latest != null && latest.status() != AttemptStatus.DRAFT;
+        boolean grades = assessment.gradePublicationStatus() == ResultPublicationStatus.PUBLISHED;
+        var submission = latest == null ? LearningDtos.AssessmentSubmissionStatus.NOT_STARTED
+                : submitted ? LearningDtos.AssessmentSubmissionStatus.SUBMITTED : LearningDtos.AssessmentSubmissionStatus.IN_PROGRESS;
+        var grading = !submitted || !grades ? LearningDtos.AssessmentGradingStatus.NOT_REQUIRED
+                : latest.status() == AttemptStatus.GRADED ? LearningDtos.AssessmentGradingStatus.GRADED
+                : latest.status() == AttemptStatus.PARTIALLY_GRADED ? LearningDtos.AssessmentGradingStatus.PARTIALLY_GRADED
+                : LearningDtos.AssessmentGradingStatus.PENDING;
+        return new LearningDtos.LearnerCourseTaskSummary(assessment.id(), assessment.courseId(), assessment.lessonId(),
+                assessment.title(), assessment.type(), state, submission, grading, false, submitted ? 1 : 0, 1,
+                assessment.opensAt(), assessment.closesAt(), null, submitted ? latest.submittedAt() : null,
+                attemptSummary(latest, grades, submitted), state != LearningDtos.AssessmentTimeState.NOT_OPEN);
+    }
+
+    /** 旧 PRACTICE 只有一次提交，兼容尚无 participant.finalAttemptId 的记录；正式任务仍只认最终指针。 */
+    private AttemptRow finalTaskAttempt(AssessmentRow assessment, String learnerId) {
+        if (assessment.type() == LearningDtos.AssessmentType.PRACTICE) {
+            return repository.attemptForLearner(assessment.id(), learnerId)
+                    .filter(value -> value.status() != AttemptStatus.DRAFT).orElse(null);
+        }
+        return repository.finalAttemptForLearner(assessment.id(), learnerId).orElse(null);
     }
 
     private static LearningDtos.AssessmentTimeState timeState(AssessmentRow assessment, Instant now) {
@@ -1155,6 +1208,11 @@ public class LearningAssessmentService {
         if (assessment == null) throw notFound();
         Instant now = Instant.now();
         requireAssessmentOpen(assessment, now);
+        // 历史练习或发布后新报名可能没有名单；仅合法开始事务补本人行，GET 和正式任务均不补写。
+        if (assessment.type() == LearningDtos.AssessmentType.PRACTICE) {
+            repository.insertParticipant(UUID.randomUUID().toString(), assessmentId, learnerId, now);
+            repository.reactivateParticipant(assessmentId, learnerId, now);
+        }
         var participant = repository.lockParticipant(assessmentId, learnerId);
         if (participant == null || !"ACTIVE".equals(participant.enrollmentStatus())) throw notFound();
         AttemptRow existing = repository.attemptForLearner(assessmentId, learnerId).orElse(null);
@@ -1513,9 +1571,20 @@ public class LearningAssessmentService {
                 && repository.isAssignedToCourse(assessmentId, assessment.courseId())
                 && repository.enrollment(learnerId, assessment.courseId())
                         .filter(value -> value.status() == EnrollmentStatus.ACTIVE).isPresent();
-        boolean historicalOwner = repository.attemptForLearner(assessmentId, learnerId).isPresent();
+        AttemptRow owned = repository.attemptForLearner(assessmentId, learnerId).orElse(null);
+        boolean historicalOwner = owned != null;
         if (!currentAccess && !historicalOwner) throw notFound();
+        if (!historicalOwner) requireAssessmentOpen(assessment, Instant.now());
         if (!repository.assessmentContainsMedia(assessmentId, mediaId)) throw notFound();
+        boolean answerVisible = owned != null && owned.status() != AttemptStatus.DRAFT
+                && assessment.answerPublicationStatus() == ResultPublicationStatus.PUBLISHED;
+        if (!answerVisible) {
+            boolean visible = repository.assessmentQuestions(assessmentId).stream().map(this::learnerQuestion)
+                    .anyMatch(question -> question.media().stream().anyMatch(item -> item.mediaId().equals(mediaId))
+                            || question.children().stream().anyMatch(child -> child.media().stream()
+                                    .anyMatch(item -> item.mediaId().equals(mediaId))));
+            if (!visible) throw notFound();
+        }
         String purpose = assessmentMediaPurpose(assessmentId, mediaId);
         LearningDtos.MediaDisposition expected = "QUESTION_ATTACHMENT".equals(purpose)
                 ? LearningDtos.MediaDisposition.ATTACHMENT : LearningDtos.MediaDisposition.INLINE;
@@ -1648,7 +1717,7 @@ public class LearningAssessmentService {
                     answerVisible ? item.snapshot().analysis() : null);
         }).toList();
         List<LearningDtos.LearnerQuestion> safeQuestions = repository.assessmentQuestions(attempt.assessmentId())
-                .stream().map(this::learnerQuestion).toList();
+                .stream().map(item -> learnerQuestion(item, answerVisible)).toList();
         LearningDtos.AttemptResultAssessment frozen = new LearningDtos.AttemptResultAssessment(
                 assessment.id(), assessment.courseId(), assessment.lessonId(), assessment.title(),
                 assessment.description(), assessment.type(), assessment.gradePolicy(), assessment.answerPolicy(),
@@ -1753,13 +1822,22 @@ public class LearningAssessmentService {
     }
 
     private LearningDtos.LearnerQuestion learnerQuestion(AssessmentQuestionRow item) {
+        return learnerQuestion(item, false);
+    }
+
+    /** 题干快照按父子题裁剪答案专用媒体；仅结果公布裁决为 true 时保留答案/解析所需图片绑定。 */
+    private LearningDtos.LearnerQuestion learnerQuestion(AssessmentQuestionRow item, boolean answerVisible) {
         QuestionDtos.VersionResponse value = item.snapshot();
         List<QuestionDtos.SystemQuestionChild> children = value.children().stream().map(child ->
                 new QuestionDtos.SystemQuestionChild(child.questionId(), child.versionId(), child.sequence(),
                         child.type(), child.difficulty(), child.stage(), child.grade(), child.subject(), child.stem(),
-                        child.options(), child.knowledgePoints(), child.media(), child.createdAt())).toList();
+                        child.options(), child.knowledgePoints(), answerVisible ? child.media()
+                                : QuestionMediaVisibility.content(child.stem(), child.options(), child.answers(),
+                                        child.analysis(), child.media()), child.createdAt())).toList();
         return new LearningDtos.LearnerQuestion(item.id(), item.questionVersionId(), item.sequence(), item.points(),
-                value.type(), value.stem(), value.options(), value.media(), children);
+                value.type(), value.stem(), value.options(), answerVisible ? value.media()
+                        : QuestionMediaVisibility.content(value.stem(), value.options(), value.answers(),
+                                value.analysis(), value.media()), children);
     }
 
     private LearningDtos.AssessmentSummary summary(AssessmentRow row) {

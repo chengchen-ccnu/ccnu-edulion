@@ -611,6 +611,13 @@ public class LearningAssessmentRepository {
                 this::enrollment, courseId);
     }
     public List<AssessmentRow> publishedCourseAssessments(String courseId) {
+        return publishedCourseAssessments(courseId, null);
+    }
+
+    /** 按精确课程和 COURSE assignment 读取发布任务；空类型保留旧作业/考试范围，非空类型在 SQL 中筛选。 */
+    public List<AssessmentRow> publishedCourseAssessments(String courseId, AssessmentType type) {
+        if (type != null) return jdbc.query("SELECT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id WHERE a.course_id=? AND a.status='PUBLISHED' AND a.assessment_type=? ORDER BY a.published_at,a.id",
+                this::mapAssessment, courseId, type.name());
         return jdbc.query("SELECT a.* FROM assessment a JOIN assessment_assignment aa ON aa.assessment_id=a.id AND aa.assignment_type='COURSE' AND aa.target_id=a.course_id WHERE a.course_id=? AND a.status='PUBLISHED' AND a.assessment_type IN ('HOMEWORK','EXAM') ORDER BY a.published_at,a.id",
                 this::mapAssessment, courseId);
     }

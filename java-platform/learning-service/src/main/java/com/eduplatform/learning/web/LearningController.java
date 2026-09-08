@@ -160,15 +160,26 @@ public class LearningController {
     }
 
     @GetMapping("/api/v1/learning/courses/{courseId}/tasks")
-    /** 返回已报名学习者可见的 HOMEWORK/EXAM 任务；当前课时只用于安全显示未开放课时任务。 */
+    /** 返回本课程已报名学习者可见任务；省略类型保留 HOMEWORK/EXAM，PRACTICE 必须显式选择。 */
     public LearningDtos.LearnerCourseTaskPage courseTasks(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable String courseId, @RequestParam(required = false) String currentLessonId,
+            @RequestParam(required = false) LearningDtos.AssessmentType type,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
         return learning.learnerCourseTasks(LearningIdentity.learner(userId, roles, permissions).userId(), courseId,
-                currentLessonId, page, size, trace(servlet));
+                currentLessonId, type, page, size, trace(servlet));
+    }
+
+    /** 旧 /practice/:assessmentId 深链的只读归属解析；服务端授权后才返回课程 ID，不返回题目。 */
+    @GetMapping("/api/v1/learning/assessments/{assessmentId}/entry")
+    public LearningDtos.LearnerCourseTaskSummary assessmentEntry(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String assessmentId, HttpServletRequest servlet) {
+        return learning.learnerAssessmentEntry(LearningIdentity.learner(userId, roles, permissions).userId(),
+                assessmentId, trace(servlet));
     }
 
     @GetMapping("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}")

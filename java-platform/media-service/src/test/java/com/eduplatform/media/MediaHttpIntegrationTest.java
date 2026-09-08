@@ -151,8 +151,8 @@ class MediaHttpIntegrationTest {
     }
 
     @Test
-    /** 管理员创建的 SYSTEM 图片可被学生和教师读取授权，教师不能伪造 SYSTEM 资产。 */
-    void systemQuestionImageRequiresAdminAndIsReadableByAuthenticatedUsers() throws Exception {
+    /** SYSTEM 元数据可认证读取；非 owner 的内容授权必须经过 Learning 正文裁决。 */
+    void systemQuestionImageRequiresAdminAndDomainAuthorizedLearnerAccess() throws Exception {
         String request = """
                 {"clientRequestId":"00000000-0000-4000-8000-000000007303",
                  "sourceUrl":"https://images.fixture.test/system-question.png","scope":"SYSTEM"}
@@ -174,7 +174,10 @@ class MediaHttpIntegrationTest {
                 "00000000-0000-4000-8000-000000007199").statusCode()).isEqualTo(200);
         assertThat(sendAs("POST", "/api/v1/media/" + mediaId + "/access-grants",
                 "{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}", "STUDENT", STUDENT).statusCode())
-                .isEqualTo(201);
+                .isEqualTo(404);
+        assertThat(sendAsWithPermissions("POST", "/api/v1/media/" + mediaId + "/access-grants",
+                "{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}", "TEACHER",
+                "teaching:access", "00000000-0000-4000-8000-000000007199").statusCode()).isEqualTo(404);
         assertThat(jdbc.queryForObject("SELECT scope FROM media_asset WHERE media_id=?", String.class, mediaId))
                 .isEqualTo("SYSTEM");
     }
@@ -395,6 +398,14 @@ class MediaHttpIntegrationTest {
         assertThat(sendInternal(wrongDisposition, mediaId, body).statusCode()).isEqualTo(403);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization", Integer.class))
                 .isEqualTo(1);
+
+        String publicContent = internalAccessBody(STUDENT, "QUESTION_IMAGE", "SYSTEM_QUESTION_CONTENT", "ORIGINAL");
+        String publicToken = serviceTokenForAccess(UUID.randomUUID().toString(), STUDENT, mediaId,
+                "QUESTION_IMAGE", "SYSTEM_QUESTION_CONTENT", "ORIGINAL", "edu-platform-media-service-test",
+                now, now.plusSeconds(30), "edu-platform-learning-service-test", "INLINE");
+        assertThat(sendInternal(publicToken, mediaId, publicContent).statusCode()).isEqualTo(201);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM consumed_service_authorization", Integer.class))
+                .isEqualTo(2);
     }
 
     @Test

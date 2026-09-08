@@ -34,4 +34,8 @@ public interface MediaClient {
     /** 使用一次性服务令牌换取测评题目媒体的短期读授权，不暴露令牌或存储实现。 */
     LearningDtos.MediaAccessGrant issueAssessmentAccess(String mediaId, String learnerId, String purpose,
             LearningDtos.MediaDisposition disposition, String traceId);
+
+    /** 公共题安全正文绑定复核后签发 SYSTEM_QUESTION_CONTENT 令牌；不能授权答案专用媒体。 */
+    LearningDtos.MediaAccessGrant issueSystemQuestionAccess(String mediaId, String learnerId, String purpose,
+            LearningDtos.MediaDisposition disposition, String traceId);
 }

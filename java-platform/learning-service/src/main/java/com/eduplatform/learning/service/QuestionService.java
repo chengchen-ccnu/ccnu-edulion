@@ -209,8 +209,26 @@ public class QuestionService {
         Version version = repository.findVersion(aggregate.currentVersionId()).orElseThrow(QuestionService::notFound);
         return new QuestionDtos.SystemQuestion(aggregate.id(), aggregate.scope(), version.type(), version.difficulty(),
                 version.stage(), version.grade(), version.subject(), version.stem(), options(version),
-                knowledge(version), media(version), repository.versionChildren(version.id()).stream()
-                        .map(this::systemChild).toList(), aggregate.createdAt(), aggregate.updatedAt());
+                knowledge(version), safeMedia(version), repository.versionChildren(version.id()).stream()
+                .map(this::systemChild).toList(), aggregate.createdAt(), aggregate.updatedAt());
+    }
+
+    /** 当前 ACTIVE SYSTEM 根题和有序子题的可见正文绑定才可授权；错版本、答案专用或他题媒体统一 404。 */
+    public com.eduplatform.learning.web.LearningDtos.MediaAccessGrant systemMediaAccess(String learnerId,
+            String questionId, String mediaId,
+            com.eduplatform.learning.web.LearningDtos.CreateAssessmentMediaAccessGrantRequest input, String traceId) {
+        var question = getSystem(questionId);
+        var candidates = new ArrayList<>(question.media());
+        question.children().forEach(child -> candidates.addAll(child.media()));
+        var binding = candidates.stream().filter(item -> item.mediaId().equals(mediaId)).findFirst()
+                .orElseThrow(QuestionService::notFound);
+        var expected = binding.purpose() == QuestionModels.MediaPurpose.QUESTION_ATTACHMENT
+                ? com.eduplatform.learning.web.LearningDtos.MediaDisposition.ATTACHMENT
+                : com.eduplatform.learning.web.LearningDtos.MediaDisposition.INLINE;
+        if (!"ORIGINAL".equals(input.variant()) || input.disposition() != expected) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "QUESTION.MEDIA_REQUEST_INVALID", "媒体变体或处置方式不匹配");
+        }
+        return mediaClient.issueSystemQuestionAccess(mediaId, learnerId, binding.purpose().name(), expected, traceId);
     }
 
     /** 分页返回教师可见题目的不可变历史摘要；只读查询不会移动当前版本指针。 */
@@ -420,11 +438,17 @@ public class QuestionService {
                 value.purpose(), value.sequence())).toList();
     }
 
+    /** 只裁剪学生媒体投影；教师完整详情与历史不可变版本保持原样。 */
+    private List<QuestionDtos.MediaResponse> safeMedia(Version version) {
+        return QuestionMediaVisibility.content(version.stem(), options(version), version.answers(),
+                version.analysis(), media(version));
+    }
+
     private QuestionDtos.SystemQuestionChild systemChild(QuestionRepository.ChildSnapshotRow child) {
         Version version = repository.findVersion(child.questionId(), child.versionId()).orElseThrow(QuestionService::notFound);
         return new QuestionDtos.SystemQuestionChild(child.questionId(), version.id(), child.sequence(), version.type(),
                 version.difficulty(), version.stage(), version.grade(), version.subject(), version.stem(), options(version),
-                knowledge(version), media(version), version.createdAt());
+                knowledge(version), safeMedia(version), version.createdAt());
     }
 
     private QuestionDtos.VersionResponse versionResponse(String questionId, Version version) {
