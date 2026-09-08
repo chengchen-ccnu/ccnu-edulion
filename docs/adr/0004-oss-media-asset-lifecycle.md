@@ -28,7 +28,7 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 | `COURSEWARE`、`ARTICLE_ATTACHMENT`、`ARTICLE_IMAGE` | `course-service` 的课时资源 | 按课程访问权限；正文图片只能通过受保护内容投影内联 | T07/T08 保留通用附件，T12F.1 增加正文图片和资源动作授权，T12F.2 交付页面 |
 | `QUESTION_IMAGE`、`QUESTION_AUDIO`、`QUESTION_ATTACHMENT` | `learning-service` 的题目版本 | 按题目/测评权限 | T09 数据与绑定，T10 编辑上传与预览 |
 | `QUESTION_IMPORT_SOURCE` | `learning-service` 的导入任务 | 教师私有、限期保留 | T09 导入任务，T10 上传与结果页 |
-| `AI_QUESTION_IMAGE` | Java Agent Access 的会话消息 | 学生本人/授权教师可见、短期保留 | T14 鉴权转交，T15 图片提问 |
+| `AI_QUESTION_IMAGE` | 独立 agent-access-service 的会话消息 | 首期仅学生本人会话可见；按引用与保留期回收 | T14.1/T14.2 鉴权与短期转交，T15A/T15B 图片提问 |
 | `USER_AVATAR` | `iam-service` 的用户资料 | 审核后公开读取 | T17 资料页面与绑定，不在 T04 回填 |
 | `TEACHER_QUALIFICATION` | `iam-service` 的教师审核记录 | 严格私有 | T16/T17 审核流程与管理端预览 |
 | `BANNER_IMAGE`、`TOPIC_COVER` | `operation-service` 的运营配置 | 发布后公开 CDN | T16 数据/发布规则，T17 管理上传与学生展示 |
@@ -63,6 +63,12 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 - T08 为课程域新增向前迁移的 `cover_media_id` 和课时资源引用；创建/编辑请求改为绑定 `coverMediaId`，读取响应仍可提供 `coverUrl` 展示投影。迁移期允许读取历史 `cover_url`，但新 UI 不再要求教师手填 URL；历史数据回填完成后再通过新版本契约移除旧写字段。
 - T10、T15、T17 分别在本领域契约中增加资产 ID；不得提前把这些字段塞进 T07 的通用媒体表，也不得让媒体服务保存题目、AI、用户或运营业务实体。
 - 任何已合并迁移只能向前追加；禁止为了替换 URL 字段重写 T05/T06 已发布迁移。
+
+## 2026-09-08 Agent 图片收口补充
+
+独立 AI 页与普通自主练习浮窗使用同一媒体授权链。AI 消息持久化只保存 mediaId 和安全元信息，Python 只取得 Java 批准的短期读取投影，不接受浏览器任意 image_url、不接 OSS SDK。多模态读取检查地址/重定向/大小/时限，退出时清理临时文件；识别不清先请学生确认，不新增 OCR 微服务。
+
+原始消息默认保留 180 天可配置，临时下载文件与未绑定上传资产使用各自较短生命周期；不能把 30 分钟悬浮会话空闲期限当作媒体删除期限。保留期结束由 Agent Access 事务写引用释放 Outbox，Media 按引用/宽限期回收；题库共享图片不能随一次聊天删除。受限课程资料的来源访问校验不被 AI 缓存或历史摘要取代。真实验收按任务精确前缀/ID 记录清理，不枚举整桶。
 
 ## 后果
 
