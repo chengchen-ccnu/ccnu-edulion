@@ -238,7 +238,12 @@ function messageFor(error: unknown) {
   return labels[error.status] ?? error.message;
 }
 function courseTaskResultRoute() {
-  return `/learn/${String(route.params.courseId ?? "")}/tasks/${String(route.params.assessmentId ?? "")}/result`;
+  const path = `/learn/${String(route.params.courseId ?? "")}/tasks/${String(route.params.assessmentId ?? "")}/result`;
+  return courseTask.value?.type === "PRACTICE" || route.query.type === "PRACTICE" ? `${path}?type=PRACTICE` : path;
+}
+function courseTaskListRoute() {
+  const path = `/learn/${String(route.params.courseId ?? "")}/tasks`;
+  return courseTask.value?.type === "PRACTICE" || route.query.type === "PRACTICE" ? `${path}?type=PRACTICE` : path;
 }
 function currentLessonQuery() {
   const currentLessonId = typeof route.query.currentLessonId === "string" ? route.query.currentLessonId : undefined;
@@ -253,9 +258,9 @@ function formatRemaining(value: number | null) { if (value === null) return "不
     <section v-else-if="errorMessage && !assessment" class="practice-empty" role="alert"><h2>无法打开测评</h2><p>{{ errorMessage }}</p>
       <button class="button button--quiet" type="button" @click="load">重新加载</button></section>
     <section v-else-if="errorMessage && !draft" class="practice-empty" role="alert"><h2>当前不能作答</h2><p>{{ errorMessage }}</p>
-      <RouterLink class="button button--quiet" :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">返回</RouterLink></section>
+      <RouterLink class="button button--quiet" :to="isCourseTask ? courseTaskListRoute() : '/practice'">返回</RouterLink></section>
     <template v-else-if="assessment && draft">
-      <header class="attempt-header"><div><RouterLink :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">← {{ isCourseTask ? '返回课程任务' : '返回练习中心' }}</RouterLink><h2>{{ assessment.title }}</h2>
+      <header class="attempt-header"><div><RouterLink :to="isCourseTask ? courseTaskListRoute() : '/practice'">← {{ isCourseTask ? (courseTask?.type === 'PRACTICE' ? '返回课程练习' : '返回课程任务') : '返回题库' }}</RouterLink><h2>{{ assessment.title }}</h2>
         <p>{{ answeredCount }}/{{ questions.length }} 已答 · {{ totalPoints }} 分</p></div>
         <div class="attempt-status"><strong :class="{ 'is-urgent': remainingMs !== null && remainingMs < 60_000 }">{{ formatRemaining(remainingMs) }}</strong>
           <span role="status">{{ saveSnapshot?.status === 'saving' ? '保存中…' : saveSnapshot?.status === 'failed' ? '保存失败' : saveSnapshot?.dirty ? '等待保存' : '已保存' }}</span></div></header>

@@ -55,7 +55,8 @@ describe("student application routes", () => {
 
   it.each([
     ["/practice", "practice"],
-    ["/practice/:assessmentId", "practice-attempt"],
+    ["/practice/questions/:questionId", "practice-question"],
+    ["/practice/:assessmentId", "practice-legacy-entry"],
     ["/attempt/:attemptId/result", "attempt-result"],
     ["/wrong-questions", "wrong-questions"]
   ])("protects T12B route %s with learning:access", (path, name) => {
@@ -87,10 +88,18 @@ describe("student application routes", () => {
     expect(router.resolve(path).name).toBe(name);
   });
 
-  it("keeps HOMEWORK and EXAM outside the legacy practice route surface", () => {
-    const source = readFileSync(new URL("./views/PracticeCenterPage.vue", import.meta.url), "utf8");
-    expect(source).toContain('item.type === "PRACTICE"');
-    expect(source).not.toContain("/learn/:courseId/tasks");
+  it("resolves the public question detail before the legacy assessment migration route", () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: studentRoutes });
+
+    expect(router.resolve("/practice/questions/question-1").name).toBe("practice-question");
+    expect(router.resolve("/practice/assessment-1").name).toBe("practice-legacy-entry");
+  });
+
+  it("uses the public question projection instead of a cross-course assessment list", () => {
+    const source = readFileSync(new URL("./views/QuestionBankPage.vue", import.meta.url), "utf8");
+    expect(source).toContain("studentQuestionApi.list");
+    expect(source).not.toContain("studentAssessmentApi.list");
+    expect(source).not.toContain("courseId");
   });
 
   it("keeps playback implementation out of the public course detail component", () => {
