@@ -956,6 +956,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-08 T10C.1 公共题库与课程练习入口契约纠偏
 
+- 交付状态：实现提交 `2ff038e` 已推送至 `codex/t10c1-question-bank-entry-contract`，PR #54 已创建并等待评审/合并；未自动合并。
 - 前置与历史：在干净的 `codex/t10c1-question-bank-entry-contract` 开工；fetch 后 HEAD、本地 `main`、`origin/main` 均为规划 PR #53 的合并提交 `921ab78`。完整复核 AGENTS、page-specs、backlog、verification、Agent 架构和 T13 规划，并审计 T10B/T12B/T11C.2 真实代码与历史。`PracticeCenterPage.vue` 从首次交付起就是测评列表，后续只加 PRACTICE 客户端过滤，没有公共题页面被删除的证据；学生缺入口不能解释为题库无数据。
 - 契约与实现：OpenAPI 从 0.21.1 演进到 0.22.0。公共题列表/详情继续只返回 ACTIVE SYSTEM 根题和有序子题，要求 `learning:access`；新增当前题目安全正文媒体授权，答案/解析专用绑定在 Learning 裁剪，Media 只接受 Learning 一次性 `SYSTEM_QUESTION_CONTENT` 令牌，通用授权保持 uploader-only。课程任务新增可选 `type`，省略时仍只查 HOMEWORK/EXAM，`type=PRACTICE` 在 SQL 分页前按指定 courseId、PUBLISHED 和匹配 COURSE assignment 查询；服务再复核当前发布 Course owner 与 ACTIVE 报名。新增旧 assessment 链接安全 entry 投影，只返回复用的任务摘要，不返回题目/答案；关闭练习不被重新开放。
 - 数据模型结论：现有 `assessment.course_id` 非空、创建必填 courseId、发布建立 COURSE assignment，足以表达课程练习，无需 DTO、表或迁移。旧 PRACTICE/后报名可能没有 participant；所有 GET 均保持只读，只有已经通过课程归属、报名、发布和开放校验的开始事务才为本人补/恢复名单并复用原单次 attempt。公共 SYSTEM 题只有只读浏览；除错题有限重做外，没有公共单题提交、自动评分或无课程自主组题业务契约，本任务没有另建测评模型或判分流程。
