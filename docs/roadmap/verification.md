@@ -986,3 +986,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 清理：Fixture CLEANUP/REPORT 确认 PRACTICE、NOT_OPEN HOMEWORK、attempt、answer、wrong occurrence 全为 0；首次验收按明确 ID 删除 Media 13 条 access grant audit 和 5 条 nonce，5173 纠偏复验删除 6 条 audit/6 条 nonce，NOT_OPEN/课程回归再删除 5 条 audit/5 条 nonce，三次残留均为 0。公共题库、课程、报名、原 HOMEWORK/EXAM、媒体资产/绑定及 OSS 对象均保留。隔离 18080～18084、5188 已释放，用户原有 5173/5174 进程未停止。
 - 自动化复核：全量 Java `clean verify` 的 8 个 Reactor 模块全部成功、0 失败/错误；安全 Fixture 的独立 `Report` 入口再次通过并报告 assessment/attempt/answer 均为 0。前端 typecheck、43 文件/294 项测试和三端 build 继续通过。
 - 结论：T10C.2 真实最终验收全部通过，PR #55 可标记 Ready；既有 5173/5174 OSS CORS 足够，无需新增 5188。完整状态码、traceId、样本和启动/清理说明见 [交付文档](../delivery/T10C.2-question-bank-course-practice-ui.md)。
+
+## 2026-09-08 PR #55 合并与 T13.1 前置审计
+
+- 合并与同步：PR #55 在真实最终验收完成、Ready 且两组 Java、Frontend、Python、OpenAPI 共 8 项检查全绿后，以普通 merge 合并为 `main@35f67674250fb971adc2f955c4e752415a9fea6c`。合并后的 main CI `34236380629` 也已成功；本地 main 已快进并与 origin/main 一致。
+- 清理：已确认两个工作区均干净后，精确移除 `C:/Users/ChenCheng/.codex/worktrees/t10c2-ui`，并删除 T10C.1/T10C.2 本地和远端分支。没有删除项目文件、业务数据、公共题、课程、报名、媒体或 OSS 对象；历史提交继续由 main 与 PR 保留。
+- T13.1 依赖：总控 Agent 规划 PR #53、T03、T10B、T11C.2、T10C.1 和 T10C.2 均已合并；`docs/architecture/agent-platform-design.md` 已进入 main，既有 Python Agent 和测试基线可供协议审计。T13.1 不依赖 Qdrant、Neo4j、重排模型或真实聊天模型运行，这些属于 T13.2/T13.3 的后续前置。
+- 开工边界：T13.1 只创建并验证内部请求/响应、流事件、错误/终态、取消、`messageId`/`runId`、预算、可信上下文/私有状态、工具白名单和索引事件协议；不得实现动态 Agent、Java Agent Access、数据库迁移、Vue、Qdrant/Neo4j 索引或模型调用。当前已从干净且与远端一致的 main 创建 `codex/t13.1-agent-internal-contract`。
+- 数据：本次总控仅执行 Git 同步、分支/worktree 清理和文档状态更新，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、Qdrant、Neo4j，也没有创建表、Seed、伪数据、消息、缓存 Key、媒体或索引。
