@@ -11,7 +11,8 @@
 - `java-platform/learning-service`：报名、进度、题库、测评、作答和成绩；首期有意不再拆服务。
 - `java-platform/operation-service`：互动、热点、通知、审核和运营配置；只能通过 API/事件读取其他领域事实。
 - `java-platform/shared-kernel`：仅共享错误信封、Trace、事件信封等技术基础；禁止放业务实体、Mapper、Repository 或跨域 DTO。
-- `edu_agent_app`：现有 Python 数学智能体，负责检索、推理和讲解；不得直连或写入 Java 业务数据库。不要在平台任务中重新实现它。
+- `java-platform/agent-access-service`（T14.1 新增）：独立 AI 会话、消息、运行、记忆、额度和审计事实；经领域 API 获取授权上下文，代理 HTTP 流，不接 OSS SDK、不跨服务查表。此新增服务不拆走 Learning 既有领域。
+- `edu_agent_app`：T13 系列按 `docs/architecture/agent-platform-design.md` 改造现有 Python 入口为动态多角色数学 Agent，并提供独立索引 Worker 启动模式；不得直连 Java MySQL 或接 OSS SDK。取消旧固定认知诊断/解题图，新方案使用 Qdrant 与 Neo4j 派生索引，不在其他平台任务重复实现 Agent。
 - `web-apps/apps/*`：学生、教师、管理三个独立应用；共享技术包位于 `web-apps/packages/*`，禁止共享带角色业务判断的整页组件。
 - `docs/api/openapi.yaml` 是外部 REST API 字段的唯一事实来源；`docs/events/*` 是事件事实来源。
 - `docs/frontend/page-specs.md` 是三端路由、页面职责、访问能力、页面状态和 Txx 归属的唯一事实来源；功能任务不得自行合并页面职责或发明平行路由。
@@ -60,7 +61,7 @@ pnpm.cmd --dir web-apps run mock:api
 ## 前端页面与产品边界规则
 
 1. 涉及前端页面、路由、导航、跨应用跳转或权限表现的任务，开始前必须完整阅读 `docs/frontend/page-specs.md`。如需新增、删除或改变页面职责，先由总控任务更新页面规格和 backlog；功能任务发现缺口时停止扩展并报告，不得自行改写全局信息架构。
-2. `/courses/:courseId` 是公共课程详情与学习决策页，`/learn/:courseId/:lessonId` 是受保护课程学习页，`/my-learning` 是学习记录入口；禁止为了阶段演示把正式播放器、进度、作答或 AI 会话重新塞回课程详情。
+2. `/courses/:courseId` 是公共课程详情与学习决策页，也是本课程练习入口所在页；`/learn/:courseId/:lessonId` 是受保护课程学习页，`/my-learning` 是学习记录入口。顶部“题库”只展示无课程归属的公共题目/自主练习；课程练习须限定具体课程。AI 只在独立页面和普通自主练习悬浮窗展示，课程播放器、HOMEWORK/EXAM 不加 AI 入口；不得把正式播放器、进度或作答器塞回课程详情。
 3. 公共课程中心对角色中立；学习空间按 `learning:access` 和领域访问事实授权，教学空间按 `teaching:access` 与所有权授权，管理空间按 `administration:access` 授权。角色和按钮隐藏不能替代服务端权限判断，教师账号可在后续按能力同时进入学习与教学空间。
 4. 未接通真实契约的功能不得用假数据、空成功页、无效按钮或永久 `PlaceholderPage` 冒充完成。阶段未实现时应隐藏入口，或只在确有产品价值时给出明确不可操作说明，并在 page specs、backlog 和交付文档中标记真实状态。
 5. 每个前端 Txx 只能实现页面规格分配给本任务的区域；后续任务应在稳定路由和布局内填充能力，不得重复创建“临时学习页”“临时管理页”或第二套登录/工作台导航。

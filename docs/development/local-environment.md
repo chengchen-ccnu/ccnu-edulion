@@ -1,5 +1,24 @@
 # Local development environment
 
+## 2026-09-08 Agent 新架构前置（计划，未安装/实施）
+
+目标架构见 [Agent 重设计](../architecture/agent-platform-design.md)。旧 Python 代码仍加载 FAISS；新 T13 系列改为 Qdrant、Neo4j 派生图和独立 Index Worker。不能把旧启动条件或已有 8 项测试当作新架构验收。
+
+| 组件 | 已取得证据 | 后续要求 |
+|---|---|---|
+| Java Agent Access | 当前 Maven 模块中尚不存在 | T14.1 新增服务/Schema，建议 local 8086，实施时检查端口再落配置 |
+| bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 文件/768 维配置已核对，未实际推理 | 复用 BGE_MODEL_PATH，T13.2 实测 CPU/GPU 与中文效果 |
+| bge-reranker-base | 2026-09-08 目标目录不存在 | 下载到 `I:\大模型学习\edu_agent\bge-reranker-base`，实现时加 RERANKER_MODEL_PATH；不重复存多个等价权重，不入 Git |
+| Qdrant | 尚未取得安装/健康证据 | T13.2 单节点持久卷，默认 HTTP 6333/gRPC 6334；核验 BM25 多语言分词/客户端版本，不用云端 Embedding |
+| Neo4j | 前次检查 Community 5.26.19 Windows 服务运行，127.0.0.1:7687/7474 可达 | 尚未认证查询图数据；通过受控凭据加载验证，不能沿用旧源码硬编码密码 |
+| MySQL/Redis/RabbitMQ | 平台既有环境与安全加载脚本存在 | 对应任务再核验专用 Schema、key/队列与最小权限；本轮不建库 |
+| Chat/Vision | 沿用供应商配置，未验证新多模态调用 | CHAT_MODEL_NAME/VISION_MODEL_NAME 可同模型；秘密安全注入，有限时限/预算 |
+| Media | 复用既有平台链路 | T14.1 补 AI 图片 owner/引用/短期读取，Python 不接 OSS SDK |
+
+地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。新配置示例与加载脚本由实施任务更新；本次不编辑 local.env、凭据或系统服务。既有知识事实已在 T10B Java MySQL 中建立，初始索引从分页内部 API 重建，不再次导入全量原题库。
+索引 Worker 与在线 Agent 独立启动并限制资源，本地批量任务错峰；图故障跳过前置增强，检索故障按授权边界降级。新方案不要求 PostgreSQL、Milvus、Elasticsearch、Kubernetes 或另一套 OSS 客户端。
+
+
 T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储使用阿里云 OSS，消息队列由 [ADR-0005](../adr/0005-rabbitmq-messaging.md) 统一为 RabbitMQ。T07 已实现 `media-service` 的 OSS、RabbitMQ 和 FFmpeg 链路；本地基础构建仍不依赖 Docker 或外部服务。
 
 ## 配置约定
