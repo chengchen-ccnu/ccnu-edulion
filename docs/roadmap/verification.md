@@ -969,11 +969,11 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-08 T10C.2 顶部题库与课程练习入口前端
 
-- 基线/状态：T10C.1 PR #54 已合并，最新 origin/main 为 `b132ff0`；独立 `codex/t10c2-question-bank-course-practice-ui` 完成实现、自动化、隔离浏览器及真实 Gateway/数据库/OSS 验收，实现提交 `0b0f06a` 已推送并创建草稿 PR #55。固定 5173 Origin 的 OSS 浏览器题图已通过；真实 NOT_OPEN 探针尚缺，PR 继续 Draft，不自动合并。
+- 基线/状态：T10C.1 PR #54 已合并，最新 origin/main 为 `b132ff0`；独立 `codex/t10c2-question-bank-course-practice-ui` 完成实现、自动化、隔离浏览器及真实 Gateway/数据库/OSS 验收，实现提交 `0b0f06a` 已推送至 PR #55。固定 5173 Origin 的 OSS 浏览器题图和真实 NOT_OPEN 探针均通过，PR 满足 Ready 条件，不自动合并。
 - 入口契约：第四槽“题库”仅消费公共 SYSTEM 列表/安全详情与根题媒体授权；按 URL 恢复学段/年级/题型/难度/页码。具体课程按钮进入 `/learn/:courseId/tasks?type=PRACTICE`，服务端过滤；默认作业/考试保持原路由。旧 `/practice/:assessmentId` 先取 entry 安全归属再跳课程，不采信查询中的 courseId。
 - 状态/安全：首次失败不报空；切课/任务类型清除旧摘要；同范围失败保留已加载内容；未开放任务不可开始。组合子题/图片/附件复用授权与安全渲染，晚到响应不更新离开页，释放 Blob URL。不新增 DTO、迁移或评分流程，公共单题提交/自主组题仍无契约并隐藏操作。
 - 实际检查：全量 typecheck 通过；Vitest 43 文件/294 项通过（含 17 项组件行为）；三端 build 通过，既有 chunk 警告保留；生成客户端无差异、diff --check 通过。隔离 Chrome 固定响应在 1440×1000、820×1100、390×844 验证分页刷新、键盘、组合图、课程未开放、旧链接及匿名深链，JS 错误与页面横向溢出均为 0。
-- 证据边界：真实联调已覆盖公共图片授权、浏览器 Blob 题图、课程练习开始/提交/结果及 HOMEWORK/EXAM 公布回归；开发库没有 NOT_OPEN 实例，不能把组件自动化算作该项真实环境通过。PR 保持待验收，不能宣布产品完成。
+- 证据边界：真实联调已覆盖公共图片授权、浏览器 Blob 题图、课程练习开始/提交/结果、NOT_OPEN 安全详情/开始拒绝及 HOMEWORK/EXAM 公布回归；最终结论不依赖固定响应或组件自动化替代真实 HTTP。
 - 数据/注释：开发库原有 PRACTICE=0，本轮用固定、幂等、可精确清理 Fixture 临时创建一场课程练习；提交后 CLEANUP/REPORT 为 0，并精确删除本轮 Media 授权审计与 nonce。没有创建 Schema/表/迁移，没有重导或清库。新页面/API/权限投影/取消、媒体清理和 Fixture 均有中文职责注释，生成代码未手工修改。详见 [独立交付文档](../delivery/T10C.2-question-bank-course-practice-ui.md)。
 
 ### 真实 Gateway、数据库与 OSS 最终验收补充
@@ -982,7 +982,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 含图 ACTIVE SYSTEM 样本的领域授权为 201，OSS 直接 GET 为 200/11,040 字节 PNG；3 秒短链在等待 15 秒后为 403。非绑定 mediaId、不可见题和学习者通用媒体授权分别安全返回 404 `QUESTION.NOT_FOUND`/`MEDIA.NOT_FOUND`，均取得 traceId。
 - CORS 纠偏复验：首次把 student-web 临时启动在 5188，偏离仓库固定 5173 Origin 和已有 OSS CORS，所得 `net::ERR_FAILED` 不能记为产品阻断。保留已有 5173 Vite，通过验收浏览器上下文加载本分支资产并保持页面 Origin 为 `http://localhost:5173` 后，真实 OSS 题图成功显示，DOM 使用 `blob:`；站内离开详情后 `createObjectURL=1`、`revokeObjectURL=1`，无 OSS CORS 错误。无需新增 5188 CORS。
 - 开发库 PRACTICE 原为 0；安全 Fixture 在 `edu_platform_learning_dev` 固定创建一场一题、一参与人的课程练习。指定课程只返回该 PRACTICE，常规入口只返回既有 HOMEWORK/EXAM 各一场；真实开始、草稿保存、提交、结果及旧链接归属跳转通过。结果为 SUBMITTED、gradeVisible=false、answerVisible=true。未认证 401，跨课程 404；既有 HOMEWORK/EXAM 结果仍 gradeVisible=false、answerVisible=false，无 score/答案/解析泄漏。
-- 当前真实 HOMEWORK/EXAM 均为 CLOSED，开发库没有 NOT_OPEN 样本；本轮没有扩大 Fixture 创建额外正式任务，因此 NOT_OPEN 仍需补真实 HTTP 验证。离页观察到授权/OSS 请求 ERR_ABORTED；固定 5173 Origin 的 Blob 创建/撤销已有真实浏览器证据。
-- 清理：Fixture CLEANUP/REPORT 确认 assessment/attempt/answer/wrong occurrence 全为 0；首次验收按明确 ID 删除 Media 13 条 access grant audit 和 5 条 nonce，5173 纠偏复验再按固定 actor/mediaId/时间边界删除 6 条 audit 和 6 条 nonce，两次残留均为 0。公共题库、课程、报名、HOMEWORK/EXAM、媒体资产/绑定及 OSS 对象均保留。隔离 18080～18084、5188 已释放，用户原有 5173/5174 进程未停止。
+- NOT_OPEN：既有 HOMEWORK/EXAM 均为 CLOSED，因此 Fixture 另建一场未来一天开放的固定 HOMEWORK 探针，不修改原任务。默认课程列表返回 `NOT_OPEN`；详情 200 且 questions 为空、description 为空；开始返回 409 `LEARNING.ASSESSMENT_NOT_OPEN`，traceId `96e193057b204036a7f87549aae8916e`。PRACTICE 筛选仍只返回本课练习。
+- 清理：Fixture CLEANUP/REPORT 确认 PRACTICE、NOT_OPEN HOMEWORK、attempt、answer、wrong occurrence 全为 0；首次验收按明确 ID 删除 Media 13 条 access grant audit 和 5 条 nonce，5173 纠偏复验删除 6 条 audit/6 条 nonce，NOT_OPEN/课程回归再删除 5 条 audit/5 条 nonce，三次残留均为 0。公共题库、课程、报名、原 HOMEWORK/EXAM、媒体资产/绑定及 OSS 对象均保留。隔离 18080～18084、5188 已释放，用户原有 5173/5174 进程未停止。
 - 自动化复核：全量 Java `clean verify` 的 8 个 Reactor 模块全部成功、0 失败/错误；安全 Fixture 的独立 `Report` 入口再次通过并报告 assessment/attempt/answer 均为 0。前端 typecheck、43 文件/294 项测试和三端 build 继续通过。
-- 结论：PR #55 继续 Draft，不满足 Ready 条件；只剩补 NOT_OPEN 真实探针。既有 5173/5174 OSS CORS 足够，无需新增 5188。完整状态码、traceId、样本和启动/清理说明见 [交付文档](../delivery/T10C.2-question-bank-course-practice-ui.md)。
+- 结论：T10C.2 真实最终验收全部通过，PR #55 可标记 Ready；既有 5173/5174 OSS CORS 足够，无需新增 5188。完整状态码、traceId、样本和启动/清理说明见 [交付文档](../delivery/T10C.2-question-bank-course-practice-ui.md)。
