@@ -18,7 +18,9 @@ import HelpPage from "./views/HelpPage.vue";
 import MyLearningPage from "./views/MyLearningPage.vue";
 import PlaceholderPage from "./views/PlaceholderPage.vue";
 import PracticeAttemptPage from "./views/PracticeAttemptPage.vue";
-import PracticeCenterPage from "./views/PracticeCenterPage.vue";
+import QuestionBankPage from "./views/QuestionBankPage.vue";
+import SystemQuestionDetailPage from "./views/SystemQuestionDetailPage.vue";
+import LegacyPracticeRedirectPage from "./views/LegacyPracticeRedirectPage.vue";
 import AttemptResultPage from "./views/AttemptResultPage.vue";
 import WrongQuestionsPage from "./views/WrongQuestionsPage.vue";
 import CourseTasksPage from "./views/CourseTasksPage.vue";
@@ -42,9 +44,11 @@ export const studentRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/learn/:courseId/:lessonId", name: "course-learning", component: CourseLearningPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
-  { path: "/practice", name: "practice", component: PracticeCenterPage,
+  { path: "/practice", name: "practice", component: QuestionBankPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
-  { path: "/practice/:assessmentId", name: "practice-attempt", component: PracticeAttemptPage,
+  { path: "/practice/questions/:questionId", name: "practice-question", component: SystemQuestionDetailPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/practice/:assessmentId", name: "practice-legacy-entry", component: LegacyPracticeRedirectPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/attempt/:attemptId/result", name: "attempt-result", component: AttemptResultPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },

@@ -1,7 +1,7 @@
 import { createGatewayClient, gatewayRequestError } from "@edu/api-client";
 import type {
   AttemptDraft, AttemptResult, GatewayClient, LearnerAssessment, LearnerAssessmentPage,
-  LearnerCourseTask, LearnerCourseTaskPage, GetLearnerCourseTaskQuery, ListLearnerCourseTasksQuery,
+  LearnerCourseTask, LearnerCourseTaskPage, LearnerCourseTaskSummary, GetLearnerCourseTaskQuery, ListLearnerCourseTasksQuery,
   ListLearnerAssessmentsQuery, ListWrongQuestionsQuery, MediaAccessGrant, RedoWrongQuestionRequest,
   SaveAttemptDraftRequest, StartAttemptRequest, SubmitAttemptRequest, UpdateWrongQuestionMasteryRequest,
   WrongQuestion, WrongQuestionPage, WrongQuestionRedoResult
@@ -20,6 +20,7 @@ export interface StudentAssessmentApi {
   startCourseTask(courseId: string, assessmentId: string, body: StartAttemptRequest,
     signal?: AbortSignal): Promise<AttemptDraft>;
   courseTaskResult(courseId: string, assessmentId: string, signal?: AbortSignal): Promise<AttemptResult>;
+  assessmentEntry(assessmentId: string, signal?: AbortSignal): Promise<LearnerCourseTaskSummary>;
   start(assessmentId: string, body: StartAttemptRequest, signal?: AbortSignal): Promise<AttemptDraft>;
   draft(attemptId: string, signal?: AbortSignal): Promise<AttemptDraft>;
   save(attemptId: string, body: SaveAttemptDraftRequest, signal?: AbortSignal): Promise<AttemptDraft>;
@@ -72,6 +73,11 @@ export function createStudentAssessmentApi(store: AuthStore = authStore,
     courseTaskResult(courseId, assessmentId, signal) {
       return request(Authorization => client.GET("/api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result", {
         headers: { Authorization }, params: { path: { courseId, assessmentId } }, signal
+      }));
+    },
+    assessmentEntry(assessmentId, signal) {
+      return request(Authorization => client.GET("/api/v1/learning/assessments/{assessmentId}/entry", {
+        headers: { Authorization }, params: { path: { assessmentId } }, signal
       }));
     },
     start(assessmentId, body, signal) {

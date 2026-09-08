@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 课程作业/考试总览：只读取课程任务安全摘要，题目内容始终留在作答页的服务端门禁之后。
+ * 课程任务总览：URL 显式 type=PRACTICE 时只读取本课程练习，省略时保留作业/考试总览。
  * 输入是受保护路由中的 courseId 与 URL 分页；输出是服务端状态驱动的课程内导航。
  * 请求离页会中止，已有数据在部分失败或离线时保留，避免把失败误报为空列表。
  */
@@ -18,23 +18,30 @@ const data = ref<LearnerCourseTaskPage | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 let controller: AbortController | null = null;
+let loadedScope = "";
 
 const courseId = computed(() => String(route.params.courseId ?? ""));
 const page = computed(() => positive(route.query.page, 1));
 const size = computed(() => positive(route.query.size, 20));
+const isPractice = computed(() => route.query.type === "PRACTICE");
 
-watch(() => [route.params.courseId, route.query.page, route.query.size], load, { immediate: true });
+watch(() => [route.params.courseId, route.query.page, route.query.size, route.query.type], load, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
 
 async function load() {
   controller?.abort();
+  // 切课或切换任务类型时清除旧摘要，避免旧任务被展示在新的课程上下文。
+  const scope = `${courseId.value}:${isPractice.value}`;
+  if (scope !== loadedScope) data.value = null;
+  loadedScope = scope;
   const active = new AbortController();
   controller = active;
   loading.value = true;
   errorMessage.value = "";
   try {
-    data.value = await studentAssessmentApi.listCourseTasks(courseId.value,
-      { page: page.value, size: Math.min(100, size.value) }, active.signal);
+    const result = await studentAssessmentApi.listCourseTasks(courseId.value,
+      { page: page.value, size: Math.min(100, size.value), type: isPractice.value ? "PRACTICE" : undefined }, active.signal);
+    if (!active.signal.aborted) data.value = result;
   } catch (error) {
     if (!active.signal.aborted) errorMessage.value = messageFor(error);
   } finally {
@@ -43,14 +50,15 @@ async function load() {
 }
 
 async function openTask(task: LearnerCourseTaskSummary) {
-  if (task.type !== "HOMEWORK" && task.type !== "EXAM") return;
   if (task.finalAttempt && task.finalAttempt.status !== "DRAFT"
       && (task.attemptsUsed >= task.maxAttempts || task.timeState === "CLOSED")) {
-    await router.push(`/learn/${courseId.value}/tasks/${task.id}/result`);
+    await router.push({ path: `/learn/${courseId.value}/tasks/${task.id}/result`,
+      query: task.type === "PRACTICE" ? { type: "PRACTICE" } : undefined });
     return;
   }
   if (task.timeState === "OPEN" || task.timeState === "LATE_WINDOW") {
-    await router.push(`/learn/${courseId.value}/tasks/${task.id}`);
+    await router.push({ path: `/learn/${courseId.value}/tasks/${task.id}`,
+      query: task.type === "PRACTICE" ? { type: "PRACTICE" } : undefined });
   }
 }
 
@@ -67,7 +75,8 @@ function taskActionLabel(task: LearnerCourseTaskSummary) {
 
 function canOpen(task: LearnerCourseTaskSummary) {
   return (task.timeState === "OPEN" || task.timeState === "LATE_WINDOW")
-    || Boolean(task.finalAttempt && task.finalAttempt.status !== "DRAFT");
+    || Boolean(task.finalAttempt && task.finalAttempt.status !== "DRAFT"
+      && (task.attemptsUsed >= task.maxAttempts || task.timeState === "CLOSED"));
 }
 
 function setPage(nextPage: number) {
@@ -83,7 +92,9 @@ const submissionLabels: Record<AssessmentSubmissionStatus, string> = {
 const gradingLabels: Record<AssessmentGradingStatus, string> = {
   NOT_REQUIRED: "无需批改", PENDING: "处理中/待批", PARTIALLY_GRADED: "部分批改", GRADED: "已批改"
 };
-function typeLabel(type: LearnerCourseTaskSummary["type"]) { return type === "HOMEWORK" ? "课程作业" : "课程考试"; }
+function typeLabel(type: LearnerCourseTaskSummary["type"]) {
+  return type === "PRACTICE" ? "课程练习" : type === "HOMEWORK" ? "课程作业" : "课程考试";
+}
 function lessonLabel(task: LearnerCourseTaskSummary) { return task.lessonId ? "课时任务" : "课程级任务"; }
 function dateLabel(value: string | null) { return value ? new Date(value).toLocaleString("zh-CN") : "未设置"; }
 function positive(value: unknown, fallback: number) {
@@ -105,8 +116,8 @@ function messageFor(error: unknown) {
 <template>
   <main class="course-tasks-page">
     <header class="course-tasks-heading">
-      <div><span class="section-kicker">COURSE TASKS</span><h2>课程作业与考试</h2>
-        <p>仅展示本人应交的作业与考试；开放时间、截止裁决和可执行操作均以服务端返回为准。</p></div>
+      <div><span class="section-kicker">COURSE TASKS</span><h2>{{ isPractice ? "课程练习" : "课程作业与考试" }}</h2>
+        <p>{{ isPractice ? "只展示教师为当前课程发布且本人有权访问的练习。" : "仅展示本人应交的作业与考试；开放时间、截止裁决和可执行操作均以服务端返回为准。" }}</p></div>
       <RouterLink class="button button--quiet" :to="`/courses/${courseId}`">返回课程详情</RouterLink>
     </header>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }} <button type="button" @click="load">重试</button></p>
@@ -130,7 +141,8 @@ function messageFor(error: unknown) {
           <button class="button button--primary" type="button" :disabled="!canOpen(task)" @click="openTask(task)">{{ taskActionLabel(task) }}</button></footer>
       </article>
     </section>
-    <section v-else-if="!loading" class="practice-empty"><h3>当前没有可展示的课程任务</h3><p>课程级待开放摘要和本人应交任务由服务端按课程访问事实返回。</p></section>
+    <section v-else-if="!loading && !errorMessage" class="practice-empty"><h3>{{ isPractice ? "当前课程没有可展示的练习" : "当前没有可展示的课程任务" }}</h3>
+      <p>{{ isPractice ? "教师发布本课程的练习后，你可以在这里查看。" : "课程级待开放摘要和本人应交任务由服务端按课程访问事实返回。" }}</p></section>
     <p v-if="data" class="server-time">服务端时间：{{ new Date(data.serverTime).toLocaleString('zh-CN') }}</p>
     <nav v-if="data && data.total > data.size" class="pagination" aria-label="课程任务分页">
       <button type="button" :disabled="data.page <= 1" @click="setPage(data.page - 1)">上一页</button>

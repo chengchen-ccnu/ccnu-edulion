@@ -21,6 +21,10 @@ const isCourseTask = computed(() => route.name === "course-task-result");
 const questionIndex = computed(() => clampQuestionIndex(route.query.question,
   result.value?.assessment.questions.length ?? 0));
 const disclosure = computed(() => result.value ? resultDisclosure(result.value) : null);
+const courseTaskBack = computed(() => {
+  const path = `/learn/${String(route.params.courseId ?? "")}/tasks`;
+  return result.value?.assessment.type === "PRACTICE" || route.query.type === "PRACTICE" ? `${path}?type=PRACTICE` : path;
+});
 const visibleQuestions = computed(() => !result.value ? [] : view.value === "single"
   ? [result.value.assessment.questions[questionIndex.value]].filter(Boolean) : result.value.assessment.questions);
 
@@ -68,7 +72,7 @@ function messageFor(error: unknown) {
     <section v-else-if="errorMessage" class="practice-empty" role="alert"><h2>无法查看结果</h2><p>{{ errorMessage }}</p>
       <button class="button button--quiet" type="button" @click="load">重新加载</button></section>
     <template v-else-if="result">
-      <header class="result-heading"><div><RouterLink :to="isCourseTask ? `/learn/${route.params.courseId}/tasks` : '/practice'">← {{ isCourseTask ? '返回课程任务' : '返回练习中心' }}</RouterLink><h2>{{ result.assessment.title }}</h2>
+      <header class="result-heading"><div><RouterLink :to="isCourseTask ? courseTaskBack : '/practice'">← {{ isCourseTask ? (result.assessment.type === 'PRACTICE' ? '返回课程练习' : '返回课程任务') : '返回题库' }}</RouterLink><h2>{{ result.assessment.title }}</h2>
         <p>提交于 {{ result.submittedAt ? new Date(result.submittedAt).toLocaleString('zh-CN') : '提交时间同步中' }}</p></div>
         <div v-if="disclosure?.showTotalScore" class="result-score"><span>最新成绩</span><strong>{{ result.score }} / {{ result.totalPoints }}</strong>
           <small v-if="result.gradeUpdatedAt">最后更新 {{ new Date(result.gradeUpdatedAt).toLocaleString('zh-CN') }}</small></div>

@@ -97,7 +97,7 @@ function messageFor(error: unknown) {
 </script>
 
 <template>
-  <main class="wrong-page"><header class="practice-heading"><div><RouterLink to="/practice">← 返回练习中心</RouterLink><h2>错题本</h2>
+  <main class="wrong-page"><header class="practice-heading"><div><RouterLink to="/practice">← 返回题库</RouterLink><h2>错题本</h2>
     <p>重做不会回到原测评，也不会修改原作答。</p></div></header>
     <form class="practice-filters" @submit.prevent><label>课程 ID<input :value="route.query.courseId ?? ''" placeholder="可选 UUID"
       @change="setQuery('courseId', ($event.target as HTMLInputElement).value.trim())"></label><button type="button" @click="load">重新载入</button></form>

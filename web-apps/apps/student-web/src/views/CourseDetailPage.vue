@@ -235,8 +235,12 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           先试看课程
         </RouterLink>
         <p v-if="actionMessage" class="feedback feedback--success" role="status">{{ actionMessage }}</p>
-        <RouterLink v-if="enrollment && hasLearningAccess" class="course-task-entry"
-          :to="`/learn/${course.id}/tasks`">课程作业与考试<span aria-hidden="true">→</span></RouterLink>
+        <nav v-if="enrollment && hasLearningAccess" class="course-task-entries" aria-label="课程任务入口">
+          <RouterLink class="course-task-entry" :to="{ path: `/learn/${course.id}/tasks`, query: { type: 'PRACTICE' } }">
+            课程练习<span aria-hidden="true">→</span></RouterLink>
+          <RouterLink class="course-task-entry" :to="`/learn/${course.id}/tasks`">
+            课程作业与考试<span aria-hidden="true">→</span></RouterLink>
+        </nav>
         <p v-if="personalizationError" class="feedback feedback--warning" role="alert">
           {{ personalizationError }}
           <button type="button" @click="loadPersonalization">重试</button>
@@ -282,7 +286,7 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
           </li>
         </ol>
         <div v-else class="empty-inline">该课程暂未提供目录。</div>
-        <p class="scope-note">目录仅预览当前发布版本；报名、进度与继续学习来自 Learning，正式视频仍只在独立学习页打开。作业与考试需报名后从课程入口进入。</p>
+        <p class="scope-note">目录仅预览当前发布版本；报名、进度与继续学习来自 Learning，正式视频仍只在独立学习页打开。课程练习、作业与考试需报名后从本课程入口进入。</p>
       </section>
     </div>
   </template>

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildStudentNavigation } from "./navigation";
 
-const labels = ["首页", "课程中心", "我的学习", "练习中心", "AI 答疑"];
+const labels = ["首页", "课程中心", "我的学习", "题库", "AI 答疑"];
 
 describe("student fixed navigation", () => {
   it.each(["login", "courses", "course-detail", "course-learning"])(
@@ -10,7 +10,7 @@ describe("student fixed navigation", () => {
         expect(buildStudentNavigation(routeName).map(item => item.label)).toEqual(labels);
       });
 
-  it("enables course center, my learning and the frozen practice slot while keeping AI inert", () => {
+  it("enables course center, my learning and the frozen question-bank slot while keeping AI inert", () => {
     const items = buildStudentNavigation("courses");
 
     expect(items.filter(item => item.state === "enabled").map(item => item.id))
@@ -18,7 +18,7 @@ describe("student fixed navigation", () => {
     expect(items.filter(item => item.state !== "enabled").every(item => item.href === undefined)).toBe(true);
   });
 
-  it.each(["practice", "practice-attempt", "attempt-result", "wrong-questions"])(
+  it.each(["practice", "practice-question", "practice-legacy-entry", "attempt-result", "wrong-questions"])(
     "keeps %s in the practice-center highlight group", routeName => {
       const items = buildStudentNavigation(routeName);
       expect(items.filter(item => item.current).map(item => item.id)).toEqual(["practice-center"]);
