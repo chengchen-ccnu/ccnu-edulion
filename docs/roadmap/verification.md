@@ -969,7 +969,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-08 T10C.2 顶部题库与课程练习入口前端
 
-- 基线/状态：T10C.1 PR #54 已合并，最新 origin/main 为 `b132ff0`；独立 `codex/t10c2-question-bank-course-practice-ui` 完成实现及自动化/隔离浏览器验证，真实 Gateway 登录与现有数据联调尚待验收，不自动合并。
+- 基线/状态：T10C.1 PR #54 已合并，最新 origin/main 为 `b132ff0`；独立 `codex/t10c2-question-bank-course-practice-ui` 完成实现及自动化/隔离浏览器验证，实现提交 `0b0f06a` 已推送并创建草稿 PR #55；真实 Gateway 登录与现有数据联调尚待验收，不自动合并。
 - 入口契约：第四槽“题库”仅消费公共 SYSTEM 列表/安全详情与根题媒体授权；按 URL 恢复学段/年级/题型/难度/页码。具体课程按钮进入 `/learn/:courseId/tasks?type=PRACTICE`，服务端过滤；默认作业/考试保持原路由。旧 `/practice/:assessmentId` 先取 entry 安全归属再跳课程，不采信查询中的 courseId。
 - 状态/安全：首次失败不报空；切课/任务类型清除旧摘要；同范围失败保留已加载内容；未开放任务不可开始。组合子题/图片/附件复用授权与安全渲染，晚到响应不更新离开页，释放 Blob URL。不新增 DTO、迁移或评分流程，公共单题提交/自主组题仍无契约并隐藏操作。
 - 实际检查：全量 typecheck 通过；Vitest 43 文件/294 项通过（含 17 项组件行为）；三端 build 通过，既有 chunk 警告保留；生成客户端无差异、diff --check 通过。隔离 Chrome 固定响应在 1440×1000、820×1100、390×844 验证分页刷新、键盘、组合图、课程未开放、旧链接及匿名深链，JS 错误与页面横向溢出均为 0。
