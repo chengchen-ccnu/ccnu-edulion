@@ -3,6 +3,8 @@ package com.eduplatform.learning.web;
 import com.eduplatform.learning.domain.QuestionModels;
 import com.eduplatform.learning.persistence.QuestionRepository;
 import com.eduplatform.learning.service.QuestionService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -12,6 +14,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.http.ResponseEntity;
 
 /** 已登录学生和教师的公共系统题只读边界；响应永不包含答案、解析或教师私有题。 */
 @RestController
@@ -22,7 +27,7 @@ public class SystemQuestionController {
 
     public SystemQuestionController(QuestionService questions) { this.questions = questions; }
 
-    /** 分页返回 ACTIVE SYSTEM 题安全摘要；身份只用于确认已登录。 */
+    /** 分页返回 ACTIVE SYSTEM 题安全摘要；要求学习能力，与 Gateway 边界一致。 */
     @GetMapping("/api/v1/learning/system-questions")
     public QuestionDtos.SystemQuestionPage list(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
@@ -34,7 +39,7 @@ public class SystemQuestionController {
             @RequestParam(required = false) QuestionModels.Type type,
             @RequestParam(required = false) QuestionModels.Difficulty difficulty,
             @RequestParam(required = false) String knowledgePointId) {
-        LearningIdentity.authenticated(userId, roles, permissions);
+        LearningIdentity.learner(userId, roles, permissions);
         return questions.listSystem(page, size, stage, grade, type, difficulty, knowledgePointId);
     }
 
@@ -44,7 +49,20 @@ public class SystemQuestionController {
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable String questionId) {
-        LearningIdentity.authenticated(userId, roles, permissions);
+        LearningIdentity.learner(userId, roles, permissions);
         return questions.getSystem(questionId);
+    }
+
+    /** 当前题目与正文绑定经 Learning 裁决后换取短期媒体授权，浏览器不能声明媒体公开或答案已公布。 */
+    @PostMapping("/api/v1/learning/system-questions/{questionId}/media/{mediaId}/access-grants")
+    public ResponseEntity<LearningDtos.MediaAccessGrant> media(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable String questionId, @PathVariable String mediaId,
+            @Valid @RequestBody LearningDtos.CreateAssessmentMediaAccessGrantRequest request,
+            HttpServletRequest servlet) {
+        return ResponseEntity.status(201).body(questions.systemMediaAccess(
+                LearningIdentity.learner(userId, roles, permissions).userId(), questionId, mediaId, request,
+                (String) servlet.getAttribute(com.eduplatform.learning.config.TraceFilter.ATTRIBUTE)));
     }
 }

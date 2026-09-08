@@ -1012,7 +1012,7 @@ export interface paths {
         };
         /**
          * List ACTIVE public system questions for an authenticated learner
-         * @description Returns only SYSTEM and ACTIVE questions. Answers and analyses are never present in this learner projection.
+         * @description Requires learning:access. Returns only ACTIVE SYSTEM root questions without course ownership. Answers, analyses and answer-only media are never present. This read-only API does not create a single-question attempt or an autonomous assessment.
          */
         get: operations["listSystemQuestions"];
         put?: never;
@@ -1030,10 +1030,33 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one ACTIVE system question without answers or analysis */
+        /**
+         * Get one ACTIVE system question without answers or analysis
+         * @description Requires learning:access and current ACTIVE SYSTEM root visibility. Ordered children remain in the root projection. Media contains only safe content bindings; request each asset through createSystemQuestionMediaAccessGrant. No single-question submission or grading operation exists.
+         */
         get: operations["getSystemQuestion"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/system-questions/{questionId}/media/{mediaId}/access-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize one visible public question content asset
+         * @description Requires learning:access. Learning revalidates the ACTIVE SYSTEM root and current parent or ordered child content binding, rejecting answer-only, archived, private, unrelated and old-version assets with 404. Media validates the one-time service token, exact purpose and READY state. No answer publication or attempt is created. ORIGINAL only; images/audio use INLINE and attachments use ATTACHMENT. Version 0.22.0 security migration replaces generic SYSTEM grants for learners; existing signed URLs expire at their original TTL.
+         */
+        post: operations["createSystemQuestionMediaAccessGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1648,6 +1671,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/learning/assessments/{assessmentId}/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a legacy assessment link to its authorized course task
+         * @description Requires learning:access. Resolves courseId from persisted assessment and validates published Course owner facts, ACTIVE enrollment, PUBLISHED status and matching COURSE assignment before returning a safe LearnerCourseTaskSummary. Supports closed course PRACTICE without reopening it or returning questions. NOT_OPEN lesson tasks without current lesson context remain 404; course-level summaries reveal no questions or description. No client courseId, URL or autonomous scope is inferred. Legacy lists remain compatibility APIs and must not be consumed as a public question bank.
+         */
+        get: operations["getLearnerAssessmentEntry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/learning/courses/{courseId}/tasks": {
         parameters: {
             query?: never;
@@ -1656,8 +1699,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List enrolled learner HOMEWORK and EXAM tasks
-         * @description Returns published course tasks visible to the enrolled learner. Course-level NOT_OPEN tasks expose only safe metadata; lesson-level NOT_OPEN tasks require the optional currentLessonId to match. PRACTICE never enters this contract.
+         * List enrolled learner tasks in one course
+         * @description Requires current published Course facts, ACTIVE enrollment and matching COURSE assignment. Optional type filters on the server before pagination; omitted type preserves HOMEWORK/EXAM only. type=PRACTICE lists only this course's published teacher practices, never autonomous or other-course practice. Course-level NOT_OPEN formal tasks expose safe metadata only; lesson-level NOT_OPEN tasks require matching currentLessonId. PRACTICE retains its existing no-schedule, one-submission rules. Reads do not create participants or attempts.
          */
         get: operations["listLearnerCourseTasks"];
         put?: never;
@@ -1675,7 +1718,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one safe learner course task */
+        /**
+         * Get one safe learner course task
+         * @description Includes course-associated PRACTICE. Course ownership, publication, assignment and ACTIVE enrollment are revalidated server-side; mismatched assessmentId is 404. A NOT_OPEN task never returns questions or its description.
+         */
         get: operations["getLearnerCourseTask"];
         put?: never;
         post?: never;
@@ -2149,7 +2195,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a short-lived, object-level read grant
-         * @description The uploader may preview an owned READY asset. HLS grants point to an expiring rewritten playlist whose segment URLs expire with the grant. The client cannot assert course, question, AI-session or review visibility, and signed URLs must never be persisted.
+         * @description Version 0.22.0 security correction. Direct grants require asset ownership, including for SYSTEM assets. Other users use the Learning public-question or assessment domain grant, which validates current content and answer publication. Existing short-lived URLs expire at their original TTL; no asset or course practice data is deleted.
          */
         post: operations["createMediaAccessGrant"];
         delete?: never;
@@ -4076,7 +4122,7 @@ export interface components {
             lessonId: string | null;
             title: string;
             /** @enum {string} */
-            type: "HOMEWORK" | "EXAM";
+            type: "PRACTICE" | "HOMEWORK" | "EXAM";
             timeState: components["schemas"]["AssessmentTimeState"];
             submissionStatus: components["schemas"]["AssessmentSubmissionStatus"];
             gradingStatus: components["schemas"]["AssessmentGradingStatus"];
@@ -4111,7 +4157,7 @@ export interface components {
             lessonId: string | null;
             title: string;
             /** @enum {string} */
-            type: "HOMEWORK" | "EXAM";
+            type: "PRACTICE" | "HOMEWORK" | "EXAM";
             timeState: components["schemas"]["AssessmentTimeState"];
             submissionStatus: components["schemas"]["AssessmentSubmissionStatus"];
             gradingStatus: components["schemas"]["AssessmentGradingStatus"];
@@ -4236,7 +4282,7 @@ export interface components {
         /** @enum {string} */
         MediaProcessingStatus: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
         /**
-         * @description SYSTEM assets are administrator-owned and readable by authenticated users; TEACHER assets remain owner-only.
+         * @description SYSTEM assets are administrator-owned. Authenticated metadata reads remain available, but direct content grants require ownership; other users require a domain-authorized content grant. TEACHER assets remain owner-only outside an authorized domain grant.
          * @enum {string}
          */
         MediaAssetScope: "SYSTEM" | "TEACHER";
@@ -6591,6 +6637,40 @@ export interface operations {
             404: components["responses"]["QuestionNotFound"];
         };
     };
+    createSystemQuestionMediaAccessGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["QuestionId"];
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAssessmentMediaAccessGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived authorized content asset. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAccessGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["QuestionNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
     listTeacherQuestions: {
         parameters: {
             query?: {
@@ -7780,12 +7860,41 @@ export interface operations {
             503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
+    getLearnerAssessmentEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessmentId: components["parameters"]["AssessmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized course and task metadata; no question or answer content. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerCourseTaskSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
     listLearnerCourseTasks: {
         parameters: {
             query?: {
                 /** @description One-based page number. */
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
+                /** @description Omit for the existing HOMEWORK/EXAM overview; specify PRACTICE for the course practice entry. */
+                type?: components["schemas"]["AssessmentType"];
                 currentLessonId?: string | null;
             };
             header?: never;

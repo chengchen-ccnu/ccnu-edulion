@@ -43,7 +43,8 @@ import tools.jackson.databind.ObjectMapper;
  * 使用独立 H2 MySQL 模式验证 T11 事务、幂等、乱序、自动/人工评分与答案防泄漏。
  * 测试数据均为固定合成 UUID，不访问真实课程、RabbitMQ、媒体或用户数据。
  */
-@SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:learning_t11_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.datasource.url=jdbc:h2:mem:learning_t11_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
 @ActiveProfiles("test")
 class LearningAssessmentIntegrationTest {
     private static final String LEARNER = "00000000-0000-4000-8000-000000011001";
@@ -60,6 +61,7 @@ class LearningAssessmentIntegrationTest {
     @MockitoBean CourseFactsClient courses;
     @MockitoBean MediaClient media;
     @MockitoBean LearnerDirectoryClient directory;
+    @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
 
     @BeforeEach
     void reset() {
@@ -506,6 +508,7 @@ class LearningAssessmentIntegrationTest {
         service.enroll(LEARNER, COURSE, "trace-enroll-media");
         seedMediaAssessment();
         String mediaId = "00000000-0000-4000-8000-000000017901";
+        String answerMediaId = "00000000-0000-4000-8000-000000017902";
         var expected = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/private-image", java.util.Map.of(),
                 Instant.now().plusSeconds(30));
         when(media.issueAssessmentAccess(eq(mediaId), eq(LEARNER), eq("QUESTION_IMAGE"),
@@ -524,8 +527,16 @@ class LearningAssessmentIntegrationTest {
                 new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
                 "trace-other-media"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> service.assessmentMediaAccess(LEARNER, ASSESSMENT, answerMediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-answer-media-hidden"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
 
         service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        assertThatThrownBy(() -> service.assessmentMediaAccess(LEARNER, ASSESSMENT, answerMediaId,
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-answer-media-draft"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
         service.publication(TEACHER_AS_LEARNER, ASSESSMENT,
                 new LearningDtos.UpdatePublicationRequest(1, LearningDtos.AssessmentStatus.ARCHIVED), "trace-archive-media");
         jdbc.update("UPDATE enrollment SET status='CANCELED' WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
@@ -1080,6 +1091,122 @@ class LearningAssessmentIntegrationTest {
                 LearningDtos.AnswerPublicationPolicy.AFTER_ASSESSMENT_GRADED);
     }
 
+    @Test
+    /** 老课程练习没有名单仍可只读浏览；晚报名开始时补本人行，原单次提交与结果公布不变。 */
+    void coursePracticeReusesLegacyAttemptsWithoutWritingOnRead() {
+        seedPublishedAssessment(LearningDtos.AssessmentType.PRACTICE, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.AFTER_SUBMISSION);
+        jdbc.update("DELETE FROM assessment_participant WHERE assessment_id=?", ASSESSMENT);
+        service.enroll(LEARNER, COURSE, "trace-practice-late-enroll");
+        assertThat(service.learnerCourseTasks(LEARNER, COURSE, null, 1, 20, "trace-default").items()).isEmpty();
+        var page = service.learnerCourseTasks(LEARNER, COURSE, null, LearningDtos.AssessmentType.PRACTICE,
+                1, 1, "trace-practice");
+        assertThat(page.total()).isEqualTo(1);
+        assertThat(page.items()).singleElement().satisfies(item -> {
+            assertThat(item.courseId()).isEqualTo(COURSE);
+            assertThat(item.submissionStatus()).isEqualTo(LearningDtos.AssessmentSubmissionStatus.NOT_STARTED);
+        });
+        assertThat(service.learnerCourseTasks(LEARNER, COURSE, null, LearningDtos.AssessmentType.PRACTICE,
+                Integer.MAX_VALUE, 100, "trace-page").items()).isEmpty();
+        assertThat(service.learnerCourseTask(LEARNER, COURSE, ASSESSMENT, null, "trace-detail").questions()).hasSize(5);
+        assertThat(repository.participant(ASSESSMENT, LEARNER)).isEmpty();
+        var draft = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-start");
+        var resumed = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-resume");
+        assertThat(resumed.id()).isEqualTo(draft.id());
+        var result = service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), draft.revision(), completeFixtureAnswers()));
+        assertThat(result.answerVisible()).isTrue();
+        assertThat(result.gradeVisible()).isFalse();
+        // 模拟 V14 前已经提交但没有最终指针的旧记录，迁移读取只返回同一 attempt。
+        jdbc.update("DELETE FROM assessment_participant WHERE assessment_id=?", ASSESSMENT);
+        assertThat(service.learnerCourseTaskResult(LEARNER, COURSE, ASSESSMENT, "trace-old-result").attemptId()).isEqualTo(draft.id());
+        jdbc.update("UPDATE assessment SET close_status='CLOSED',settlement_status='COMPLETED' WHERE id=?", ASSESSMENT);
+        var entry = service.learnerAssessmentEntry(LEARNER, ASSESSMENT, "trace-old-entry");
+        assertThat(entry.timeState()).isEqualTo(LearningDtos.AssessmentTimeState.CLOSED);
+        assertThat(entry.finalAttempt().id()).isEqualTo(draft.id());
+        assertThat(repository.participant(ASSESSMENT, LEARNER)).isEmpty();
+        assertThatThrownBy(() -> service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-no-reopen"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.code()).isEqualTo("LEARNING.ASSESSMENT_CLOSED"));
+    }
+
+    @Test
+    /** 课程路径、真实 owner、发布、分配和报名逐项拒绝；不能靠 PRACTICE 枚举进入别课。 */
+    void coursePracticeEntryRejectsWrongCourseUnenrolledUnpublishedAndUnassigned() {
+        service.enroll(LEARNER, COURSE, "trace-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.PRACTICE, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.NEVER);
+        assertThatThrownBy(() -> service.learnerAssessmentEntry(OTHER, ASSESSMENT, "trace-other"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.code()).isEqualTo("LEARNING.ENROLLMENT_REQUIRED"));
+        String secondCourse = "00000000-0000-4000-8000-000000012002";
+        when(courses.requirePublished(eq(secondCourse), anyString())).thenReturn(new CourseFactsClient.CourseFact(
+                secondCourse, "v1", "PUBLIC", TEACHER_AS_LEARNER, Set.of()));
+        service.enroll(LEARNER, secondCourse, "trace-second-enroll");
+        assertThat(service.learnerCourseTasks(LEARNER, secondCourse, null, LearningDtos.AssessmentType.PRACTICE,
+                1, 20, "trace-second").items()).isEmpty();
+        assertThatThrownBy(() -> service.learnerCourseTask(LEARNER, secondCourse, ASSESSMENT, null, "trace-cross"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        for (String sql : List.of("UPDATE assessment SET status='DRAFT' WHERE id=?",
+                "UPDATE assessment SET status='ARCHIVED' WHERE id=?",
+                "UPDATE assessment SET status='PUBLISHED',owner_teacher_id='" + OTHER + "' WHERE id=?")) {
+            jdbc.update(sql, ASSESSMENT);
+            assertThatThrownBy(() -> service.learnerAssessmentEntry(LEARNER, ASSESSMENT, "trace-hidden"))
+                    .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        }
+        jdbc.update("UPDATE assessment SET owner_teacher_id=? WHERE id=?", TEACHER_AS_LEARNER, ASSESSMENT);
+        jdbc.update("DELETE FROM assessment_assignment WHERE assessment_id=?", ASSESSMENT);
+        assertThatThrownBy(() -> service.learnerAssessmentEntry(LEARNER, ASSESSMENT, "trace-no-assignment"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 未开放课程级摘要只返回安全元数据；未开放课时级任务要求当前真实课时，两个入口均无题目。 */
+    void notOpenFormalTaskRetainsSafeMetadataAndRejectsForeignLesson() {
+        service.enroll(LEARNER, COURSE, "trace-enroll");
+        seedHomeworkAssessment(1, QuestionModels.Type.SINGLE_CHOICE);
+        jdbc.update("UPDATE assessment SET lesson_id=NULL,opens_at=? WHERE id=?", java.sql.Timestamp.from(Instant.now().plusSeconds(300)), ASSESSMENT);
+        var detail = service.learnerCourseTask(LEARNER, COURSE, ASSESSMENT, null, "trace-not-open");
+        assertThat(detail.questions()).isEmpty();
+        assertThat(detail.description()).isEmpty();
+        assertThat(service.learnerAssessmentEntry(LEARNER, ASSESSMENT, "trace-entry").questionContentAvailable()).isFalse();
+        jdbc.update("UPDATE assessment SET lesson_id=? WHERE id=?", LESSON, ASSESSMENT);
+        assertThat(service.learnerCourseTasks(LEARNER, COURSE, null, 1, 20, "trace-list").items()).isEmpty();
+        assertThat(service.learnerCourseTask(LEARNER, COURSE, ASSESSMENT, LESSON, "trace-context").questions()).isEmpty();
+        assertThatThrownBy(() -> service.learnerCourseTask(LEARNER, COURSE, ASSESSMENT, OTHER, "trace-foreign"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+    }
+
+    @Test
+    /** 真实 HTTP 绑定验证可选 type、分页、标准错误信封与无能力拒绝，不把客户端筛选当作授权。 */
+    void coursePracticeHttpContractValidatesTypePageAndLearningCapability() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-http");
+        seedPublishedAssessment(LearningDtos.AssessmentType.PRACTICE, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.NEVER);
+        String path = "/api/v1/learning/courses/" + COURSE + "/tasks";
+        var good = taskGet(path + "?type=PRACTICE&size=1", "learning:access");
+        assertThat(good.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(good.body()).get("total").asInt()).isEqualTo(1);
+        assertThat(taskGet(path, "teaching:access").statusCode()).isEqualTo(403);
+        for (String query : List.of("?type=ANY", "?page=0", "?size=101")) {
+            var error = taskGet(path + query, "learning:access");
+            assertThat(error.statusCode()).isEqualTo(422);
+            assertThat(mapper.readTree(error.body()).propertyNames())
+                    .containsAll(List.of("code", "message", "traceId", "timestamp", "path", "fieldErrors"));
+        }
+        var entry = taskGet("/api/v1/learning/assessments/" + ASSESSMENT + "/entry", "learning:access");
+        assertThat(entry.statusCode()).isEqualTo(200);
+        assertThat(entry.body()).doesNotContain("questions", "answers", "analysis");
+    }
+
+    private java.net.http.HttpResponse<String> taskGet(String path, String permissions) throws Exception {
+        return java.net.http.HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(
+                java.net.URI.create("http://127.0.0.1:" + port + path)).header("X-User-Id", LEARNER)
+                .header("X-User-Permissions", permissions).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+    }
+
     private void seedPublishedAssessment(LearningDtos.AssessmentType type,
             LearningDtos.GradePublicationPolicy gradePolicy,
             LearningDtos.AnswerPublicationPolicy answerPolicy) {
@@ -1179,10 +1306,14 @@ class LearningAssessmentIntegrationTest {
         QuestionDtos.VersionResponse snapshot = new QuestionDtos.VersionResponse(
                 UUID.randomUUID().toString(), 1, QuestionModels.Type.SINGLE_CHOICE,
                 QuestionModels.Difficulty.MEDIUM, QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN,
-                QuestionModels.Subject.MATHEMATICS, "带私有图片的题目", List.of(
-                        new QuestionDtos.OptionInput("A", "选项 A")), List.of("A"), "解析", List.of(),
+                QuestionModels.Subject.MATHEMATICS,
+                "带私有图片的题目 {{media:00000000-0000-4000-8000-000000017901}}", List.of(
+                        new QuestionDtos.OptionInput("A", "选项 A")), List.of("A"),
+                "解析 {{media:00000000-0000-4000-8000-000000017902}}", List.of(),
                 List.of(new QuestionDtos.MediaResponse(UUID.randomUUID().toString(),
-                        "00000000-0000-4000-8000-000000017901", QuestionModels.MediaPurpose.QUESTION_IMAGE, 1)),
+                                "00000000-0000-4000-8000-000000017901", QuestionModels.MediaPurpose.QUESTION_IMAGE, 1),
+                        new QuestionDtos.MediaResponse(UUID.randomUUID().toString(),
+                                "00000000-0000-4000-8000-000000017902", QuestionModels.MediaPurpose.QUESTION_IMAGE, 2)),
                 null, List.of(), now);
         repository.insertAssessmentQuestion(new AssessmentQuestionRow(
                 "00000000-0000-4000-8000-000000017001", ASSESSMENT, UUID.randomUUID().toString(),

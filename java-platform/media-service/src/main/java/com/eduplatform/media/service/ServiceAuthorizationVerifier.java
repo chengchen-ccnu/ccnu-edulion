@@ -114,7 +114,9 @@ public class ServiceAuthorizationVerifier {
             boolean resourceDownload = courseIssuer && "COURSE_RESOURCE_DOWNLOAD".equals(request.accessType())
                     && courseResourcePurpose && "ORIGINAL".equals(request.variant())
                     && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.ATTACHMENT;
-            boolean assessmentMedia = learningIssuer && "ASSESSMENT_QUESTION".equals(request.accessType())
+            // Learning 已分别验证测评公布事实或当前公共题正文；Media 只校验来源令牌及技术资产边界。
+            boolean assessmentMedia = learningIssuer
+                    && Set.of("ASSESSMENT_QUESTION", "SYSTEM_QUESTION_CONTENT").contains(request.accessType())
                     && Set.of(com.eduplatform.media.domain.MediaPurpose.QUESTION_IMAGE,
                             com.eduplatform.media.domain.MediaPurpose.QUESTION_AUDIO,
                             com.eduplatform.media.domain.MediaPurpose.QUESTION_ATTACHMENT).contains(request.purpose())

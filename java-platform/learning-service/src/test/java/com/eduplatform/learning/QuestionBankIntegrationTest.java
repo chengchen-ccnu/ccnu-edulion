@@ -18,6 +18,7 @@ import com.eduplatform.learning.service.QuestionImportService;
 import com.eduplatform.learning.service.LegacyQuestionImportService;
 import com.eduplatform.learning.service.QuestionService;
 import com.eduplatform.learning.web.QuestionDtos;
+import com.eduplatform.learning.web.LearningDtos;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -145,6 +146,72 @@ class QuestionBankIntegrationTest {
         assertThat(questions.getSystem(system.id()).stem()).contains("1+1");
         assertThatThrownBy(() -> questions.getSystem(own.id())).isInstanceOfSatisfying(QuestionException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    /** 公共单题仅返回题干/选项使用的媒体；答案专用图片即使同版本绑定也不能授权。 */
+    void systemQuestionMediaProjectionRejectsAnswerOnlyBinding() {
+        UUID visible = UUID.randomUUID();
+        UUID answerOnly = UUID.randomUUID();
+        var base = single("A", List.of(
+                new QuestionDtos.MediaInput(visible, QuestionModels.MediaPurpose.QUESTION_IMAGE, 1),
+                new QuestionDtos.MediaInput(answerOnly, QuestionModels.MediaPurpose.QUESTION_IMAGE, 2)));
+        var input = new QuestionDtos.VersionInput(base.type(), base.difficulty(), base.stage(), base.grade(),
+                base.subject(), "观察 {{media:" + visible + "}} 后作答", base.options(), base.answers(),
+                "答案解析 {{media:" + answerOnly + "}}", base.knowledgePointIds(), base.media());
+        var system = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                input, "trace-system-media-create").response();
+        var grant = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/content", java.util.Map.of(), Instant.now());
+        org.mockito.Mockito.when(media.issueSystemQuestionAccess(visible.toString(), TEACHER,
+                "QUESTION_IMAGE", LearningDtos.MediaDisposition.INLINE, "trace-system-media-grant"))
+                .thenReturn(grant);
+
+        assertThat(questions.getSystem(system.id()).media()).extracting(QuestionDtos.MediaResponse::mediaId)
+                .containsExactly(visible.toString());
+        assertThat(questions.systemMediaAccess(TEACHER, system.id(), visible.toString(),
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-system-media-grant").url()).isEqualTo(grant.url());
+        assertThatThrownBy(() -> questions.systemMediaAccess(TEACHER, system.id(), answerOnly.toString(),
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-answer-media"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    /** 组合题的子题沿用同一媒体投影：题干图片可见，答案专用图片不随父题详情或授权接口泄露。 */
+    void systemCompositeChildMediaUsesTheSameSafeProjection() {
+        UUID visible = UUID.randomUUID();
+        UUID answerOnly = UUID.randomUUID();
+        var child = new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE, QuestionModels.Difficulty.EASY,
+                QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                "子题观察 {{media:" + visible + "}}", List.of(new QuestionDtos.OptionInput("A", "1"),
+                        new QuestionDtos.OptionInput("B", "2")), List.of("A"),
+                "子题解析 {{media:" + answerOnly + "}}", List.of(UUID.fromString(KP)), List.of(
+                        new QuestionDtos.MediaInput(visible, QuestionModels.MediaPurpose.QUESTION_IMAGE, 1),
+                        new QuestionDtos.MediaInput(answerOnly, QuestionModels.MediaPurpose.QUESTION_IMAGE, 2)));
+        var childQuestion = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM,
+                UUID.randomUUID().toString(), child, "trace-system-composite-child").response();
+        var parent = new QuestionDtos.VersionInput(QuestionModels.Type.COMPOSITE, QuestionModels.Difficulty.MEDIUM,
+                QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                "组合题父题", List.of(), List.of("综合作答"), "父题解析", List.of(UUID.fromString(KP)),
+                List.of());
+        var system = questions.createImportedComposite(ADMIN, QuestionModels.Scope.SYSTEM,
+                UUID.randomUUID().toString(), parent, List.of(childQuestion.id()),
+                "trace-system-composite-media").response();
+        var grant = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/child", java.util.Map.of(), Instant.now());
+        org.mockito.Mockito.when(media.issueSystemQuestionAccess(visible.toString(), TEACHER,
+                "QUESTION_IMAGE", LearningDtos.MediaDisposition.INLINE, "trace-child-media"))
+                .thenReturn(grant);
+
+        assertThat(questions.getSystem(system.id()).children()).singleElement().satisfies(item ->
+                assertThat(item.media()).extracting(QuestionDtos.MediaResponse::mediaId).containsExactly(visible.toString()));
+        assertThat(questions.systemMediaAccess(TEACHER, system.id(), visible.toString(),
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-child-media").url()).isEqualTo(grant.url());
+        assertThatThrownBy(() -> questions.systemMediaAccess(TEACHER, system.id(), answerOnly.toString(),
+                new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
+                "trace-child-hidden"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test

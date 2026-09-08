@@ -39,6 +39,15 @@ public class AssessmentMediaAuthorizationIssuer {
      * @return 只供内部 HTTP 调用使用的紧凑 JWT
      */
     public String issue(String visitorId, String mediaId, String purpose, String disposition, String traceId) {
+        return issue(visitorId, mediaId, purpose, disposition, traceId, "ASSESSMENT_QUESTION");
+    }
+
+    /** 仅由受控领域适配器选择测评或公共题正文来源；访问类型绑定 JWT，不能由浏览器指定。 */
+    public String issue(String visitorId, String mediaId, String purpose, String disposition, String traceId,
+            String accessType) {
+        if (!java.util.Set.of("ASSESSMENT_QUESTION", "SYSTEM_QUESTION_CONTENT").contains(accessType)) {
+            throw new IllegalArgumentException("Unsupported learning media authorization type");
+        }
         byte[] secret = properties.authorizationSecret() == null ? new byte[0]
                 : properties.authorizationSecret().getBytes(StandardCharsets.UTF_8);
         if (secret.length < 32 || properties.authorizationTokenTtl() == null
@@ -57,7 +66,7 @@ public class AssessmentMediaAuthorizationIssuer {
                 .expiresAt(now.plus(properties.authorizationTokenTtl()))
                 .claim("mediaId", mediaId)
                 .claim("purpose", purpose)
-                .claim("accessType", "ASSESSMENT_QUESTION")
+                .claim("accessType", accessType)
                 .claim("variant", "ORIGINAL")
                 .claim("disposition", disposition)
                 .claim("traceId", traceId)

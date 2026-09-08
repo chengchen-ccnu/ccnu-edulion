@@ -279,6 +279,16 @@ class GatewayRouteSecurityTest {
                 .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300))))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.route").isEqualTo("learning").jsonPath("$.roles").isEqualTo("STUDENT");
+        client.get().uri("/api/v1/learning/system-questions")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "teaching:access")))
+                .exchange().expectStatus().isForbidden();
+        client.post().uri("/api/v1/learning/system-questions/00000000-0000-4000-8000-000000000201/media/"
+                        + "00000000-0000-4000-8000-000000000203/access-grants")
+                .header("Content-Type", "application/json")
+                .bodyValue("{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}")
+                .headers(headers -> headers.setBearerAuth(token(now, now.plusSeconds(300), "TEACHER", "learning:access")))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.route").isEqualTo("learning").jsonPath("$.permissions").isEqualTo("learning:access");
 
         client.post().uri("/api/v1/admin/legacy-question-imports").bodyValue("{}")
                 .header("Content-Type", "application/json")
