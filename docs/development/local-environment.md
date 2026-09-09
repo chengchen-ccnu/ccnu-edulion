@@ -9,14 +9,44 @@
 | Java Agent Access | T14.1 已通过 PR #57 合并；本机已补齐 DPAPI 加密的 Index Worker 服务令牌且 `AGENT_INDEX_API_ENABLED=true` | local 端口 8086；只有显式 local/test profile 启用持久化，真实 Python 动态运行时仍待 T13.3 |
 | bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 已用 CPU 完成 2 条中文文本真实推理，输出 768 维有限向量 | T13.2 增加明确 `BGE_MODEL_PATH` 配置并建立代表样本阈值，不把一次加载成功当成检索质量验收 |
 | bge-reranker-base | `I:\大模型学习\edu_agent\bge-reranker-base` 已用 PyTorch 2.4.1/Transformers 4.57.5 离线加载；最小相关/无关文本排序通过 | T13.2 增加 `RERANKER_MODEL_PATH` 和锁定依赖；模型不进入 Git，真实候选集继续验证排序质量与延迟 |
-| Qdrant | Docker `qdrant/qdrant:latest` 实际报告 1.19.1，127.0.0.1:6333/6334 可达，持久化 Docker volume 正常，当前 collection 数为 0 | T13.2 锁定兼容的 Python client，核验 BM25 中文分词并创建受版本管理的四集合；仓库根目录同名未跟踪文件夹不是容器挂载卷，不得误删或提交 |
-| Neo4j | Community 5.26.19 Windows 服务运行，127.0.0.1:7687/7474 可达 | 本项目共享环境尚无 Neo4j 加密凭据，认证查询未通过；T13.2 必须增加安全凭据加载并由开发者输入现有密码，禁止写入仓库或普通 `local.env` |
-| MySQL/Redis/RabbitMQ | 平台既有环境与安全加载脚本存在 | 对应任务再核验专用 Schema、key/队列与最小权限；本轮不建库 |
+| Qdrant | 1.19.1，127.0.0.1:6333/6334 可达；T13.2 已用 `qdrant-client==1.19.0` 建立四集合 | 使用 `multilingual` tokenizer 的服务端 BM25；模型/Schema 版本不一致会拒绝混写，升级前显式清理与重建 |
+| Neo4j | Community 5.26.19，127.0.0.1:7687/7474；T13.2 已完成认证、受控约束/投影和有界查询 | 开发期密码可暂由仓库外 local.env 注入，项目完成后必须迁入 `neo4j.credential.clixml`/正式 Secret 并删除明文行 |
+| MySQL/Redis/RabbitMQ | RabbitMQ 4.3.4 已完成 confirm、手动 ACK、有限重试和 DLQ 真实验收 | Worker 凭据使用 `rabbitmq.credential.clixml`/正式 Secret；MySQL 只由 Java 事实源访问，Python 不跨库读表 |
 | Chat/Vision | 沿用供应商配置，未验证新多模态调用 | CHAT_MODEL_NAME/VISION_MODEL_NAME 可同模型；秘密安全注入，有限时限/预算 |
 | Media | 复用既有平台链路；T14.1 已补 AI 图片 owner/引用/短期读取投影 | Python 不接 OSS SDK；后续 Agent 任务只消费 Java 授权结果 |
 
-地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。T13.2 实施时补齐 Qdrant、BGE、reranker、Neo4j 和 Worker 的非敏感配置示例；Neo4j 密码须扩展加密加载器，不能写入 `local.env`。既有知识事实已在 T10B Java MySQL 中建立，初始索引从分页内部 API 重建，不再次导入全量原题库。
+地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。T13.2 的 Qdrant、BGE、reranker、Neo4j、RabbitMQ、Java 事实源和 Worker 参数见 `.env.example`。既有知识事实从 Java 分页内部 API 重建，不再次导入全量原题库。
 索引 Worker 与在线 Agent 独立启动并限制资源，本地批量任务错峰；图故障跳过前置增强，检索故障按授权边界降级。新方案不要求 PostgreSQL、Milvus、Elasticsearch、Kubernetes 或另一套 OSS 客户端。
+
+### T13.2 Index Worker 本地启动
+
+Python 需 3.10+；项目声明锁定 `qdrant-client==1.19.0`、`pika==1.3.2`，复用 sentence-transformers、transformers 和 neo4j。大模型目录只配置绝对/相对本地路径，不下载或提交权重。首次配置 RabbitMQ/Neo4j 本地凭据：
+
+```powershell
+& .\scripts\Initialize-LocalRabbitMq.ps1
+& .\scripts\Initialize-LocalNeo4j.ps1
+```
+
+随后用统一包装器执行初始化、重建、对账或消费：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & python -m edu_agent_app index-worker --mode init
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & python -m edu_agent_app index-worker --mode rebuild
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & python -m edu_agent_app index-worker --mode reconcile
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & python -m edu_agent_app index-worker
+}
+```
+
+默认状态库 `.m2/agent-index/worker-state.sqlite3` 保存 eventId、最高 revision/tombstone 和分页检查点，一个状态库只对应一个 namespace。重建中断后直接重新执行 `--mode rebuild`；只有明确要从 Java 起点重新遍历时才加 `--restart-rebuild`。清理必须先停该 namespace 全部 Worker，再使用 `--mode cleanup --confirm-namespace <AGENT_INDEX_NAMESPACE>`；它只删该 namespace 的 Qdrant 点、Worker 标签 Neo4j 节点和专属状态表行，不删 collection 或来源不明图，清空状态后可重新应用相同 revision。
+
+当前开发机的 `NEO4J_PASSWORD` 暂存在仓库外 `~/.ccnu-edulion/local.env`。项目全部开发结束前，运行 `Initialize-LocalNeo4j.ps1` 并验证包装命令，然后删除 local.env 中该密码行；RabbitMQ 密码若曾放入 local.env，也应迁至 `rabbitmq.credential.clixml` 后删除。生产/共享环境一律使用部署 Secret 管理，不复制 DPAPI 文件。
 
 
 T02 使用开发机已经运行的 MySQL `127.0.0.1:3306` 和 Redis `127.0.0.1:6379`。对象存储使用阿里云 OSS，消息队列由 [ADR-0005](../adr/0005-rabbitmq-messaging.md) 统一为 RabbitMQ。T07 已实现 `media-service` 的 OSS、RabbitMQ 和 FFmpeg 链路；本地基础构建仍不依赖 Docker 或外部服务。
@@ -105,7 +135,7 @@ T07 可以先使用 OSS/MQ 适配器 Mock 完成契约、单元测试和不依�
 
 Windows 原生 RabbitMQ 的建议准备顺序是：安装一个受 RabbitMQ 支持的 64 位 Erlang/OTP 27.x，再安装 RabbitMQ 4.3.x；安装目录使用 ASCII 且尽量不含空格，以管理员权限安装服务。管理插件是可选的，可用于本机查看 Exchange、Queue 和死信。只对本机开放应用端口 `5672` 和可选管理端口 `15672`，不要把集群/CLI 端口暴露到公网。建议创建专用 vhost `/edu-platform` 和最小权限本地用户，不直接沿用默认 `guest` 作为共享或生产账号。
 
-T07 使用 `RABBITMQ_ENABLED`、`RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_VHOST`、`RABBITMQ_USERNAME` 和 `RABBITMQ_PASSWORD`。纯本机的 RabbitMQ/Redis 开发密码可保存在仓库外 `.ccnu-edulion/local.env`；OSS AccessKey、Security Token 及其他远程 API 凭据只能由调用进程环境或同等密钥管理注入，禁止写入 `local.env` 或仓库。
+T07 使用 `RABBITMQ_ENABLED`、`RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_VHOST`、`RABBITMQ_USERNAME` 和 `RABBITMQ_PASSWORD`。本机 RabbitMQ 密码使用 `Initialize-LocalRabbitMq.ps1` 保存到当前用户 DPAPI 文件，并由统一包装器临时注入；不得新写入 `.ccnu-edulion/local.env`。OSS AccessKey、Security Token 及其他远程 API 凭据只能由调用进程环境或同等密钥管理注入，禁止写入 `local.env` 或仓库。
 
 安装后可用 RabbitMQ 自带命令做不包含凭据的只读健康确认：
 
