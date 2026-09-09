@@ -6,16 +6,16 @@
 
 | 组件 | 已取得证据 | 后续要求 |
 |---|---|---|
-| Java Agent Access | T14.1 已新增独立 Maven 模块和 Flyway V1 | local 端口 8086；只有显式 local/test profile 启用持久化，真实 Python 动态运行时仍待 T13.3 |
-| bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 文件/768 维配置已核对，未实际推理 | 复用 BGE_MODEL_PATH，T13.2 实测 CPU/GPU 与中文效果 |
-| bge-reranker-base | 2026-09-08 目标目录不存在 | 下载到 `I:\大模型学习\edu_agent\bge-reranker-base`，实现时加 RERANKER_MODEL_PATH；不重复存多个等价权重，不入 Git |
-| Qdrant | 尚未取得安装/健康证据 | T13.2 单节点持久卷，默认 HTTP 6333/gRPC 6334；核验 BM25 多语言分词/客户端版本，不用云端 Embedding |
-| Neo4j | 前次检查 Community 5.26.19 Windows 服务运行，127.0.0.1:7687/7474 可达 | 尚未认证查询图数据；通过受控凭据加载验证，不能沿用旧源码硬编码密码 |
+| Java Agent Access | T14.1 已通过 PR #57 合并；本机已补齐 DPAPI 加密的 Index Worker 服务令牌且 `AGENT_INDEX_API_ENABLED=true` | local 端口 8086；只有显式 local/test profile 启用持久化，真实 Python 动态运行时仍待 T13.3 |
+| bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 已用 CPU 完成 2 条中文文本真实推理，输出 768 维有限向量 | T13.2 增加明确 `BGE_MODEL_PATH` 配置并建立代表样本阈值，不把一次加载成功当成检索质量验收 |
+| bge-reranker-base | `I:\大模型学习\edu_agent\bge-reranker-base` 已用 PyTorch 2.4.1/Transformers 4.57.5 离线加载；最小相关/无关文本排序通过 | T13.2 增加 `RERANKER_MODEL_PATH` 和锁定依赖；模型不进入 Git，真实候选集继续验证排序质量与延迟 |
+| Qdrant | Docker `qdrant/qdrant:latest` 实际报告 1.19.1，127.0.0.1:6333/6334 可达，持久化 Docker volume 正常，当前 collection 数为 0 | T13.2 锁定兼容的 Python client，核验 BM25 中文分词并创建受版本管理的四集合；仓库根目录同名未跟踪文件夹不是容器挂载卷，不得误删或提交 |
+| Neo4j | Community 5.26.19 Windows 服务运行，127.0.0.1:7687/7474 可达 | 本项目共享环境尚无 Neo4j 加密凭据，认证查询未通过；T13.2 必须增加安全凭据加载并由开发者输入现有密码，禁止写入仓库或普通 `local.env` |
 | MySQL/Redis/RabbitMQ | 平台既有环境与安全加载脚本存在 | 对应任务再核验专用 Schema、key/队列与最小权限；本轮不建库 |
 | Chat/Vision | 沿用供应商配置，未验证新多模态调用 | CHAT_MODEL_NAME/VISION_MODEL_NAME 可同模型；秘密安全注入，有限时限/预算 |
-| Media | 复用既有平台链路 | T14.1 补 AI 图片 owner/引用/短期读取，Python 不接 OSS SDK |
+| Media | 复用既有平台链路；T14.1 已补 AI 图片 owner/引用/短期读取投影 | Python 不接 OSS SDK；后续 Agent 任务只消费 Java 授权结果 |
 
-地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。新配置示例与加载脚本由实施任务更新；本次不编辑 local.env、凭据或系统服务。既有知识事实已在 T10B Java MySQL 中建立，初始索引从分页内部 API 重建，不再次导入全量原题库。
+地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。T13.2 实施时补齐 Qdrant、BGE、reranker、Neo4j 和 Worker 的非敏感配置示例；Neo4j 密码须扩展加密加载器，不能写入 `local.env`。既有知识事实已在 T10B Java MySQL 中建立，初始索引从分页内部 API 重建，不再次导入全量原题库。
 索引 Worker 与在线 Agent 独立启动并限制资源，本地批量任务错峰；图故障跳过前置增强，检索故障按授权边界降级。新方案不要求 PostgreSQL、Milvus、Elasticsearch、Kubernetes 或另一套 OSS 客户端。
 
 

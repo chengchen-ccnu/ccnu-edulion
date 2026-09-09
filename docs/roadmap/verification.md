@@ -1016,3 +1016,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与环境：本轮没有连接或创建真实 MySQL Schema，没有修改开发库、Redis、RabbitMQ、OSS、Qdrant 或 Neo4j，也没有持久 Seed/伪数据。H2 Fixture 随测试进程释放。初始化脚本新增 `AGENT_MYSQL_DATABASE` 和 DPAPI 加密的 Agent Index 服务令牌，包装器仅对子命令注入；本轮不要求新增 Python 包。
 - 验证：Java 全量 `clean verify` 的 9 个 Reactor 模块全部成功，共 222 项、0 失败、0 错误、31 项显式真实环境测试跳过；Agent Access 5 项全部通过。Python `compileall`、全量 25/25（契约专项 17 项）和 wheel 构建通过。前端生成、typecheck、43 文件/294 项测试及三端 build 通过，只有既有大 chunk 警告。PowerShell 两个环境脚本语法解析、4 份 Agent YAML 解析和 diff 检查通过。未运行的真实外部依赖验收不记为通过，CI 结果在 PR 创建后继续记录。
 - 提交与 PR：实现提交 `a5ac059` 与交付状态提交 `e510bd7` 均已按规则执行 `git push origin HEAD`；Ready [PR #57](https://github.com/chengchen-ccnu/ccnu-edulion/pull/57) 已创建、未合并。`e510bd7` 的 push/PR 两轮 Java、Python、Frontend、OpenAPI 共 8 项检查全部成功；只有 GitHub Actions 自身 Node 20 action 运行时弃用提示，不影响项目构建结论。
+
+## 2026-09-09 PR #57 合并与 T13.2 前置审计
+
+- 合并与清理：[PR #57](https://github.com/chengchen-ccnu/ccnu-edulion/pull/57) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项检查全部成功后，以普通 merge 合并为 `main@9afc1ae7ba5569805690ff4fad6e6a8feaacc275`；本地 `main` 已快进同步，T14.1 本地和远端分支均已删除。
+- Qdrant：Docker 容器实际返回 1.19.1，HTTP 6333、gRPC 6334 均监听，`/collections` 为 `status=ok` 且 0 个 collection；容器使用 Docker volume `qdrant-storage`，没有创建、删除或修改 collection。仓库根目录原有未跟踪 `Qdrant/` 不是该挂载卷，已仅加入本仓库 `.git/info/exclude` 防误提交，文件保持原样。
+- 本地模型：`bge-base-zh` 使用 `D:\Anaconda\envs\langgraph` 在 CPU 完成 2 条中文文本编码，形状为 2×768、数值有限、样本余弦为 0.804332。`bge-reranker-base` 使用 PyTorch 2.4.1+cu124/Transformers 4.57.5 离线加载为 XLM-R，返回 2 个有限分数且相关文本排在无关文本之前；一次性探测脚本执行后已删除，未写入 Git。
+- Neo4j 与 RabbitMQ：Neo4j Community 5.26.19 Windows 服务、7474/7687 端口正常；由于共享环境尚无 Neo4j 用户/密码，认证查询明确失败，T13.2 真实验收前必须增加 DPAPI 或同等级加密加载并由开发者输入现有密码。RabbitMQ 4.3.4 服务和 5672/15672 端口正常，但 CLI 存在当前用户 Erlang cookie 不一致；T13.2 仍需通过应用连接验证发布确认、消费、有限重试和 DLQ，不能把端口监听当成消息链路通过。
+- Worker 门禁：重新运行本地初始化后已生成 DPAPI 加密的 Agent Index Worker 服务令牌，包装器可注入且 `AGENT_INDEX_API_ENABLED=true`。当前系统默认 Python 不具备 Worker 依赖，现有 `langgraph` 环境也没有 `qdrant-client`；Qdrant client、Worker 配置、Neo4j 安全凭据加载和正式启动入口属于 T13.2 实现范围，不以临时全局安装替代依赖声明。
+- 准备结论：T13.1、T14.1 与物理服务/模型资产前置已满足，可从 `main@9afc1ae` 开始 T13.2；Neo4j 认证和 RabbitMQ 应用链路是最终真实验收门禁，不是编写 Worker 的前置。已准备 `codex/t13.2-retrieval-index-worker`，只承接检索与独立索引 Worker，不实现 T13.3 动态 Agent、T14.2 记忆或前端。
+- 数据边界：本轮没有连接或修改 MySQL、Redis、OSS，没有创建 Qdrant collection、Neo4j 节点/关系或 RabbitMQ 消息/队列，也没有创建 Seed 或伪数据；只做健康/只读列表和本地模型推理。Agent Index DPAPI 令牌是本机缺失安全配置，不进入仓库。
