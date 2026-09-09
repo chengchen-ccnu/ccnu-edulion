@@ -12,7 +12,7 @@
 | Qdrant | 1.19.1，127.0.0.1:6333/6334 可达；T13.2 已用 `qdrant-client==1.19.0` 建立四集合 | 使用 `multilingual` tokenizer 的服务端 BM25；模型/Schema 版本不一致会拒绝混写，升级前显式清理与重建 |
 | Neo4j | Community 5.26.19，127.0.0.1:7687/7474；T13.2 已完成认证、受控约束/投影和有界查询 | 开发期密码可暂由仓库外 local.env 注入，项目完成后必须迁入 `neo4j.credential.clixml`/正式 Secret 并删除明文行 |
 | MySQL/Redis/RabbitMQ | RabbitMQ 4.3.4 已完成 confirm、手动 ACK、有限重试和 DLQ 真实验收 | Worker 凭据使用 `rabbitmq.credential.clixml`/正式 Secret；MySQL 只由 Java 事实源访问，Python 不跨库读表 |
-| Chat/Vision | T13.3 前置审计确认共享包装环境尚无 API Key、兼容 Base URL、聊天模型名或视觉模型名 | `CHAT_MODEL_NAME`/`VISION_MODEL_NAME` 可同模型；实现可先用协议替身，最终验收必须配置真实供应商、有限时限/预算且不得输出秘密 |
+| Chat/Vision | 共享包装环境已配置阿里云百炼 OpenAI 兼容接口；文本和内存 PNG 视觉最小调用均返回 200，实际模型 `qwen3.8-flash` | `CHAT_MODEL_NAME`/`VISION_MODEL_NAME` 可同模型；T13.3 继续验证完整流、有限时限/预算、取消和多模态安全，不输出秘密或完整探测响应 |
 | Media | 复用既有平台链路；T14.1 已补 AI 图片 owner/引用/短期读取投影 | Python 不接 OSS SDK；后续 Agent 任务只消费 Java 授权结果 |
 
 地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。T13.2 的 Qdrant、BGE、reranker、Neo4j、RabbitMQ、Java 事实源和 Worker 参数见 `.env.example`。既有知识事实从 Java 分页内部 API 重建，不再次导入全量原题库。
