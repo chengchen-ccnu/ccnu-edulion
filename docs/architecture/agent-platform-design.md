@@ -45,7 +45,9 @@ Python 在线服务仍位于 `edu_agent_app`，一次进程部署多个角色；
 
 ## 4. HTTP、状态与幂等
 
-浏览器 fetch 流 → Gateway → Java WebClient → Python HTTP 流。服务间认证、超时、取消、结构化事件由 T13.1 先定义，Java 外部 REST 字段仍只在 `docs/api/openapi.yaml` 维护。内部协议计划放 `docs/api/agent-internal.yaml`；事件在 `docs/events/`，均在实施任务中实际创建并测试，不在本次规划虚增版本。
+浏览器 fetch 流 → Gateway → Java WebClient → Python HTTP 流。服务间认证、超时、取消、结构化事件由 T13.1 先定义，Java 外部 REST 字段仍只在 `docs/api/openapi.yaml` 维护。内部协议位于 `docs/api/agent-internal.yaml`，派生索引事件位于 `docs/events/agent-index-events.v1.yaml`；两者均由实施任务创建并测试，不在规划阶段虚增版本。
+
+T13.1 已于 2026-09-09 将上述边界冻结为 [`agent-internal.yaml`](../api/agent-internal.yaml) v1，并以 [`agent-index-events.v1.yaml`](../events/agent-index-events.v1.yaml) 冻结四类派生索引通知。该状态只表示 Schema、示例和契约测试完成，不表示 Java 流代理、Python 动态编排、RabbitMQ、Qdrant、Neo4j 或真实模型调用已经实现；外部 `openapi.yaml` 未改变。
 
 可信公共上下文包含全局 userId、requestId/messageId/conversationId/runId/traceId、服务端时间、文本/附件/语言、入口来源、明确的可选题目/版本/课程/课时/作答标识、已授权内容快照、年级和偏好、相关记忆摘要及版本、允许工具与资源范围。不得把所有旧 State 字段暴露到 API。
 

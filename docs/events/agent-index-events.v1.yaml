@@ -1,0 +1,243 @@
+contract: edu.agent.index.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.agent.index.events.v1
+compatibility: backward
+producers:
+  - learning-service question and knowledge transactions
+  - course-service published text transactions
+  - agent-access-service student memory transactions (T14.2)
+consumers:
+  - edu_agent_app index-worker (T13.2)
+deliverySemantics: at-least-once; producers use local transactional Outbox and consumers persist eventId before ACK
+description: |
+  T13.1 只冻结派生索引通知协议，不创建 RabbitMQ、Qdrant 或 Neo4j 消费者。事件携带稳定事实源 ID、
+  sourceRevision、学段、可见范围和最小授权元数据；内容由后续 Worker 通过受控分页/投影 API 读取，
+  避免在消息中复制题干、课程正文或学生记忆。消费者对 eventId 幂等，并按
+  (eventType, payload.entityId) 记录最高 sourceRevision；较旧或相同 revision 不得覆盖新投影。
+  DELETE 是 tombstone，后续更旧 UPSERT 也不得复活已删除投影。
+
+x-consumer-semantics:
+  idempotencyKey: eventId
+  orderingKey: [eventType, payload.entityId]
+  versionField: payload.sourceRevision
+  staleEventRule: IGNORE_WHEN_REVISION_NOT_GREATER
+  deleteRule: TOMBSTONE_AT_REVISION
+  rebuildSource: JAVA_AUTHORIZED_PAGED_PROJECTION_API
+  retry: bounded-with-dlq
+  exactlyOnceClaimed: false
+
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId:
+      type: string
+      format: uuid
+      description: 消费者持久化的全局幂等键；重复投递为 no-op。
+    eventType:
+      type: string
+      enum:
+        - QuestionIndexProjectionChanged
+        - KnowledgePointIndexProjectionChanged
+        - CourseTextIndexProjectionChanged
+        - StudentMemoryIndexProjectionChanged
+    eventVersion: {type: integer, const: 1}
+    aggregateId:
+      type: string
+      format: uuid
+      description: 事实源聚合稳定 ID；对题目/知识点/记忆等同 entityId，课程文字使用 courseId。
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, pattern: '^[A-Za-z0-9_-]{8,64}$'}
+    payload: {type: object}
+  allOf:
+    - if: {properties: {eventType: {const: QuestionIndexProjectionChanged}}}
+      then: {properties: {payload: {$ref: '#/events/QuestionIndexProjectionChanged/payload'}}}
+    - if: {properties: {eventType: {const: KnowledgePointIndexProjectionChanged}}}
+      then: {properties: {payload: {$ref: '#/events/KnowledgePointIndexProjectionChanged/payload'}}}
+    - if: {properties: {eventType: {const: CourseTextIndexProjectionChanged}}}
+      then: {properties: {payload: {$ref: '#/events/CourseTextIndexProjectionChanged/payload'}}}
+    - if: {properties: {eventType: {const: StudentMemoryIndexProjectionChanged}}}
+      then: {properties: {payload: {$ref: '#/events/StudentMemoryIndexProjectionChanged/payload'}}}
+
+events:
+  QuestionIndexProjectionChanged:
+    routingKey: agent.index.question.changed.v1
+    aggregate: question
+    sourceDomain: learning-service
+    payload:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceDomain
+        - entityType
+        - entityId
+        - questionVersionId
+        - sourceRevision
+        - operation
+        - sourceState
+        - educationStage
+        - visibility
+        - authorization
+      properties:
+        sourceDomain: {type: string, const: LEARNING}
+        entityType: {type: string, const: QUESTION}
+        entityId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+        operation: {type: string, enum: [UPSERT, DELETE]}
+        sourceState: {type: string, enum: [ACTIVE, ARCHIVED, DELETED]}
+        educationStage: {type: string, const: JUNIOR}
+        grade: {type: string, enum: [GRADE_7, GRADE_8, GRADE_9]}
+        visibility: {type: string, const: PUBLIC_SYSTEM}
+        authorization:
+          type: object
+          additionalProperties: false
+          required: [questionScope, projectionApi]
+          properties:
+            questionScope: {type: string, const: ACTIVE_SYSTEM_ONLY}
+            projectionApi: {type: string, const: LEARNING_QUESTION_SAFE_PROJECTION}
+      allOf:
+        - if: {properties: {operation: {const: UPSERT}}}
+          then: {properties: {sourceState: {const: ACTIVE}}}
+        - if: {properties: {operation: {const: DELETE}}}
+          then: {properties: {sourceState: {enum: [ARCHIVED, DELETED]}}}
+      description: 事件不含答案、解析、教师私有题、题干、外部 URL 或媒体签名；Worker 读取安全投影。
+
+  KnowledgePointIndexProjectionChanged:
+    routingKey: agent.index.knowledge-point.changed.v1
+    aggregate: knowledge_point
+    sourceDomain: learning-service
+    payload:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceDomain
+        - entityType
+        - entityId
+        - sourceRevision
+        - operation
+        - sourceState
+        - educationStage
+        - visibility
+        - authorization
+      properties:
+        sourceDomain: {type: string, const: LEARNING}
+        entityType: {type: string, const: KNOWLEDGE_POINT}
+        entityId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+        operation: {type: string, enum: [UPSERT, DELETE]}
+        sourceState: {type: string, enum: [ACTIVE, ARCHIVED, DELETED]}
+        educationStage: {type: string, const: JUNIOR}
+        visibility: {type: string, const: PUBLIC_MATH_KNOWLEDGE}
+        authorization:
+          type: object
+          additionalProperties: false
+          required: [enabledOnly, projectionApi, graphProjection]
+          properties:
+            enabledOnly: {type: boolean, const: true}
+            projectionApi: {type: string, const: LEARNING_KNOWLEDGE_SAFE_PROJECTION}
+            graphProjection: {type: string, const: BOUNDED_PREREQUISITE_RELATIONS}
+      allOf:
+        - if: {properties: {operation: {const: UPSERT}}}
+          then: {properties: {sourceState: {const: ACTIVE}}}
+        - if: {properties: {operation: {const: DELETE}}}
+          then: {properties: {sourceState: {enum: [ARCHIVED, DELETED]}}}
+
+  CourseTextIndexProjectionChanged:
+    routingKey: agent.index.course-text.changed.v1
+    aggregate: course
+    sourceDomain: course-service
+    payload:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceDomain
+        - entityType
+        - entityId
+        - courseId
+        - courseVersionId
+        - lessonId
+        - sourceRevision
+        - operation
+        - sourceState
+        - educationStage
+        - visibility
+        - authorization
+      properties:
+        sourceDomain: {type: string, const: COURSE}
+        entityType: {type: string, const: COURSE_TEXT}
+        entityId:
+          type: string
+          format: uuid
+          description: 稳定的课程文字投影 ID，不是正文 hash。
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+        operation: {type: string, enum: [UPSERT, DELETE]}
+        sourceState: {type: string, enum: [PUBLISHED, ARCHIVED, DELETED]}
+        educationStage: {type: string, const: JUNIOR}
+        visibility: {type: string, const: COURSE_AUTHORIZED}
+        authorization:
+          type: object
+          additionalProperties: false
+          required: [requiresCurrentCourseAccess, projectionApi]
+          properties:
+            requiresCurrentCourseAccess: {type: boolean, const: true}
+            projectionApi: {type: string, const: COURSE_AUTHORIZED_TEXT_PROJECTION}
+      allOf:
+        - if: {properties: {operation: {const: UPSERT}}}
+          then: {properties: {sourceState: {const: PUBLISHED}}}
+        - if: {properties: {operation: {const: DELETE}}}
+          then: {properties: {sourceState: {enum: [ARCHIVED, DELETED]}}}
+      description: |
+        消息不含课程正文或名单。在线检索必须再次由 Java 复核当前课程访问；权限服务失败时禁止
+        退化为全库课程检索。
+
+  StudentMemoryIndexProjectionChanged:
+    routingKey: agent.index.student-memory.changed.v1
+    aggregate: ai_memory
+    sourceDomain: agent-access-service
+    availability: RESERVED_FOR_T14.2
+    payload:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceDomain
+        - entityType
+        - entityId
+        - subjectUserId
+        - sourceRevision
+        - operation
+        - sourceState
+        - educationStage
+        - visibility
+        - authorization
+      properties:
+        sourceDomain: {type: string, const: AGENT_ACCESS}
+        entityType: {type: string, const: STUDENT_MEMORY}
+        entityId: {type: string, format: uuid}
+        subjectUserId:
+          type: string
+          format: uuid
+          description: IAM 全局 userId；消息中不得出现姓名、联系方式或隐藏画像。
+        sourceRevision: {type: integer, minimum: 1}
+        operation: {type: string, enum: [UPSERT, DELETE]}
+        sourceState: {type: string, enum: [ACTIVE, EXPIRED, DELETED]}
+        educationStage: {type: string, const: JUNIOR}
+        visibility: {type: string, const: USER_PRIVATE}
+        authorization:
+          type: object
+          additionalProperties: false
+          required: [ownerScope, projectionApi]
+          properties:
+            ownerScope: {type: string, const: SUBJECT_USER_ONLY}
+            projectionApi: {type: string, const: AGENT_ACCESS_MEMORY_SAFE_PROJECTION}
+      allOf:
+        - if: {properties: {operation: {const: UPSERT}}}
+          then: {properties: {sourceState: {const: ACTIVE}}}
+        - if: {properties: {operation: {const: DELETE}}}
+          then: {properties: {sourceState: {enum: [EXPIRED, DELETED]}}}
+      description: 只通知安全记忆投影变化；不含会话原文、完整学生隐私、隐藏画像、提示词或模型推理。

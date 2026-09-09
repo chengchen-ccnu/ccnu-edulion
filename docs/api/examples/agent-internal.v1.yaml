@@ -1,0 +1,533 @@
+protocolVersion: 1
+
+validRequests:
+  textQuestion: &textRequest
+    protocolVersion: 1
+    conversationId: 10000000-0000-4000-8000-000000000001
+    messageId: 10000000-0000-4000-8000-000000000002
+    runId: 10000000-0000-4000-8000-000000000003
+    clientRequestId: 10000000-0000-4000-8000-000000000004
+    traceId: trace-t131-text-0001
+    requestedAt: '2026-09-09T01:00:00Z'
+    userMessage:
+      text: 为什么负数乘负数等于正数？
+      locale: zh-CN
+    trustedContext:
+      userId: 10000000-0000-4000-8000-000000000005
+      educationStage: JUNIOR
+      grade: GRADE_7
+      entryPoint: INDEPENDENT_CHAT
+      authorizedAt: '2026-09-09T01:00:00Z'
+      preferences:
+        - kind: EXPLANATION_STYLE
+          value: 分步骤并配一个简单例子
+          source: EXPLICIT
+      toolGrants:
+        - toolName: KNOWLEDGE_SEARCH
+          resourceScopes:
+            - scopeType: PUBLIC_JUNIOR_MATH
+    budget: &defaultBudget
+      maxOrchestrationSteps: 12
+      maxLlmCalls: 8
+      reservedFinalLlmCalls: 1
+      maxToolAttempts: 10
+      maxExpertTransfers: 2
+      maxSameToolArgumentsAttempts: 2
+      maxTeachingRemediations: 3
+      teachingRemediationOrder: [REPHRASE, SIMPLE_EXAMPLE, PREREQUISITE_FALLBACK]
+      totalTimeMs: 90000
+    timeoutPolicy: &defaultTimeout
+      firstEventTimeoutMs: 5000
+      heartbeatIntervalMs: 10000
+      idleTimeoutMs: 20000
+      slowClientBufferMaxEvents: 64
+
+  questionWithStudentWork:
+    protocolVersion: 1
+    conversationId: 20000000-0000-4000-8000-000000000001
+    messageId: 20000000-0000-4000-8000-000000000002
+    runId: 20000000-0000-4000-8000-000000000003
+    clientRequestId: 20000000-0000-4000-8000-000000000004
+    traceId: trace-t131-question-0001
+    requestedAt: '2026-09-09T01:01:00Z'
+    userMessage:
+      text: 帮我检查这个移项过程哪里错了。
+      locale: zh-CN
+      studentAttachedWork:
+        attachedByStudent: true
+        content: 2x+3=9，所以 2x=9+3，x=6。
+        status: STUDENT_DRAFT
+    trustedContext:
+      userId: 20000000-0000-4000-8000-000000000005
+      educationStage: JUNIOR
+      grade: GRADE_7
+      entryPoint: PRACTICE_FLOATING
+      authorizedAt: '2026-09-09T01:01:00Z'
+      question:
+        questionId: 20000000-0000-4000-8000-000000000006
+        questionVersionId: 20000000-0000-4000-8000-000000000007
+        scope: ACTIVE_SYSTEM
+        safeProjection:
+          questionType: SHORT_ANSWER
+          stem: 解方程 2x+3=9。
+      media:
+        - mediaId: 20000000-0000-4000-8000-000000000008
+          purpose: QUESTION_IMAGE
+          mimeType: image/png
+          sizeBytes: 4096
+          accessDecision: AUTHORIZED_BY_JAVA
+          temporaryAccess:
+            url: https://media.invalid/short-lived/example
+            expiresAt: '2026-09-09T01:01:30Z'
+            confidentiality: SHORT_LIVED_SECRET
+      toolGrants:
+        - toolName: QUESTION_SEARCH
+          resourceScopes:
+            - scopeType: QUESTION_VERSION
+              resourceIds: [20000000-0000-4000-8000-000000000007]
+        - toolName: AUTHORIZED_IMAGE_UNDERSTANDING
+          resourceScopes:
+            - scopeType: MEDIA
+              resourceIds: [20000000-0000-4000-8000-000000000008]
+      learningFacts:
+        - factType: STUDENT_SUBMISSION
+          factId: 20000000-0000-4000-8000-000000000009
+          ownerScope: USER_SELF
+          revision: 1
+    budget: *defaultBudget
+    timeoutPolicy: *defaultTimeout
+
+retryOfTextQuestion: *textRequest
+
+validCancelRequests:
+  stop:
+    cancelRequestId: 30000000-0000-4000-8000-000000000001
+    traceId: trace-t131-cancel-0001
+    requestedAt: '2026-09-09T01:02:00Z'
+    reason: USER_STOPPED
+
+validCancelResponses:
+  accepted:
+    runId: 20000000-0000-4000-8000-000000000003
+    cancelRequestId: 30000000-0000-4000-8000-000000000001
+    outcome: CANCELLATION_ACCEPTED
+    traceId: trace-t131-cancel-0001
+  replayed:
+    runId: 20000000-0000-4000-8000-000000000003
+    cancelRequestId: 30000000-0000-4000-8000-000000000001
+    outcome: ALREADY_CANCELLED
+    terminalStatus: CANCELLED
+    traceId: trace-t131-cancel-0001
+
+validHttpErrors:
+  concurrentRun:
+    code: AGENT.RUN_CONFLICT
+    message: 此会话正在回答，请等待当前回答结束后重试。
+    retryable: true
+    traceId: trace-t131-conflict-0001
+  forgedResource:
+    code: AGENT.TRUSTED_CONTEXT_REJECTED
+    message: 请求包含未经 Java 授权的资源。
+    retryable: false
+    traceId: trace-t131-forged-0001
+
+validIntentDecisions:
+  checkWork:
+    primaryIntent: MATH_TUTORING
+    secondaryIntent: CHECK_STUDENT_WORK
+    role: MATH_TUTOR
+    resolution: ROUTED
+    slots:
+      questionId: 20000000-0000-4000-8000-000000000006
+      studentWork: 2x=9+3
+    subRequests: []
+  clarifyCourse:
+    primaryIntent: MATH_TUTORING
+    secondaryIntent: COURSE_QUESTION
+    role: MATH_TUTOR
+    resolution: NEEDS_CLARIFICATION
+    slots: {}
+    missingSlots: [courseId]
+    subRequests: []
+  twoOrderedRequests:
+    primaryIntent: MATH_TUTORING
+    secondaryIntent: SOLVE_PROBLEM
+    role: MATH_TUTOR
+    resolution: ROUTED
+    slots:
+      problemText: 解方程 x+2=5，并给我一个复习计划。
+    subRequests:
+      - sequence: 1
+        secondaryIntent: SOLVE_PROBLEM
+        role: MATH_TUTOR
+        slots: {problemText: 解方程 x+2=5}
+      - sequence: 2
+        secondaryIntent: CREATE_PLAN
+        role: STUDY_PLANNER
+        slots: {planGoal: 复习一元一次方程}
+
+validToolCalls:
+  questionSearch:
+    toolCallId: 40000000-0000-4000-8000-000000000001
+    runId: 20000000-0000-4000-8000-000000000003
+    traceId: trace-t131-tool-0001
+    toolName: QUESTION_SEARCH
+    timeoutMs: 3000
+    arguments:
+      query: 一元一次方程移项
+      limit: 5
+      resourceIds: [20000000-0000-4000-8000-000000000007]
+  courseText:
+    toolCallId: 40000000-0000-4000-8000-000000000002
+    runId: 40000000-0000-4000-8000-000000000003
+    traceId: trace-t131-tool-0002
+    toolName: COURSE_TEXT_SEARCH
+    timeoutMs: 5000
+    arguments:
+      query: 老师对移项的定义
+      courseId: 40000000-0000-4000-8000-000000000004
+      courseVersionId: v3
+      lessonIds: [40000000-0000-4000-8000-000000000005]
+      limit: 5
+
+validToolResults:
+  safeQuestion:
+    toolCallId: 40000000-0000-4000-8000-000000000001
+    toolName: QUESTION_SEARCH
+    status: SUCCEEDED
+    traceId: trace-t131-tool-0001
+    elapsedMs: 23
+    evidence:
+      - evidenceId: 20000000-0000-4000-8000-000000000007
+        evidenceType: QUESTION
+        title: 一元一次方程安全题目投影
+        summary: 题目要求解一个含移项步骤的一元一次方程。
+        accessDecision: AUTHORIZED_BY_JAVA
+        revision: 2
+  helpUnavailable:
+    toolCallId: 40000000-0000-4000-8000-000000000006
+    toolName: USER_HELP_SEARCH
+    status: REJECTED
+    traceId: trace-t131-help-0001
+    elapsedMs: 1
+    evidence: []
+    error:
+      code: AGENT.HELP_KB_NOT_AVAILABLE
+      message: 平台帮助知识库将在 T13.4 接入。
+      retryable: false
+      traceId: trace-t131-help-0001
+
+validStreams:
+  completed:
+    - &accepted
+      eventType: RUN_ACCEPTED
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 1
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:00Z'
+      payload:
+        conversationId: 10000000-0000-4000-8000-000000000001
+        messageId: 10000000-0000-4000-8000-000000000002
+        replayed: false
+    - eventType: STAGE_CHANGED
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 2
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:01Z'
+      payload: {stage: EXPLAINING, message: 正在组织分步说明}
+    - eventType: TEXT_DELTA
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 3
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:02Z'
+      payload: {delta: 可以先从“保持等式两边相等”来理解。}
+    - eventType: HEARTBEAT
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 4
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:03Z'
+      payload: {stage: EXPLAINING}
+    - eventType: FINAL_RESULT
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 5
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:04Z'
+      payload:
+        terminal: true
+        terminalStatus: COMPLETED
+        finalAnswer: 负数乘负数可以理解为“把相反方向再反转一次”，因此回到正方向。
+        answerCompleteness: COMPLETE
+        references: []
+
+  cancelledWithPartial:
+    - eventType: RUN_ACCEPTED
+      runId: 50000000-0000-4000-8000-000000000001
+      sequence: 1
+      traceId: trace-t131-cancel-stream
+      emittedAt: '2026-09-09T01:03:00Z'
+      payload:
+        conversationId: 50000000-0000-4000-8000-000000000002
+        messageId: 50000000-0000-4000-8000-000000000003
+        replayed: false
+    - eventType: PARTIAL_CHECKPOINT
+      runId: 50000000-0000-4000-8000-000000000001
+      sequence: 2
+      traceId: trace-t131-cancel-stream
+      emittedAt: '2026-09-09T01:03:01Z'
+      payload:
+        text: 先把等式两边同时减去 3。
+        complete: false
+        persisted: true
+    - eventType: FINAL_RESULT
+      runId: 50000000-0000-4000-8000-000000000001
+      sequence: 3
+      traceId: trace-t131-cancel-stream
+      emittedAt: '2026-09-09T01:03:02Z'
+      payload:
+        terminal: true
+        terminalStatus: CANCELLED
+        finalAnswer: 先把等式两边同时减去 3。
+        answerCompleteness: INTERRUPTED
+        interruptionNotice: 回答已中断
+        savedCheckpointSequence: 2
+        references: []
+
+  limitReached:
+    - eventType: RUN_ACCEPTED
+      runId: 60000000-0000-4000-8000-000000000001
+      sequence: 1
+      traceId: trace-t131-limit-stream
+      emittedAt: '2026-09-09T01:04:00Z'
+      payload:
+        conversationId: 60000000-0000-4000-8000-000000000002
+        messageId: 60000000-0000-4000-8000-000000000003
+        replayed: false
+    - eventType: RUN_ERROR
+      runId: 60000000-0000-4000-8000-000000000001
+      sequence: 2
+      traceId: trace-t131-limit-stream
+      emittedAt: '2026-09-09T01:05:29Z'
+      payload:
+        terminal: false
+        error:
+          code: AGENT.TOTAL_TIME_LIMIT
+          message: 本轮已达到配置的总时限，返回现有可靠信息。
+          retryable: true
+          traceId: trace-t131-limit-stream
+    - eventType: FINAL_RESULT
+      runId: 60000000-0000-4000-8000-000000000001
+      sequence: 3
+      traceId: trace-t131-limit-stream
+      emittedAt: '2026-09-09T01:05:30Z'
+      payload:
+        terminal: true
+        terminalStatus: LIMIT_REACHED
+        finalAnswer: 可以先使用等式两边同时做相同运算的原则继续检查。
+        answerCompleteness: SIMPLIFIED
+        references: []
+
+  clarification:
+    - eventType: RUN_ACCEPTED
+      runId: 61000000-0000-4000-8000-000000000001
+      sequence: 1
+      traceId: trace-t131-clarify-stream
+      emittedAt: '2026-09-09T01:06:00Z'
+      payload:
+        conversationId: 61000000-0000-4000-8000-000000000002
+        messageId: 61000000-0000-4000-8000-000000000003
+        replayed: false
+    - eventType: CLARIFICATION_REQUIRED
+      runId: 61000000-0000-4000-8000-000000000001
+      sequence: 2
+      traceId: trace-t131-clarify-stream
+      emittedAt: '2026-09-09T01:06:01Z'
+      payload:
+        question: 你想问哪一门课程或哪一个课时的内容？
+        missingSlots: [courseId]
+    - eventType: FINAL_RESULT
+      runId: 61000000-0000-4000-8000-000000000001
+      sequence: 3
+      traceId: trace-t131-clarify-stream
+      emittedAt: '2026-09-09T01:06:02Z'
+      payload:
+        terminal: true
+        terminalStatus: COMPLETED
+        finalAnswer: 你想问哪一门课程或哪一个课时的内容？
+        answerCompleteness: COMPLETE
+        references: []
+
+  degradedAfterTeachingRemediations:
+    - eventType: RUN_ACCEPTED
+      runId: 62000000-0000-4000-8000-000000000001
+      sequence: 1
+      traceId: trace-t131-degraded-stream
+      emittedAt: '2026-09-09T01:07:00Z'
+      payload:
+        conversationId: 62000000-0000-4000-8000-000000000002
+        messageId: 62000000-0000-4000-8000-000000000003
+        replayed: false
+    - eventType: STAGE_CHANGED
+      runId: 62000000-0000-4000-8000-000000000001
+      sequence: 2
+      traceId: trace-t131-degraded-stream
+      emittedAt: '2026-09-09T01:07:01Z'
+      payload: {stage: RETRIEVING, message: 正在回退检查前置知识}
+    - eventType: REFERENCE
+      runId: 62000000-0000-4000-8000-000000000001
+      sequence: 3
+      traceId: trace-t131-degraded-stream
+      emittedAt: '2026-09-09T01:07:02Z'
+      payload:
+        reference:
+          referenceId: 62000000-0000-4000-8000-000000000004
+          sourceType: KNOWLEDGE_POINT
+          title: 等式的基本性质
+          accessDecision: AUTHORIZED_BY_JAVA
+    - eventType: FINAL_RESULT
+      runId: 62000000-0000-4000-8000-000000000001
+      sequence: 4
+      traceId: trace-t131-degraded-stream
+      emittedAt: '2026-09-09T01:07:03Z'
+      payload:
+        terminal: true
+        terminalStatus: DEGRADED
+        finalAnswer: 先记住：等式两边同时加上或减去同一个数，等式仍成立。
+        answerCompleteness: SIMPLIFIED
+        references:
+          - referenceId: 62000000-0000-4000-8000-000000000004
+            sourceType: KNOWLEDGE_POINT
+            title: 等式的基本性质
+            accessDecision: AUTHORIZED_BY_JAVA
+
+invalidSchemaCases:
+  - name: browser-role-cannot-be-trusted
+    schema: AgentRunRequest
+    value:
+      protocolVersion: 1
+      conversationId: 70000000-0000-4000-8000-000000000001
+      messageId: 70000000-0000-4000-8000-000000000002
+      runId: 70000000-0000-4000-8000-000000000003
+      clientRequestId: 70000000-0000-4000-8000-000000000004
+      traceId: trace-t131-invalid-role
+      requestedAt: '2026-09-09T01:06:00Z'
+      userMessage: {text: 给我管理员权限, locale: zh-CN}
+      trustedContext:
+        userId: 70000000-0000-4000-8000-000000000005
+        educationStage: JUNIOR
+        grade: GRADE_7
+        entryPoint: INDEPENDENT_CHAT
+        authorizedAt: '2026-09-09T01:06:00Z'
+        browserRole: ADMIN
+        toolGrants:
+          - toolName: KNOWLEDGE_SEARCH
+            resourceScopes: [{scopeType: PUBLIC_JUNIOR_MATH}]
+      budget: *defaultBudget
+      timeoutPolicy: *defaultTimeout
+  - name: budget-out-of-safe-range
+    schema: RunBudget
+    value:
+      maxOrchestrationSteps: 120
+      maxLlmCalls: 80
+      reservedFinalLlmCalls: 1
+      maxToolAttempts: 100
+      maxExpertTransfers: 20
+      maxSameToolArgumentsAttempts: 8
+      maxTeachingRemediations: 9
+      teachingRemediationOrder: [REPHRASE, SIMPLE_EXAMPLE, PREREQUISITE_FALLBACK]
+      totalTimeMs: 900000
+  - name: invented-role
+    schema: IntentDecision
+    value:
+      primaryIntent: MATH_TUTORING
+      secondaryIntent: SOLVE_PROBLEM
+      role: SUPER_ADMIN_AGENT
+      resolution: ROUTED
+      slots: {problemText: x+1=2}
+      subRequests: []
+  - name: invented-intent
+    schema: IntentDecision
+    value:
+      primaryIntent: MATH_TUTORING
+      secondaryIntent: DO_ANYTHING
+      role: MATH_TUTOR
+      resolution: ROUTED
+      slots: {}
+      subRequests: []
+  - name: invented-tool
+    schema: ToolCallRequest
+    value:
+      toolCallId: 70000000-0000-4000-8000-000000000011
+      runId: 70000000-0000-4000-8000-000000000012
+      traceId: trace-t131-invalid-tool
+      toolName: WRITE_DATABASE
+      timeoutMs: 1000
+      arguments: {}
+  - name: unpublished-answer-in-tool-result
+    schema: ToolResult
+    value:
+      toolCallId: 70000000-0000-4000-8000-000000000021
+      toolName: QUESTION_SEARCH
+      status: SUCCEEDED
+      traceId: trace-t131-invalid-answer
+      elapsedMs: 2
+      evidence: []
+      unpublishedAnswer: x=4
+  - name: signed-url-in-tool-result
+    schema: ToolResult
+    value:
+      toolCallId: 70000000-0000-4000-8000-000000000022
+      toolName: AUTHORIZED_IMAGE_UNDERSTANDING
+      status: SUCCEEDED
+      traceId: trace-t131-invalid-url
+      elapsedMs: 2
+      evidence:
+        - evidenceId: image-1
+          evidenceType: IMAGE_UNDERSTANDING
+          title: 图片理解
+          summary: 图片中是一道方程题。
+          accessDecision: AUTHORIZED_BY_JAVA
+          signedUrl: https://media.invalid/secret
+  - name: token-and-reasoning-in-tool-result
+    schema: ToolResult
+    value:
+      toolCallId: 70000000-0000-4000-8000-000000000023
+      toolName: KNOWLEDGE_SEARCH
+      status: SUCCEEDED
+      traceId: trace-t131-invalid-token
+      elapsedMs: 2
+      evidence: []
+      token: secret
+      internalReasoning: hidden chain
+  - name: unknown-stream-event
+    schema: StreamEvent
+    value:
+      eventType: MODEL_THOUGHT
+      runId: 70000000-0000-4000-8000-000000000031
+      sequence: 1
+      traceId: trace-t131-invalid-event
+      emittedAt: '2026-09-09T01:07:00Z'
+      payload: {}
+
+invalidStreamSequences:
+  duplicateTerminal:
+    - *accepted
+    - eventType: FINAL_RESULT
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 2
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:01Z'
+      payload: {terminal: true, terminalStatus: COMPLETED, finalAnswer: 完成。, answerCompleteness: COMPLETE}
+    - eventType: FINAL_RESULT
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 3
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:02Z'
+      payload: {terminal: true, terminalStatus: CANCELLED, answerCompleteness: INTERRUPTED, interruptionNotice: 回答已中断}
+  sequenceGap:
+    - *accepted
+    - eventType: FINAL_RESULT
+      runId: 10000000-0000-4000-8000-000000000003
+      sequence: 3
+      traceId: trace-t131-text-0001
+      emittedAt: '2026-09-09T01:00:02Z'
+      payload: {terminal: true, terminalStatus: COMPLETED, finalAnswer: 完成。, answerCompleteness: COMPLETE}

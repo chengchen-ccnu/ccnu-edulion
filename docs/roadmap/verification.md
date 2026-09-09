@@ -994,3 +994,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - T13.1 依赖：总控 Agent 规划 PR #53、T03、T10B、T11C.2、T10C.1 和 T10C.2 均已合并；`docs/architecture/agent-platform-design.md` 已进入 main，既有 Python Agent 和测试基线可供协议审计。T13.1 不依赖 Qdrant、Neo4j、重排模型或真实聊天模型运行，这些属于 T13.2/T13.3 的后续前置。
 - 开工边界：T13.1 只创建并验证内部请求/响应、流事件、错误/终态、取消、`messageId`/`runId`、预算、可信上下文/私有状态、工具白名单和索引事件协议；不得实现动态 Agent、Java Agent Access、数据库迁移、Vue、Qdrant/Neo4j 索引或模型调用。当前已从干净且与远端一致的 main 创建 `codex/t13.1-agent-internal-contract`。
 - 数据：本次总控仅执行 Git 同步、分支/worktree 清理和文档状态更新，没有连接或修改 MySQL、Redis、RabbitMQ、OSS、Qdrant、Neo4j，也没有创建表、Seed、伪数据、消息、缓存 Key、媒体或索引。
+
+## 2026-09-09 T13.1 Agent 内部协议与工具契约
+
+- 门禁：开始时工作区干净，分支为 `codex/t13.1-agent-internal-contract`，HEAD 为准备提交 `49590fd`；fetch 后本地 `main` 与 `origin/main` 均为 PR #55 合并提交 `35f6767`。Git 历史、GitHub PR #53 和现有路线图共同确认 T03、T10B、T11C.2、T10C.1、T10C.2 均已合并。完整阅读 Agent 设计、访谈记录、页面规格、backlog、verification 和 T13 规划后才开始写契约。
+- 旧实现审计：只读取 `edu_agent_app`、`server.py`、两份现有 Python 测试及依赖声明，没有读取模型权重、FAISS 索引或题库 JSON。可复用点是 Pydantic 结构化输出、SSE 适配思路、检索清洗和失败也计数的调用上限；旧 `thread_id` 幂等、FAISS/PostgreSQL 检查点、80 层递归、30 次会话调用与人工转交不进入新协议。
+- 内部 HTTP：新增 `docs/api/agent-internal.yaml` OpenAPI 3.1/v1，只定义 Java Agent Access → Python 的 run 流与幂等取消，不修改浏览器外部 `docs/api/openapi.yaml`。协议区分 conversationId/messageId/runId/clientRequestId/traceId，冻结同逻辑请求不重复建消息/执行、同会话单活动 run/409 不排队、可信上下文与 Python 私有状态隔离、短期媒体 URL 秘密处理，以及首事件/心跳/空闲/总时限/慢客户端终止语义。
+- 流、意图和工具：SSE 使用 9 种可判别事件、连续 sequence 和唯一 `FINAL_RESULT`；终态为 COMPLETED/DEGRADED/LIMIT_REACHED/CANCELLED/FAILED。冻结 7 类一级意图、14 个二级意图、5 个角色、受约束槽位和最多两个有序子请求；10 个工具位置全部只读，调用需 toolCallId/超时并同时受 Java 工具白名单和资源范围限制。USER_HELP_SEARCH 在 T13.4 前只返回不可用，不宣称完整帮助能力。
+- 预算：请求内的首版可配置默认值为 12 编排步骤、8 次 LLM（其中 1 次预留最终降级）、10 次工具尝试、2 次专家转交、同工具同参数 2 次、总时限约 90 秒；教学补救固定依次为重述、简单例子、回退前置知识。失败重试、视觉、总结和记忆提取均计入预算，到限额使用已有可靠信息并以 DEGRADED/LIMIT_REACHED 结束。
+- 索引事件：新增 `agent-index-events.v1.yaml`，沿用统一事件信封和 at-least-once/Outbox/eventId 幂等语义，覆盖题目、知识点、课程文字和后续学生记忆 UPSERT/DELETE。消息只携带事实源、稳定 ID、sourceRevision、JUNIOR、可见范围和最小授权元数据；消费者拒绝旧 revision 覆盖新投影或复活较新 tombstone。真实 Outbox/RabbitMQ/Qdrant/Neo4j/Worker/重建留给 T14.1/T13.2/T14.2。
+- 示例与校验：HTTP/工具/意图/SSE 和索引事件正反例均为仓库 YAML，并由 `tests/test_agent_internal_contract.py` 使用正式 Schema 校验；跨事件测试另检查全部本地引用、事件/终态完整集合、唯一终态、连续序号、取消后终止、最多两个子请求、白名单资源不能提升、eventId 重复 no-op 与旧 revision 拒绝。新增专项 16/16、完整 Python 24/24 和字节码编译已通过；wheel、diff 检查和 GitHub CI 结果以 T13.1 交付文档最终记录为准。
+- 数据与边界：没有安装或连接 Qdrant、Neo4j、模型、MySQL、Redis、RabbitMQ、OSS；没有创建/修改数据库、表、迁移、Seed、伪数据、缓存 Key、消息、媒体、向量 collection 或图节点。没有实现 LangGraph 动态编排、LLM 调用、Index Worker、Java Agent Access、Vue 页面或外部前端 DTO。

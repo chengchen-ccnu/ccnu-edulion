@@ -1,0 +1,940 @@
+openapi: 3.1.0
+info:
+  title: Edu Agent Internal Protocol
+  version: 1.0.0
+  description: |
+    Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
+    不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
+    Python 只接受本协议中的可信上下文与工具白名单；浏览器提交的资源 ID、角色或权限不能直接
+    复制到 trustedContext。
+
+    Python 私有运行状态（提示词、路由草稿、模型推理、工具原始结果、剩余内部工作集等）不是
+    HTTP DTO，也不得出现在流事件、日志或持久消息中。首期只冻结契约，不表示 Java/Python
+    在线运行时已经实现。
+servers:
+  - url: http://edu-agent.internal
+    description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
+tags:
+  - name: AgentRun
+    description: 单次 Agent run 的创建、流式执行与显式取消。
+
+paths:
+  /internal/v1/agent/runs:
+    post:
+      tags: [AgentRun]
+      operationId: executeAgentRun
+      summary: 创建或找回同一次 run，并返回有类型的 SSE 流
+      description: |
+        clientRequestId 标识客户端的一次逻辑发送，messageId 标识已保存的用户消息，runId 标识
+        该消息的一次执行。Java 必须用唯一约束/事务保证同一 clientRequestId 不创建第二条消息，
+        同一 messageId+runId 重试不启动第二次执行。同一 conversationId 最多一个活动 run；冲突
+        立即返回 409，不排队。成功重放可以返回同一 run 的已保存事件或结果，但不得重新调用模型。
+      x-idempotency:
+        logicalRequestKey: [conversationId, clientRequestId]
+        executionKey: [messageId, runId]
+        retryCreatesMessage: false
+        retryStartsExecution: false
+        replayMode: SAVED_EVENTS_ONLY
+      x-concurrency:
+        scope: conversationId
+        maxActiveRuns: 1
+        queueOnConflict: false
+        conflictStatus: 409
+        conflictCode: AGENT.RUN_CONFLICT
+        retryable: true
+      x-stream-semantics:
+        firstEvent: RUN_ACCEPTED
+        sequenceStartsAt: 1
+        sequenceRule: strictly-consecutive
+        terminalEvent: FINAL_RESULT
+        terminalEventCount: 1
+        resumeBehavior: READ_SAVED_ONLY
+        disconnectStopsNewModelOrToolCalls: true
+        cancelStopsNewModelOrToolCalls: true
+        partialAnswerLabel: 回答已中断
+        timeoutTermination:
+          FIRST_EVENT_TIMEOUT: FAILED
+          IDLE_TIMEOUT: FAILED
+          TOTAL_TIME_LIMIT: LIMIT_REACHED
+          SLOW_CLIENT: FAILED
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRunRequest'
+      responses:
+        '200':
+          description: |
+            UTF-8 SSE。每个 data 字段是一个 StreamEvent JSON；事件序号连续递增，并且恰有一个
+            FINAL_RESULT 终态。心跳也占用序号。恢复读取不得自动重新生成。
+          headers:
+            X-Agent-Internal-Protocol-Version:
+              $ref: '#/components/headers/ProtocolVersion'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              x-event-schema:
+                $ref: '#/components/schemas/StreamEvent'
+        '409':
+          description: 同会话已有活动 run；客户端可在已有 run 结束后重试。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+        '422':
+          description: 请求、可信上下文或预算不符合协议。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+        '503':
+          description: Agent 服务不可用，且未启动 run。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+
+  /internal/v1/agent/runs/{runId}/cancel:
+    post:
+      tags: [AgentRun]
+      operationId: cancelAgentRun
+      summary: 幂等取消指定 run
+      description: |
+        相同 runId 和 cancelRequestId 重试返回同一取消结果。已处于任意终态时不得生成第二个终态；
+        取消一经观察到，Python 不得继续启动新的模型或工具调用。已发往供应商的请求只保证尽力
+        中止，不承诺立即停止计费。
+      x-idempotency:
+        key: [runId, cancelRequestId]
+        repeatSideEffects: false
+        terminalEventCount: 1
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersion'
+        - name: runId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRunRequest'
+      responses:
+        '200':
+          description: 取消已接受、已取消，或 run 已经处于其他终态。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelRunResponse'
+        '404':
+          description: run 不存在或调用方不可见。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+        '422':
+          description: 取消请求不符合协议。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+
+components:
+  parameters:
+    ProtocolVersion:
+      name: X-Agent-Internal-Protocol-Version
+      in: header
+      required: true
+      schema:
+        type: string
+        const: '1'
+      description: 不兼容变更使用新内部路径和新协议版本，不静默改变 v1。
+  headers:
+    ProtocolVersion:
+      schema:
+        type: string
+        const: '1'
+
+  schemas:
+    AgentRunRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - protocolVersion
+        - conversationId
+        - messageId
+        - runId
+        - clientRequestId
+        - traceId
+        - requestedAt
+        - userMessage
+        - trustedContext
+        - budget
+        - timeoutPolicy
+      properties:
+        protocolVersion: {type: integer, const: 1}
+        conversationId: {type: string, format: uuid}
+        messageId:
+          type: string
+          format: uuid
+          description: Java 已持久化的用户消息身份；重试必须保持不变。
+        runId:
+          type: string
+          format: uuid
+          description: 本次执行身份；网络重试保持不变，明确重新生成才使用新值。
+        clientRequestId:
+          type: string
+          format: uuid
+          description: 浏览器一次逻辑发送经 Java 保存后的稳定请求身份，不是 thread_id。
+        traceId: {$ref: '#/components/schemas/TraceId'}
+        requestedAt: {type: string, format: date-time}
+        userMessage: {$ref: '#/components/schemas/UserMessage'}
+        trustedContext: {$ref: '#/components/schemas/TrustedContext'}
+        budget: {$ref: '#/components/schemas/RunBudget'}
+        timeoutPolicy: {$ref: '#/components/schemas/TimeoutPolicy'}
+
+    UserMessage:
+      type: object
+      additionalProperties: false
+      required: [text, locale]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        locale:
+          type: string
+          enum: [zh-CN]
+        studentAttachedWork:
+          $ref: '#/components/schemas/StudentAttachedWork'
+
+    StudentAttachedWork:
+      type: object
+      additionalProperties: false
+      required: [attachedByStudent, content, status]
+      properties:
+        attachedByStudent:
+          type: boolean
+          const: true
+          description: 只有学生主动勾选附加时才能为 true；页面草稿不得被 Java 自动附带。
+        content: {type: string, minLength: 1, maxLength: 20000}
+        status: {type: string, const: STUDENT_DRAFT}
+
+    TrustedContext:
+      type: object
+      additionalProperties: false
+      required: [userId, educationStage, grade, entryPoint, authorizedAt, toolGrants]
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: IAM 全局 userId，由 Java 服务端身份注入。
+        educationStage: {type: string, const: JUNIOR}
+        grade: {type: string, enum: [GRADE_7, GRADE_8, GRADE_9]}
+        entryPoint:
+          type: string
+          enum: [INDEPENDENT_CHAT, PRACTICE_FLOATING]
+        authorizedAt: {type: string, format: date-time}
+        preferences:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/LearningPreference'}
+        question: {$ref: '#/components/schemas/AuthorizedQuestionContext'}
+        course: {$ref: '#/components/schemas/AuthorizedCourseContext'}
+        learningFacts:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AuthorizedLearningFactRef'}
+        media:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/AuthorizedMediaReference'}
+        memorySummaries:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/AuthorizedMemorySummary'}
+        toolGrants:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/ToolGrant'}
+      description: |
+        仅包含 Java 已授权的事实。字段中故意不存在 browserRole、permissions、arbitraryCourseId、
+        arbitraryQuestionId 或 arbitraryMediaUrl；Python 不得把浏览器原始提交提升为可信事实。
+
+    LearningPreference:
+      type: object
+      additionalProperties: false
+      required: [kind, value, source]
+      properties:
+        kind: {type: string, enum: [EXPLANATION_STYLE, DETAIL_LEVEL, HINT_FIRST]}
+        value: {type: string, minLength: 1, maxLength: 80}
+        source: {type: string, enum: [EXPLICIT, INFERRED]}
+
+    AuthorizedQuestionContext:
+      type: object
+      additionalProperties: false
+      required: [questionId, questionVersionId, scope, safeProjection]
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        scope: {type: string, enum: [ACTIVE_SYSTEM, AUTHORIZED_ASSESSMENT_SNAPSHOT]}
+        safeProjection: {$ref: '#/components/schemas/SafeQuestionProjection'}
+
+    SafeQuestionProjection:
+      type: object
+      additionalProperties: false
+      required: [questionType, stem]
+      properties:
+        questionType:
+          type: string
+          enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE]
+        stem: {type: string, minLength: 1, maxLength: 30000}
+        options:
+          type: array
+          maxItems: 20
+          items: {type: string, minLength: 1, maxLength: 4000}
+        children:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [questionVersionId, questionType, stem]
+            properties:
+              questionVersionId: {type: string, format: uuid}
+              questionType:
+                type: string
+                enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER]
+              stem: {type: string, minLength: 1, maxLength: 20000}
+              options:
+                type: array
+                maxItems: 20
+                items: {type: string, minLength: 1, maxLength: 4000}
+      description: 学生当前有权看到的题目正文；永不包含官方答案、解析、得分或评分规则。
+
+    AuthorizedCourseContext:
+      type: object
+      additionalProperties: false
+      required: [courseId, courseVersionId, accessDecision]
+      properties:
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonId: {type: string, format: uuid}
+        accessDecision: {type: string, const: AUTHORIZED_BY_JAVA}
+        textResourceRefs:
+          type: array
+          maxItems: 32
+          items: {type: string, format: uuid}
+      description: 只表达已授权范围；Python 仍须按 ToolGrant 检索，依赖失败时禁止全库退化。
+
+    AuthorizedLearningFactRef:
+      type: object
+      additionalProperties: false
+      required: [factType, factId, ownerScope, revision]
+      properties:
+        factType:
+          type: string
+          enum: [WRONG_QUESTION, STUDENT_SUBMISSION, PUBLISHED_GRADE, LEARNING_PROGRESS]
+        factId: {type: string, format: uuid}
+        ownerScope: {type: string, const: USER_SELF}
+        revision: {type: integer, minimum: 0}
+
+    AuthorizedMediaReference:
+      type: object
+      additionalProperties: false
+      required: [mediaId, purpose, mimeType, sizeBytes, accessDecision]
+      properties:
+        mediaId: {type: string, format: uuid}
+        purpose: {type: string, enum: [QUESTION_IMAGE, AI_QUESTION_IMAGE]}
+        mimeType: {type: string, enum: [image/jpeg, image/png, image/webp]}
+        sizeBytes: {type: integer, minimum: 1, maximum: 10485760}
+        accessDecision: {type: string, const: AUTHORIZED_BY_JAVA}
+        temporaryAccess: {$ref: '#/components/schemas/TemporaryMediaAccess'}
+
+    TemporaryMediaAccess:
+      type: object
+      additionalProperties: false
+      required: [url, expiresAt, confidentiality]
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          writeOnly: true
+          x-sensitive: true
+        expiresAt: {type: string, format: date-time}
+        confidentiality: {type: string, const: SHORT_LIVED_SECRET}
+      description: |
+        只交给受控媒体读取适配器；禁止回显、持久化、日志记录、写入引用、传给模型或工具结果。
+        Python 不接 OSS SDK，也不接受浏览器任意 image_url。
+
+    AuthorizedMemorySummary:
+      type: object
+      additionalProperties: false
+      required: [summaryId, revision, text, authorizedByJava]
+      properties:
+        summaryId: {type: string, format: uuid}
+        revision: {type: integer, minimum: 1}
+        text: {type: string, minLength: 1, maxLength: 4000}
+        authorizedByJava: {type: boolean, const: true}
+
+    ToolGrant:
+      type: object
+      additionalProperties: false
+      required: [toolName, resourceScopes]
+      properties:
+        toolName: {$ref: '#/components/schemas/ToolName'}
+        resourceScopes:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/ResourceScope'}
+      description: 模型只能缩小该白名单和范围，不能新增工具、资源或权限。
+
+    ResourceScope:
+      type: object
+      additionalProperties: false
+      required: [scopeType]
+      properties:
+        scopeType:
+          type: string
+          enum: [PUBLIC_JUNIOR_MATH, USER_SELF, QUESTION_VERSION, COURSE, MEDIA, HELP_KB]
+        resourceIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
+
+    RunBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - maxOrchestrationSteps
+        - maxLlmCalls
+        - reservedFinalLlmCalls
+        - maxToolAttempts
+        - maxExpertTransfers
+        - maxSameToolArgumentsAttempts
+        - maxTeachingRemediations
+        - teachingRemediationOrder
+        - totalTimeMs
+      properties:
+        maxOrchestrationSteps: {type: integer, minimum: 1, maximum: 32, default: 12}
+        maxLlmCalls: {type: integer, minimum: 1, maximum: 16, default: 8}
+        reservedFinalLlmCalls: {type: integer, minimum: 0, maximum: 2, default: 1}
+        maxToolAttempts: {type: integer, minimum: 0, maximum: 20, default: 10}
+        maxExpertTransfers: {type: integer, minimum: 0, maximum: 4, default: 2}
+        maxSameToolArgumentsAttempts: {type: integer, minimum: 1, maximum: 3, default: 2}
+        maxTeachingRemediations: {type: integer, minimum: 0, maximum: 3, default: 3}
+        teachingRemediationOrder:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items: {type: string, enum: [REPHRASE, SIMPLE_EXAMPLE, PREREQUISITE_FALLBACK]}
+        totalTimeMs: {type: integer, minimum: 1000, maximum: 180000, default: 90000}
+      description: |
+        这些是 Java 可配置后下发的每轮上限，default 只是首版建议。路由、失败重试、视觉、总结和
+        记忆提取都计数；达到上限后输出可靠简化答复并以 DEGRADED 或 LIMIT_REACHED 结束。
+
+    TimeoutPolicy:
+      type: object
+      additionalProperties: false
+      required: [firstEventTimeoutMs, heartbeatIntervalMs, idleTimeoutMs, slowClientBufferMaxEvents]
+      properties:
+        firstEventTimeoutMs: {type: integer, minimum: 1000, maximum: 30000, default: 5000}
+        heartbeatIntervalMs: {type: integer, minimum: 1000, maximum: 30000, default: 10000}
+        idleTimeoutMs: {type: integer, minimum: 5000, maximum: 60000, default: 20000}
+        slowClientBufferMaxEvents: {type: integer, minimum: 8, maximum: 256, default: 64}
+      description: |
+        首事件/空闲/慢客户端失败必须发安全 RUN_ERROR（若连接仍可写）并以唯一 FAILED 终态结束；
+        totalTimeMs 用尽则以 LIMIT_REACHED 结束。断线后停止新工作，不在后台继续生成。
+
+    CancelRunRequest:
+      type: object
+      additionalProperties: false
+      required: [cancelRequestId, traceId, requestedAt, reason]
+      properties:
+        cancelRequestId: {type: string, format: uuid}
+        traceId: {$ref: '#/components/schemas/TraceId'}
+        requestedAt: {type: string, format: date-time}
+        reason: {type: string, enum: [USER_STOPPED, CLIENT_DISCONNECTED, PAGE_CLOSED, SWITCH_TO_FULL_PAGE]}
+
+    CancelRunResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, cancelRequestId, outcome, traceId]
+      properties:
+        runId: {type: string, format: uuid}
+        cancelRequestId: {type: string, format: uuid}
+        outcome:
+          type: string
+          enum: [CANCELLATION_ACCEPTED, ALREADY_CANCELLED, ALREADY_TERMINAL]
+        terminalStatus:
+          $ref: '#/components/schemas/TerminalStatus'
+        traceId: {$ref: '#/components/schemas/TraceId'}
+
+    StreamEvent:
+      type: object
+      additionalProperties: false
+      required: [eventType, runId, sequence, traceId, emittedAt, payload]
+      properties:
+        eventType:
+          type: string
+          enum:
+            - RUN_ACCEPTED
+            - STAGE_CHANGED
+            - TEXT_DELTA
+            - CLARIFICATION_REQUIRED
+            - REFERENCE
+            - PARTIAL_CHECKPOINT
+            - HEARTBEAT
+            - RUN_ERROR
+            - FINAL_RESULT
+        runId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1}
+        traceId: {$ref: '#/components/schemas/TraceId'}
+        emittedAt: {type: string, format: date-time}
+        payload:
+          type: object
+      allOf:
+        - if: {properties: {eventType: {const: RUN_ACCEPTED}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/RunAcceptedPayload'}}}
+        - if: {properties: {eventType: {const: STAGE_CHANGED}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/StageChangedPayload'}}}
+        - if: {properties: {eventType: {const: TEXT_DELTA}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/TextDeltaPayload'}}}
+        - if: {properties: {eventType: {const: CLARIFICATION_REQUIRED}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/ClarificationPayload'}}}
+        - if: {properties: {eventType: {const: REFERENCE}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/ReferencePayload'}}}
+        - if: {properties: {eventType: {const: PARTIAL_CHECKPOINT}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/PartialCheckpointPayload'}}}
+        - if: {properties: {eventType: {const: HEARTBEAT}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/HeartbeatPayload'}}}
+        - if: {properties: {eventType: {const: RUN_ERROR}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/RunErrorPayload'}}}
+        - if: {properties: {eventType: {const: FINAL_RESULT}}}
+          then: {properties: {payload: {$ref: '#/components/schemas/FinalResultPayload'}}}
+
+    RunAcceptedPayload:
+      type: object
+      additionalProperties: false
+      required: [conversationId, messageId, replayed]
+      properties:
+        conversationId: {type: string, format: uuid}
+        messageId: {type: string, format: uuid}
+        replayed:
+          type: boolean
+          description: true 表示读取既有执行/保存事件，不会重新调用模型或工具。
+
+    StageChangedPayload:
+      type: object
+      additionalProperties: false
+      required: [stage, message]
+      properties:
+        stage:
+          type: string
+          enum: [UNDERSTANDING, RETRIEVING, CHECKING_WORK, PLANNING, EXPLAINING, FINALIZING]
+        message: {type: string, minLength: 1, maxLength: 120}
+
+    TextDeltaPayload:
+      type: object
+      additionalProperties: false
+      required: [delta]
+      properties:
+        delta: {type: string, minLength: 1, maxLength: 4000}
+
+    ClarificationPayload:
+      type: object
+      additionalProperties: false
+      required: [question, missingSlots]
+      properties:
+        question: {type: string, minLength: 1, maxLength: 500}
+        missingSlots:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/SlotName'}
+
+    ReferencePayload:
+      type: object
+      additionalProperties: false
+      required: [reference]
+      properties:
+        reference: {$ref: '#/components/schemas/AuthorizedReference'}
+
+    PartialCheckpointPayload:
+      type: object
+      additionalProperties: false
+      required: [text, complete, persisted]
+      properties:
+        text: {type: string, minLength: 1, maxLength: 30000}
+        complete: {type: boolean, const: false}
+        persisted: {type: boolean, const: true}
+      description: 有界保存的部分回答；它不是完整答案，也不能直接作为已掌握证据。
+
+    HeartbeatPayload:
+      type: object
+      additionalProperties: false
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          enum: [UNDERSTANDING, RETRIEVING, CHECKING_WORK, PLANNING, EXPLAINING, FINALIZING]
+
+    RunErrorPayload:
+      type: object
+      additionalProperties: false
+      required: [error, terminal]
+      properties:
+        error: {$ref: '#/components/schemas/SafeError'}
+        terminal: {type: boolean, const: false}
+      description: 错误事件本身不是终态；随后仍必须恰有一个 FINAL_RESULT。
+
+    FinalResultPayload:
+      type: object
+      additionalProperties: false
+      required: [terminal, terminalStatus, answerCompleteness]
+      properties:
+        terminal: {type: boolean, const: true}
+        terminalStatus: {$ref: '#/components/schemas/TerminalStatus'}
+        finalAnswer: {type: string, minLength: 1, maxLength: 60000}
+        answerCompleteness:
+          type: string
+          enum: [COMPLETE, SIMPLIFIED, INTERRUPTED]
+        interruptionNotice:
+          type: string
+          const: 回答已中断
+        savedCheckpointSequence: {type: integer, minimum: 1}
+        references:
+          type: array
+          maxItems: 20
+          items: {$ref: '#/components/schemas/AuthorizedReference'}
+        error: {$ref: '#/components/schemas/SafeError'}
+      allOf:
+        - if: {properties: {terminalStatus: {const: COMPLETED}}}
+          then:
+            required: [finalAnswer]
+            properties: {answerCompleteness: {const: COMPLETE}}
+        - if: {properties: {terminalStatus: {enum: [DEGRADED, LIMIT_REACHED]}}}
+          then:
+            required: [finalAnswer]
+            properties: {answerCompleteness: {const: SIMPLIFIED}}
+        - if: {properties: {terminalStatus: {enum: [CANCELLED, FAILED]}}}
+          then:
+            required: [interruptionNotice]
+            properties: {answerCompleteness: {const: INTERRUPTED}}
+
+    TerminalStatus:
+      type: string
+      enum: [COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED]
+
+    AuthorizedReference:
+      type: object
+      additionalProperties: false
+      required: [referenceId, sourceType, title, accessDecision]
+      properties:
+        referenceId: {type: string, minLength: 1, maxLength: 128}
+        sourceType: {type: string, enum: [QUESTION, KNOWLEDGE_POINT, COURSE_TEXT, STUDENT_FACT, USER_HELP]}
+        title: {type: string, minLength: 1, maxLength: 200}
+        accessDecision: {type: string, const: AUTHORIZED_BY_JAVA}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+      description: 只显示仍经授权的稳定来源；不得含签名 URL、工具参数、原始结果或隐藏权限名单。
+
+    SafeError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable, traceId]
+      properties:
+        code:
+          type: string
+          pattern: '^AGENT\.[A-Z0-9_]{3,48}$'
+          examples: [AGENT.RUN_CONFLICT, AGENT.IDLE_TIMEOUT]
+        message: {type: string, minLength: 1, maxLength: 300}
+        retryable: {type: boolean}
+        traceId: {$ref: '#/components/schemas/TraceId'}
+      description: 禁止 Token、提示词、签名 URL、完整工具参数、模型推理、堆栈或个人隐私。
+
+    TraceId:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{8,64}$'
+
+    PrimaryIntent:
+      type: string
+      enum: [MATH_TUTORING, PRACTICE_COACHING, STUDY_PLANNING, PLATFORM_HELP, CONVERSATION, UNSUPPORTED, ACTION_CONTROL]
+
+    SecondaryIntent:
+      type: string
+      enum:
+        - SOLVE_PROBLEM
+        - EXPLAIN_CONCEPT
+        - COURSE_QUESTION
+        - CHECK_STUDENT_WORK
+        - GIVE_HINT
+        - REVIEW_WRONG_QUESTION
+        - RECOMMEND_PRACTICE
+        - CREATE_PLAN
+        - ADJUST_PLAN
+        - LEARNING_ADVICE
+        - SMALL_TALK
+        - UNSUPPORTED
+        - ACTION_CONFIRMATION
+        - ACTION_CANCELLATION
+
+    AgentRole:
+      type: string
+      enum: [COORDINATOR, MATH_TUTOR, PRACTICE_COACH, STUDY_PLANNER, PLATFORM_HELP]
+
+    IntentDecision:
+      type: object
+      additionalProperties: false
+      required: [primaryIntent, secondaryIntent, role, resolution, slots, subRequests]
+      properties:
+        primaryIntent: {$ref: '#/components/schemas/PrimaryIntent'}
+        secondaryIntent: {$ref: '#/components/schemas/SecondaryIntent'}
+        role: {$ref: '#/components/schemas/AgentRole'}
+        resolution: {type: string, enum: [ROUTED, NEEDS_CLARIFICATION]}
+        slots: {$ref: '#/components/schemas/IntentSlots'}
+        missingSlots:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/SlotName'}
+        subRequests:
+          type: array
+          maxItems: 2
+          items: {$ref: '#/components/schemas/RoutedSubRequest'}
+      allOf:
+        - if: {properties: {resolution: {const: NEEDS_CLARIFICATION}}}
+          then: {required: [missingSlots]}
+      description: 一级意图固定专家，二级意图固定提示词、必需槽位和允许工具；模型不得自由发明值。
+
+    IntentSlots:
+      type: object
+      additionalProperties: false
+      properties:
+        problemText: {type: string, minLength: 1, maxLength: 10000}
+        conceptName: {type: string, minLength: 1, maxLength: 200}
+        questionId: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+        studentWork: {type: string, minLength: 1, maxLength: 20000}
+        hintLevel: {type: string, enum: [LIGHT, MEDIUM, STRONG]}
+        wrongQuestionId: {type: string, format: uuid}
+        practiceTopic: {type: string, minLength: 1, maxLength: 200}
+        planGoal: {type: string, minLength: 1, maxLength: 500}
+        planConstraints: {type: string, minLength: 1, maxLength: 1000}
+        platformTopic: {type: string, minLength: 1, maxLength: 200}
+        actionId: {type: string, format: uuid}
+
+    SlotName:
+      type: string
+      enum: [problemText, conceptName, questionId, courseId, lessonId, studentWork, hintLevel, wrongQuestionId, practiceTopic, planGoal, platformTopic, actionId]
+
+    RoutedSubRequest:
+      type: object
+      additionalProperties: false
+      required: [sequence, secondaryIntent, role, slots]
+      properties:
+        sequence: {type: integer, minimum: 1, maximum: 2}
+        secondaryIntent: {$ref: '#/components/schemas/SecondaryIntent'}
+        role: {$ref: '#/components/schemas/AgentRole'}
+        slots: {$ref: '#/components/schemas/IntentSlots'}
+
+    ToolName:
+      type: string
+      enum:
+        - QUESTION_SEARCH
+        - KNOWLEDGE_SEARCH
+        - PREREQUISITE_GRAPH
+        - STUDENT_WRONG_QUESTIONS
+        - STUDENT_SUBMISSIONS
+        - STUDENT_PUBLISHED_GRADES
+        - STUDENT_PROGRESS
+        - COURSE_TEXT_SEARCH
+        - AUTHORIZED_IMAGE_UNDERSTANDING
+        - USER_HELP_SEARCH
+
+    ToolCallRequest:
+      type: object
+      additionalProperties: false
+      required: [toolCallId, runId, traceId, toolName, timeoutMs, arguments]
+      properties:
+        toolCallId: {type: string, format: uuid}
+        runId: {type: string, format: uuid}
+        traceId: {$ref: '#/components/schemas/TraceId'}
+        toolName: {$ref: '#/components/schemas/ToolName'}
+        timeoutMs: {type: integer, minimum: 100, maximum: 30000}
+        arguments:
+          type: object
+      allOf:
+        - if: {properties: {toolName: {enum: [QUESTION_SEARCH, KNOWLEDGE_SEARCH, USER_HELP_SEARCH]}}}
+          then: {properties: {arguments: {$ref: '#/components/schemas/SearchArguments'}}}
+        - if: {properties: {toolName: {const: PREREQUISITE_GRAPH}}}
+          then: {properties: {arguments: {$ref: '#/components/schemas/GraphArguments'}}}
+        - if: {properties: {toolName: {enum: [STUDENT_WRONG_QUESTIONS, STUDENT_SUBMISSIONS, STUDENT_PUBLISHED_GRADES, STUDENT_PROGRESS]}}}
+          then: {properties: {arguments: {$ref: '#/components/schemas/StudentFactArguments'}}}
+        - if: {properties: {toolName: {const: COURSE_TEXT_SEARCH}}}
+          then: {properties: {arguments: {$ref: '#/components/schemas/CourseTextArguments'}}}
+        - if: {properties: {toolName: {const: AUTHORIZED_IMAGE_UNDERSTANDING}}}
+          then: {properties: {arguments: {$ref: '#/components/schemas/ImageArguments'}}}
+      description: toolCallId 标识一次有界调用；执行前必须同时匹配 ToolGrant 名称和资源范围。
+
+    SearchArguments:
+      type: object
+      additionalProperties: false
+      required: [query, limit]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 2000}
+        limit: {type: integer, minimum: 1, maximum: 20}
+        resourceIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
+
+    GraphArguments:
+      type: object
+      additionalProperties: false
+      required: [knowledgePointIds, direction, maxDepth]
+      properties:
+        knowledgePointIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: {type: string, format: uuid}
+        direction: {type: string, enum: [PREREQUISITES, DEPENDENTS]}
+        maxDepth: {type: integer, minimum: 1, maximum: 3}
+
+    StudentFactArguments:
+      type: object
+      additionalProperties: false
+      required: [userId, limit]
+      properties:
+        userId: {type: string, format: uuid}
+        limit: {type: integer, minimum: 1, maximum: 50}
+        resourceIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: {type: string, format: uuid}
+
+    CourseTextArguments:
+      type: object
+      additionalProperties: false
+      required: [query, courseId, courseVersionId, limit]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 2000}
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonIds:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: {type: string, format: uuid}
+        limit: {type: integer, minimum: 1, maximum: 20}
+
+    ImageArguments:
+      type: object
+      additionalProperties: false
+      required: [mediaId, task]
+      properties:
+        mediaId: {type: string, format: uuid}
+        task: {type: string, enum: [READ_MATH_CONTENT, CHECK_STUDENT_WORK]}
+
+    ToolResult:
+      type: object
+      additionalProperties: false
+      required: [toolCallId, toolName, status, traceId, elapsedMs, evidence]
+      properties:
+        toolCallId: {type: string, format: uuid}
+        toolName: {$ref: '#/components/schemas/ToolName'}
+        status: {type: string, enum: [SUCCEEDED, EMPTY, REJECTED, TIMEOUT, FAILED]}
+        traceId: {$ref: '#/components/schemas/TraceId'}
+        elapsedMs: {type: integer, minimum: 0, maximum: 30000}
+        evidence:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/SafeToolEvidence'}
+        error: {$ref: '#/components/schemas/SafeError'}
+      allOf:
+        - if: {properties: {status: {enum: [REJECTED, TIMEOUT, FAILED]}}}
+          then: {required: [error]}
+      description: |
+        结果只允许安全证据投影，禁止未公布答案/解析/成绩、教师私有题、Token、签名 URL、
+        隐藏权限名单、提示词、内部推理和工具原始结果。课程授权依赖失败必须 REJECTED/FAILED，
+        不能退化为全库检索。首期没有任何业务写工具。
+
+    SafeToolEvidence:
+      type: object
+      additionalProperties: false
+      required: [evidenceId, evidenceType, title, summary, accessDecision]
+      properties:
+        evidenceId: {type: string, minLength: 1, maxLength: 128}
+        evidenceType:
+          type: string
+          enum: [QUESTION, KNOWLEDGE_POINT, PREREQUISITE_RELATION, STUDENT_FACT, COURSE_TEXT, IMAGE_UNDERSTANDING, USER_HELP]
+        title: {type: string, minLength: 1, maxLength: 200}
+        summary: {type: string, minLength: 1, maxLength: 4000}
+        accessDecision: {type: string, const: AUTHORIZED_BY_JAVA}
+        revision: {type: integer, minimum: 0}
+
+x-role-routing:
+  MATH_TUTORING:
+    role: MATH_TUTOR
+    secondaryIntents: [SOLVE_PROBLEM, EXPLAIN_CONCEPT, COURSE_QUESTION, CHECK_STUDENT_WORK, GIVE_HINT]
+  PRACTICE_COACHING:
+    role: PRACTICE_COACH
+    secondaryIntents: [REVIEW_WRONG_QUESTION, RECOMMEND_PRACTICE]
+  STUDY_PLANNING:
+    role: STUDY_PLANNER
+    secondaryIntents: [CREATE_PLAN, ADJUST_PLAN, LEARNING_ADVICE]
+  PLATFORM_HELP:
+    role: PLATFORM_HELP
+    secondaryIntents: []
+    availability: RESERVED_FOR_T13.4
+  CONVERSATION:
+    role: COORDINATOR
+    secondaryIntents: [SMALL_TALK]
+  UNSUPPORTED:
+    role: COORDINATOR
+    secondaryIntents: [UNSUPPORTED]
+  ACTION_CONTROL:
+    role: COORDINATOR
+    secondaryIntents: [ACTION_CONFIRMATION, ACTION_CANCELLATION]
+
+x-secondary-intent-contracts:
+  SOLVE_PROBLEM: {requiredAnySlots: [problemText, questionId], allowedTools: [QUESTION_SEARCH, KNOWLEDGE_SEARCH, PREREQUISITE_GRAPH, AUTHORIZED_IMAGE_UNDERSTANDING]}
+  EXPLAIN_CONCEPT: {requiredSlots: [conceptName], allowedTools: [KNOWLEDGE_SEARCH, PREREQUISITE_GRAPH]}
+  COURSE_QUESTION: {requiredSlots: [courseId], allowedTools: [COURSE_TEXT_SEARCH, KNOWLEDGE_SEARCH]}
+  CHECK_STUDENT_WORK: {requiredSlots: [studentWork], allowedTools: [QUESTION_SEARCH, KNOWLEDGE_SEARCH, AUTHORIZED_IMAGE_UNDERSTANDING]}
+  GIVE_HINT: {requiredAnySlots: [problemText, questionId], allowedTools: [QUESTION_SEARCH, KNOWLEDGE_SEARCH]}
+  REVIEW_WRONG_QUESTION: {requiredSlots: [wrongQuestionId], allowedTools: [STUDENT_WRONG_QUESTIONS, STUDENT_SUBMISSIONS, KNOWLEDGE_SEARCH]}
+  RECOMMEND_PRACTICE: {requiredSlots: [practiceTopic], allowedTools: [QUESTION_SEARCH, STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
+  CREATE_PLAN: {requiredSlots: [planGoal], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
+  ADJUST_PLAN: {requiredSlots: [planGoal], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
+  LEARNING_ADVICE: {requiredSlots: [], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
+  SMALL_TALK: {requiredSlots: [], allowedTools: []}
+  UNSUPPORTED: {requiredSlots: [], allowedTools: []}
+  ACTION_CONFIRMATION: {requiredSlots: [actionId], allowedTools: []}
+  ACTION_CANCELLATION: {requiredSlots: [actionId], allowedTools: []}
+
+x-private-state-boundary:
+  serializedByJava: false
+  returnedInSse: false
+  persistedAsToolResult: false
+  forbiddenPublicFields: [privateState, hiddenProfile, systemPrompt, chainOfThought, rawToolResult]
+  description: Python 私有状态只存在实现内部；本协议不定义或暴露旧 Agent 数十个 State 字段。
