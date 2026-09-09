@@ -1040,3 +1040,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - Java/数据库事实：真实内部 API 题目/知识点分页可读，Course 当前返回 0 个已发布非空 ARTICLE；T13.2 未跨域造课程/报名/退课数据，故不宣称真实课程用户状态闭环。启动已合并的 T14.1 服务时，`edu_platform_course_dev` 从 V4 前进 V5（outbox `exchange_name`、`course_text_index_revision`），`edu_platform_learning_dev` 从 V14 前进 V15（`question_index_revision`）；没有新增 T13.2 MySQL 迁移、Seed 或业务伪数据。
 - 自动化：Java 全量 `clean verify` 9 模块、222 项通过，0 失败/错误、31 项显式真实环境测试跳过，总耗时 5 分 36 秒。Python compileall 通过；全量 47 项中 40 项通过、7 项真实测试按显式开关跳过；启动 Java 事实源并打开开关后，真实专项最终 7/7 通过、19.891 秒。Java 服务停止后的一次误触发因端口不可达失败，按前置条件重启后的最终轮次通过。wheel 与 3 个 PowerShell 脚本语法解析通过；diff 检查在提交前最终复核。GitHub CI/PR 尚未创建，不提前写成通过。完整命令、配置、清理和风险见 [T13.2 交付文档](../delivery/T13.2-retrieval-index-worker.md)。
 - 提交与 PR：规则提交 `f50bcba` 保持独立，业务实现提交为 `3511e6c`，首次交付状态提交为 `2777115`，PR 记录提交为 `80f6f4d`；分支已按规则推送并创建 Ready [PR #58](https://github.com/chengchen-ccnu/ccnu-edulion/pull/58)，保持 Open、未合并。`80f6f4d` 的 push/pull_request 两组 Java、Python、Frontend、OpenAPI 共 8 项检查全部成功，0 失败/取消/跳过。
+
+## 2026-09-09 PR #58 合并与 T13.3 前置审计
+
+- 合并与清理：[PR #58](https://github.com/chengchen-ccnu/ccnu-edulion/pull/58) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项检查全部成功后，以普通 merge 合并为 `main@df9568034a88f7a6623fe9ff143e1b6641b4d5a9`；本地 `main` 已快进同步，T13.2 本地和远端分支均已删除。
+- 协议门禁：T13.1 `agent-internal.yaml`、T14.1 Agent Access HTTP/SSE 调用与 T13.2 `HybridSearchService`/Index Worker 均已进入同一 main。使用本机 Python 环境执行 `tests.test_agent_internal_contract` 与 `tests.test_hybrid_index_retrieval` 共 20 项全部通过，覆盖唯一终态、取消/并发/预算、工具范围、索引事件和 dense/BM25/RRF/reranker 四阶段；没有修改协议或运行时代码。
+- Python 依赖：`D:\Anaconda\envs\langgraph` 已可导入 qdrant-client、Pika、Neo4j、SentenceTransformers 和 Transformers，足以开始运行时与检索适配开发；T13.3 仍须通过项目依赖声明和 CI，而不能依赖这台机器的偶然全局状态。
+- 模型配置：通过 `Invoke-WithLocalEnvironment.ps1` 只检查配置是否存在，未读取或输出秘密。当前共享环境没有 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、旧 `MODEL_NAME`、新 `CHAT_MODEL_NAME` 或 `VISION_MODEL_NAME`；因此可以用严格协议替身开始实现，但真实聊天、视觉、超时、取消和用量验收在配置完成前保持阻断，不能把 Mock 写成真实模型通过。
+- 准备结论：T13.1、T13.2、T14.1 的代码和协议依赖已经满足，已从干净 `main@df95680` 准备 `codex/t13.3-dynamic-multi-agent-runtime`。该分支只承接动态五角色、多轮状态、意图/槽位、受控工具、检索接入、预算/降级、流/取消和多模态；不实现 T14.2 真实长期记忆事实、T13.4 帮助知识库、前端或自主组题。
+- 数据边界：本轮只执行 Git 合并/同步/分支清理、配置存在性检查和 20 项纯自动化测试；没有创建、修改或清理 MySQL/Redis 数据、Qdrant 点、Neo4j 节点/关系、RabbitMQ 队列/消息、OSS 对象或伪数据。T13.2 已保留的本机派生索引保持原样。
