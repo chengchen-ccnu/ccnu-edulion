@@ -26,6 +26,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
+import com.eduplatform.learning.messaging.LearningEvents;
 
 /**
  * T10B 图谱导入编排与教师只读查询。
@@ -38,9 +39,10 @@ import tools.jackson.databind.ObjectMapper;
 public class KnowledgeGraphService {
     private final KnowledgeGraphRepository repository;
     private final ObjectMapper mapper;
+    private final LearningEvents events;
 
-    public KnowledgeGraphService(KnowledgeGraphRepository repository, ObjectMapper mapper) {
-        this.repository = repository; this.mapper = mapper;
+    public KnowledgeGraphService(KnowledgeGraphRepository repository, ObjectMapper mapper, LearningEvents events) {
+        this.repository = repository; this.mapper = mapper; this.events = events;
     }
 
     /** 创建幂等任务；输入只有来源命名空间、文件摘要和预期计数。 */
@@ -69,6 +71,13 @@ public class KnowledgeGraphService {
     @Transactional
     public KnowledgeGraphDtos.BatchResult nodes(String administratorId, String taskId,
             KnowledgeGraphDtos.NodeBatchRequest request) {
+        return nodes(administratorId, taskId, request, "agent-index-" + taskId);
+    }
+
+    /** 带入口 Trace 的节点批次；旧测试/内部调用签名仍委托到稳定安全 Trace。 */
+    @Transactional
+    public KnowledgeGraphDtos.BatchResult nodes(String administratorId, String taskId,
+            KnowledgeGraphDtos.NodeBatchRequest request, String traceId) {
         TaskRow task = owned(administratorId, taskId, true);
         String fingerprint = hash(request);
         var replay = repository.findBatch(taskId, request.batchId().toString());
@@ -94,7 +103,8 @@ public class KnowledgeGraphService {
         if (request.finalBatch() && projected != task.expectedNodeCount()) throw invalid("nodes", "最终节点批次后的数量与 expectedNodeCount 不一致");
         repository.insertBatch(taskId, request.batchId().toString(), "NODE", fingerprint, request.finalBatch(), request.nodes().size(), now);
         repository.advance(taskId, request.nodes().size(), 0, next, now);
-        if (request.finalBatch() && task.expectedRelationCount() == 0) return finish(administratorId, taskId, request.batchId().toString(), request.nodes().size());
+        if (request.finalBatch() && task.expectedRelationCount() == 0) return finish(administratorId, taskId,
+                request.batchId().toString(), request.nodes().size(), traceId);
         return new KnowledgeGraphDtos.BatchResult(taskId, request.batchId().toString(), false, request.nodes().size(), next);
     }
 
@@ -102,6 +112,13 @@ public class KnowledgeGraphService {
     @Transactional
     public KnowledgeGraphDtos.BatchResult relations(String administratorId, String taskId,
             KnowledgeGraphDtos.RelationBatchRequest request) {
+        return relations(administratorId, taskId, request, "agent-index-" + taskId);
+    }
+
+    /** 带入口 Trace 的关系批次；正式落库与 Agent Outbox 保持同一事务。 */
+    @Transactional
+    public KnowledgeGraphDtos.BatchResult relations(String administratorId, String taskId,
+            KnowledgeGraphDtos.RelationBatchRequest request, String traceId) {
         TaskRow task = owned(administratorId, taskId, true);
         String fingerprint = hash(request);
         var replay = repository.findBatch(taskId, request.batchId().toString());
@@ -121,7 +138,7 @@ public class KnowledgeGraphService {
         if (request.finalBatch() && projected != task.expectedRelationCount()) throw invalid("relations", "最终关系批次后的数量与 expectedRelationCount 不一致");
         repository.insertBatch(taskId, request.batchId().toString(), "RELATION", fingerprint, request.finalBatch(), request.relations().size(), now);
         repository.advance(taskId, 0, request.relations().size(), request.finalBatch() ? KnowledgeGraphDtos.Status.VALIDATING : task.status(), now);
-        return request.finalBatch() ? finish(administratorId, taskId, request.batchId().toString(), request.relations().size())
+        return request.finalBatch() ? finish(administratorId, taskId, request.batchId().toString(), request.relations().size(), traceId)
                 : new KnowledgeGraphDtos.BatchResult(taskId, request.batchId().toString(), false, request.relations().size(), task.status());
     }
 
@@ -161,7 +178,8 @@ public class KnowledgeGraphService {
         return new KnowledgeGraphDtos.Graph(center, prerequisites, dependents, nodes, projectedEdges, depth);
     }
 
-    private KnowledgeGraphDtos.BatchResult finish(String administratorId, String taskId, String batchId, int accepted) {
+    private KnowledgeGraphDtos.BatchResult finish(String administratorId, String taskId, String batchId,
+            int accepted, String traceId) {
         TaskRow task = owned(administratorId, taskId, true); Instant now = Instant.now();
         List<NodeRow> nodes = repository.nodes(taskId); List<RelationRow> relations = repository.relations(taskId);
         Map<String, NodeRow> bySource = new LinkedHashMap<>(); nodes.forEach(node -> bySource.put(node.sourceKnowId(), node));
@@ -215,20 +233,36 @@ public class KnowledgeGraphService {
                 addedNodes, reusedNodes, conflictNodes, addedRelations, reusedRelations, skippedRelations,
                 missing, duplicateEdges, self, crossDiscipline, crossStage, combinedCycle, inDegree.values().stream().mapToInt(Integer::intValue).max().orElse(0),
                 outDegree.values().stream().mapToInt(Integer::intValue).max().orElse(0), metrics.longest());
-        if (!task.dryRun() && structural == 0 && duplicateNodes == 0 && duplicateEdges == 0) importBusiness(task, nodes, relations, businessIds, now);
+        if (!task.dryRun() && structural == 0 && duplicateNodes == 0 && duplicateEdges == 0) {
+            java.util.Set<String> changed = importBusiness(task, nodes, relations, businessIds, now);
+            repository.bumpIndexRevisions(changed, now);
+            changed.forEach(id -> repository.indexSourceRevision(id).ifPresent(revision ->
+                    repository.insertOutbox(events.knowledgeIndexChanged(id, revision, traceId, now))));
+        }
         KnowledgeGraphDtos.Status status = structural + duplicateNodes + duplicateEdges > 0
                 ? KnowledgeGraphDtos.Status.COMPLETED_WITH_ISSUES : KnowledgeGraphDtos.Status.COMPLETED;
         repository.complete(taskId, status, summary, now);
         return new KnowledgeGraphDtos.BatchResult(taskId, batchId, false, accepted, status);
     }
 
-    private void importBusiness(TaskRow task, List<NodeRow> nodes, List<RelationRow> relations,
+    private java.util.Set<String> importBusiness(TaskRow task, List<NodeRow> nodes, List<RelationRow> relations,
             Map<String, String> businessIds, Instant now) {
-        for (NodeRow node : nodes) businessIds.computeIfAbsent(node.sourceKnowId(), ignored -> repository.insertSourcePoint(task.sourceSystem(), node, now));
+        java.util.Set<String> changed = new java.util.LinkedHashSet<>();
+        for (NodeRow node : nodes) {
+            if (!businessIds.containsKey(node.sourceKnowId())) {
+                String id = repository.insertSourcePoint(task.sourceSystem(), node, now);
+                businessIds.put(node.sourceKnowId(), id);
+                changed.add(id);
+            }
+        }
         for (RelationRow relation : relations) {
             String from = businessIds.get(relation.prerequisiteSourceKnowId()), to = businessIds.get(relation.dependentSourceKnowId());
-            if (!repository.relationExists(from, to)) repository.insertBusinessRelation(from, to, task.sourceSystem(), relation.sourceRelationType(), now);
+            if (!repository.relationExists(from, to)) {
+                repository.insertBusinessRelation(from, to, task.sourceSystem(), relation.sourceRelationType(), now);
+                changed.add(from); changed.add(to);
+            }
         }
+        return changed;
     }
 
     /**

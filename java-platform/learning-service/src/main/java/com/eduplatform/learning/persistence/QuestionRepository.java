@@ -503,12 +503,26 @@ public class QuestionRepository {
         }
     }
 
-    /** 兼容 T09A 导入：把现有子聚合的当前版本冻结到新关系列。 */
-    public void insertCurrentVersionChildren(String parentQuestionId, String parentVersionId,
+    /** 兼容 T09A 导入：把现有子聚合的当前版本冻结到新关系列，并返回精确子版本。 */
+    public List<ChildLink> insertCurrentVersionChildren(String parentQuestionId, String parentVersionId,
             List<String> childQuestionIds) {
         List<ChildLink> links = childQuestionIds.stream().map(id -> new ChildLink(id,
                 jdbc.queryForObject("SELECT current_version_id FROM question_aggregate WHERE id=?", String.class, id))).toList();
         insertVersionChildren(parentQuestionId, parentVersionId, links);
+        return links;
+    }
+
+    /**
+     * 提升公共题的派生索引 revision；minimumRevision 让既有题首次接入时不低于业务投影版本，
+     * 后续 tombstone 始终严格大于先前事件，且不触碰业务 revision 的导入清理语义。
+     */
+    public long bumpQuestionIndexRevision(String questionId, long minimumRevision, Instant now) {
+        jdbc.update("""
+                INSERT INTO question_index_revision(question_id,revision,updated_at) VALUES(?,?,?)
+                ON DUPLICATE KEY UPDATE revision=GREATEST(revision+1,VALUES(revision)),updated_at=VALUES(updated_at)
+                """, questionId, minimumRevision, ts(now));
+        return jdbc.queryForObject("SELECT revision FROM question_index_revision WHERE question_id=?",
+                Long.class, questionId);
     }
 
     /** 返回不可变父版本的有序子版本键，完整内容由 findVersion 精确读取。 */
@@ -591,6 +605,7 @@ public class QuestionRepository {
         jdbc.update("DELETE FROM question_legacy_item_resolution WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         jdbc.update("DELETE FROM question_legacy_review_item WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
         int refs = jdbc.update("DELETE FROM question_legacy_source_ref WHERE import_task_id=? AND owner_id=?", taskId, ownerId);
+        jdbc.update("DELETE FROM question_index_revision WHERE question_id IN (" + marks + ")", all.toArray());
         jdbc.update("DELETE FROM question_version_child WHERE parent_question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + ")) OR child_question_id IN (" + marks + ")",
                 concat(all, all));
         jdbc.update("DELETE FROM question_version_media WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id IN (" + marks + "))", all.toArray());

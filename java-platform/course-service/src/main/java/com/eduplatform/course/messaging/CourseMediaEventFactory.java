@@ -53,7 +53,8 @@ public class CourseMediaEventFactory {
         try {
             String routingKey = BOUND.equals(eventType)
                     ? "media.reference.bound.v1" : "media.reference.released.v1";
-            return new CourseOutboxEvent(eventId, eventType, 1, mediaId, routingKey, traceId,
+            return new CourseOutboxEvent(eventId, eventType, 1, mediaId, CourseRabbitConfig.MEDIA_EVENTS_EXCHANGE,
+                    routingKey, traceId,
                     objectMapper.writeValueAsString(envelope), "PENDING", 0, now, null, null, now, now);
         } catch (Exception exception) {
             throw new IllegalStateException("Unable to serialize course media event", exception);

@@ -145,7 +145,8 @@ public class HttpMediaClient implements MediaClient {
                             "disposition", disposition.name()))
                     .retrieve().body(Grant.class);
             if (grant == null || !"GET".equals(grant.method()) || grant.expiresAt() == null) throw unavailable();
-            return new LearningDtos.MediaAccessGrant(grant.method(), grant.url(), grant.headers(), grant.expiresAt());
+            return new LearningDtos.MediaAccessGrant(grant.mediaId(), grant.mimeType(), grant.sizeBytes(),
+                    grant.method(), grant.url(), grant.headers(), grant.expiresAt());
         } catch (QuestionException exception) {
             throw exception;
         } catch (RestClientResponseException exception) {
@@ -171,6 +172,7 @@ public class HttpMediaClient implements MediaClient {
     }
 
     private record Binding(String mediaId, String purpose, String status, boolean bindable) {}
-    private record Grant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+    private record Grant(String mediaId, String mimeType, long sizeBytes,
+            String method, String url, Map<String, String> headers, Instant expiresAt) {}
     private record Asset(String mediaId, String purpose, String status) {}
 }

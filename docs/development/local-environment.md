@@ -1,12 +1,12 @@
 # Local development environment
 
-## 2026-09-08 Agent 新架构前置（计划，未安装/实施）
+## 2026-09-08 Agent 新架构前置
 
 目标架构见 [Agent 重设计](../architecture/agent-platform-design.md)。旧 Python 代码仍加载 FAISS；新 T13 系列改为 Qdrant、Neo4j 派生图和独立 Index Worker。不能把旧启动条件或已有 8 项测试当作新架构验收。
 
 | 组件 | 已取得证据 | 后续要求 |
 |---|---|---|
-| Java Agent Access | 当前 Maven 模块中尚不存在 | T14.1 新增服务/Schema，建议 local 8086，实施时检查端口再落配置 |
+| Java Agent Access | T14.1 已新增独立 Maven 模块和 Flyway V1 | local 端口 8086；只有显式 local/test profile 启用持久化，真实 Python 动态运行时仍待 T13.3 |
 | bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 文件/768 维配置已核对，未实际推理 | 复用 BGE_MODEL_PATH，T13.2 实测 CPU/GPU 与中文效果 |
 | bge-reranker-base | 2026-09-08 目标目录不存在 | 下载到 `I:\大模型学习\edu_agent\bge-reranker-base`，实现时加 RERANKER_MODEL_PATH；不重复存多个等价权重，不入 Git |
 | Qdrant | 尚未取得安装/健康证据 | T13.2 单节点持久卷，默认 HTTP 6333/gRPC 6334；核验 BM25 多语言分词/客户端版本，不用云端 Embedding |
@@ -32,7 +32,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 & .\scripts\Initialize-LocalEnvironment.ps1
 ```
 
-脚本会显示 Windows 安全凭据输入框，将非敏感配置保存到当前用户目录的 `.ccnu-edulion/local.env`，并使用 Windows DPAPI 将 MySQL 凭据加密为同目录下的 `mysql.credential.clixml`。T08A.1 起还会自动生成独立 256-bit 课程/媒体服务授权密钥并加密为 `course-media-auth.credential.clixml`。已有本地环境缺少该文件时可直接重跑初始化脚本，它只补齐服务密钥，不覆盖 MySQL 凭据或 `local.env`；加密文件只能由同一台计算机上的同一 Windows 用户解密，不会进入 Git。
+脚本会显示 Windows 安全凭据输入框，将非敏感配置保存到当前用户目录的 `.ccnu-edulion/local.env`，并使用 Windows DPAPI 将 MySQL 凭据加密为同目录下的 `mysql.credential.clixml`。T08A.1 起还会自动生成独立 256-bit 课程/媒体服务授权密钥并加密为 `course-media-auth.credential.clixml`；T14.1 再生成 `agent-index-service.credential.clixml`，供独立 Index Worker 调用 Course/Learning 内部索引源。已有本地环境可直接重跑初始化脚本：它只补齐缺失密钥和缺少的 Agent 非敏感配置行，不覆盖 MySQL 凭据或其他 `local.env` 行。加密文件只能由同一台计算机上的同一 Windows 用户解密，不会进入 Git。
 
 需要凭据的命令通过受控脚本执行，例如：
 
@@ -47,7 +47,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 T08A.1 的加载脚本把 DPAPI 服务密钥临时注入为 `COURSE_MEDIA_AUTH_SECRET`，同时供 course-service 签发和 media-service 验证。生产/CI 必须通过各自 Secret 管理提供同名变量，不能复用 `IAM_JWT_SECRET`。非敏感参数 `COURSE_MEDIA_AUTH_ISSUER`、`COURSE_MEDIA_AUTH_AUDIENCE`、`COURSE_MEDIA_AUTH_TOKEN_TTL`、`MEDIA_SERVICE_AUTH_MAX_TOKEN_TTL` 和 `MEDIA_SERVICE_AUTH_CLOCK_SKEW` 可由环境覆盖；默认分别为 `edu-platform-course-service`、`edu-platform-media-service`、`30s`、`1m` 和 `5s`。
 
-五个领域服务的 MySQL Schema 变量分别是 `IAM_MYSQL_DATABASE`、`COURSE_MYSQL_DATABASE`、`MEDIA_MYSQL_DATABASE`、`LEARNING_MYSQL_DATABASE` 和 `OPERATION_MYSQL_DATABASE`。T02 不创建 Schema 或业务表；后续任务应保持每服务独立 Schema/账号。当前本地管理员账号只作为临时开发约定，通过 `MYSQL_USERNAME` 和 `MYSQL_PASSWORD` 注入，不能成为生产配置。
+六个领域服务的 MySQL Schema 变量分别是 `IAM_MYSQL_DATABASE`、`COURSE_MYSQL_DATABASE`、`MEDIA_MYSQL_DATABASE`、`LEARNING_MYSQL_DATABASE`、`OPERATION_MYSQL_DATABASE` 和 `AGENT_MYSQL_DATABASE`。T02 不创建 Schema 或业务表；后续任务应保持每服务独立 Schema/账号。当前本地管理员账号只作为临时开发约定，通过 `MYSQL_USERNAME` 和 `MYSQL_PASSWORD` 注入，不能成为生产配置。
 
 Redis 默认将 Gateway 和五个领域服务分配到逻辑 DB 0 到 5；这些编号都可覆盖。Redis 不是正式成绩、课程权限或其他业务事实源。
 
@@ -84,7 +84,7 @@ java -jar java-platform/iam-service/target/iam-service-0.1.0-SNAPSHOT.jar --spri
 Invoke-RestMethod http://127.0.0.1:8081/actuator/health
 ```
 
-验证完成后用 `Remove-Item Env:MYSQL_PASSWORD` 清除当前进程变量。其他服务替换 Maven 模块名和对应 Schema 变量；端口依次为 Gateway 8080、IAM 8081、Course 8082、Media 8083、Learning 8084、Operation 8085。
+验证完成后用 `Remove-Item Env:MYSQL_PASSWORD` 清除当前进程变量。其他服务替换 Maven 模块名和对应 Schema 变量；端口依次为 Gateway 8080、IAM 8081、Course 8082、Media 8083、Learning 8084、Operation 8085、Agent Access 8086。
 
 ## T07 的 OSS、RabbitMQ 与转码环境
 
@@ -574,6 +574,26 @@ T12G.1 已将批次大小、刷新间隔、租约、Worker 并发、课程事实
 2026-09-07 发现本机 `GATEWAY_REDIS_DATABASE` 与 `IAM_REDIS_DATABASE` 不一致，导致 Gateway 查不到 IAM sessionVersion。当前 Gateway 只使用一个 Redis 连接读取会话缓存；本地启动时可在包装脚本的 ScriptBlock 内设置 `$env:GATEWAY_REDIS_DATABASE=$env:IAM_REDIS_DATABASE`，再启动 Gateway。该设置仅影响子进程，不改共享 local.env；不能通过关闭 session-validation 或 rate-limit 规避 503。正常登录及课程事实请求须重新确认 200。
 
 T11C.2 专用浏览器 Fixture 及 INITIALIZE/REPORT/CLEANUP 命令见 [交付文档](../delivery/T11C.2-homework-gradebook-web.md)。它只允许 `edu_platform_learning_dev`，不创建数据库/账号/课程/题目；清理必须限定本轮测评、错题派生和明确记录的导出审计 UUID，不得运行按整个课程删除审计的清理替代。
+
+## T14.1 Agent Access 与索引源环境
+
+T14.1 新增 `agent-access-service`，local 端口为 8086，专用 Schema 约定为 `edu_platform_agent_dev`。服务不会创建数据库；只有显式 `local` 或 `test` profile 才启用 JDBC/Flyway，其他 profile 排除 DataSource 并关闭持久化。首次本地运行前应由开发者创建或确认用途明确的专用开发 Schema 和最小权限账号，不得把 Agent 表放入 IAM、Course、Learning 或其他服务 Schema。
+
+通过统一凭据包装器启动：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    mvn '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml -pl agent-access-service -am spring-boot:run
+}
+```
+
+Flyway V1 创建 `ai_conversation`、`ai_message`、`ai_run`、`ai_run_event`、`ai_run_cancellation` 和 `ai_tool_call`。这些表只保存 Agent Access 自有会话、公开事件、取消与安全工具审计；不保存 Course/Learning 领域实体、短期媒体 URL、Token、提示词、内部推理或原始工具结果。开发环境清理应删除明确的测试 conversation 及其从表记录；禁止清空整个 Schema。T14.1 自动化使用进程内 H2，测试结束后自动释放，没有持久 Seed。
+
+`AGENT_RUNTIME_BASE_URL` 默认指向 `http://127.0.0.1:8000`，请求超时默认 95 秒。T14.1 的 Java 流代理测试使用协议替身；当前旧 Python 入口不等于 T13.3 动态五角色运行时，未完成 T13.3 前不要用本端口组合宣称真实 Agent 已接通。
+
+Course/Learning 的 `/internal/v1/agent-index/**` 只在 `AGENT_INDEX_API_ENABLED=true` 时启用，Gateway 不路由。初始化脚本生成 DPAPI 加密的 `agent-index-service.credential.clixml`，包装器仅在子命令期间注入 `AGENT_INDEX_SERVICE_TOKEN`；调用方还必须发送固定 `X-Internal-Caller: agent-index-worker`。禁止打印令牌或写入 `local.env`。RabbitMQ 中题目、知识点、课程文字通知只携带稳定 ID 和 revision，正文由 T13.2 Worker 通过分页 API 拉取；在线命中后仍须由 Java 按当前用户复核访问权限。
+
+T14.1 不需要 Qdrant、Neo4j、BGE、重排模型或新增 Python 包。它们属于 T13.2；届时应先核对现有 Python 版本、硬件和本机资产，再由任务锁定精确版本，避免现在提前安装出一套漂移环境。
 
 ## 全量验证
 

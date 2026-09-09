@@ -322,9 +322,13 @@ async function resolveTeacherImage(lesson: EditableLesson, mediaId: string, sign
     refresh = false): Promise<CourseMediaAccessGrant> {
   const resource = lesson.resources.find(item => item.purpose === "ARTICLE_IMAGE" && item.mediaId === mediaId);
   if (!course.value || !lesson.id || !resource) throw new Error("正文图片尚未绑定。");
-  if (resource.localUrl) return {
-    method: "GET", url: resource.localUrl, headers: {},
-    expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  if (resource.localUrl) {
+    if (!resource.mimeType || resource.size === undefined) throw new Error("正文图片缺少本地媒体元数据。");
+    return {
+      mediaId: resource.mediaId, mimeType: resource.mimeType, sizeBytes: resource.size,
+      method: "GET", url: resource.localUrl, headers: {},
+      expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  }
   const projected = lesson.articleContent?.inlineImages.find(image =>
     image.mediaId.toLowerCase() === mediaId.toLowerCase());
   if (projected && !refresh) return projected.grant;

@@ -62,7 +62,7 @@ public class CourseOutboxPublisher {
         headers.setHeader("eventVersion", event.eventVersion());
         headers.setHeader("traceId", event.traceId());
         try {
-            rabbit.send(CourseRabbitConfig.MEDIA_EVENTS_EXCHANGE, event.routingKey(),
+            rabbit.send(event.exchange(), event.routingKey(),
                     new Message(event.payloadJson().getBytes(StandardCharsets.UTF_8), headers), correlation);
             CorrelationData.Confirm confirm = correlation.getFuture().get(
                     properties.messaging().confirmTimeout().toMillis(), TimeUnit.MILLISECONDS);

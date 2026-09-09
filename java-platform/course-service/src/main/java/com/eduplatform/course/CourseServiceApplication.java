@@ -6,11 +6,12 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.eduplatform.course.config.CourseMediaProperties;
+import com.eduplatform.course.config.AgentIndexProperties;
 
 /** 启动课程领域服务，并启用媒体引用 Outbox 的受控补投调度。 */
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties(CourseMediaProperties.class)
+@EnableConfigurationProperties({CourseMediaProperties.class, AgentIndexProperties.class})
 public class CourseServiceApplication {
     /**
      * 启动 Spring Boot 应用。

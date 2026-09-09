@@ -82,6 +82,7 @@ class QuestionBankIntegrationTest {
         jdbc.update("DELETE FROM question_legacy_import_batch"); jdbc.update("DELETE FROM question_version_child");
         jdbc.update("DELETE FROM question_import_row_error"); jdbc.update("DELETE FROM question_import_task");
         jdbc.update("DELETE FROM question_version_media"); jdbc.update("DELETE FROM question_version_knowledge_point");
+        jdbc.update("DELETE FROM question_index_revision");
         jdbc.update("DELETE FROM question_idempotency_request"); jdbc.update("DELETE FROM question_version");
         jdbc.update("UPDATE question_aggregate SET parent_question_id=NULL");
         jdbc.update("DELETE FROM question_aggregate"); jdbc.update("DELETE FROM knowledge_point");
@@ -121,6 +122,12 @@ class QuestionBankIntegrationTest {
         assertThat(system.scope()).isEqualTo(QuestionModels.Scope.SYSTEM);
         assertThat(system.status()).isEqualTo(QuestionModels.Status.ACTIVE);
         assertThat(system.editable()).isFalse();
+        String indexEvent = jdbc.queryForObject("""
+                SELECT payload_json FROM learning_outbox_event
+                WHERE event_type='QuestionIndexProjectionChanged' AND aggregate_id=?
+                """, String.class, system.id());
+        assertThat(indexEvent).contains("\"operation\":\"UPSERT\"", "\"questionVersionId\"")
+                .doesNotContain("answers", "analysis", "1+1=?");
         assertThat(questions.get(TEACHER, system.id())).extracting(QuestionDtos.QuestionResponse::editable)
                 .isEqualTo(false);
         assertThat(questions.list(TEACHER, 1, 20, null, null, null, null, null, null, null, null).items())
@@ -198,6 +205,14 @@ class QuestionBankIntegrationTest {
         var system = questions.createImportedComposite(ADMIN, QuestionModels.Scope.SYSTEM,
                 UUID.randomUUID().toString(), parent, List.of(childQuestion.id()),
                 "trace-system-composite-media").response();
+        assertThat(jdbc.queryForList("""
+                SELECT payload_json FROM learning_outbox_event
+                WHERE event_type='QuestionIndexProjectionChanged' AND aggregate_id=?
+                ORDER BY occurred_at,event_id
+                """, String.class, childQuestion.id())).hasSize(2).satisfies(events -> {
+                    assertThat(events.get(0)).contains("\"operation\":\"UPSERT\"", "\"sourceRevision\":1");
+                    assertThat(events.get(1)).contains("\"operation\":\"DELETE\"", "\"sourceRevision\":2");
+                });
         var grant = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/child", java.util.Map.of(), Instant.now());
         org.mockito.Mockito.when(media.issueSystemQuestionAccess(visible.toString(), TEACHER,
                 "QUESTION_IMAGE", LearningDtos.MediaDisposition.INLINE, "trace-child-media"))
@@ -478,6 +493,46 @@ class QuestionBankIntegrationTest {
         assertThat(cleaned.questionsDeleted()).isEqualTo(3); assertThat(cleaned.mediaReferencesReleased()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM learning_outbox_event WHERE event_type='MediaReferenceReleased'", Integer.class)).isEqualTo(1);
+    }
+
+    /** SYSTEM 历史题清理必须先发更高 revision 的 tombstone，防止派生索引残留已删除公共题。 */
+    @Test
+    void systemLegacyCleanupEmitsNewerQuestionIndexTombstone() throws Exception {
+        var task = legacyImports.create(ADMIN, QuestionModels.Scope.SYSTEM,
+                new QuestionDtos.CreateLegacyImportRequest(UUID.randomUUID(),
+                        "SYSTEM_AGENT_INDEX_FIXTURE", "d".repeat(64), false, 1)).response();
+        var source = objectMapper.readTree("""
+                {"exerciseID":"system-index-cleanup-01","exerciseType":"fillin","difficulty":1,
+                 "gradeIndex":7,"gradeName":"七年级","question":"计算 $x+1$", "queAns":"2",
+                 "solution":"代入计算","subQues":[]}
+                """);
+        var imported = legacyImports.submit(ADMIN, task.id(), new QuestionDtos.LegacyImportBatchRequest(
+                UUID.randomUUID(), true, List.of(legacyItem("system-index-cleanup-01", source))),
+                "trace-system-index-create");
+        String questionId = imported.items().get(0).questionId();
+        List<String> beforeCleanup = jdbc.queryForList("""
+                SELECT payload_json FROM learning_outbox_event
+                WHERE event_type='QuestionIndexProjectionChanged' AND aggregate_id=?
+                ORDER BY occurred_at,event_id
+                """, String.class, questionId);
+        assertThat(beforeCleanup).hasSize(1);
+        var upsert = objectMapper.readTree(beforeCleanup.get(0)).path("payload");
+        assertThat(upsert.path("operation").asText()).isEqualTo("UPSERT");
+
+        legacyImports.cleanup(ADMIN, task.id(), "trace-system-index-cleanup");
+
+        List<String> afterCleanup = jdbc.queryForList("""
+                SELECT payload_json FROM learning_outbox_event
+                WHERE event_type='QuestionIndexProjectionChanged' AND aggregate_id=?
+                ORDER BY occurred_at,event_id
+                """, String.class, questionId);
+        assertThat(afterCleanup).hasSize(2);
+        var tombstone = objectMapper.readTree(afterCleanup.get(1)).path("payload");
+        assertThat(tombstone.path("operation").asText()).isEqualTo("DELETE");
+        assertThat(tombstone.path("sourceRevision").asLong())
+                .isGreaterThan(upsert.path("sourceRevision").asLong());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_aggregate WHERE id=?",
+                Integer.class, questionId)).isZero();
     }
 
     /** 创建并更新一层组合题，验证根列表隔离及旧父版本仍读取原子题完整内容。 */

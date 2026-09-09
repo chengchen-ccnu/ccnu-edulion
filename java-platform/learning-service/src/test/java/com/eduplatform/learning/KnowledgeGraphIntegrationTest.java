@@ -39,6 +39,7 @@ class KnowledgeGraphIntegrationTest {
         jdbc.update("DELETE FROM question_legacy_import_issue"); jdbc.update("DELETE FROM question_legacy_source_ref");
         jdbc.update("DELETE FROM question_legacy_import_batch"); jdbc.update("DELETE FROM question_version_child");
         jdbc.update("DELETE FROM question_version_knowledge_point"); jdbc.update("DELETE FROM question_version_media");
+        jdbc.update("DELETE FROM question_index_revision");
         jdbc.update("DELETE FROM question_idempotency_request"); jdbc.update("DELETE FROM question_version");
         jdbc.update("UPDATE question_aggregate SET parent_question_id=NULL"); jdbc.update("DELETE FROM question_aggregate");
         jdbc.update("DELETE FROM question_import_task"); jdbc.update("DELETE FROM knowledge_point_prerequisite");

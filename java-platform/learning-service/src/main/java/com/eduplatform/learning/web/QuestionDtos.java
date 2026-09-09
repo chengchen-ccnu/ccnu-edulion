@@ -177,7 +177,7 @@ public final class QuestionDtos {
             QuestionModels.Grade grade, QuestionModels.Subject subject, String stem, List<OptionInput> options,
             List<KnowledgePointResponse> knowledgePoints, List<MediaResponse> media, Instant createdAt) {}
     /** 已启用公共题的学习端只读投影；不包含 answers、analysis 或历史版本。 */
-    public record SystemQuestion(String id, QuestionModels.Scope scope, QuestionModels.Type type,
+    public record SystemQuestion(String id, String versionId, QuestionModels.Scope scope, QuestionModels.Type type,
             QuestionModels.Difficulty difficulty, QuestionModels.Stage stage, QuestionModels.Grade grade,
             QuestionModels.Subject subject, String stem, List<OptionInput> options,
             List<KnowledgePointResponse> knowledgePoints, List<MediaResponse> media,

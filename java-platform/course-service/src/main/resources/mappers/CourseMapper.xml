@@ -381,18 +381,36 @@
           AND publication_status &lt;&gt; #{status}
     </update>
 
+    <!-- Agent 索引事件只枚举 ARTICLE 身份；正文由 Worker 另走受控分页 API 读取。 -->
+    <select id="listVersionArticleLessons" resultType="com.eduplatform.course.domain.LessonEntity">
+        SELECT l.id,l.chapter_id,l.title,l.lesson_type,l.position,l.previewable,l.article_markdown
+        FROM chapter ch JOIN lesson l ON l.chapter_id=ch.id
+        WHERE ch.course_version_id=#{versionId} AND l.lesson_type='ARTICLE'
+          AND l.article_markdown IS NOT NULL AND l.article_markdown&lt;&gt;''
+        ORDER BY ch.position,l.position,l.id
+    </select>
+
+    <insert id="bumpCourseTextIndexRevision">
+        INSERT INTO course_text_index_revision(lesson_id,revision,updated_at) VALUES(#{lessonId},1,#{now})
+        ON DUPLICATE KEY UPDATE revision=revision+1,updated_at=VALUES(updated_at)
+    </insert>
+
+    <select id="findCourseTextIndexRevision" resultType="long">
+        SELECT revision FROM course_text_index_revision WHERE lesson_id=#{lessonId}
+    </select>
+
     <insert id="insertOutbox">
         INSERT INTO outbox_event (
-            event_id, event_type, event_version, aggregate_id, routing_key, trace_id, payload_json,
+            event_id, event_type, event_version, aggregate_id, exchange_name, routing_key, trace_id, payload_json,
             status, attempts, next_attempt_at, published_at, last_error, created_at, updated_at
         ) VALUES (
-            #{eventId}, #{eventType}, #{eventVersion}, #{aggregateId}, #{routingKey}, #{traceId}, #{payloadJson},
+            #{eventId}, #{eventType}, #{eventVersion}, #{aggregateId}, #{exchange}, #{routingKey}, #{traceId}, #{payloadJson},
             #{status}, #{attempts}, #{nextAttemptAt}, #{publishedAt}, #{lastError}, #{createdAt}, #{updatedAt}
         )
     </insert>
 
     <select id="pendingOutbox" resultType="com.eduplatform.course.messaging.CourseOutboxEvent">
-        SELECT event_id, event_type, event_version, aggregate_id, routing_key, trace_id, payload_json,
+        SELECT event_id, event_type, event_version, aggregate_id, exchange_name AS exchange, routing_key, trace_id, payload_json,
                status, attempts, next_attempt_at, published_at, last_error, created_at, updated_at
         FROM outbox_event
         WHERE status = 'PENDING' AND next_attempt_at &lt;= #{now}

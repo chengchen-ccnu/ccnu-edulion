@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: agent-access-service
+  flyway:
+    enabled: false
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
+      fail-on-missing-creator-properties: true
+      fail-on-null-for-primitives: true
+server:
+  port: ${SERVER_PORT:8086}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+platform:
+  agent:
+    persistence-enabled: false
+    runtime-base-url: ${AGENT_RUNTIME_BASE_URL:http://127.0.0.1:8000}
+    runtime-request-timeout: ${AGENT_RUNTIME_REQUEST_TIMEOUT:95s}
+    learning-base-url: ${LEARNING_SERVICE_BASE_URL:http://127.0.0.1:8084}
+    course-base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
+    domain-request-timeout: ${AGENT_DOMAIN_REQUEST_TIMEOUT:5s}
+    protocol-version: '1'
+
+---
+spring:
+  config:
+    activate:
+      on-profile: "!local & !test"
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration

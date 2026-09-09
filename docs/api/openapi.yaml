@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.22.0
-  description: T10C.1 course practice entry and public question media security contract. Adds opt-in course PRACTICE filtering and safe legacy entry resolution using existing task projections. Public question media is authorized from current visible content; generic grants remain uploader-only. HOMEWORK/EXAM timing, grading and publication remain unchanged. No autonomous assessment or public single-question submission model is introduced.
+  version: 0.23.0
+  description: T14.1 Agent Access contract. Adds authenticated AI conversation, message, run streaming, saved-event recovery and idempotent cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. This contract does not claim that the real Python multi-Agent runtime, Qdrant, Neo4j or frontend is connected.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -24,6 +24,7 @@ tags:
   - name: Learning
   - name: Assessments
   - name: Teacher Assessments
+  - name: Agent
 paths:
   /api/v1/auth/login:
     post:
@@ -3033,6 +3034,140 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/v1/ai/conversations:
+    post:
+      tags: [Agent]
+      operationId: createAgentConversation
+      summary: Create or recover an AI conversation
+      description: Requires learning:access. clientRequestId is unique per authenticated user; retrying the same logical request returns the same conversation and never creates a second row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAgentConversationRequest'}
+      responses:
+        '201': {description: Conversation created., content: {application/json: {schema: {$ref: '#/components/schemas/AgentConversation'}}}}
+        '200': {description: Idempotent retry recovered the existing conversation., content: {application/json: {schema: {$ref: '#/components/schemas/AgentConversation'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    get:
+      tags: [Agent]
+      operationId: listAgentConversations
+      summary: List the current user's AI conversations
+      description: Requires learning:access. Results are owner-scoped and ordered by lastMessageAt descending then id descending.
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+      responses:
+        '200': {description: Owner-scoped conversation page., content: {application/json: {schema: {$ref: '#/components/schemas/AgentConversationPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/conversations/{conversationId}:
+    get:
+      tags: [Agent]
+      operationId: getAgentConversation
+      summary: Get an owner-visible AI conversation
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+      responses:
+        '200': {description: Conversation summary., content: {application/json: {schema: {$ref: '#/components/schemas/AgentConversation'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/conversations/{conversationId}/messages:
+    get:
+      tags: [Agent]
+      operationId: listAgentMessages
+      summary: List persisted messages in an owner-visible conversation
+      description: Interrupted assistant output is returned with completeness PARTIAL and must never be presented as a complete answer.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+      responses:
+        '200': {description: Message page ordered by sequenceNo ascending., content: {application/json: {schema: {$ref: '#/components/schemas/AgentMessagePage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [Agent]
+      operationId: sendAgentMessage
+      summary: Persist a user message and stream one Agent run
+      description: |
+        Requires learning:access. The browser sends stable identifiers only; Java re-authorizes every question,
+        course, lesson and media reference and constructs trustedContext. clientRequestId is unique within the
+        conversation. Retrying it returns the same messageId/runId and saved events without restarting Python.
+        A different request while the conversation has an active run fails with 409 and is never queued.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SendAgentMessageRequest'}
+      responses:
+        '200':
+          description: UTF-8 SSE. data is AgentClientStreamEvent JSON; sequence is strictly consecutive and exactly one FINAL_RESULT terminates the run.
+          headers:
+            X-Agent-Run-Id:
+              description: Stable run identity used for cancel and saved-event recovery.
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string}
+              x-event-schema: {$ref: '#/components/schemas/AgentClientStreamEvent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/AgentUnavailable'}
+  /api/v1/ai/runs/{runId}/events:
+    get:
+      tags: [Agent]
+      operationId: listAgentRunEvents
+      summary: Read saved public events without regenerating a run
+      parameters:
+        - {$ref: '#/components/parameters/AgentRunId'}
+        - name: afterSequence
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200': {description: Saved owner-visible events ordered by sequence., content: {application/json: {schema: {$ref: '#/components/schemas/AgentRunEventPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/runs/{runId}/cancel:
+    post:
+      tags: [Agent]
+      operationId: cancelAgentRun
+      summary: Idempotently cancel an owner-visible Agent run
+      description: A terminal run remains terminal and never gets a second terminal event. Cancellation stops new model/tool work best-effort but cannot promise that an already-sent provider request is unbilled.
+      parameters:
+        - {$ref: '#/components/parameters/AgentRunId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CancelAgentRunRequest'}
+      responses:
+        '200': {description: Stable cancellation result., content: {application/json: {schema: {$ref: '#/components/schemas/CancelAgentRunResponse'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
 components:
   securitySchemes:
     bearerAuth:
@@ -3075,6 +3210,18 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    AgentConversationId:
+      name: conversationId
+      in: path
+      required: true
+      description: Owner-scoped AI conversation ID; foreign IDs are reported as not found.
+      schema: {type: string, format: uuid}
+    AgentRunId:
+      name: runId
+      in: path
+      required: true
+      description: Owner-scoped Agent run ID; foreign IDs are reported as not found.
+      schema: {type: string, format: uuid}
     CourseId:
       name: courseId
       in: path
@@ -3290,6 +3437,42 @@ components:
             timestamp: '2026-07-16T10:00:00Z'
             path: /api/v1/courses
             fieldErrors: []
+    AgentNotFound:
+      description: The conversation or run does not exist or is owned by another user.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: AGENT.NOT_FOUND
+            message: AI 会话或运行不存在
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-09-09T10:00:00Z'
+            path: /api/v1/ai/conversations/0199c000-0000-7000-8000-000000000001
+            fieldErrors: []
+    AgentConflict:
+      description: Another run is active in the conversation, or an idempotency key was reused with different content.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: AGENT.RUN_CONFLICT
+            message: 当前会话已有回答正在生成
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-09-09T10:00:00Z'
+            path: /api/v1/ai/conversations/0199c000-0000-7000-8000-000000000001/messages
+            fieldErrors: []
+    AgentUnavailable:
+      description: The internal Agent runtime or an authorization dependency is unavailable before a safe run can start.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example:
+            code: AGENT.DEPENDENCY_UNAVAILABLE
+            message: AI 服务暂时不可用，请稍后重试
+            traceId: 2f6c8c3b98f14a9c
+            timestamp: '2026-09-09T10:00:00Z'
+            path: /api/v1/ai/conversations/0199c000-0000-7000-8000-000000000001/messages
+            fieldErrors: []
     MediaNotFound:
       description: The upload or media asset does not exist or is not owned by the authenticated caller.
       content:
@@ -3502,6 +3685,173 @@ components:
             path: /api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171/disable
             fieldErrors: []
   schemas:
+    AgentEntryPoint:
+      type: string
+      enum: [INDEPENDENT_CHAT, PRACTICE_FLOATING]
+    AgentConversationStatus:
+      type: string
+      enum: [ACTIVE, ARCHIVED]
+    AgentRunStatus:
+      type: string
+      enum: [ACCEPTED, RUNNING, COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED]
+    AgentMessageRole:
+      type: string
+      enum: [USER, ASSISTANT]
+    AgentMessageCompleteness:
+      type: string
+      enum: [COMPLETE, PARTIAL]
+    CreateAgentConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, entryPoint]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: Stable logical-create key generated by the client and scoped to the authenticated user.
+        entryPoint: {$ref: '#/components/schemas/AgentEntryPoint'}
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Optional user-visible title only; it never changes permissions or routing.
+    AgentConversation:
+      type: object
+      additionalProperties: false
+      required: [id, entryPoint, title, status, revision, createdAt, updatedAt, lastMessageAt]
+      properties:
+        id: {type: string, format: uuid}
+        entryPoint: {$ref: '#/components/schemas/AgentEntryPoint'}
+        title: {type: string, minLength: 1, maxLength: 80}
+        status: {$ref: '#/components/schemas/AgentConversationStatus'}
+        revision: {type: integer, minimum: 0}
+        activeRunId:
+          type: [string, 'null']
+          format: uuid
+          description: Current run identity when one run is active; null in a quiescent conversation.
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        lastMessageAt: {type: string, format: date-time}
+    AgentConversationPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AgentConversation'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+    AgentMessageContextRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        questionId:
+          type: string
+          format: uuid
+          description: Untrusted browser hint. Java must resolve the current learner-safe question projection and version.
+        courseId:
+          type: string
+          format: uuid
+          description: Untrusted browser hint. Java must verify current course access and never fall back to public retrieval when authorization is unavailable.
+        lessonId:
+          type: string
+          format: uuid
+          description: Requires courseId and must belong to the authorized current course version.
+        questionMediaIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: {type: string, format: uuid}
+          description: Optional subset of media bound to the authorized question. Arbitrary media IDs are rejected.
+    SendAgentMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, content]
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: Stable logical-send key unique within the conversation.
+        content: {type: string, minLength: 1, maxLength: 10000}
+        context: {$ref: '#/components/schemas/AgentMessageContextRequest'}
+    AgentMessageContext:
+      type: object
+      additionalProperties: false
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonId: {type: string, format: uuid}
+        mediaIds:
+          type: array
+          maxItems: 8
+          items: {type: string, format: uuid}
+      description: Persisted stable authorized identifiers only. Temporary URLs and hidden answer fields are never stored.
+    AgentMessage:
+      type: object
+      additionalProperties: false
+      required: [id, conversationId, role, content, completeness, sequenceNo, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        conversationId: {type: string, format: uuid}
+        runId: {type: [string, 'null'], format: uuid}
+        role: {$ref: '#/components/schemas/AgentMessageRole'}
+        content: {type: string, maxLength: 100000}
+        completeness: {$ref: '#/components/schemas/AgentMessageCompleteness'}
+        context: {$ref: '#/components/schemas/AgentMessageContext'}
+        sequenceNo: {type: integer, minimum: 1}
+        createdAt: {type: string, format: date-time}
+    AgentMessagePage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AgentMessage'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+    AgentClientStreamEvent:
+      type: object
+      additionalProperties: false
+      required: [eventType, runId, messageId, sequence, occurredAt, payload]
+      properties:
+        eventType:
+          type: string
+          enum: [RUN_ACCEPTED, STAGE_CHANGED, TEXT_DELTA, CLARIFICATION_REQUIRED, REFERENCE, PARTIAL_CHECKPOINT, HEARTBEAT, RUN_ERROR, FINAL_RESULT]
+        runId: {type: string, format: uuid}
+        messageId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1}
+        occurredAt: {type: string, format: date-time}
+        payload:
+          type: object
+          description: Public protocol payload for the named eventType. It never includes prompts, chain-of-thought, raw tool output, credentials or temporary media URLs.
+      description: Browser-safe projection of the internal typed event. FINAL_RESULT occurs exactly once and carries the terminal AgentRunStatus.
+    AgentRunEventPage:
+      type: object
+      additionalProperties: false
+      required: [runId, status, items]
+      properties:
+        runId: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/AgentRunStatus'}
+        items: {type: array, maxItems: 1000, items: {$ref: '#/components/schemas/AgentClientStreamEvent'}}
+    CancelAgentRunRequest:
+      type: object
+      additionalProperties: false
+      required: [cancelRequestId, reason]
+      properties:
+        cancelRequestId: {type: string, format: uuid}
+        reason: {type: string, enum: [USER_STOP, CLIENT_DISCONNECTED, PAGE_CLOSED]}
+    CancelAgentRunResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, status, accepted, terminal]
+      properties:
+        runId: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/AgentRunStatus'}
+        accepted: {type: boolean}
+        terminal: {type: boolean}
+        terminalEventSequence: {type: [integer, 'null'], minimum: 1}
     IdentityType:
       type: string
       enum: [PHONE, EMAIL]
@@ -4286,9 +4636,14 @@ components:
     LessonContent:
       type: object
       additionalProperties: false
-      required: [courseId, lessonId, title, type, previewable, articleMarkdown, playbackResourceId, poster, inlineImages, resources]
+      required: [courseId, courseVersionId, lessonId, title, type, previewable, articleMarkdown, playbackResourceId, poster, inlineImages, resources]
       properties:
         courseId: {type: string, format: uuid}
+        courseVersionId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Authorized published course-version identity used by Agent retrieval and stale-index checks.
         lessonId: {type: string, format: uuid}
         title: {type: string, minLength: 1, maxLength: 120}
         type: {type: string, enum: [VIDEO, ARTICLE, ASSESSMENT]}
@@ -5185,9 +5540,13 @@ components:
       type: object
       additionalProperties: false
       description: Learner-safe ACTIVE SYSTEM question; correct answers and analysis are intentionally absent.
-      required: [id, scope, type, difficulty, stage, grade, subject, stem, options, knowledgePoints, media, children, createdAt, updatedAt]
+      required: [id, versionId, scope, type, difficulty, stage, grade, subject, stem, options, knowledgePoints, media, children, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
+        versionId:
+          type: string
+          format: uuid
+          description: Current authorized immutable question version; safe for stale-index and Agent context checks.
         scope: {$ref: '#/components/schemas/QuestionScope'}
         type: {$ref: '#/components/schemas/QuestionType'}
         difficulty: {$ref: '#/components/schemas/QuestionDifficulty'}
@@ -6682,8 +7041,11 @@ components:
     MediaAccessGrant:
       type: object
       additionalProperties: false
-      required: [method, url, headers, expiresAt]
+      required: [mediaId, mimeType, sizeBytes, method, url, headers, expiresAt]
       properties:
+        mediaId: {type: string, format: uuid}
+        mimeType: {type: string, minLength: 3, maxLength: 127}
+        sizeBytes: {type: integer, format: int64, minimum: 1}
         method:
           type: string
           const: GET
@@ -6701,9 +7063,12 @@ components:
     CourseMediaPlaybackGrant:
       type: object
       additionalProperties: false
-      required: [method, url, headers, expiresAt]
+      required: [mediaId, mimeType, sizeBytes, method, url, headers, expiresAt]
       description: Short-lived playback projection returned by course-service after domain authorization. It contains no Bucket, Object Key, permanent URL or service credential.
       properties:
+        mediaId: {type: string, format: uuid}
+        mimeType: {type: string, minLength: 3, maxLength: 127}
+        sizeBytes: {type: integer, format: int64, minimum: 1}
         method:
           type: string
           const: GET
@@ -6722,9 +7087,12 @@ components:
     CourseMediaAccessGrant:
       type: object
       additionalProperties: false
-      required: [method, url, headers, expiresAt]
+      required: [mediaId, mimeType, sizeBytes, method, url, headers, expiresAt]
       description: Short-lived course-authorized poster, inline image, preview or download projection. It contains no Bucket, Object Key, permanent URL, media-service credential or service JWT.
       properties:
+        mediaId: {type: string, format: uuid}
+        mimeType: {type: string, minLength: 3, maxLength: 127}
+        sizeBytes: {type: integer, format: int64, minimum: 1}
         method: {type: string, const: GET}
         url:
           type: string

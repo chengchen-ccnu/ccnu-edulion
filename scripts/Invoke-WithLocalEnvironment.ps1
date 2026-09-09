@@ -15,10 +15,13 @@ $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
+$agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
 $iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
 $commandExitCode = 0
 $iamSmtpCredential = $null
 $iamSmtpNetworkCredential = $null
+$agentIndexCredential = $null
+$agentIndexNetworkCredential = $null
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "Missing local environment file. Run scripts/Initialize-LocalEnvironment.ps1 first."
@@ -38,6 +41,10 @@ if (-not (Test-Path -LiteralPath $iamSecurityCredentialPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $learningIamCredentialPath -PathType Leaf)) {
     throw "Missing encrypted Learning-to-IAM service secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
+}
+
+if (-not (Test-Path -LiteralPath $agentIndexCredentialPath -PathType Leaf)) {
+    throw "Missing encrypted Agent Index Worker service secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
 }
 
 $originalEnvironment = @{}
@@ -124,6 +131,16 @@ try {
     }
     Set-ScopedEnvironmentVariable -Name "IAM_INTERNAL_SERVICE_TOKEN" -Value $learningIamNetworkCredential.Password
 
+    $agentIndexCredential = Import-Clixml -LiteralPath $agentIndexCredentialPath
+    if ($agentIndexCredential -isnot [PSCredential] -or $agentIndexCredential.UserName -ne "agent-index-worker") {
+        throw "The encrypted Agent Index Worker service credential has an unexpected format."
+    }
+    $agentIndexNetworkCredential = $agentIndexCredential.GetNetworkCredential()
+    if ($agentIndexNetworkCredential.Password.Length -lt 32) {
+        throw "The encrypted Agent Index Worker service credential is incomplete."
+    }
+    Set-ScopedEnvironmentVariable -Name "AGENT_INDEX_SERVICE_TOKEN" -Value $agentIndexNetworkCredential.Password
+
     if ($env:IAM_VERIFICATION_DELIVERY_MODE -eq "smtp") {
         if (-not (Test-Path -LiteralPath $iamSmtpCredentialPath -PathType Leaf)) {
             throw "SMTP mode requires the DPAPI-encrypted IAM SMTP credential. Run scripts/Initialize-LocalSmtp.ps1."
@@ -162,6 +179,8 @@ finally {
     $iamSecurityCredential = $null
     $learningIamNetworkCredential = $null
     $learningIamCredential = $null
+    $agentIndexNetworkCredential = $null
+    $agentIndexCredential = $null
     $iamSmtpNetworkCredential = $null
     $iamSmtpCredential = $null
 }

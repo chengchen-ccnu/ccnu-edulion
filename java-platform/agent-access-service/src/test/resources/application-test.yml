@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:agent_access_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+platform:
+  agent:
+    persistence-enabled: true
+    runtime-base-url: http://127.0.0.1:65530
+    runtime-request-timeout: 2s
+    learning-base-url: http://127.0.0.1:65531
+    course-base-url: http://127.0.0.1:65532
+    domain-request-timeout: 1s
+    protocol-version: '1'
+    raw-message-retention-days: 180

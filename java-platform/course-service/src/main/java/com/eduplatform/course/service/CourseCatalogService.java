@@ -13,6 +13,7 @@ import com.eduplatform.course.media.MediaBindingClient.BindingSnapshot;
 import com.eduplatform.course.media.MediaCoverClient;
 import com.eduplatform.course.media.MediaPlaybackClient;
 import com.eduplatform.course.messaging.CourseMediaEventFactory;
+import com.eduplatform.course.messaging.CourseAgentIndexEventFactory;
 import com.eduplatform.course.persistence.CourseMapper;
 import com.eduplatform.course.persistence.EnrollmentAccessRepository;
 import com.eduplatform.course.web.CourseDtos;
@@ -49,13 +50,15 @@ public class CourseCatalogService {
     private final MediaPlaybackClient mediaPlaybackClient;
     private final MediaAccessClient mediaAccessClient;
     private final CourseMediaEventFactory mediaEvents;
+    private final CourseAgentIndexEventFactory agentIndexEvents;
     private final EnrollmentAccessRepository enrollmentAccess;
     private final ControlledMarkdownValidator markdownValidator;
 
     public CourseCatalogService(CourseMapper mapper, ObjectMapper objectMapper,
             MediaBindingClient mediaBindingClient, MediaCoverClient mediaCoverClient,
             MediaPlaybackClient mediaPlaybackClient, MediaAccessClient mediaAccessClient,
-            CourseMediaEventFactory mediaEvents, EnrollmentAccessRepository enrollmentAccess,
+            CourseMediaEventFactory mediaEvents, CourseAgentIndexEventFactory agentIndexEvents,
+            EnrollmentAccessRepository enrollmentAccess,
             ControlledMarkdownValidator markdownValidator) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
@@ -64,6 +67,7 @@ public class CourseCatalogService {
         this.mediaPlaybackClient = mediaPlaybackClient;
         this.mediaAccessClient = mediaAccessClient;
         this.mediaEvents = mediaEvents;
+        this.agentIndexEvents = agentIndexEvents;
         this.enrollmentAccess = enrollmentAccess;
         this.markdownValidator = markdownValidator;
     }
@@ -183,7 +187,7 @@ public class CourseCatalogService {
         List<CourseDtos.LessonContentResource> attachments = resources.stream()
                 .filter(row -> Set.of("COURSEWARE", "ARTICLE_ATTACHMENT").contains(row.getPurpose()))
                 .map(this::contentResource).toList();
-        return new CourseDtos.LessonContent(courseId, lessonId, lesson.getLessonTitle(),
+        return new CourseDtos.LessonContent(courseId, lesson.getVersionId(), lessonId, lesson.getLessonTitle(),
                 CourseDtos.LessonType.valueOf(lesson.getLessonType()), lesson.isPreviewable(),
                 "ARTICLE".equals(lesson.getLessonType()) ? lesson.getArticleMarkdown() : null,
                 playbackResourceId, poster, images, attachments);
@@ -504,10 +508,11 @@ public class CourseCatalogService {
             throw versionConflict();
         }
 
+        String traceId = newTraceId();
         if (request.status() == CourseDtos.PublishTarget.PUBLISHED) {
-            publish(course, editable, teacherId, newTraceId());
+            publish(course, editable, teacherId, traceId);
         } else {
-            unpublish(course);
+            unpublish(course, traceId);
         }
         CourseEntity current = requireOwnedCourse(courseId, teacherId, false);
         CourseVersionEntity currentVersion = mapper.findVersion(current.getCurrentDraftVersionId() != null
@@ -517,6 +522,7 @@ public class CourseCatalogService {
 
     /** 校验目录后把当前草稿固化为发布版本，并归档先前发布版本；调用方事务负责整体回滚。 */
     private void publish(CourseEntity course, CourseVersionEntity editable, String teacherId, String traceId) {
+        String previousPublishedVersionId = course.getPublishedVersionId();
         if (course.getCurrentDraftVersionId() != null) {
             if (mapper.countChapters(editable.getId()) == 0 || mapper.countEmptyChapters(editable.getId()) > 0) {
                 throw new CourseException(HttpStatus.UNPROCESSABLE_CONTENT,
@@ -530,17 +536,37 @@ public class CourseCatalogService {
             }
             mapper.publishVersion(editable.getId());
             mapper.publishDraft(course.getId(), editable.getId());
+            if (previousPublishedVersionId != null && !previousPublishedVersionId.equals(editable.getId())) {
+                emitCourseTextEvents(course.getId(), previousPublishedVersionId, "DELETE", traceId);
+            }
+            emitCourseTextEvents(course.getId(), editable.getId(), "UPSERT", traceId);
         } else {
+            if (CourseDtos.PublicationStatus.PUBLISHED.name().equals(course.getPublicationStatus())) {
+                return;
+            }
             mapper.updatePublicationStatus(course.getId(), CourseDtos.PublicationStatus.PUBLISHED.name());
+            emitCourseTextEvents(course.getId(), editable.getId(), "UPSERT", traceId);
         }
     }
 
     /** 将已发布课程切为不可公开读取；版本及目录仍保留，未发布课程重复下架返回冲突。 */
-    private void unpublish(CourseEntity course) {
+    private void unpublish(CourseEntity course, String traceId) {
         if (course.getPublishedVersionId() == null) {
             throw new CourseException(HttpStatus.CONFLICT, "COURSE.NOT_PUBLISHED", "课程尚未发布，无法下架");
         }
         mapper.updatePublicationStatus(course.getId(), CourseDtos.PublicationStatus.UNPUBLISHED.name());
+        emitCourseTextEvents(course.getId(), course.getPublishedVersionId(), "DELETE", traceId);
+    }
+
+    /** 发布状态和每个 ARTICLE 通知在同一课程事务提交，消息仅携带 ID 与 revision。 */
+    private void emitCourseTextEvents(String courseId, String versionId, String operation, String traceId) {
+        java.time.Instant now = java.time.Instant.now();
+        for (LessonEntity lesson : mapper.listVersionArticleLessons(versionId)) {
+            mapper.bumpCourseTextIndexRevision(lesson.getId(), now);
+            long revision = mapper.findCourseTextIndexRevision(lesson.getId());
+            mapper.insertOutbox(agentIndexEvents.create(courseId, versionId, lesson.getId(), revision,
+                    operation, traceId, now));
+        }
     }
 
     /** 返回现有草稿，或从已发布版本完整复制新草稿；没有任何可复制版本时按不存在处理。 */

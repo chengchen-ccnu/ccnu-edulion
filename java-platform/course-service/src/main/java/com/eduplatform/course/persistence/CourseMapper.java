@@ -109,6 +109,12 @@ public interface CourseMapper {
 
     int updatePublicationStatus(@Param("courseId") String courseId, @Param("status") String status);
 
+    List<LessonEntity> listVersionArticleLessons(String versionId);
+
+    int bumpCourseTextIndexRevision(@Param("lessonId") String lessonId, @Param("now") Instant now);
+
+    long findCourseTextIndexRevision(String lessonId);
+
     int insertOutbox(CourseOutboxEvent event);
 
     List<CourseOutboxEvent> pendingOutbox(@Param("now") Instant now, @Param("limit") int limit);

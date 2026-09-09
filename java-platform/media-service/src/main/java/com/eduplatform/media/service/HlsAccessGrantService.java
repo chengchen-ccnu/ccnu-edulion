@@ -106,8 +106,8 @@ public class HlsAccessGrantService {
                 repository.insertTemporaryAccessObject(new TemporaryAccessObject(grantId, asset.mediaId(),
                         variant.variantName(), temporaryKey, finalExpiresAt, null, java.time.Instant.now()));
             });
-            return new MediaDtos.AccessGrant(playlistGrant.method(), playlistGrant.url().toString(),
-                    playlistGrant.headers(), finalExpiresAt);
+            return new MediaDtos.AccessGrant(asset.mediaId(), variant.mimeType(), variant.size(),
+                    playlistGrant.method(), playlistGrant.url().toString(), playlistGrant.headers(), finalExpiresAt);
         } catch (IOException | RuntimeException failure) {
             if (uploaded) {
                 try { storage.delete(temporaryKey); } catch (RuntimeException ignored) { }

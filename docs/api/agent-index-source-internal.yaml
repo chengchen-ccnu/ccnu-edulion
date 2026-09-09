@@ -1,0 +1,196 @@
+openapi: 3.1.0
+info:
+  title: Edu Agent Index Source Internal API
+  version: 1.0.0
+  description: |
+    T14.1 为 T13.2 独立 Index Worker 提供的 Java 事实源只读分页协议。接口只在服务间网络开放，
+    使用专用调用方身份与本地加密初始化的共享令牌；Gateway 不路由这些路径。分页按
+    (sourceRevision, entityId) 稳定前进，Worker 可做有界全量重建，也可按 Outbox 事件中的 entityId
+    获取最新投影。响应不含官方答案、解析、学生隐私、OSS 定位或短期签名 URL。
+servers:
+  - url: http://learning-service.internal
+    description: 题目和知识点事实源。
+  - url: http://course-service.internal
+    description: 已发布课程文字事实源。
+tags:
+  - name: AgentIndexSource
+paths:
+  /internal/v1/agent-index/questions:
+    get:
+      tags: [AgentIndexSource]
+      operationId: pageQuestionIndexProjections
+      summary: 分页读取当前 ACTIVE SYSTEM 初中数学题安全投影
+      parameters:
+        - {$ref: '#/components/parameters/InternalCaller'}
+        - {$ref: '#/components/parameters/InternalToken'}
+        - {$ref: '#/components/parameters/AfterRevision'}
+        - {$ref: '#/components/parameters/AfterEntityId'}
+        - {$ref: '#/components/parameters/EntityId'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: Stable page., content: {application/json: {schema: {$ref: '#/components/schemas/QuestionProjectionPage'}}}}
+        '401': {$ref: '#/components/responses/InternalUnauthorized'}
+        '422': {$ref: '#/components/responses/InternalValidationFailed'}
+  /internal/v1/agent-index/knowledge-points:
+    get:
+      tags: [AgentIndexSource]
+      operationId: pageKnowledgePointIndexProjections
+      summary: 分页读取已启用初中数学知识点及有界前置关系
+      parameters:
+        - {$ref: '#/components/parameters/InternalCaller'}
+        - {$ref: '#/components/parameters/InternalToken'}
+        - {$ref: '#/components/parameters/AfterRevision'}
+        - {$ref: '#/components/parameters/AfterEntityId'}
+        - {$ref: '#/components/parameters/EntityId'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: Stable page., content: {application/json: {schema: {$ref: '#/components/schemas/KnowledgePointProjectionPage'}}}}
+        '401': {$ref: '#/components/responses/InternalUnauthorized'}
+        '422': {$ref: '#/components/responses/InternalValidationFailed'}
+  /internal/v1/agent-index/course-texts:
+    get:
+      tags: [AgentIndexSource]
+      operationId: pageCourseTextIndexProjections
+      summary: 分页读取当前已发布初中数学课程 ARTICLE 文字投影
+      parameters:
+        - {$ref: '#/components/parameters/InternalCaller'}
+        - {$ref: '#/components/parameters/InternalToken'}
+        - {$ref: '#/components/parameters/AfterRevision'}
+        - {$ref: '#/components/parameters/AfterEntityId'}
+        - {$ref: '#/components/parameters/EntityId'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: Stable page., content: {application/json: {schema: {$ref: '#/components/schemas/CourseTextProjectionPage'}}}}
+        '401': {$ref: '#/components/responses/InternalUnauthorized'}
+        '422': {$ref: '#/components/responses/InternalValidationFailed'}
+components:
+  parameters:
+    InternalCaller:
+      name: X-Internal-Caller
+      in: header
+      required: true
+      schema: {type: string, const: agent-index-worker}
+    InternalToken:
+      name: X-Internal-Service-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 32, writeOnly: true}
+      description: AGENT_INDEX_SERVICE_TOKEN；不得写入日志、响应、仓库配置或事件。
+    AfterRevision:
+      name: afterRevision
+      in: query
+      required: false
+      schema: {type: integer, minimum: 0, default: 0}
+    AfterEntityId:
+      name: afterEntityId
+      in: query
+      required: false
+      schema: {type: string, format: uuid, default: 00000000-0000-0000-0000-000000000000}
+    EntityId:
+      name: entityId
+      in: query
+      required: false
+      schema: {type: string, format: uuid}
+      description: 事件增量拉取时精确读取一个当前投影；不存在表示事实已删除或不再可索引。
+    PageSize:
+      name: size
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 200, default: 100}
+  responses:
+    InternalUnauthorized:
+      description: 调用方身份或服务令牌不正确。
+      content: {application/json: {schema: {$ref: '#/components/schemas/InternalError'}}}
+    InternalValidationFailed:
+      description: 游标或分页参数不合法。
+      content: {application/json: {schema: {$ref: '#/components/schemas/InternalError'}}}
+  schemas:
+    InternalError:
+      type: object
+      additionalProperties: false
+      required: [code, message, traceId, timestamp, path, fieldErrors]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        traceId: {type: string}
+        timestamp: {type: string, format: date-time}
+        path: {type: string}
+        fieldErrors: {type: array, items: {type: object}}
+    ProjectionCursor:
+      type: object
+      additionalProperties: false
+      required: [sourceRevision, entityId]
+      properties:
+        sourceRevision: {type: integer, minimum: 1}
+        entityId: {type: string, format: uuid}
+    QuestionIndexProjection:
+      type: object
+      additionalProperties: false
+      required: [entityId, questionVersionId, sourceRevision, educationStage, grade, subject, questionType, stem, options, knowledgePointIds]
+      properties:
+        entityId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+        educationStage: {type: string, const: JUNIOR}
+        grade: {type: string, enum: [GRADE_7, GRADE_8, GRADE_9]}
+        subject: {type: string, const: MATH}
+        questionType: {type: string, enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, COMPOSITE]}
+        stem: {type: string, minLength: 1, maxLength: 30000}
+        options: {type: array, maxItems: 20, items: {type: string, maxLength: 4000}}
+        knowledgePointIds: {type: array, maxItems: 32, items: {type: string, format: uuid}}
+      description: 不包含 answers、analysis、教师私有题、历史版本或媒体 URL。
+    QuestionProjectionPage:
+      type: object
+      additionalProperties: false
+      required: [items, hasMore]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/QuestionIndexProjection'}}
+        hasMore: {type: boolean}
+        nextCursor:
+          oneOf: [{$ref: '#/components/schemas/ProjectionCursor'}, {type: 'null'}]
+    KnowledgePointIndexProjection:
+      type: object
+      additionalProperties: false
+      required: [entityId, code, name, sourceRevision, educationStage, subject, prerequisiteIds]
+      properties:
+        entityId: {type: string, format: uuid}
+        code: {type: string, minLength: 1, maxLength: 64}
+        name: {type: string, minLength: 1, maxLength: 120}
+        sourceRevision: {type: integer, minimum: 1}
+        educationStage: {type: string, const: JUNIOR}
+        subject: {type: string, const: MATH}
+        prerequisiteIds: {type: array, maxItems: 32, items: {type: string, format: uuid}}
+    KnowledgePointProjectionPage:
+      type: object
+      additionalProperties: false
+      required: [items, hasMore]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/KnowledgePointIndexProjection'}}
+        hasMore: {type: boolean}
+        nextCursor:
+          oneOf: [{$ref: '#/components/schemas/ProjectionCursor'}, {type: 'null'}]
+    CourseTextIndexProjection:
+      type: object
+      additionalProperties: false
+      required: [entityId, courseId, courseVersionId, lessonId, sourceRevision, educationStage, subject, title, articleMarkdown, accessType]
+      properties:
+        entityId: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+        educationStage: {type: string, const: JUNIOR}
+        subject: {type: string, const: MATH}
+        title: {type: string, minLength: 1, maxLength: 120}
+        articleMarkdown: {type: string, minLength: 1, maxLength: 200000}
+        accessType: {type: string, enum: [FREE, PAID]}
+      description: 在线命中后仍必须回到 Java 按当前用户复核课程访问；索引可见不等于用户有权读取。
+    CourseTextProjectionPage:
+      type: object
+      additionalProperties: false
+      required: [items, hasMore]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/CourseTextIndexProjection'}}
+        hasMore: {type: boolean}
+        nextCursor:
+          oneOf: [{$ref: '#/components/schemas/ProjectionCursor'}, {type: 'null'}]

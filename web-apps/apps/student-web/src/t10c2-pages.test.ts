@@ -138,7 +138,7 @@ describe("T10C.2 page behavior", () => {
 
   it("renders ordered composite children and authorizes their image through the root question", async () => {
     const mediaId = "00000000-0000-4000-8000-000000000001";
-    const value: SystemQuestion = { id: "question-test-1", scope: "SYSTEM", type: "COMPOSITE", stage: "PRIMARY", grade: "ONE", subject: "MATHEMATICS", difficulty: "EASY", stem: "组合测试题", options: [], knowledgePoints: [], media: [], createdAt: date, updatedAt: date,
+    const value: SystemQuestion = { id: "question-test-1", versionId: "root-version-test-1", scope: "SYSTEM", type: "COMPOSITE", stage: "PRIMARY", grade: "ONE", subject: "MATHEMATICS", difficulty: "EASY", stem: "组合测试题", options: [], knowledgePoints: [], media: [], createdAt: date, updatedAt: date,
       children: [{ questionId: "child-test-1", versionId: "version-test-1", sequence: 1, type: "SHORT_ANSWER", stage: "PRIMARY", grade: "ONE", subject: "MATHEMATICS", difficulty: "EASY", stem: `小问一 {{media:${mediaId}}}`, options: [], knowledgePoints: [], media: [{ id: "binding-test-1", mediaId, purpose: "QUESTION_IMAGE", sequence: 1 }], createdAt: date }] };
     api.detail.mockResolvedValue(value); api.mediaGrant.mockResolvedValue({ url: "https://media.test/image", headers: {}, expiresAt: date });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["test"]) }));

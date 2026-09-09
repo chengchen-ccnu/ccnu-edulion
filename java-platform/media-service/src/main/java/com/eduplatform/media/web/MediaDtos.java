@@ -103,5 +103,7 @@ public final class MediaDtos {
 
     public record AssetPage(List<Asset> items, int page, int size, long total) {}
 
-    public record AccessGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+    /** 短期访问授权同时携带安全元数据，供已授权领域构造 Agent 图片上下文；URL 仍禁止持久化。 */
+    public record AccessGrant(String mediaId, String mimeType, long sizeBytes,
+            String method, String url, Map<String, String> headers, Instant expiresAt) {}
 }

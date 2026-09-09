@@ -24,6 +24,7 @@ HTTP_CONTRACT_PATH = ROOT / "docs" / "api" / "agent-internal.yaml"
 HTTP_EXAMPLES_PATH = ROOT / "docs" / "api" / "examples" / "agent-internal.v1.yaml"
 INDEX_CONTRACT_PATH = ROOT / "docs" / "events" / "agent-index-events.v1.yaml"
 INDEX_EXAMPLES_PATH = ROOT / "docs" / "events" / "examples" / "agent-index-events.v1.yaml"
+INDEX_SOURCE_CONTRACT_PATH = ROOT / "docs" / "api" / "agent-index-source-internal.yaml"
 
 
 class AgentInternalContractTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class AgentInternalContractTests(unittest.TestCase):
         cls.http_examples = load_yaml(HTTP_EXAMPLES_PATH)
         cls.index_contract = load_yaml(INDEX_CONTRACT_PATH)
         cls.index_examples = load_yaml(INDEX_EXAMPLES_PATH)
+        cls.index_source_contract = load_yaml(INDEX_SOURCE_CONTRACT_PATH)
 
     def assertSchemaValid(self, schema_name, value):
         """断言一个示例符合指定内部 HTTP 组件 Schema。"""
@@ -52,6 +54,26 @@ class AgentInternalContractTests(unittest.TestCase):
         """内部 HTTP 与索引事件契约的每个本地引用都必须指向现存节点。"""
         self.assertEqual(local_ref_errors(self.http_contract), [])
         self.assertEqual(local_ref_errors(self.index_contract), [])
+        self.assertEqual(local_ref_errors(self.index_source_contract), [])
+
+    def test_index_source_api_is_internal_paginated_and_excludes_hidden_facts(self):
+        """Java 索引源必须使用专用调用身份与稳定游标，题目类型层面不含答案/解析。"""
+        paths = self.index_source_contract["paths"]
+        self.assertEqual(
+            set(paths),
+            {
+                "/internal/v1/agent-index/questions",
+                "/internal/v1/agent-index/knowledge-points",
+                "/internal/v1/agent-index/course-texts",
+            },
+        )
+        parameters = self.index_source_contract["components"]["parameters"]
+        self.assertEqual(parameters["InternalCaller"]["schema"]["const"], "agent-index-worker")
+        self.assertGreaterEqual(parameters["InternalToken"]["schema"]["minLength"], 32)
+        question = self.index_source_contract["components"]["schemas"]["QuestionIndexProjection"]
+        self.assertTrue({"entityId", "questionVersionId", "sourceRevision"}.issubset(question["required"]))
+        for forbidden in ("answers", "analysis", "url", "token"):
+            self.assertNotIn(forbidden, question["properties"])
 
     def test_retry_keeps_all_logical_and_execution_ids(self):
         """相同逻辑请求重试必须沿用会话、客户端、消息和 run 身份。"""

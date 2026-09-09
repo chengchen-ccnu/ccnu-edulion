@@ -25,6 +25,7 @@
         <module>media-service</module>
         <module>learning-service</module>
         <module>operation-service</module>
+        <module>agent-access-service</module>
     </modules>
 
     <properties>

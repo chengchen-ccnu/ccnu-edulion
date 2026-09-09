@@ -10,6 +10,7 @@ public record CourseOutboxEvent(
         String eventType,
         int eventVersion,
         String aggregateId,
+        String exchange,
         String routingKey,
         String traceId,
         String payloadJson,
