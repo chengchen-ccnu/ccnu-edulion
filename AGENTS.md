@@ -88,7 +88,7 @@ pnpm.cmd --dir web-apps run mock:api
 
 1. 不得依赖某个 Codex 对话中出现过的凭据信息。Windows 本地开发凭据统一通过 `scripts/Initialize-LocalEnvironment.ps1` 初始化到当前用户目录的 `.ccnu-edulion`，其中 MySQL 凭据使用 Windows DPAPI 加密，不进入仓库。
 2. 需要本地凭据的命令必须通过 `scripts/Invoke-WithLocalEnvironment.ps1` 执行。禁止读取、打印、复制或在命令参数中拼接凭据文件内容；脚本或凭据文件缺失时停止数据库操作并报告。
-3. 用户目录中的 `local.env` 只保存非敏感本地配置；密码、Token、AccessKey、Seed 密码和 JWT 密钥不得以明文写入该文件。需要新增其他秘密时必须使用本机密钥管理或同等级加密存储。
+3. 用户目录中的 `local.env` 只保存非敏感本地配置；密码、Token、AccessKey、Seed 密码和 JWT 密钥不得以明文写入该文件。需要新增其他秘密时必须使用本机密钥管理或同等级加密存储。开发过程中可以使用local.env，但全部开发流程结束应该告诉用户local.env中哪些需要删除，需要换到哪些地方配置。
 4. 共享本地配置中的 Schema 名称只是连接约定，不授权提前创建数据库、业务表或伪数据；实际操作仍必须遵守当前任务的数据范围。
 
 ## 代码注释与可读性规则

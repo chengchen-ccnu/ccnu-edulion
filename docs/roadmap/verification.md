@@ -1016,3 +1016,27 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与环境：本轮没有连接或创建真实 MySQL Schema，没有修改开发库、Redis、RabbitMQ、OSS、Qdrant 或 Neo4j，也没有持久 Seed/伪数据。H2 Fixture 随测试进程释放。初始化脚本新增 `AGENT_MYSQL_DATABASE` 和 DPAPI 加密的 Agent Index 服务令牌，包装器仅对子命令注入；本轮不要求新增 Python 包。
 - 验证：Java 全量 `clean verify` 的 9 个 Reactor 模块全部成功，共 222 项、0 失败、0 错误、31 项显式真实环境测试跳过；Agent Access 5 项全部通过。Python `compileall`、全量 25/25（契约专项 17 项）和 wheel 构建通过。前端生成、typecheck、43 文件/294 项测试及三端 build 通过，只有既有大 chunk 警告。PowerShell 两个环境脚本语法解析、4 份 Agent YAML 解析和 diff 检查通过。未运行的真实外部依赖验收不记为通过，CI 结果在 PR 创建后继续记录。
 - 提交与 PR：实现提交 `a5ac059` 与交付状态提交 `e510bd7` 均已按规则执行 `git push origin HEAD`；Ready [PR #57](https://github.com/chengchen-ccnu/ccnu-edulion/pull/57) 已创建、未合并。`e510bd7` 的 push/PR 两轮 Java、Python、Frontend、OpenAPI 共 8 项检查全部成功；只有 GitHub Actions 自身 Node 20 action 运行时弃用提示，不影响项目构建结论。
+
+## 2026-09-09 PR #57 合并与 T13.2 前置审计
+
+- 合并与清理：[PR #57](https://github.com/chengchen-ccnu/ccnu-edulion/pull/57) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项检查全部成功后，以普通 merge 合并为 `main@9afc1ae7ba5569805690ff4fad6e6a8feaacc275`；本地 `main` 已快进同步，T14.1 本地和远端分支均已删除。
+- Qdrant：Docker 容器实际返回 1.19.1，HTTP 6333、gRPC 6334 均监听，`/collections` 为 `status=ok` 且 0 个 collection；容器使用 Docker volume `qdrant-storage`，没有创建、删除或修改 collection。仓库根目录原有未跟踪 `Qdrant/` 不是该挂载卷，已仅加入本仓库 `.git/info/exclude` 防误提交，文件保持原样。
+- 本地模型：`bge-base-zh` 使用 `D:\Anaconda\envs\langgraph` 在 CPU 完成 2 条中文文本编码，形状为 2×768、数值有限、样本余弦为 0.804332。`bge-reranker-base` 使用 PyTorch 2.4.1+cu124/Transformers 4.57.5 离线加载为 XLM-R，返回 2 个有限分数且相关文本排在无关文本之前；一次性探测脚本执行后已删除，未写入 Git。
+- Neo4j 与 RabbitMQ：Neo4j Community 5.26.19 Windows 服务、7474/7687 端口正常；由于共享环境尚无 Neo4j 用户/密码，认证查询明确失败，T13.2 真实验收前必须增加 DPAPI 或同等级加密加载并由开发者输入现有密码。RabbitMQ 4.3.4 服务和 5672/15672 端口正常，但 CLI 存在当前用户 Erlang cookie 不一致；T13.2 仍需通过应用连接验证发布确认、消费、有限重试和 DLQ，不能把端口监听当成消息链路通过。
+- Worker 门禁：重新运行本地初始化后已生成 DPAPI 加密的 Agent Index Worker 服务令牌，包装器可注入且 `AGENT_INDEX_API_ENABLED=true`。当前系统默认 Python 不具备 Worker 依赖，现有 `langgraph` 环境也没有 `qdrant-client`；Qdrant client、Worker 配置、Neo4j 安全凭据加载和正式启动入口属于 T13.2 实现范围，不以临时全局安装替代依赖声明。
+- 准备结论：T13.1、T14.1 与物理服务/模型资产前置已满足，可从 `main@9afc1ae` 开始 T13.2；Neo4j 认证和 RabbitMQ 应用链路是最终真实验收门禁，不是编写 Worker 的前置。已准备 `codex/t13.2-retrieval-index-worker`，只承接检索与独立索引 Worker，不实现 T13.3 动态 Agent、T14.2 记忆或前端。
+- 数据边界：本轮没有连接或修改 MySQL、Redis、OSS，没有创建 Qdrant collection、Neo4j 节点/关系或 RabbitMQ 消息/队列，也没有创建 Seed 或伪数据；只做健康/只读列表和本地模型推理。Agent Index DPAPI 令牌是本机缺失安全配置，不进入仓库。
+
+## 2026-09-09 T13.2 Qdrant/Neo4j 检索与独立索引 Worker
+
+- 基线与规则：分支 `codex/t13.2-retrieval-index-worker` 确认包含 `main@9afc1ae` 和规划提交 `2f265bc`。开工时唯一修改为用户确认的 AGENTS 本地凭据规则，差异无其他内容，已先独立提交为 `f50bcba`，后续业务实现未混入该规则提交。
+- 独立 Worker：`python -m edu_agent_app index-worker` 在导入在线 Agent/uvicorn 前分流，提供 init、consume、rebuild、reconcile 和 namespace 精确 cleanup。依赖锁定 `qdrant-client==1.19.0`、`pika==1.3.2`，项目/CI Python 最低版本为 3.10；复用本地 SentenceTransformers/Transformers/Neo4j，不下载 BGE-M3，不新增 Elasticsearch、Milvus、Kafka、PostgreSQL 或 FAISS 链路。
+- 索引与检索：Qdrant 1.19.1 的四个固定 collection 均为 768 维 dense + `qdrant/bm25` sparse；BM25 使用 IDF modifier、`multilingual` tokenizer 并关闭语言 stemmer/stopwords。真实流水线按 dense 30 + BM25 30 → RRF(k=60) → 本地 reranker 25 → 集合/意图阈值 → 0～8 条可靠候选，空召回不填充。collection metadata 和 payload 同时记录 Schema/模型版本，版本漂移拒绝混写。
+- 增量与重建：Rabbit v1 payload 严格白名单拒绝正文/答案/URL/秘密；Worker 使用固定内部调用方/专用令牌回读 Java 投影。SQLite 保存 eventId、实体最高 revision、tombstone 和分页检查点；重复/旧事件 no-op，DELETE 后旧 UPSERT 不能复活。主队列单活、手动 ACK，重试/DLQ 先 publisher confirm 再 ACK，失败不伪装成功。重建每页不超过 200，页批量编码、有限并发、整页检查点、恢复和只读对账，不读 Java MySQL/原始 44,441 JSON，也不自动删除差异。
+- 权限与图：题目只写 ACTIVE SYSTEM JUNIOR MATH 安全投影，抽查 payload 无答案/解析；课程查询强制精确 course/version/lesson 和 bool 重授权标志，缺范围或旧版本不退化全库；记忆强制全局 userId 且 T14.2 前只使用协议替身。Neo4j 仅写受控 Worker 标签/有向前置关系，固定参数化 Cypher、深度 1～3、节点/超时有界，连接故障返回 degraded 且公共 Qdrant 检索继续。
+- 真实重建与恢复：首次三路重建因开发机 Learning 小连接池瞬时 HTTP 500 中断；知识点 1,386 项和空课程源的检查点已完成，题目未越过失败页。以并发 1 重启后从检查点恢复并完成 648 道题，随后实现 Java 5xx/连接错误最多 3 次有限退避。最终 Qdrant 为题目 648、知识点 1,386、课程 0、记忆 0；Neo4j Worker namespace 为 1,386 节点/2,054 关系。原有 3,671 节点/2,107 关系全部保留，全库最终精确为 5,057/4,161。
+- 真实检索：中文术语样本阈值前 25/后 8，dense/BM25/RRF/reranker 分别为 30/30/42/25；LaTeX 样本为 30/15/40/25，阈值后 8；相近但错误谓词最终错误候选为 0；非数学“今天午饭吃什么”阈值前 25、后 0。检索/重排典型耗时分别约 8～66 ms / 117～181 ms，总耗时约 183～505 ms，正文未写日志或本验证记录。
+- Rabbit/临时清理：真实 Pika 链路完成 publisher confirm、手动 ACK、两次 TTL 重试、第三次 DLQ 及手动重投读取。唯一后缀的验收 exchange、主/DLQ/四 retry 队列全部精确删除；课程过滤验收的唯一临时 namespace 1 个点已删除并确认 0。生产 3 个 exchange 与主/DLQ/四 retry 队列幂等声明后保留，结束时 6 队列均 0 消息/0 消费者；没有删除其他 Rabbit 队列、Qdrant collection 或来源不明 Neo4j 数据。最终新进程因尚无 RabbitMQ DPAPI 文件而无法再次认证，未把该轮写成通过；再次启动前须交互初始化安全凭据。
+- Java/数据库事实：真实内部 API 题目/知识点分页可读，Course 当前返回 0 个已发布非空 ARTICLE；T13.2 未跨域造课程/报名/退课数据，故不宣称真实课程用户状态闭环。启动已合并的 T14.1 服务时，`edu_platform_course_dev` 从 V4 前进 V5（outbox `exchange_name`、`course_text_index_revision`），`edu_platform_learning_dev` 从 V14 前进 V15（`question_index_revision`）；没有新增 T13.2 MySQL 迁移、Seed 或业务伪数据。
+- 自动化：Java 全量 `clean verify` 9 模块、222 项通过，0 失败/错误、31 项显式真实环境测试跳过，总耗时 5 分 36 秒。Python compileall 通过；全量 47 项中 40 项通过、7 项真实测试按显式开关跳过；启动 Java 事实源并打开开关后，真实专项最终 7/7 通过、19.891 秒。Java 服务停止后的一次误触发因端口不可达失败，按前置条件重启后的最终轮次通过。wheel 与 3 个 PowerShell 脚本语法解析通过；diff 检查在提交前最终复核。GitHub CI/PR 尚未创建，不提前写成通过。完整命令、配置、清理和风险见 [T13.2 交付文档](../delivery/T13.2-retrieval-index-worker.md)。
+- 提交与 PR：规则提交 `f50bcba` 保持独立，业务实现提交为 `3511e6c`，首次交付状态提交为 `2777115`，PR 记录提交为 `80f6f4d`；分支已按规则推送并创建 Ready [PR #58](https://github.com/chengchen-ccnu/ccnu-edulion/pull/58)，保持 Open、未合并。`80f6f4d` 的 push/pull_request 两组 Java、Python、Frontend、OpenAPI 共 8 项检查全部成功，0 失败/取消/跳过。

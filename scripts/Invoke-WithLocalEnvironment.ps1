@@ -16,12 +16,18 @@ $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credentia
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
+$neo4jCredentialPath = Join-Path $ConfigDirectory "neo4j.credential.clixml"
+$rabbitMqCredentialPath = Join-Path $ConfigDirectory "rabbitmq.credential.clixml"
 $iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
 $commandExitCode = 0
 $iamSmtpCredential = $null
 $iamSmtpNetworkCredential = $null
 $agentIndexCredential = $null
 $agentIndexNetworkCredential = $null
+$neo4jCredential = $null
+$neo4jNetworkCredential = $null
+$rabbitMqCredential = $null
+$rabbitMqNetworkCredential = $null
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "Missing local environment file. Run scripts/Initialize-LocalEnvironment.ps1 first."
@@ -141,6 +147,35 @@ try {
     }
     Set-ScopedEnvironmentVariable -Name "AGENT_INDEX_SERVICE_TOKEN" -Value $agentIndexNetworkCredential.Password
 
+    # Neo4j 凭据迁移到 DPAPI 后优先覆盖 local.env 的开发期明文；文件尚不存在时保持兼容，
+    # 便于按交付文档完成一次性迁移，且不会读取或输出秘密内容。
+    if (Test-Path -LiteralPath $neo4jCredentialPath -PathType Leaf) {
+        $neo4jCredential = Import-Clixml -LiteralPath $neo4jCredentialPath
+        if ($neo4jCredential -isnot [PSCredential]) {
+            throw "The encrypted Neo4j credential has an unexpected format."
+        }
+        $neo4jNetworkCredential = $neo4jCredential.GetNetworkCredential()
+        if (-not $neo4jNetworkCredential.UserName -or -not $neo4jNetworkCredential.Password) {
+            throw "The encrypted Neo4j credential is incomplete."
+        }
+        Set-ScopedEnvironmentVariable -Name "NEO4J_USER" -Value $neo4jNetworkCredential.UserName
+        Set-ScopedEnvironmentVariable -Name "NEO4J_PASSWORD" -Value $neo4jNetworkCredential.Password
+    }
+
+    # RabbitMQ 凭据同样可由独立 DPAPI 文件覆盖；未初始化时不猜测或硬编码默认密码。
+    if (Test-Path -LiteralPath $rabbitMqCredentialPath -PathType Leaf) {
+        $rabbitMqCredential = Import-Clixml -LiteralPath $rabbitMqCredentialPath
+        if ($rabbitMqCredential -isnot [PSCredential]) {
+            throw "The encrypted RabbitMQ credential has an unexpected format."
+        }
+        $rabbitMqNetworkCredential = $rabbitMqCredential.GetNetworkCredential()
+        if (-not $rabbitMqNetworkCredential.UserName -or -not $rabbitMqNetworkCredential.Password) {
+            throw "The encrypted RabbitMQ credential is incomplete."
+        }
+        Set-ScopedEnvironmentVariable -Name "RABBITMQ_USERNAME" -Value $rabbitMqNetworkCredential.UserName
+        Set-ScopedEnvironmentVariable -Name "RABBITMQ_PASSWORD" -Value $rabbitMqNetworkCredential.Password
+    }
+
     if ($env:IAM_VERIFICATION_DELIVERY_MODE -eq "smtp") {
         if (-not (Test-Path -LiteralPath $iamSmtpCredentialPath -PathType Leaf)) {
             throw "SMTP mode requires the DPAPI-encrypted IAM SMTP credential. Run scripts/Initialize-LocalSmtp.ps1."
@@ -181,6 +216,10 @@ finally {
     $learningIamCredential = $null
     $agentIndexNetworkCredential = $null
     $agentIndexCredential = $null
+    $neo4jNetworkCredential = $null
+    $neo4jCredential = $null
+    $rabbitMqNetworkCredential = $null
+    $rabbitMqCredential = $null
     $iamSmtpNetworkCredential = $null
     $iamSmtpCredential = $null
 }
