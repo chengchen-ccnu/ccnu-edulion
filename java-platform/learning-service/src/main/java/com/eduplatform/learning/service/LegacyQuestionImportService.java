@@ -260,6 +260,14 @@ public class LegacyQuestionImportService {
         var versionMedia = repository.mediaForQuestions(ids); Instant now = Instant.now();
         versionMedia.forEach(item -> repository.insertOutbox(events.mediaReference("MediaReferenceReleased", item.mediaId(),
                 "QUESTION_VERSION_MEDIA", item.id(), traceId, now)));
+        if (task.questionScope() == QuestionModels.Scope.SYSTEM) {
+            // 先写高于既有 UPSERT 的根题 tombstone，再精确删除任务数据；Broker 失败仍由同事务 Outbox 补发。
+            ids.forEach(id -> repository.findAggregate(id, ownerId).ifPresent(aggregate -> {
+                long revision = repository.bumpQuestionIndexRevision(id, aggregate.revision() + 1, now);
+                repository.insertOutbox(events.questionIndexDeleted(id, aggregate.currentVersionId(),
+                        revision, traceId, now));
+            }));
+        }
         var counts = repository.deleteLegacyTaskQuestions(taskId, ownerId, task.questionScope(), now);
         return new QuestionDtos.LegacyImportCleanupResult(taskId, counts.questionsDeleted(),
                 counts.sourceReferencesDeleted(), versionMedia.size(), false);

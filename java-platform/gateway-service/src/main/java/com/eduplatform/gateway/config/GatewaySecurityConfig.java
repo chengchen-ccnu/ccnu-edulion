@@ -107,6 +107,7 @@ public class GatewaySecurityConfig {
                                 "/api/v1/teacher/gradebook", "/api/v1/teacher/gradebook/export")
                         .hasAuthority("teaching:access")
                         .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
+                        .pathMatchers("/api/v1/ai/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/admin/users", "/api/v1/admin/users/**").hasAuthority("administration:access")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
@@ -127,7 +128,7 @@ public class GatewaySecurityConfig {
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Trace-Id"));
         // 成绩册下载需要读取安全文件名；只暴露响应头，不放宽来源、Cookie 或教学权限。
-        configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After", "Content-Disposition"));
+        configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After", "Content-Disposition", "X-Agent-Run-Id"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

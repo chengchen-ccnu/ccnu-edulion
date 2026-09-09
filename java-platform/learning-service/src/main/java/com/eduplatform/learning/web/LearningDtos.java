@@ -292,8 +292,13 @@ public final class LearningDtos {
             boolean replayed) {}
     public record CreateAssessmentMediaAccessGrantRequest(@NotBlank String variant,
             @NotNull MediaDisposition disposition) {}
-    public record MediaAccessGrant(String method, String url, java.util.Map<String, String> headers,
-            Instant expiresAt) {}
+    public record MediaAccessGrant(String mediaId, String mimeType, long sizeBytes,
+            String method, String url, java.util.Map<String, String> headers, Instant expiresAt) {
+        /** 兼容既有测试替身；生产响应由 media-service 提供真实元数据。 */
+        public MediaAccessGrant(String method, String url, java.util.Map<String, String> headers, Instant expiresAt) {
+            this(null, null, 0, method, url, headers, expiresAt);
+        }
+    }
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record StudentLearningSummary(String learnerId, EnrollmentStatus enrollmentStatus,
             int completedLessonCount, long watchedSeconds, int submittedAttemptCount,

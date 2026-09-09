@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
 import java.net.URI;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -42,16 +43,20 @@ public class KnowledgeGraphController {
     public KnowledgeGraphDtos.BatchResult nodes(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String taskId, @Valid @RequestBody KnowledgeGraphDtos.NodeBatchRequest request) {
-        return service.nodes(LearningIdentity.administrator(userId, roles, permissions).userId(), taskId, request);
+            @PathVariable String taskId, @Valid @RequestBody KnowledgeGraphDtos.NodeBatchRequest request,
+            HttpServletRequest servlet) {
+        return service.nodes(LearningIdentity.administrator(userId, roles, permissions).userId(), taskId, request,
+                (String) servlet.getAttribute(com.eduplatform.learning.config.TraceFilter.ATTRIBUTE));
     }
 
     @PostMapping("/api/v1/admin/knowledge-graph-imports/{taskId}/relation-batches")
     public KnowledgeGraphDtos.BatchResult relations(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String taskId, @Valid @RequestBody KnowledgeGraphDtos.RelationBatchRequest request) {
-        return service.relations(LearningIdentity.administrator(userId, roles, permissions).userId(), taskId, request);
+            @PathVariable String taskId, @Valid @RequestBody KnowledgeGraphDtos.RelationBatchRequest request,
+            HttpServletRequest servlet) {
+        return service.relations(LearningIdentity.administrator(userId, roles, permissions).userId(), taskId, request,
+                (String) servlet.getAttribute(com.eduplatform.learning.config.TraceFilter.ATTRIBUTE));
     }
 
     @GetMapping("/api/v1/admin/knowledge-graph-imports/{taskId}")

@@ -143,15 +143,27 @@ public final class CourseDtos {
             String mimeType, long size) {}
 
     /** 短期 HLS 播放投影；URL 及请求头不得持久化、写事件或输出到普通日志。 */
-    public record CourseMediaPlaybackGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+    public record CourseMediaPlaybackGrant(String mediaId, String mimeType, long sizeBytes,
+            String method, String url, Map<String, String> headers, Instant expiresAt) {
+        /** 兼容既有协议替身；生产 HTTP 响应必须携带媒体元数据。 */
+        public CourseMediaPlaybackGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {
+            this(null, null, 0, method, url, headers, expiresAt);
+        }
+    }
 
     /** 课程域完成可见性与资源动作判断后返回的短期安全媒体投影。 */
-    public record CourseMediaAccessGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {}
+    public record CourseMediaAccessGrant(String mediaId, String mimeType, long sizeBytes,
+            String method, String url, Map<String, String> headers, Instant expiresAt) {
+        /** 兼容既有协议替身；生产 HTTP 响应必须携带媒体元数据。 */
+        public CourseMediaAccessGrant(String method, String url, Map<String, String> headers, Instant expiresAt) {
+            this(null, null, 0, method, url, headers, expiresAt);
+        }
+    }
 
     public record CreateCourseResourceAccessGrantRequest(@NotNull CourseResourceAction action) {}
 
     /** 受保护课时内容；附件仅暴露课程域 resourceId，浏览器不能凭 mediaId 申请授权。 */
-    public record LessonContent(String courseId, String lessonId, String title, LessonType type,
+    public record LessonContent(String courseId, String courseVersionId, String lessonId, String title, LessonType type,
             boolean previewable, String articleMarkdown, String playbackResourceId,
             CourseMediaAccessGrant poster, List<LessonInlineImage> inlineImages,
             List<LessonContentResource> resources) {}

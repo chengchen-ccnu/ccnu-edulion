@@ -88,7 +88,13 @@ public class QuestionService {
         repository.setInitialVersion(questionId, versionId, now);
         repository.insertIdempotency(ownerId, requestId, fingerprint, "QUESTION", questionId, now);
         bindMedia(versionMedia, traceId, now);
-        return new Creation(getOwned(ownerId, questionId), true);
+        QuestionDtos.QuestionResponse response = getOwned(ownerId, questionId);
+        if (scope == QuestionModels.Scope.SYSTEM && initialStatus == QuestionModels.Status.ACTIVE) {
+            long sourceRevision = repository.bumpQuestionIndexRevision(questionId, response.revision() + 1, now);
+            repository.insertOutbox(events.questionIndexChanged(questionId, versionId, sourceRevision,
+                    agentGrade(input.grade()), traceId, now));
+        }
+        return new Creation(response, true);
     }
 
     /** 导入行使用任务 ID + 行号派生的请求 ID，因此 Worker 崩溃重放也不会重复生成题目。 */
@@ -111,8 +117,18 @@ public class QuestionService {
         QuestionModels.Status status = scope == QuestionModels.Scope.SYSTEM
                 ? QuestionModels.Status.ACTIVE : QuestionModels.Status.DRAFT;
         Creation parent = createInternal(ownerId, scope, status, deterministicRequestId, input, traceId, true, false);
-        if (parent.created()) repository.insertCurrentVersionChildren(parent.response().id(),
-                parent.response().currentVersion().id(), childQuestionIds);
+        if (parent.created()) {
+            Instant now = Instant.now();
+            var linked = repository.insertCurrentVersionChildren(parent.response().id(),
+                    parent.response().currentVersion().id(), childQuestionIds);
+            if (scope == QuestionModels.Scope.SYSTEM) {
+                linked.forEach(child -> {
+                    long sourceRevision = repository.bumpQuestionIndexRevision(child.questionId(), 1, now);
+                    repository.insertOutbox(events.questionIndexDeleted(child.questionId(), child.versionId(),
+                            sourceRevision, traceId, now));
+                });
+            }
+        }
         return new Creation(getOwned(ownerId, parent.response().id()), parent.created());
     }
 
@@ -207,7 +223,7 @@ public class QuestionService {
     public QuestionDtos.SystemQuestion getSystem(String questionId) {
         Aggregate aggregate = repository.findActiveSystemRootAggregate(questionId).orElseThrow(QuestionService::notFound);
         Version version = repository.findVersion(aggregate.currentVersionId()).orElseThrow(QuestionService::notFound);
-        return new QuestionDtos.SystemQuestion(aggregate.id(), aggregate.scope(), version.type(), version.difficulty(),
+        return new QuestionDtos.SystemQuestion(aggregate.id(), version.id(), aggregate.scope(), version.type(), version.difficulty(),
                 version.stage(), version.grade(), version.subject(), version.stem(), options(version),
                 knowledge(version), safeMedia(version), repository.versionChildren(version.id()).stream()
                 .map(this::systemChild).toList(), aggregate.createdAt(), aggregate.updatedAt());
@@ -270,6 +286,16 @@ public class QuestionService {
         return new QuestionDtos.VersionInput(child.type(), child.difficulty(), child.stage(), child.grade(),
                 child.subject(), child.stem(), child.options(), child.answers(), child.analysis(),
                 child.knowledgePointIds(), child.media(), List.of());
+    }
+
+    /** 将领域枚举投影到已冻结的 Agent 年级契约。 */
+    private static String agentGrade(QuestionModels.Grade grade) {
+        return switch (grade) {
+            case SEVEN -> "GRADE_7";
+            case EIGHT -> "GRADE_8";
+            case NINE -> "GRADE_9";
+            default -> throw new IllegalStateException("Only junior questions may enter the Agent index");
+        };
     }
 
     /** 将 HTTP 省略的可选 children 转为空列表，使校验、幂等指纹和持久化采用同一语义。 */

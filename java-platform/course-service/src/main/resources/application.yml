@@ -18,6 +18,9 @@ management:
         include: health,info
 platform:
   course:
+    agent-index:
+      enabled: ${AGENT_INDEX_API_ENABLED:false}
+      service-token: ${AGENT_INDEX_SERVICE_TOKEN:}
     enrollment-messaging:
       enabled: false
     media:

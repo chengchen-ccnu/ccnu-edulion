@@ -15,6 +15,7 @@ public class LearningEvents {
     public static final String LEARNING_EXCHANGE_V2 = "edu.learning.events.v2";
     public static final String MEDIA_EXCHANGE = "edu.media.events.v1";
     public static final String ENROLLMENT_EXCHANGE = "edu.learning.enrollment.events.v1";
+    public static final String AGENT_INDEX_EXCHANGE = "edu.agent.index.events.v1";
     private final ObjectMapper mapper;
 
     public LearningEvents(ObjectMapper mapper) { this.mapper = mapper; }
@@ -54,6 +55,58 @@ public class LearningEvents {
                 "learning.enrollment.access-changed.v1", traceId,
                 Map.of("enrollmentId", enrollmentId, "learnerId", learnerId, "courseId", courseId,
                         "status", status, "changedAt", now, "courseVersionId", courseVersionId), now);
+    }
+
+    /** 创建 ACTIVE SYSTEM 题索引通知；正文、答案、解析和媒体 URL 由事件明确排除。 */
+    public Outbox questionIndexChanged(String questionId, String versionId, long sourceRevision,
+            String grade, String traceId, Instant now) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("sourceDomain", "LEARNING");
+        payload.put("entityType", "QUESTION");
+        payload.put("entityId", questionId);
+        payload.put("questionVersionId", versionId);
+        payload.put("sourceRevision", sourceRevision);
+        payload.put("operation", "UPSERT");
+        payload.put("sourceState", "ACTIVE");
+        payload.put("educationStage", "JUNIOR");
+        payload.put("grade", grade);
+        payload.put("visibility", "PUBLIC_SYSTEM");
+        payload.put("authorization", Map.of("questionScope", "ACTIVE_SYSTEM_ONLY",
+                "projectionApi", "LEARNING_QUESTION_SAFE_PROJECTION"));
+        return event("QuestionIndexProjectionChanged", 1, questionId, AGENT_INDEX_EXCHANGE,
+                "agent.index.question.changed.v1", traceId,
+                payload, now);
+    }
+
+    /** 既有公共根题被收编为组合子题时创建 tombstone，防止 Worker 保留先前已索引的根题。 */
+    public Outbox questionIndexDeleted(String questionId, String versionId, long sourceRevision,
+            String traceId, Instant now) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("sourceDomain", "LEARNING");
+        payload.put("entityType", "QUESTION");
+        payload.put("entityId", questionId);
+        payload.put("questionVersionId", versionId);
+        payload.put("sourceRevision", sourceRevision);
+        payload.put("operation", "DELETE");
+        payload.put("sourceState", "DELETED");
+        payload.put("educationStage", "JUNIOR");
+        payload.put("visibility", "PUBLIC_SYSTEM");
+        payload.put("authorization", Map.of("questionScope", "ACTIVE_SYSTEM_ONLY",
+                "projectionApi", "LEARNING_QUESTION_SAFE_PROJECTION"));
+        return event("QuestionIndexProjectionChanged", 1, questionId, AGENT_INDEX_EXCHANGE,
+                "agent.index.question.changed.v1", traceId, payload, now);
+    }
+
+    /** 创建知识点索引通知；关系变化同样提升节点 revision 后按节点重新读取。 */
+    public Outbox knowledgeIndexChanged(String knowledgeId, long sourceRevision, String traceId, Instant now) {
+        return event("KnowledgePointIndexProjectionChanged", 1, knowledgeId, AGENT_INDEX_EXCHANGE,
+                "agent.index.knowledge-point.changed.v1", traceId,
+                Map.of("sourceDomain", "LEARNING", "entityType", "KNOWLEDGE_POINT", "entityId", knowledgeId,
+                        "sourceRevision", sourceRevision, "operation", "UPSERT", "sourceState", "ACTIVE",
+                        "educationStage", "JUNIOR", "visibility", "PUBLIC_MATH_KNOWLEDGE",
+                        "authorization", Map.of("enabledOnly", true,
+                                "projectionApi", "LEARNING_KNOWLEDGE_SAFE_PROJECTION",
+                                "graphProjection", "BOUNDED_PREREQUISITE_RELATIONS")), now);
     }
 
     private Outbox event(String type, int version, String aggregateId, String exchange, String routing, String traceId,

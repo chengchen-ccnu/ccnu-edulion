@@ -46,6 +46,7 @@ class LearningMysqlMigrationAcceptanceTest {
     private static final Set<String> TABLES = Set.of("knowledge_point", "question_aggregate", "question_version",
             "question_version_knowledge_point", "question_version_media", "question_idempotency_request",
             "question_import_task", "question_import_row_error", "learning_outbox_event", "learning_consumed_event",
+            "question_index_revision",
             "question_legacy_import_batch", "question_legacy_source_ref", "question_legacy_import_issue",
             "question_version_child", "question_legacy_review_item", "question_legacy_item_resolution",
             "enrollment", "lesson_progress", "lesson_progress_event", "learning_note", "assessment",
@@ -395,6 +396,8 @@ class LearningMysqlMigrationAcceptanceTest {
                 List<String> ids = new java.util.ArrayList<>(); ids.add(questionId);
                 ids.addAll(jdbc.queryForList("SELECT id FROM question_aggregate WHERE parent_question_id=?", String.class, questionId));
                 jdbc.update("DELETE FROM question_version_child WHERE parent_question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", questionId);
+                jdbc.update("DELETE FROM question_index_revision WHERE question_id IN (SELECT id FROM question_aggregate WHERE id=? OR parent_question_id=?)",
+                        questionId, questionId);
                 for (String id : ids) {
                     jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", id);
                     jdbc.update("DELETE FROM question_version_media WHERE question_version_id IN (SELECT id FROM question_version WHERE question_id=?)", id);

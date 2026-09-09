@@ -15,7 +15,8 @@ describe("course resource actions", () => {
     const replace = vi.fn();
     vi.spyOn(window, "open").mockReturnValue({ opener: window, location: { replace }, close: vi.fn() } as unknown as Window);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-    const provider = vi.fn(async () => ({ method: "GET" as const, url: "https://signed.example.test/file",
+    const provider = vi.fn(async () => ({ mediaId: "media-1", mimeType: "application/pdf", sizeBytes: 4,
+      method: "GET" as const, url: "https://signed.example.test/file",
       headers: {}, expiresAt: "2099-01-01T00:00:00Z" }));
     const controller = createResourceActionController();
 

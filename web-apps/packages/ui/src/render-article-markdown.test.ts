@@ -37,7 +37,7 @@ describe("safe article markdown", () => {
     const host = document.createElement("div"); document.body.append(host);
     const app = createApp({ render: () => h(SafeArticleContent, {
       source: `![替代文字](media:${mediaId})`, images: [{ resourceId: "resource-1", mediaId,
-        grant: { method: "GET", url: "https://signed.example.test/image", headers: {}, expiresAt: "2099-01-01T00:00:00Z" } }],
+        grant: { mediaId, mimeType: "image/png", sizeBytes: 5, method: "GET", url: "https://signed.example.test/image", headers: {}, expiresAt: "2099-01-01T00:00:00Z" } }],
       onRendered: rendered
     }) });
 
@@ -62,7 +62,7 @@ describe("safe article markdown", () => {
     const host = document.createElement("div"); document.body.append(host);
     const app = createApp({ render: () => h(SafeArticleContent, {
       source: `![损坏图片](media:${mediaId})`, images: [{ mediaId, grant: {
-        method: "GET", url: "https://signed.example.test/broken", headers: {}, expiresAt: "2099-01-01T00:00:00Z"
+        mediaId, mimeType: "image/png", sizeBytes: 6, method: "GET", url: "https://signed.example.test/broken", headers: {}, expiresAt: "2099-01-01T00:00:00Z"
       } }], onRendered: rendered, onRenderError: failed
     }) });
     app.mount(host);
@@ -84,7 +84,7 @@ describe("safe article markdown", () => {
 
   it("requests a fresh business projection when a short-lived image grant expires", async () => {
     const mediaId = "00000000-0000-4000-8000-000000000704";
-    const freshGrant = { method: "GET" as const, url: "https://signed.example.test/fresh-image",
+    const freshGrant = { mediaId, mimeType: "image/png", sizeBytes: 5, method: "GET" as const, url: "https://signed.example.test/fresh-image",
       headers: {}, expiresAt: "2099-01-01T00:00:00Z" };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 403 }))
@@ -104,7 +104,7 @@ describe("safe article markdown", () => {
     const host = document.createElement("div"); document.body.append(host);
     const app = createApp({ render: () => h(SafeArticleContent, {
       source: `![替代文字](media:${mediaId})`, images: [{ mediaId, grant: {
-        method: "GET", url: "https://signed.example.test/expired-image", headers: {}, expiresAt: "2020-01-01T00:00:00Z"
+        mediaId, mimeType: "image/png", sizeBytes: 5, method: "GET", url: "https://signed.example.test/expired-image", headers: {}, expiresAt: "2020-01-01T00:00:00Z"
       } }], resolveImage: resolver, onRendered: rendered
     }) });
 

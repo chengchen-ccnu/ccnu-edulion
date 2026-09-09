@@ -341,7 +341,8 @@ public class MediaAssetService {
                 request.disposition().name(), properties.oss().accessGrantTtl()));
         repository.insertAccessAudit(UUID.randomUUID().toString(), asset.mediaId(), actorId, request.variant(),
                 request.disposition().name(), grant.expiresAt(), traceId, Instant.now());
-        return new MediaDtos.AccessGrant(grant.method(), grant.url().toString(), grant.headers(), grant.expiresAt());
+        return new MediaDtos.AccessGrant(asset.mediaId(), asset.mimeType(), asset.size(),
+                grant.method(), grant.url().toString(), grant.headers(), grant.expiresAt());
     }
 
     private OptionalUpload existingCreate(String ownerId, String clientRequestId, String fingerprint) {

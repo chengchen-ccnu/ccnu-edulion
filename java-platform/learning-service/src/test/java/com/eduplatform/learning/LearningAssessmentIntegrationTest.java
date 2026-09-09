@@ -91,6 +91,7 @@ class LearningAssessmentIntegrationTest {
         jdbc.update("DELETE FROM question_version_knowledge_point");
         jdbc.update("DELETE FROM question_version_media");
         jdbc.update("DELETE FROM question_version_child");
+        jdbc.update("DELETE FROM question_index_revision");
         jdbc.update("DELETE FROM question_version");
         jdbc.update("DELETE FROM question_aggregate");
         var fact = new CourseFactsClient.CourseFact(COURSE, "v8", "ENROLLMENT_REQUIRED", TEACHER_AS_LEARNER,

@@ -44,6 +44,7 @@ class CourseCatalogIntegrationTest {
         accessClient.clear();
         jdbc.update("DELETE FROM consumed_learning_event");
         jdbc.update("DELETE FROM course_enrollment_access");
+        jdbc.update("DELETE FROM course_text_index_revision");
         jdbc.update("UPDATE course SET current_draft_version_id = NULL, published_version_id = NULL");
         jdbc.update("DELETE FROM outbox_event");
         jdbc.update("DELETE FROM lesson_media_resource");
@@ -390,11 +391,23 @@ class CourseCatalogIntegrationTest {
                 new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, first.revision()));
         assertThat(publishRetry.status()).isEqualTo(CourseDtos.PublicationStatus.PUBLISHED);
         assertThat(publishRetry.publishedVersion()).isEqualTo(published.publishedVersion());
+        assertThat(jdbc.queryForList("""
+                SELECT payload_json FROM outbox_event
+                WHERE event_type='CourseTextIndexProjectionChanged' ORDER BY created_at,event_id
+                """, String.class)).singleElement().satisfies(payload ->
+                        assertThat(payload).contains("\"operation\":\"UPSERT\"", "\"sourceRevision\":1")
+                                .doesNotContain("articleMarkdown"));
 
         CourseDtos.CoursePublication unpublished = service.updatePublication(
                 draft.id(), TEACHER_ID,
                 new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.UNPUBLISHED, first.revision()));
         assertThat(unpublished.status()).isEqualTo(CourseDtos.PublicationStatus.UNPUBLISHED);
+        assertThat(jdbc.queryForList("""
+                SELECT payload_json FROM outbox_event
+                WHERE event_type='CourseTextIndexProjectionChanged' ORDER BY created_at,event_id
+                """, String.class)).hasSize(2).last().satisfies(payload ->
+                        assertThat(payload).contains("\"operation\":\"DELETE\"", "\"sourceRevision\":2")
+                                .doesNotContain("articleMarkdown"));
         assertThatThrownBy(() -> service.getPublished(draft.id()))
                 .isInstanceOfSatisfying(CourseException.class,
                         error -> assertThat(error.status().value()).isEqualTo(404));

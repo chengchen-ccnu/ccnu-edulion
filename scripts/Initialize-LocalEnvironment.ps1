@@ -20,6 +20,7 @@ $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
+$agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
 
 function New-ServiceAuthorizationCredential {
     $bytes = New-Object byte[] 32
@@ -72,6 +73,24 @@ function New-LearningIamServiceCredential {
         $secret = [Convert]::ToBase64String($bytes)
         return [PSCredential]::new(
             "learning-iam-service",
+            (ConvertTo-SecureString $secret -AsPlainText -Force)
+        )
+    }
+    finally {
+        $generator.Dispose()
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        $secret = $null
+    }
+}
+
+function New-AgentIndexServiceCredential {
+    $bytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+        $secret = [Convert]::ToBase64String($bytes)
+        return [PSCredential]::new(
+            "agent-index-worker",
             (ConvertTo-SecureString $secret -AsPlainText -Force)
         )
     }
@@ -140,8 +159,32 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             $existingLearningIamCredential = $null
         }
     }
+    $agentIndexCredentialValid = $false
+    if (Test-Path -LiteralPath $agentIndexCredentialPath -PathType Leaf) {
+        try {
+            $existingAgentIndexCredential = Import-Clixml -LiteralPath $agentIndexCredentialPath
+            if ($existingAgentIndexCredential -is [PSCredential] `
+                    -and $existingAgentIndexCredential.UserName -eq "agent-index-worker") {
+                $existingAgentIndexNetworkCredential = $existingAgentIndexCredential.GetNetworkCredential()
+                $agentIndexCredentialValid = $existingAgentIndexNetworkCredential.Password.Length -ge 32
+            }
+        }
+        catch {
+            $agentIndexCredentialValid = $false
+        }
+        finally {
+            $existingAgentIndexNetworkCredential = $null
+            $existingAgentIndexCredential = $null
+        }
+    }
+    $existingLocalLines = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        @(Get-Content -LiteralPath $configPath)
+    } else { @() }
+    $agentConfigurationValid = ($existingLocalLines -match '^AGENT_MYSQL_DATABASE=').Count -gt 0 `
+        -and ($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -gt 0
     if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid `
-            -or -not $learningIamCredentialValid)) {
+            -or -not $learningIamCredentialValid -or -not $agentIndexCredentialValid `
+            -or -not $agentConfigurationValid)) {
         New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
         if (-not $serviceCredentialValid) {
             New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
@@ -154,6 +197,19 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
         if (-not $learningIamCredentialValid) {
             New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force
             Write-Host "Added the DPAPI-encrypted Learning-to-IAM service secret."
+        }
+        if (-not $agentIndexCredentialValid) {
+            New-AgentIndexServiceCredential | Export-Clixml -LiteralPath $agentIndexCredentialPath -Force
+            Write-Host "Added the DPAPI-encrypted Agent Index Worker service secret."
+        }
+        if (($existingLocalLines -match '^AGENT_MYSQL_DATABASE=').Count -eq 0) {
+            Add-Content -LiteralPath $configPath -Value "AGENT_MYSQL_DATABASE=edu_platform_agent_dev" -Encoding UTF8
+        }
+        if (($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -eq 0) {
+            Add-Content -LiteralPath $configPath -Value "AGENT_INDEX_API_ENABLED=true" -Encoding UTF8
+        }
+        if (-not $agentConfigurationValid) {
+            Write-Host "Added the non-secret Agent local configuration."
         }
         return
     }
@@ -267,10 +323,11 @@ $credential | Export-Clixml -LiteralPath $credentialPath -Force
 New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
 New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
 New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force
+New-AgentIndexServiceCredential | Export-Clixml -LiteralPath $agentIndexCredentialPath -Force
 
 @(
     "# Non-secret local configuration for ccnu-edulion."
-    "# MySQL, course/media and Learning-to-IAM service credentials are stored separately with Windows DPAPI."
+    "# MySQL, course/media, Learning-to-IAM and Agent index service credentials are stored separately with Windows DPAPI."
     "SPRING_PROFILES_ACTIVE=local"
     "MYSQL_HOST=127.0.0.1"
     "MYSQL_PORT=3306"
@@ -282,6 +339,7 @@ New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCreden
     "MEDIA_MYSQL_DATABASE=edu_platform_media_dev"
     "LEARNING_MYSQL_DATABASE=edu_platform_learning_dev"
     "OPERATION_MYSQL_DATABASE=edu_platform_operation_dev"
+    "AGENT_MYSQL_DATABASE=edu_platform_agent_dev"
     "REDIS_HOST=127.0.0.1"
     "REDIS_PORT=6379"
     "REDIS_SSL_ENABLED=false"
@@ -294,6 +352,7 @@ New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCreden
     "IAM_SEED_ENABLED=false"
     "IAM_VERIFICATION_DELIVERY_MODE=fixed-local"
     "COURSE_SEED_ENABLED=false"
+    "AGENT_INDEX_API_ENABLED=true"
 ) | Set-Content -LiteralPath $configPath -Encoding UTF8
 
 Write-Host "Local environment initialized in $ConfigDirectory."

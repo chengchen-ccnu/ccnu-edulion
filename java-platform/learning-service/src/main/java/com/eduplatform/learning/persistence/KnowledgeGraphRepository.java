@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
+import com.eduplatform.learning.persistence.QuestionRepository.Outbox;
 
 /** T10B 图谱持久化边界；所有查询和外键都限定在 learning Schema。 */
 @Repository
@@ -133,6 +134,28 @@ public class KnowledgeGraphRepository {
         jdbc.update("INSERT INTO knowledge_point_prerequisite(id,prerequisite_id,dependent_id,relation_type,source_system,source_relation_type,revision,created_at) VALUES(?,?,?,?,?,?,?,?)",
                 UUID.randomUUID().toString(), prerequisiteId, dependentId, "PREREQUISITE", sourceSystem,
                 sourceRelationType, 0, ts(now));
+    }
+
+    /** 关系或节点投影变化时提升涉及节点的 revision，供分页游标和乱序事件保护使用。 */
+    public void bumpIndexRevisions(java.util.Set<String> ids, Instant now) {
+        if (ids.isEmpty()) return;
+        named.update("UPDATE knowledge_point SET revision=revision+1,updated_at=:updated WHERE id IN (:ids)",
+                Map.of("ids", ids, "updated", ts(now)));
+    }
+
+    /** 仅返回当前可索引初中节点的对外 sourceRevision；数据库 revision 加一以覆盖历史零值。 */
+    public Optional<Long> indexSourceRevision(String id) {
+        return jdbc.query("SELECT revision+1 FROM knowledge_point WHERE id=? AND enabled=TRUE AND normalized_stage='JUNIOR'",
+                (rs, ignored) -> rs.getLong(1), id).stream().findFirst();
+    }
+
+    /** 与知识图谱导入事务同库写入 Agent 索引 Outbox，Broker 故障不回滚事实。 */
+    public void insertOutbox(Outbox event) {
+        jdbc.update("INSERT INTO learning_outbox_event(event_id,event_type,event_version,aggregate_id,exchange_name,routing_key,trace_id,payload_json,status,attempts,next_attempt_at,last_error,occurred_at,published_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                event.eventId(), event.eventType(), event.eventVersion(), event.aggregateId(), event.exchange(),
+                event.routingKey(), event.traceId(), event.payloadJson(), event.status(), event.attempts(),
+                ts(event.nextAttemptAt()), event.lastError(), ts(event.occurredAt()),
+                event.publishedAt() == null ? null : ts(event.publishedAt()), ts(event.updatedAt()));
     }
 
     /** 返回同一来源已落库关系的来源业务键，用于正式写入前与新图合并做环检测。 */

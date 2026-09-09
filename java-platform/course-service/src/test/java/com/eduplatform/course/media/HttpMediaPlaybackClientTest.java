@@ -30,7 +30,9 @@ class HttpMediaPlaybackClientTest {
                 return;
             }
             respond(exchange, 201, """
-                    {"method":"GET","url":"https://media.test/legacy.m3u8","headers":{},
+                    {"mediaId":"00000000-0000-0000-0000-000000000099",
+                     "mimeType":"application/vnd.apple.mpegurl","sizeBytes":1024,
+                     "method":"GET","url":"https://media.test/legacy.m3u8","headers":{},
                      "expiresAt":"%s"}
                     """.formatted(Instant.now().plusSeconds(60)));
         });

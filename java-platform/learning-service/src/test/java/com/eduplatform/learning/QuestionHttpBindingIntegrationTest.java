@@ -200,6 +200,8 @@ class QuestionHttpBindingIntegrationTest {
                 + "(SELECT id FROM question_version WHERE created_by=?)", TEACHER);
         jdbc.update("DELETE FROM question_version_knowledge_point WHERE question_version_id IN "
                 + "(SELECT id FROM question_version WHERE created_by=?)", TEACHER);
+        jdbc.update("DELETE FROM question_index_revision WHERE question_id IN "
+                + "(SELECT id FROM question_aggregate WHERE owner_id=?)", TEACHER);
         jdbc.update("DELETE FROM question_idempotency_request WHERE owner_id=?", TEACHER);
         jdbc.update("UPDATE question_aggregate SET current_version_id=NULL,parent_question_id=NULL WHERE owner_id=?", TEACHER);
         jdbc.update("DELETE FROM question_version WHERE created_by=?", TEACHER);

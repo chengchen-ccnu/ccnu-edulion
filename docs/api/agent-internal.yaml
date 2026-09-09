@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.0.0
+  version: 1.0.1
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -227,14 +227,19 @@ components:
     TrustedContext:
       type: object
       additionalProperties: false
-      required: [userId, educationStage, grade, entryPoint, authorizedAt, toolGrants]
+      required: [userId, educationStage, entryPoint, authorizedAt, toolGrants]
       properties:
         userId:
           type: string
           format: uuid
           description: IAM 全局 userId，由 Java 服务端身份注入。
         educationStage: {type: string, const: JUNIOR}
-        grade: {type: string, enum: [GRADE_7, GRADE_8, GRADE_9]}
+        grade:
+          type: string
+          enum: [GRADE_7, GRADE_8, GRADE_9]
+          description: |
+            仅在 Java 能从已授权题目等领域事实中确定年级时提供。IAM 当前没有学生年级事实，
+            因此独立聊天不得复制浏览器自报值；缺失时 Python 应按需要澄清，不能自行猜测。
         entryPoint:
           type: string
           enum: [INDEPENDENT_CHAT, PRACTICE_FLOATING]

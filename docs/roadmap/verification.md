@@ -1006,3 +1006,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 示例与校验：HTTP/工具/意图/SSE 和索引事件正反例均为仓库 YAML，并由 `tests/test_agent_internal_contract.py` 使用正式 Schema 校验；跨事件测试另检查全部本地引用、事件/终态完整集合、唯一终态、连续序号、取消后终止、最多两个子请求、白名单资源不能提升、eventId 重复 no-op 与旧 revision 拒绝。新增专项 16/16、完整 Python 24/24 和字节码编译已通过；wheel、diff 检查和 GitHub CI 结果以 T13.1 交付文档最终记录为准。
 - 数据与边界：没有安装或连接 Qdrant、Neo4j、模型、MySQL、Redis、RabbitMQ、OSS；没有创建/修改数据库、表、迁移、Seed、伪数据、缓存 Key、消息、媒体、向量 collection 或图节点。没有实现 LangGraph 动态编排、LLM 调用、Index Worker、Java Agent Access、Vue 页面或外部前端 DTO。
 - PR 与 CI：实现提交 `bc018867a093a662376c35aba3a63d9f27eea1f6` 已按规则执行 `git push origin HEAD`，Ready [PR #56](https://github.com/chengchen-ccnu/ccnu-edulion/pull/56) 已创建。首轮 Java、Frontend、外部 OpenAPI 检查成功；Python 因既有 job 不安装依赖而缺少 `yaml` 失败。CI 适配提交 `e387cef` 新增独立 `requirements-contract.txt` 和契约测试依赖安装步骤，并在隔离环境以 `jsonschema 4.25.1`、`PyYAML 6.0.3` 验证专项 16/16、全量 24/24 通过；该提交触发的 push/PR 两组共 8 项 Java、Python、Frontend、外部 OpenAPI 检查全部成功，不自行合并。
+
+## 2026-09-09 PR #56 合并与 T14.1 Agent Access 会话授权基础
+
+- 基线：T13.1 PR #56 在两组 Java、Python、Frontend、OpenAPI 共 8 项检查全绿后以普通 merge 合并为 `main@a4b2aebc5e696b32eefca9c496b6f786a2cc1593`；本地 main 快进后从该提交创建 `codex/t14.1-agent-access-foundation`，开工前工作区干净。
+- 契约：外部 OpenAPI 升级至 0.23.0，增加本人会话/消息/run SSE/恢复/取消；内部 `agent-internal.yaml` v1.0.1 兼容修正普通对话可不带 grade；新增 `agent-index-source-internal.yaml` 1.0.0，冻结三类稳定分页安全投影和服务令牌边界。生成客户端由同一外部 OpenAPI 重新生成。
+- Java Agent Access：新增 8086 独立模块与 Flyway V1，保存会话、消息、run、公开事件、取消和安全工具审计；owner、`learning:access`、请求指纹、单活动 run、领域上下文先授权、短期媒体 URL 不落库、逐事件校验/持久化/SSE 代理、恢复不重跑、取消幂等、断线取消和启动孤儿 FAILED 收口均由测试覆盖。
+- 事实源：Learning 仅输出 ACTIVE SYSTEM 初中数学题安全投影与启用知识点/直接前置，Course 仅输出当前已发布非空 ARTICLE；内部接口要求固定调用方和专用令牌，Gateway 不路由。题目、知识点、课程正文变更在原领域事务写最小 Outbox。独立 `question_index_revision` 解决根题 UPSERT 后转组合子题 DELETE 必须拥有更高 revision、又不能改变业务 revision 的具体顺序问题。
+- 数据与环境：本轮没有连接或创建真实 MySQL Schema，没有修改开发库、Redis、RabbitMQ、OSS、Qdrant 或 Neo4j，也没有持久 Seed/伪数据。H2 Fixture 随测试进程释放。初始化脚本新增 `AGENT_MYSQL_DATABASE` 和 DPAPI 加密的 Agent Index 服务令牌，包装器仅对子命令注入；本轮不要求新增 Python 包。
+- 验证：Java 全量 `clean verify` 的 9 个 Reactor 模块全部成功，共 222 项、0 失败、0 错误、31 项显式真实环境测试跳过；Agent Access 5 项全部通过。Python `compileall`、全量 25/25（契约专项 17 项）和 wheel 构建通过。前端生成、typecheck、43 文件/294 项测试及三端 build 通过，只有既有大 chunk 警告。PowerShell 两个环境脚本语法解析、4 份 Agent YAML 解析和 diff 检查通过。未运行的真实外部依赖验收不记为通过，CI 结果在 PR 创建后继续记录。

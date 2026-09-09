@@ -30,11 +30,18 @@ public class CourseRabbitConfig {
     public static final String ENROLLMENT_DLQ = "edu.course.enrollment-access.dlq.v1";
     public static final String ENROLLMENT_ROUTING_KEY = "learning.enrollment.access-changed.v1";
     public static final String ENROLLMENT_DEAD_ROUTING_KEY = "course.enrollment-access.dead.v1";
+    public static final String AGENT_INDEX_EVENTS_EXCHANGE = "edu.agent.index.events.v1";
 
     @Bean
     @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
     TopicExchange courseMediaEventsExchange() {
         return new TopicExchange(MEDIA_EVENTS_EXCHANGE, true, false);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
+    TopicExchange courseAgentIndexEventsExchange() {
+        return new TopicExchange(AGENT_INDEX_EVENTS_EXCHANGE, true, false);
     }
 
     @Bean

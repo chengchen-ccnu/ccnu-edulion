@@ -37,6 +37,10 @@ spring:
               uri: ${OPERATION_SERVICE_URL:http://localhost:8085}
               predicates:
                 - Path=/api/v1/operations/**
+            - id: agent-access-service
+              uri: ${AGENT_ACCESS_SERVICE_URL:http://localhost:8086}
+              predicates:
+                - Path=/api/v1/ai/**
 
 server:
   port: ${SERVER_PORT:8080}

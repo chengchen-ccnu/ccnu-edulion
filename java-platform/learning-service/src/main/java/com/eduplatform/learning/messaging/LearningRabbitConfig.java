@@ -33,6 +33,8 @@ public class LearningRabbitConfig {
 
     @Bean TopicExchange learningEventsExchange() { return new TopicExchange(LearningRabbitTopology.EVENTS_EXCHANGE, true, false); }
     @Bean TopicExchange learningEventsExchangeV2() { return new TopicExchange(LearningRabbitTopology.EVENTS_EXCHANGE_V2, true, false); }
+    /** T13.2 Worker 后续声明队列；生产者只声明统一 durable topic exchange。 */
+    @Bean TopicExchange agentIndexEventsExchange() { return new TopicExchange(LearningEvents.AGENT_INDEX_EXCHANGE, true, false); }
     @Bean DirectExchange learningDeadExchange() { return new DirectExchange(LearningRabbitTopology.DEAD_EXCHANGE, true, false); }
     @Bean Queue learningImportQueue() { return QueueBuilder.durable(LearningRabbitTopology.IMPORT_QUEUE)
             .deadLetterExchange(LearningRabbitTopology.DEAD_EXCHANGE).deadLetterRoutingKey(LearningRabbitTopology.IMPORT_DEAD_KEY).build(); }

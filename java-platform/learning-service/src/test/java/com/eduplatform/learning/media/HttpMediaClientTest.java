@@ -100,7 +100,9 @@ class HttpMediaClientTest {
         if (path.startsWith("/internal/v1/media/")) {
             observedAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
             observedInternalBody = new String(requestBody, StandardCharsets.UTF_8);
-            respond(exchange, 201, "{\"method\":\"GET\",\"url\":\"https://fixture.invalid/private\","
+            respond(exchange, 201, "{\"mediaId\":\"00000000-0000-4000-8000-000000000406\","
+                    + "\"mimeType\":\"image/png\",\"sizeBytes\":1024,"
+                    + "\"method\":\"GET\",\"url\":\"https://fixture.invalid/private\","
                     + "\"headers\":{},\"expiresAt\":\"2026-08-27T10:00:00Z\"}"); return;
         }
         if (path.equals("/api/v1/media/external-image-transfers")) {
@@ -111,7 +113,9 @@ class HttpMediaClientTest {
                     + "\"purpose\":\"QUESTION_IMAGE\",\"status\":\"READY\"}"); return;
         }
         if (path.endsWith("/access-grants")) {
-            respond(exchange, 201, "{\"method\":\"GET\",\"url\":\"http://127.0.0.1:" + server.getAddress().getPort()
+            respond(exchange, 201, "{\"mediaId\":\"00000000-0000-4000-8000-000000000404\","
+                    + "\"mimeType\":\"text/csv\",\"sizeBytes\":1024,"
+                    + "\"method\":\"GET\",\"url\":\"http://127.0.0.1:" + server.getAddress().getPort()
                     + "/download\",\"headers\":{},\"expiresAt\":\"2026-08-09T22:00:00Z\"}"); return;
         }
         if (path.contains("000000000401")) { respond(exchange, 404, "{}"); return; }
