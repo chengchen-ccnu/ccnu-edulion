@@ -1,0 +1,3 @@
+# T13.1 contract-test dependencies only; no Agent runtime or model packages.
+PyYAML>=6.0
+jsonschema>=4.23
