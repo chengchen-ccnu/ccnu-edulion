@@ -47,6 +47,10 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             requirements.txt
+            requirements-contract.txt
+
+      - name: Install contract-test dependencies
+        run: python -m pip install -r requirements-contract.txt
 
       - name: Compile Python sources
         run: python -m compileall -q edu_agent_app server.py

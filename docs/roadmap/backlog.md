@@ -43,7 +43,7 @@
 | T10C.1 公共题库与课程练习入口契约纠偏 | 已合并（PR #54，b132ff0） | T10B、T11C.2、T12B 已合并 | OpenAPI 0.22.0 复用公共 ACTIVE SYSTEM 列表/详情，新增当前安全正文题图领域授权、指定课程 `type=PRACTICE` 服务端筛选和旧 assessment 深链安全归属投影；Learning 复核当前 Course owner、报名、发布及 COURSE assignment，GET 不补名单，合法开始才兼容旧 PRACTICE；HOMEWORK/EXAM 规则不变。只读开发库确认 648 根题、362 子题、1,910 READY/BOUND 图片，未重导、清库或新增迁移；公共单题提交/自主组题契约仍明确缺失 |
 | T10C.2 顶部题库与课程练习入口前端 | 已完成并通过真实验收，已合并（PR #55） | T10C.1 OpenAPI 0.22.0、Java/Gateway、生成客户端已验收 | 顶栏第四槽、648 个公共根题安全浏览、真实 OSS Blob 题图、课程精确 PRACTICE、真实开始/保存/提交/结果/旧链接、NOT_OPEN 409 及 HOMEWORK/EXAM 公布回归全部通过。固定 student Origin 5173 下创建/撤销 Blob 均通过；PR 以普通 merge 合并为 `35f6767`。单题作答/自主组题仍无契约 |
 | T13 Agent 重设计 | 已拆分；旧 T13 单任务定义撤销 | 见 T13.1～T13.4 | 以 agent-platform-design 为目标；不是只包装旧 FAISS 固定工作流 |
-| T13.1 Agent 内部协议与工具契约 | 已完成协议、示例与本地契约验证，待 Ready PR/CI | Agent 规划 PR #53；T03、T10B、T11C.2、T10C.1、T10C.2 已合并 | `agent-internal.yaml` v1 冻结可信上下文/私有状态隔离、HTTP 流/取消/幂等、唯一终态、意图槽位、只读工具白名单、预算/超时；`agent-index-events.v1.yaml` 冻结四类索引通知。正反例由 16 项新增测试校验；未实现运行时、Java、Vue、MQ 或索引。完整命令结果见 T13.1 交付文档 |
+| T13.1 Agent 内部协议与工具契约 | 已完成协议、示例与本地契约验证；Ready PR #56，待最新 CI | Agent 规划 PR #53；T03、T10B、T11C.2、T10C.1、T10C.2 已合并 | `agent-internal.yaml` v1 冻结可信上下文/私有状态隔离、HTTP 流/取消/幂等、唯一终态、意图槽位、只读工具白名单、预算/超时；`agent-index-events.v1.yaml` 冻结四类索引通知。正反例由 16 项新增测试校验；未实现运行时、Java、Vue、MQ 或索引。完整命令结果见 T13.1 交付文档 |
 | T14.1 Agent Access 会话与授权基础 | 待开始 | T13.1；T12D.1、T07、T10B、T12F.1 已合并 | 新独立 Java 服务/Schema，会话/消息/run、用户权限、题目/课程/图片可信投影、Java 分页索引源与 Outbox、基础流代理；用协议替身验证，不能宣称真实 Agent 已完成 |
 | T13.2 Qdrant/Neo4j 检索与独立索引 Worker | 待开始 | T13.1、T14.1 索引 API/事件；本地模型与图/向量环境 | 四集合、BM25+dense/RRF/语义重排、阈值、增量事件/有界重建、旧版本保护、权限结果复核；复用既有知识事实，不重新导入原库、不使用旧 FAISS |
 | T13.3 动态多 Agent 与多轮运行时 | 待开始 | T13.1、T13.2、T14.1 | 五角色按能力启用，规则+LLM 意图/槽位、有限工具转交、流式/取消/降级、多模态、最近轮次压缩和候选记忆；无认知诊断步骤、无人工转交、无正式组题写入 |
