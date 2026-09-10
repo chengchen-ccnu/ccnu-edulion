@@ -1049,3 +1049,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 模型配置：首次通过 `Invoke-WithLocalEnvironment.ps1` 检查时共享环境尚无模型配置；用户随后补齐阿里云百炼 API Key、OpenAI 兼容 Base URL、旧/新聊天与视觉模型名。只读取进程变量且不输出秘密：极短文本调用返回 200、响应非空、正常 stop、29 Token；内存生成的 16×16 红色 PNG 视觉调用返回 200、正确识别红色、正常 stop、91 Token，服务实际报告模型均为 `qwen3.8-flash`。这只证明凭据、地域、兼容端点和基础多模态可用，不能替代 T13.3 的流式、超时、取消、结构化输出和完整用量验收。
 - 准备结论：T13.1、T13.2、T14.1 的代码和协议依赖已经满足，已从干净 `main@df95680` 准备 `codex/t13.3-dynamic-multi-agent-runtime`。该分支只承接动态五角色、多轮状态、意图/槽位、受控工具、检索接入、预算/降级、流/取消和多模态；不实现 T14.2 真实长期记忆事实、T13.4 帮助知识库、前端或自主组题。
 - 数据边界：本轮只执行 Git 合并/同步/分支清理、配置存在性检查和 20 项纯自动化测试；没有创建、修改或清理 MySQL/Redis 数据、Qdrant 点、Neo4j 节点/关系、RabbitMQ 队列/消息、OSS 对象或伪数据。T13.2 已保留的本机派生索引保持原样。
+
+## 2026-09-09 T13.3 动态多 Agent 与多轮运行时
+
+- 协议与运行时：Python 内部入口严格解析 `agent-internal.yaml` v1，请求、五角色、一级/14 个二级意图、槽位、工具和 SSE/唯一终态不另建枚举。Coordinator 使用明确规则优先、结构化模型兜底和最多一次 JSON 修复；只顺序处理最多两个子请求。旧固定认知诊断/解题图、FAISS、人工转交、LangGraph 递归与 PostgreSQL checkpoint 已从运行时代码、测试和依赖移除。
+- 有界执行：所有 run 共用 12 步、8 次 LLM、10 次工具、2 次转交、同工具同参数 2 次和约 90 秒的下发预算。离线回归覆盖每一种上限、第三子请求截断、角色/意图/grant/scope 越权拒绝、连续三次“不懂”的换表述/简单例子/前置知识顺序、Platform Help/T14.3 写入边界，以及同会话第二个并发 run 的 409。
+- SSE 与故障：`RUN_ACCEPTED` 同步成为首事件，后续 sequence 连续且仅有一个 `FINAL_RESULT`。心跳、总/空闲超时、慢客户端、断线和取消均停止后续模型/工具；`COMPLETED`、`DEGRADED`、`LIMIT_REACHED`、`CANCELLED`、`FAILED` 全覆盖，超时/取消保留已成功文本并标为中断或简化。测试中发现并修复慢客户端生产协程异常未回收问题。
+- 检索与安全：在线工具复用 T13.2 三集合 dense + multilingual BM25 + RRF + 本地 reranker，Neo4j 仅做有界前置知识。离线覆盖成功、空、异常、超时和降级；真实专项 3/3 通过（17.936 秒），覆盖 Qdrant Schema/安全 payload、四阶段与空命中、Neo4j 正常及关闭后降级。课程候选再次授权没有冻结的 Python→Java 端点，因此未自创 API；未注入 verifier 时课程命中 fail-closed 全部剔除，不回退全库。这是明确后续契约风险。
+- 多轮与视觉：进程内最近消息结合 Java 已授权摘要；有限压缩保留公式、未解决问题、明确偏好和来源标题，清除 URL/签名/Token，不写工具原始结果、隐藏画像或受限正文，仅产出 T14.2 候选记忆。图片只消费 Java 授权 media/grant 和短期访问，复核 MIME/大小/过期/重定向，视觉不可靠时澄清；Python 不接 OSS SDK。
+- 自动化结果：Python compileall 通过；默认全量 57 项中 48 项通过、9 项显式真实环境测试跳过、0 失败。百炼真实专项 2/2 通过：服务模型均为 `qwen3.8-flash`，文本 1 次、76/66 Token、1848ms；内存 PNG 视觉 1 次、171/98 Token、2288ms、可靠标记为真，未输出完整回答。Agent Access `clean verify` 的 3 模块成功，shared-kernel 1 项与 Agent Access 5 项通过；wheel `edu_math_agent-0.2.0-py3-none-any.whl` 构建成功，包内容审计确认不再携带旧运行时文件；`git diff --check` 通过。Ready PR 创建后回填，不能提前视为 CI 通过。
+- 数据边界：未创建或修改 MySQL/Redis 数据、Qdrant 点、Neo4j 节点/关系、RabbitMQ 消息/队列、OSS 对象或伪数据；真实索引专项只读 T13.2 已保留派生数据，Java 使用进程内 H2 并随 JVM 释放，视觉 PNG 只在内存存在。详细实现、命令、演示和风险见 [T13.3 交付文档](../delivery/T13.3-dynamic-multi-agent-runtime.md)。

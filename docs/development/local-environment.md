@@ -6,13 +6,13 @@
 
 | 组件 | 已取得证据 | 后续要求 |
 |---|---|---|
-| Java Agent Access | T14.1 已通过 PR #57 合并；本机已补齐 DPAPI 加密的 Index Worker 服务令牌且 `AGENT_INDEX_API_ENABLED=true` | local 端口 8086；只有显式 local/test profile 启用持久化，真实 Python 动态运行时仍待 T13.3 |
+| Java Agent Access | T14.1 已通过 PR #57 合并；T13.3 的 6 项 Java Agent Access/shared-kernel 回归通过 | local 端口 8086；只有显式 local/test profile 启用持久化；课程检索候选再次授权端点尚未冻结，Python 当前 fail-closed |
 | bge-base-zh | `I:\大模型学习\edu_agent\bge-base-zh` 已用 CPU 完成 2 条中文文本真实推理，输出 768 维有限向量 | T13.2 增加明确 `BGE_MODEL_PATH` 配置并建立代表样本阈值，不把一次加载成功当成检索质量验收 |
 | bge-reranker-base | `I:\大模型学习\edu_agent\bge-reranker-base` 已用 PyTorch 2.4.1/Transformers 4.57.5 离线加载；最小相关/无关文本排序通过 | T13.2 增加 `RERANKER_MODEL_PATH` 和锁定依赖；模型不进入 Git，真实候选集继续验证排序质量与延迟 |
 | Qdrant | 1.19.1，127.0.0.1:6333/6334 可达；T13.2 已用 `qdrant-client==1.19.0` 建立四集合 | 使用 `multilingual` tokenizer 的服务端 BM25；模型/Schema 版本不一致会拒绝混写，升级前显式清理与重建 |
 | Neo4j | Community 5.26.19，127.0.0.1:7687/7474；T13.2 已完成认证、受控约束/投影和有界查询 | 开发期密码可暂由仓库外 local.env 注入，项目完成后必须迁入 `neo4j.credential.clixml`/正式 Secret 并删除明文行 |
 | MySQL/Redis/RabbitMQ | RabbitMQ 4.3.4 已完成 confirm、手动 ACK、有限重试和 DLQ 真实验收 | Worker 凭据使用 `rabbitmq.credential.clixml`/正式 Secret；MySQL 只由 Java 事实源访问，Python 不跨库读表 |
-| Chat/Vision | 共享包装环境已配置阿里云百炼 OpenAI 兼容接口；文本和内存 PNG 视觉最小调用均返回 200，实际模型 `qwen3.8-flash` | `CHAT_MODEL_NAME`/`VISION_MODEL_NAME` 可同模型；T13.3 继续验证完整流、有限时限/预算、取消和多模态安全，不输出秘密或完整探测响应 |
+| Chat/Vision | T13.3 真实文本/视觉各 1 次调用通过，实际模型 `qwen3.8-flash`；分别为 142/269 总 Token、1848/2288ms | `CHAT_MODEL_NAME`/`VISION_MODEL_NAME` 可同模型；只记录计数、Token 和阶段延迟，不输出秘密、完整提示或完整回答 |
 | Media | 复用既有平台链路；T14.1 已补 AI 图片 owner/引用/短期读取投影 | Python 不接 OSS SDK；后续 Agent 任务只消费 Java 授权结果 |
 
 地址、模型路径是非敏感配置，密码/密钥按项目安全加载器处理。T13.2 的 Qdrant、BGE、reranker、Neo4j、RabbitMQ、Java 事实源和 Worker 参数见 `.env.example`。既有知识事实从 Java 分页内部 API 重建，不再次导入全量原题库。
@@ -624,6 +624,22 @@ Flyway V1 创建 `ai_conversation`、`ai_message`、`ai_run`、`ai_run_event`、
 Course/Learning 的 `/internal/v1/agent-index/**` 只在 `AGENT_INDEX_API_ENABLED=true` 时启用，Gateway 不路由。初始化脚本生成 DPAPI 加密的 `agent-index-service.credential.clixml`，包装器仅在子命令期间注入 `AGENT_INDEX_SERVICE_TOKEN`；调用方还必须发送固定 `X-Internal-Caller: agent-index-worker`。禁止打印令牌或写入 `local.env`。RabbitMQ 中题目、知识点、课程文字通知只携带稳定 ID 和 revision，正文由 T13.2 Worker 通过分页 API 拉取；在线命中后仍须由 Java 按当前用户复核访问权限。
 
 T14.1 不需要 Qdrant、Neo4j、BGE、重排模型或新增 Python 包。它们属于 T13.2；届时应先核对现有 Python 版本、硬件和本机资产，再由任务锁定精确版本，避免现在提前安装出一套漂移环境。
+
+## T13.3 动态 Agent 运行时环境
+
+Python 在线服务现由 `python -m edu_agent_app` 启动 T13.1 v1 内部 HTTP/SSE；`python -m edu_agent_app index-worker` 仍是 T13.2 独立进程。建议使用已经验证过的 Python 3.11 环境，并通过统一包装器注入百炼与 Neo4j 等秘密：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    D:\Anaconda\envs\langgraph\python.exe -m edu_agent_app
+}
+```
+
+聊天与视觉读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`CHAT_MODEL_NAME`、`VISION_MODEL_NAME`；`AGENT_MODEL_REQUEST_TIMEOUT_SECONDS` 默认 30 秒。`AGENT_ONLINE_RETRIEVAL_ENABLED=true` 时复用 T13.2 的 Qdrant、BGE、reranker 和可选 Neo4j 配置；`AGENT_CONTEXT_COMPRESSION_THRESHOLD_CHARS` 默认 12000，只控制进程内有限摘要。每个 run 的 12 步/8 次模型/10 次工具/2 次转交/同参 2 次/约 90 秒预算由 Java 请求携带，不应在本机配置另建第二套隐藏上限。
+
+本机真实验收的文本和内存 PNG 视觉均由百炼 `qwen3.8-flash` 成功处理；真实 Qdrant 混合检索、空命中和 Neo4j 有界查询也通过。真实模型专项必须显式设置 `AGENT_RUNTIME_REAL_ACCEPTANCE=true`，只使用有界样本并仅输出用量指标；默认全量测试不会产生模型费用。课程候选再次授权适配器尚无冻结 Java 端点，未注入时 `course_content` 命中全部剔除，不得为本地演示关闭该门禁或回退全库。
+
+本任务没有向用户目录 `local.env` 写新行。项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除明文并迁入对应加密凭据。模型名、Base URL、模型路径、超时和压缩阈值属于非敏感配置，可保留在 `local.env`。
 
 ## 全量验证
 

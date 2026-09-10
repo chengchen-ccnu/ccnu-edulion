@@ -5,18 +5,16 @@ import sys
 
 
 def main() -> None:
-    """无子命令时保持旧 HTTP 入口；index-worker 完全独立启动，不加载在线 Agent。"""
+    """无子命令时启动 T13.3 HTTP；index-worker 仍完全独立且不加载在线模型。"""
     if len(sys.argv) > 1 and sys.argv[1] == "index-worker":
         from .indexing.cli import run_index_worker
 
         raise SystemExit(run_index_worker(sys.argv[2:]))
     import uvicorn
 
-    from .api import app
-
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("edu_agent_app.api:app", host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":

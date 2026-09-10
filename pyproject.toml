@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edu-math-agent"
-version = "0.1.0"
-description = "Existing middle-school mathematics teaching agent service"
+version = "0.2.0"
+description = "Dynamic multi-agent runtime and retrieval worker for middle-school mathematics"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]
