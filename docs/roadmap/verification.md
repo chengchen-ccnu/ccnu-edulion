@@ -1070,6 +1070,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 记忆与用量缺口：Python 已产生候选记忆及模型/视觉/工具/Token 统计，但公开 SSE 有意不承载 Java 私有数据，当前也没有幂等内部结果上报。Agent Access 仅有 T14.1 六张基础表，无摘要、记忆、证据、主题、偏好、用量、安全审计或记忆 Outbox。
 - Redis 与真实流边界：Agent Access 当前未引入 Redis；同会话活动槽由 MySQL 唯一约束保护，进程内 map 只持有本实例上游句柄。基础 WebClient 流、事件先落库、取消和部分检查点已存在，但多实例租约、用户总并发/额度、Redis 故障恢复、真实背压和供应商取消尚未闭环。
 - 拆分结论：旧 T14.2 无法独立验收，拆成 T14.2.1 授权上下文与恢复契约、T14.2.2 长期记忆事实/画像/索引、T14.2.3 Redis 运行治理与真实链路。已从干净 `main@05050fc` 准备 `codex/t14.2.1-agent-context-contract`；本分支只提交规划与审计，不实现业务代码。
+- 页面与数据：拆分不改变现有路由或页面职责，因此未修改 `page-specs.md`。本轮没有连接或修改 MySQL、Redis、Qdrant、Neo4j、RabbitMQ、OSS，也没有创建伪数据或临时业务数据。
 
 ## 2026-09-10 T14.2.1 Agent 授权上下文与恢复契约闭环
 
@@ -1081,4 +1082,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：PowerShell 初始化/包装脚本语法通过；Python compileall、wheel 与全量 59 个测试通过，9 个显式真实依赖专项跳过。Java clean 回归 shared-kernel 1、Course 34（跳过 3）、Learning 102（跳过 19）、Agent Access 10，均 0 failure/0 error；三个服务均在随机 localhost 端口通过真实 Spring/Tomcat HTTP 入口验收，另验证领域 HTTP 超时安全映射。两份内部 YAML 解析/Schema 正反例通过；公共 OpenAPI 客户端重生成无差异且 api-client typecheck 通过。
 - 数据：只使用 JVM 进程内 H2 与 Python 内存替身；固定合成 UUID Fixture 按测试生命周期精确清理，进程退出后数据库释放。未连接或修改开发 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS 或收费模型。为隔离 Python 补装仓库已声明的 `pika==1.3.2` 后既有 RabbitMQ 单测恢复通过。
 - 边界：没有实现长期记忆表、画像、衰减、Outbox、Qdrant 记忆写入、Redis 租约/额度、多实例治理、Vue、T13.4 或 T14.3。真实多服务+模型+索引长链路及上报跨进程可靠性仍由 T14.2.2/T14.2.3 承接。
-- 页面与数据：拆分不改变现有路由或页面职责，因此未修改 `page-specs.md`。本轮没有连接或修改 MySQL、Redis、Qdrant、Neo4j、RabbitMQ、OSS，也没有创建伪数据或临时业务数据。
+- 交付：实现提交 `d58bee6` 已推送到 `codex/t14.2.1-agent-context-contract`；Ready PR #60 已创建为 OPEN、非 Draft，未合并。
