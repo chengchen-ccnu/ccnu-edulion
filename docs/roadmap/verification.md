@@ -1082,4 +1082,16 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：PowerShell 初始化/包装脚本语法通过；Python compileall、wheel 与全量 59 个测试通过，9 个显式真实依赖专项跳过。Java clean 回归 shared-kernel 1、Course 34（跳过 3）、Learning 102（跳过 19）、Agent Access 10，均 0 failure/0 error；三个服务均在随机 localhost 端口通过真实 Spring/Tomcat HTTP 入口验收，另验证领域 HTTP 超时安全映射。两份内部 YAML 解析/Schema 正反例通过；公共 OpenAPI 客户端重生成无差异且 api-client typecheck 通过。
 - 数据：只使用 JVM 进程内 H2 与 Python 内存替身；固定合成 UUID Fixture 按测试生命周期精确清理，进程退出后数据库释放。未连接或修改开发 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS 或收费模型。为隔离 Python 补装仓库已声明的 `pika==1.3.2` 后既有 RabbitMQ 单测恢复通过。
 - 边界：没有实现长期记忆表、画像、衰减、Outbox、Qdrant 记忆写入、Redis 租约/额度、多实例治理、Vue、T13.4 或 T14.3。真实多服务+模型+索引长链路及上报跨进程可靠性仍由 T14.2.2/T14.2.3 承接。
-- 交付：实现提交 `d58bee6` 已推送到 `codex/t14.2.1-agent-context-contract`；Ready PR #60 已创建为 OPEN、非 Draft，未合并。
+- 交付：实现提交 `d58bee6` 已推送到 `codex/t14.2.1-agent-context-contract`；Ready PR #60 后续在 8 项 CI 全部成功后合并，最终事实见下节。
+
+## 2026-09-10 PR #60 合并与 T14.2.2 前置审计
+
+- 合并与清理：[PR #60](https://github.com/chengchen-ccnu/ccnu-edulion/pull/60) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项检查全部成功后，以普通 merge 合并为 `main@5810fae47bdb9b92bf650bca6ef469428a8a90e0`；本地 `main` 已快进同步，T14.2.1 本地和远端分支均已删除。
+- 报告与迁移：Agent Access 当前迁移精确为 V1、V2；V2 只在 `ai_run` 增加唯一 `result_report_id`、有界私有 JSON 和时间，终态后同 ID/同正文幂等。T14.2.2 必须从 V3 向前迁移，并在单个 Agent Access 事务中把尚未规范化的报告落为用量、审计和候选记忆事实；不能改写 V1/V2，也不能把暂存 JSON 当长期查询模型。
+- 事件与事实源：`StudentMemoryIndexProjectionChanged` v1 已冻结稳定 ID、全局 `subjectUserId`、revision、UPSERT/DELETE 和 USER_PRIVATE 边界，但仍标记为 `RESERVED_FOR_T14.2`。现有 `agent-index-source-internal.yaml` 没有记忆分页/单实体安全投影，Agent Access 也没有记忆 Outbox；T14.2.2 需向前补齐并复用既有 eventId/revision/tombstone 规则。
+- Worker 与 Qdrant：Index Worker 已绑定 `agent.index.student-memory.changed.v1`，Qdrant 1.19.1 的 `student_memories` collection、768 维 dense/BM25 和 `user_id` payload 索引存在且当前 0 点；生产 `MemoryProjectionProvider` 仍明确抛出未接通错误，只有协议替身测试。T14.2.2 应实现 Agent Access HTTP Provider，不另建 collection、向量库或第二套消费者。
+- RabbitMQ：本机 RabbitMQ Windows 服务为 Running 且 5672 可达；当前用户尚无 `rabbitmq.credential.clixml`，统一包装器不能为 Worker 注入应用用户名/密码。该项不阻塞 V3/Java/Python 开发，但在真实 Outbox→RabbitMQ→Worker→Qdrant 验收前必须运行 `scripts/Initialize-LocalRabbitMq.ps1`，不得把密码写入仓库或命令参数。
+- 数据边界：MySQL 是摘要、记忆、证据、主题等级、偏好、逐 run 用量、安全审计与 Outbox 的事实源；Qdrant 只保存可重建的 ACTIVE 安全记忆投影。聊天候选只算弱证据，正式作答/批改为强证据；“懂了”不能直接形成掌握，旧批改被纠正时新 revision 必须撤销旧证据效力。明确偏好持续到用户修改，推断偏好可衰减；主题只保存少量有证据等级，不为全部知识点预建状态。
+- 权限与保留：所有事实使用 IAM 全局 userId；来源受限记忆保留 course/version 等稳定范围，召回前仍需当前授权。索引不得包含完整聊天、答案、解析、成绩、隐藏画像、Token、URL 或提示词。普通经历与推断偏好按类型衰减，曾掌握证据只降低当前可信度而不按时间改成未掌握；原始消息 180 天清理与媒体引用释放仍由 T14.2.3 验收。
+- 准备结论：代码依赖满足，已从干净 `main@5810fae` 准备 `codex/t14.2.2-memory-profile-index-sync`。T14.2.2 不实现 Redis 租约/额度、多实例 SSE、Vue、帮助知识库或自主组题；RabbitMQ 凭据是最终真实验收门禁而非开工阻断。
+- 环境与数据：为适配 T14.2.1，本机初始化器新增了 DPAPI 加密的 Agent Access 内部令牌，并在未跟踪 `local.env` 补齐非敏感启用开关；没有读取或输出秘密。Docker Desktop/Qdrant 已恢复运行，只读确认 collection 为 0 点；没有连接 MySQL、写 RabbitMQ、修改 Qdrant/Neo4j/OSS 或创建伪数据。
