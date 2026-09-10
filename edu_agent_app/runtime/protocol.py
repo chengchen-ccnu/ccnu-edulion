@@ -84,6 +84,16 @@ class UserMessage(StrictModel):
     studentAttachedWork: StudentAttachedWork | None = None
 
 
+class RecentMessage(StrictModel):
+    """由 Java 持久化事实构造的最近消息；不承载上下文 JSON、工具结果或临时授权。"""
+
+    messageId: UUID
+    role: Literal["USER", "ASSISTANT"]
+    content: str = Field(min_length=1, max_length=10_000)
+    completeness: Literal["COMPLETE", "PARTIAL"]
+    sequenceNo: int = Field(ge=1)
+
+
 class LearningPreference(StrictModel):
     kind: Literal["EXPLANATION_STYLE", "DETAIL_LEVEL", "HINT_FIRST"]
     value: str = Field(min_length=1, max_length=80)
@@ -215,9 +225,21 @@ class AgentRunRequest(StrictModel):
     traceId: str = Field(pattern=r"^[A-Za-z0-9_-]{8,64}$")
     requestedAt: datetime
     userMessage: UserMessage
+    recentMessages: list[RecentMessage] = Field(default_factory=list, max_length=12)
     trustedContext: TrustedContext
     budget: RunBudget
     timeoutPolicy: TimeoutPolicy
+
+    @model_validator(mode="after")
+    def validate_recent_messages(self) -> "AgentRunRequest":
+        if sum(len(item.content) for item in self.recentMessages) > 16_000:
+            raise ValueError("recentMessages 总字符数不能超过 16000")
+        sequences = [item.sequenceNo for item in self.recentMessages]
+        if sequences != sorted(set(sequences)):
+            raise ValueError("recentMessages 必须按唯一 sequenceNo 升序")
+        if any(item.messageId == self.messageId for item in self.recentMessages):
+            raise ValueError("recentMessages 不得重复当前用户消息")
+        return self
 
 
 class CancelRunRequest(StrictModel):

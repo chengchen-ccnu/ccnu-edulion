@@ -21,6 +21,7 @@ $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credentia
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
+$agentAccessCredentialPath = Join-Path $ConfigDirectory "agent-access-internal.credential.clixml"
 
 function New-ServiceAuthorizationCredential {
     $bytes = New-Object byte[] 32
@@ -101,6 +102,27 @@ function New-AgentIndexServiceCredential {
     }
 }
 
+function New-AgentAccessInternalCredential {
+    $callbackBytes = New-Object byte[] 32
+    $domainBytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($callbackBytes)
+        $generator.GetBytes($domainBytes)
+        $payload = @{
+            runtimeCallbackToken = [Convert]::ToBase64String($callbackBytes)
+            domainToken = [Convert]::ToBase64String($domainBytes)
+        } | ConvertTo-Json -Compress
+        return [PSCredential]::new("agent-access-internal", (ConvertTo-SecureString $payload -AsPlainText -Force))
+    }
+    finally {
+        $generator.Dispose()
+        [Array]::Clear($callbackBytes, 0, $callbackBytes.Length)
+        [Array]::Clear($domainBytes, 0, $domainBytes.Length)
+        $payload = $null
+    }
+}
+
 if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $credentialPath))) {
     $existingBaseConfiguration = (Test-Path -LiteralPath $configPath -PathType Leaf) `
         -and (Test-Path -LiteralPath $credentialPath -PathType Leaf)
@@ -177,13 +199,32 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             $existingAgentIndexCredential = $null
         }
     }
+    $agentAccessCredentialValid = $false
+    if (Test-Path -LiteralPath $agentAccessCredentialPath -PathType Leaf) {
+        try {
+            $existingAgentAccessCredential = Import-Clixml -LiteralPath $agentAccessCredentialPath
+            if ($existingAgentAccessCredential -is [PSCredential] `
+                    -and $existingAgentAccessCredential.UserName -eq "agent-access-internal") {
+                $existingAgentAccessPayload = $existingAgentAccessCredential.GetNetworkCredential().Password | ConvertFrom-Json
+                $agentAccessCredentialValid = $existingAgentAccessPayload.runtimeCallbackToken.Length -ge 32 `
+                    -and $existingAgentAccessPayload.domainToken.Length -ge 32
+            }
+        }
+        catch { $agentAccessCredentialValid = $false }
+        finally {
+            $existingAgentAccessPayload = $null
+            $existingAgentAccessCredential = $null
+        }
+    }
     $existingLocalLines = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
         @(Get-Content -LiteralPath $configPath)
     } else { @() }
     $agentConfigurationValid = ($existingLocalLines -match '^AGENT_MYSQL_DATABASE=').Count -gt 0 `
-        -and ($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -gt 0
+        -and ($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -gt 0 `
+        -and ($existingLocalLines -match '^AGENT_ACCESS_DOMAIN_API_ENABLED=').Count -gt 0
     if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid `
             -or -not $learningIamCredentialValid -or -not $agentIndexCredentialValid `
+            -or -not $agentAccessCredentialValid `
             -or -not $agentConfigurationValid)) {
         New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
         if (-not $serviceCredentialValid) {
@@ -202,11 +243,18 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             New-AgentIndexServiceCredential | Export-Clixml -LiteralPath $agentIndexCredentialPath -Force
             Write-Host "Added the DPAPI-encrypted Agent Index Worker service secret."
         }
+        if (-not $agentAccessCredentialValid) {
+            New-AgentAccessInternalCredential | Export-Clixml -LiteralPath $agentAccessCredentialPath -Force
+            Write-Host "Added the DPAPI-encrypted Agent Access internal service secrets."
+        }
         if (($existingLocalLines -match '^AGENT_MYSQL_DATABASE=').Count -eq 0) {
             Add-Content -LiteralPath $configPath -Value "AGENT_MYSQL_DATABASE=edu_platform_agent_dev" -Encoding UTF8
         }
         if (($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -eq 0) {
             Add-Content -LiteralPath $configPath -Value "AGENT_INDEX_API_ENABLED=true" -Encoding UTF8
+        }
+        if (($existingLocalLines -match '^AGENT_ACCESS_DOMAIN_API_ENABLED=').Count -eq 0) {
+            Add-Content -LiteralPath $configPath -Value "AGENT_ACCESS_DOMAIN_API_ENABLED=true" -Encoding UTF8
         }
         if (-not $agentConfigurationValid) {
             Write-Host "Added the non-secret Agent local configuration."
@@ -324,10 +372,11 @@ New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredenti
 New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
 New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force
 New-AgentIndexServiceCredential | Export-Clixml -LiteralPath $agentIndexCredentialPath -Force
+New-AgentAccessInternalCredential | Export-Clixml -LiteralPath $agentAccessCredentialPath -Force
 
 @(
     "# Non-secret local configuration for ccnu-edulion."
-    "# MySQL, course/media, Learning-to-IAM and Agent index service credentials are stored separately with Windows DPAPI."
+    "# MySQL and service credentials are stored separately with Windows DPAPI."
     "SPRING_PROFILES_ACTIVE=local"
     "MYSQL_HOST=127.0.0.1"
     "MYSQL_PORT=3306"
@@ -353,6 +402,7 @@ New-AgentIndexServiceCredential | Export-Clixml -LiteralPath $agentIndexCredenti
     "IAM_VERIFICATION_DELIVERY_MODE=fixed-local"
     "COURSE_SEED_ENABLED=false"
     "AGENT_INDEX_API_ENABLED=true"
+    "AGENT_ACCESS_DOMAIN_API_ENABLED=true"
 ) | Set-Content -LiteralPath $configPath -Encoding UTF8
 
 Write-Host "Local environment initialized in $ConfigDirectory."

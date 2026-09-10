@@ -16,6 +16,7 @@ $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credentia
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
+$agentAccessCredentialPath = Join-Path $ConfigDirectory "agent-access-internal.credential.clixml"
 $neo4jCredentialPath = Join-Path $ConfigDirectory "neo4j.credential.clixml"
 $rabbitMqCredentialPath = Join-Path $ConfigDirectory "rabbitmq.credential.clixml"
 $iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
@@ -24,6 +25,8 @@ $iamSmtpCredential = $null
 $iamSmtpNetworkCredential = $null
 $agentIndexCredential = $null
 $agentIndexNetworkCredential = $null
+$agentAccessCredential = $null
+$agentAccessPayload = $null
 $neo4jCredential = $null
 $neo4jNetworkCredential = $null
 $rabbitMqCredential = $null
@@ -51,6 +54,9 @@ if (-not (Test-Path -LiteralPath $learningIamCredentialPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $agentIndexCredentialPath -PathType Leaf)) {
     throw "Missing encrypted Agent Index Worker service secret. Run scripts/Initialize-LocalEnvironment.ps1 to add it."
+}
+if (-not (Test-Path -LiteralPath $agentAccessCredentialPath -PathType Leaf)) {
+    throw "Missing encrypted Agent Access internal secrets. Run scripts/Initialize-LocalEnvironment.ps1 to add them."
 }
 
 $originalEnvironment = @{}
@@ -147,6 +153,17 @@ try {
     }
     Set-ScopedEnvironmentVariable -Name "AGENT_INDEX_SERVICE_TOKEN" -Value $agentIndexNetworkCredential.Password
 
+    $agentAccessCredential = Import-Clixml -LiteralPath $agentAccessCredentialPath
+    if ($agentAccessCredential -isnot [PSCredential] -or $agentAccessCredential.UserName -ne "agent-access-internal") {
+        throw "The encrypted Agent Access internal credential has an unexpected format."
+    }
+    $agentAccessPayload = $agentAccessCredential.GetNetworkCredential().Password | ConvertFrom-Json
+    if ($agentAccessPayload.runtimeCallbackToken.Length -lt 32 -or $agentAccessPayload.domainToken.Length -lt 32) {
+        throw "The encrypted Agent Access internal credential is incomplete."
+    }
+    Set-ScopedEnvironmentVariable -Name "AGENT_RUNTIME_CALLBACK_TOKEN" -Value $agentAccessPayload.runtimeCallbackToken
+    Set-ScopedEnvironmentVariable -Name "AGENT_ACCESS_DOMAIN_TOKEN" -Value $agentAccessPayload.domainToken
+
     # Neo4j 凭据迁移到 DPAPI 后优先覆盖 local.env 的开发期明文；文件尚不存在时保持兼容，
     # 便于按交付文档完成一次性迁移，且不会读取或输出秘密内容。
     if (Test-Path -LiteralPath $neo4jCredentialPath -PathType Leaf) {
@@ -216,6 +233,8 @@ finally {
     $learningIamCredential = $null
     $agentIndexNetworkCredential = $null
     $agentIndexCredential = $null
+    $agentAccessPayload = $null
+    $agentAccessCredential = $null
     $neo4jNetworkCredential = $null
     $neo4jCredential = $null
     $rabbitMqNetworkCredential = $null

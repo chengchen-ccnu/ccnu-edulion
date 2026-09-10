@@ -81,7 +81,7 @@ class OpenAICompatibleModel:
             raise ModelUnavailable(f"结构化模型调用失败：{type(exc).__name__}") from exc
         finally:
             if limits is not None:
-                limits.usage.phase_latency_ms["MODEL_INTENT"] = int((perf_counter() - started) * 1000)
+                limits.add_phase_duration("MODEL_INTENT", int((perf_counter() - started) * 1000))
 
     async def stream_text(
         self,
@@ -120,7 +120,7 @@ class OpenAICompatibleModel:
         except Exception as exc:
             raise ModelUnavailable(f"文本模型调用失败：{type(exc).__name__}") from exc
         finally:
-            limits.usage.phase_latency_ms[phase] = int((perf_counter() - started) * 1000)
+            limits.add_phase_duration(phase, int((perf_counter() - started) * 1000))
 
     async def understand_image(
         self,
@@ -131,6 +131,7 @@ class OpenAICompatibleModel:
         """把已安全读取的图片字节交给视觉模型，返回描述和“是否足够可靠”判断。"""
 
         limits.llm()
+        limits.usage.vision_calls += 1
         client = self._require_client()
         started = perf_counter()
         instruction = (
@@ -162,7 +163,7 @@ class OpenAICompatibleModel:
         except Exception as exc:
             raise ModelUnavailable(f"视觉模型调用失败：{type(exc).__name__}") from exc
         finally:
-            limits.usage.phase_latency_ms["MODEL_VISION"] = int((perf_counter() - started) * 1000)
+            limits.add_phase_duration("MODEL_VISION", int((perf_counter() - started) * 1000))
 
 
 class ScriptedModel:
@@ -192,5 +193,6 @@ class ScriptedModel:
 
     async def understand_image(self, _data: str, _task: str, limits: RunLimits):
         limits.llm()
+        limits.usage.vision_calls += 1
         self.vision_calls += 1
         return "图片中的数学题可清晰读取。", True

@@ -17,10 +17,11 @@ class LimitReached(RuntimeError):
 
 @dataclass
 class Usage:
-    """只供 Java/运行日志消费的脱敏用量，不进入学生 SSE。"""
+    """只供 Java 私有结果报告消费的脱敏用量，不进入学生 SSE 或日志正文。"""
 
     orchestration_steps: int = 0
     llm_calls: int = 0
+    vision_calls: int = 0
     tool_attempts: int = 0
     expert_transfers: int = 0
     prompt_tokens: int = 0
@@ -80,3 +81,8 @@ class RunLimits:
     def add_tokens(self, prompt: int | None, completion: int | None) -> None:
         self.usage.prompt_tokens += int(prompt or 0)
         self.usage.completion_tokens += int(completion or 0)
+
+    def add_phase_duration(self, phase: str, duration_ms: int) -> None:
+        """累加同一阶段的真实耗时；重复模型/工具调用不会覆盖之前的用量事实。"""
+
+        self.usage.phase_latency_ms[phase] = self.usage.phase_latency_ms.get(phase, 0) + max(0, duration_ms)

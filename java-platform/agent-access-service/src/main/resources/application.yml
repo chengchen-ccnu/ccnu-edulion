@@ -25,6 +25,10 @@ platform:
     course-base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
     domain-request-timeout: ${AGENT_DOMAIN_REQUEST_TIMEOUT:5s}
     protocol-version: '1'
+    runtime-callback-token: ${AGENT_RUNTIME_CALLBACK_TOKEN:}
+    domain-service-token: ${AGENT_ACCESS_DOMAIN_TOKEN:}
+    recent-message-max-turns: ${AGENT_RECENT_MESSAGE_MAX_TURNS:6}
+    recent-message-max-chars: ${AGENT_RECENT_MESSAGE_MAX_CHARS:16000}
 
 ---
 spring:

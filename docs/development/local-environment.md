@@ -617,11 +617,13 @@ T14.1 新增 `agent-access-service`，local 端口为 8086，专用 Schema 约�
 }
 ```
 
-Flyway V1 创建 `ai_conversation`、`ai_message`、`ai_run`、`ai_run_event`、`ai_run_cancellation` 和 `ai_tool_call`。这些表只保存 Agent Access 自有会话、公开事件、取消与安全工具审计；不保存 Course/Learning 领域实体、短期媒体 URL、Token、提示词、内部推理或原始工具结果。开发环境清理应删除明确的测试 conversation 及其从表记录；禁止清空整个 Schema。T14.1 自动化使用进程内 H2，测试结束后自动释放，没有持久 Seed。
+Flyway V1 创建 `ai_conversation`、`ai_message`、`ai_run`、`ai_run_event`、`ai_run_cancellation` 和 `ai_tool_call`。T14.2.1 的 V2 仅向 `ai_run` 增加一组有界私有结果报告列及唯一 `reportId`；这是 T14.2.2 正式用量/记忆建模前的协议事实保存，不是长期记忆或画像表。报告正文不得进入浏览器消息、SSE 或日志正文。开发环境清理应删除明确的测试 conversation 及其从表记录；禁止清空整个 Schema。自动化使用进程内 H2，测试结束后自动释放，没有持久 Seed。
 
 `AGENT_RUNTIME_BASE_URL` 默认指向 `http://127.0.0.1:8000`，请求超时默认 95 秒。T14.1 的 Java 流代理测试使用协议替身；当前旧 Python 入口不等于 T13.3 动态五角色运行时，未完成 T13.3 前不要用本端口组合宣称真实 Agent 已接通。
 
-Course/Learning 的 `/internal/v1/agent-index/**` 只在 `AGENT_INDEX_API_ENABLED=true` 时启用，Gateway 不路由。初始化脚本生成 DPAPI 加密的 `agent-index-service.credential.clixml`，包装器仅在子命令期间注入 `AGENT_INDEX_SERVICE_TOKEN`；调用方还必须发送固定 `X-Internal-Caller: agent-index-worker`。禁止打印令牌或写入 `local.env`。RabbitMQ 中题目、知识点、课程文字通知只携带稳定 ID 和 revision，正文由 T13.2 Worker 通过分页 API 拉取；在线命中后仍须由 Java 按当前用户复核访问权限。
+Course/Learning 的 `/internal/v1/agent-index/**` 只在 `AGENT_INDEX_API_ENABLED=true` 时启用，Gateway 不路由。初始化脚本生成 DPAPI 加密的 `agent-index-service.credential.clixml`，包装器仅在子命令期间注入 `AGENT_INDEX_SERVICE_TOKEN`；调用方还必须发送固定 `X-Internal-Caller: agent-index-worker`。禁止打印令牌或写入 `local.env`。RabbitMQ 中题目、知识点、课程文字通知只携带稳定 ID 和 revision，正文由 T13.2 Worker 通过分页 API 拉取。
+
+T14.2.1 另增加 Agent 在线链路的两段私有身份：Python→Agent Access 使用 `AGENT_RUNTIME_CALLBACK_TOKEN`，Agent Access→Course/Learning 使用 `AGENT_ACCESS_DOMAIN_TOKEN`。`Initialize-LocalEnvironment.ps1` 将两个随机令牌合并保存到当前用户 DPAPI 文件 `agent-access-internal.credential.clixml`；`Invoke-WithLocalEnvironment.ps1` 只在子命令期间解密并注入，不能把令牌写入 `local.env`、命令参数或日志。Course/Learning 私有端点由 `AGENT_ACCESS_DOMAIN_API_ENABLED=true` 启用，调用方固定为 `agent-access-service`；Python 调用方固定为 `edu-agent-runtime`。Gateway 不路由任何 `/internal/v1/agent-access/**` 或 Agent 回调路径。
 
 T14.1 不需要 Qdrant、Neo4j、BGE、重排模型或新增 Python 包。它们属于 T13.2；届时应先核对现有 Python 版本、硬件和本机资产，再由任务锁定精确版本，避免现在提前安装出一套漂移环境。
 
@@ -635,11 +637,13 @@ Python 在线服务现由 `python -m edu_agent_app` 启动 T13.1 v1 内部 HTTP/
 }
 ```
 
-聊天与视觉读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`CHAT_MODEL_NAME`、`VISION_MODEL_NAME`；`AGENT_MODEL_REQUEST_TIMEOUT_SECONDS` 默认 30 秒。`AGENT_ONLINE_RETRIEVAL_ENABLED=true` 时复用 T13.2 的 Qdrant、BGE、reranker 和可选 Neo4j 配置；`AGENT_CONTEXT_COMPRESSION_THRESHOLD_CHARS` 默认 12000，只控制进程内有限摘要。每个 run 的 12 步/8 次模型/10 次工具/2 次转交/同参 2 次/约 90 秒预算由 Java 请求携带，不应在本机配置另建第二套隐藏上限。
+聊天与视觉读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`CHAT_MODEL_NAME`、`VISION_MODEL_NAME`；`AGENT_MODEL_REQUEST_TIMEOUT_SECONDS` 默认 30 秒。`AGENT_ONLINE_RETRIEVAL_ENABLED=true` 时复用 T13.2 的 Qdrant、BGE、reranker 和可选 Neo4j 配置；`AGENT_CONTEXT_COMPRESSION_THRESHOLD_CHARS` 默认 12000，只控制进程内有限摘要。每个 run 的 12 步/8 次模型/10 次工具/2 次转交/同参 2 次/约 90 秒预算由 Java请求携带，不应在本机配置另建第二套隐藏上限。
 
-本机真实验收的文本和内存 PNG 视觉均由百炼 `qwen3.8-flash` 成功处理；真实 Qdrant 混合检索、空命中和 Neo4j 有界查询也通过。真实模型专项必须显式设置 `AGENT_RUNTIME_REAL_ACCEPTANCE=true`，只使用有界样本并仅输出用量指标；默认全量测试不会产生模型费用。课程候选再次授权适配器尚无冻结 Java 端点，未注入时 `course_content` 命中全部剔除，不得为本地演示关闭该门禁或回退全库。
+T14.2.1 中 Python 使用 `AGENT_ACCESS_BASE_URL`（默认 `http://127.0.0.1:8086`）和 `AGENT_ACCESS_REQUEST_TIMEOUT_SECONDS`（默认 5 秒）访问 Agent Access 私有回调；没有安全包装器注入的 callback token 时，课程候选和学习事实保持 fail-closed，运行结果也不会伪装成已上报。Agent Access 访问 Course/Learning 的超时继续由 `AGENT_DOMAIN_REQUEST_TIMEOUT` 控制。最近消息窗口默认最多 6 轮、16000 字符，可用非敏感变量 `AGENT_RECENT_MESSAGE_MAX_TURNS` 和 `AGENT_RECENT_MESSAGE_MAX_CHARS` 调整，但生产值不得突破代码的 12 轮/32000 字符硬上限。
 
-本任务没有向用户目录 `local.env` 写新行。项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除明文并迁入对应加密凭据。模型名、Base URL、模型路径、超时和压缩阈值属于非敏感配置，可保留在 `local.env`。
+本机真实验收的文本和内存 PNG 视觉均由百炼 `qwen3.8-flash` 成功处理；真实 Qdrant 混合检索、空命中和 Neo4j 有界查询也通过。真实模型专项必须显式设置 `AGENT_RUNTIME_REAL_ACCEPTANCE=true`，只使用有界样本并仅输出用量指标；默认全量测试不会产生模型费用。课程候选现经 Agent Access 和 Course 按 run owner、当前发布版本、资源字段、revision 与报名事实再次授权；任一私有依赖不可用时必须返回失败或空结果，禁止回退全课程搜索。
+
+项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及所有服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除 `AGENT_RUNTIME_CALLBACK_TOKEN`、`AGENT_ACCESS_DOMAIN_TOKEN` 等明文并重新运行初始化脚本迁入对应加密凭据。Base URL、模型名、模型路径、启用开关、超时和窗口上限属于非敏感配置，可保留在 `local.env`。
 
 ## 全量验证
 

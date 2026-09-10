@@ -177,6 +177,11 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         grants.add(grant("QUESTION_SEARCH", publicScope));
         grants.add(grant("KNOWLEDGE_SEARCH", publicScope));
         grants.add(grant("PREREQUISITE_GRAPH", publicScope));
+        Map<String, Object> selfScope = Map.of("scopeType", "USER_SELF");
+        grants.add(grant("STUDENT_WRONG_QUESTIONS", selfScope));
+        grants.add(grant("STUDENT_SUBMISSIONS", selfScope));
+        grants.add(grant("STUDENT_PUBLISHED_GRADES", selfScope));
+        grants.add(grant("STUDENT_PROGRESS", selfScope));
         if (question != null) grants.add(grant("QUESTION_SEARCH",
                 Map.of("scopeType", "QUESTION_VERSION", "resourceIds", List.of(question.versionId()))));
         if (lesson != null) grants.add(grant("COURSE_TEXT_SEARCH",

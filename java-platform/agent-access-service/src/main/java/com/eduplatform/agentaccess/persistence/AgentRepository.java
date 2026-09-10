@@ -46,6 +46,7 @@ public class AgentRepository {
     }
 
     public record EventRow(UUID runId, long sequence, String eventType, String eventJson, Instant occurredAt) {}
+    public record ResultReportRow(UUID reportId, String json, Instant reportedAt) {}
 
     public Optional<ConversationRow> findConversationByCreateRequest(UUID owner, UUID requestId) {
         return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND create_request_id=?",
@@ -140,6 +141,13 @@ public class AgentRepository {
                 this::message, conversationId.toString(), size, (page - 1) * size);
     }
 
+    /** 按倒序读取当前消息之前的有限窗口；服务层完成字符预算后再恢复为 sequenceNo 升序。 */
+    public List<MessageRow> listMessagesBefore(UUID conversationId, long beforeSequence, int size) {
+        return jdbc.query("SELECT * FROM ai_message WHERE conversation_id=? AND sequence_no<? "
+                        + "ORDER BY sequence_no DESC LIMIT ?", this::message,
+                conversationId.toString(), beforeSequence, size);
+    }
+
     public long countMessages(UUID conversationId) {
         return jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=?",
                 Long.class, conversationId.toString());
@@ -179,6 +187,20 @@ public class AgentRepository {
     public Optional<String> findCancellation(UUID runId, UUID requestId) {
         return jdbc.query("SELECT response_json FROM ai_run_cancellation WHERE run_id=? AND cancel_request_id=?",
                 (rs, ignored) -> rs.getString(1), runId.toString(), requestId.toString()).stream().findFirst();
+    }
+
+    public Optional<ResultReportRow> findResultReport(UUID runId) {
+        return jdbc.query("SELECT result_report_id,result_report_json,result_reported_at "
+                        + "FROM ai_run WHERE id=? AND result_report_id IS NOT NULL",
+                (rs, ignored) -> new ResultReportRow(UUID.fromString(rs.getString(1)), rs.getString(2),
+                        rs.getTimestamp(3).toInstant()), runId.toString()).stream().findFirst();
+    }
+
+    /** 仅在尚无报告时写入；并发重试由服务层读取首个事实后判定重放或冲突。 */
+    public boolean insertResultReport(UUID runId, UUID reportId, String json, Instant at) {
+        return jdbc.update("UPDATE ai_run SET result_report_id=?,result_report_json=?,result_reported_at=?,updated_at=? "
+                        + "WHERE id=? AND result_report_id IS NULL",
+                reportId.toString(), json, timestamp(at), timestamp(at), runId.toString()) == 1;
     }
 
     /** 返回重启后没有进程内执行句柄的活动运行，由服务层补写可恢复的失败终态事件。 */

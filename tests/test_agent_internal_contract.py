@@ -65,6 +65,8 @@ class AgentInternalContractTests(unittest.TestCase):
                 "/internal/v1/agent-index/questions",
                 "/internal/v1/agent-index/knowledge-points",
                 "/internal/v1/agent-index/course-texts",
+                "/internal/v1/agent-access/course-candidates:verify",
+                "/internal/v1/agent-access/student-facts:query",
             },
         )
         parameters = self.index_source_contract["components"]["parameters"]
@@ -74,6 +76,42 @@ class AgentInternalContractTests(unittest.TestCase):
         self.assertTrue({"entityId", "questionVersionId", "sourceRevision"}.issubset(question["required"]))
         for forbidden in ("answers", "analysis", "url", "token"):
             self.assertNotIn(forbidden, question["properties"])
+        self.assertEqual(parameters["AgentAccessCaller"]["schema"]["const"], "agent-access-service")
+        safe_fact = self.index_source_contract["components"]["schemas"]["SafeStudentFact"]
+        for forbidden in ("answer", "analysis", "userId", "url", "token"):
+            self.assertNotIn(forbidden, safe_fact["properties"])
+
+    def test_t1421_v1_compatibility_recent_window_and_private_callbacks(self):
+        """旧 v1 请求仍合法；新增最近窗口和三个无 userId 的私有回调具有严格 Schema。"""
+        old_request = deepcopy(self.http_examples["validRequests"]["textQuestion"])
+        old_request.pop("recentMessages", None)
+        self.assertSchemaValid("AgentRunRequest", old_request)
+        recent = deepcopy(old_request)
+        recent["recentMessages"] = [{
+            "messageId": "00000000-0000-4000-8000-000000000111",
+            "role": "ASSISTANT", "content": "上轮保留的部分回答", "completeness": "PARTIAL",
+            "sequenceNo": 2,
+        }]
+        self.assertSchemaValid("AgentRunRequest", recent)
+        course = {"candidates": [{
+            "entityId": "00000000-0000-4000-8000-000000000201",
+            "courseId": "00000000-0000-4000-8000-000000000202",
+            "courseVersionId": "v2", "lessonId": "00000000-0000-4000-8000-000000000201",
+            "sourceRevision": 3,
+        }]}
+        self.assertSchemaValid("VerifyCourseCandidatesRequest", course)
+        facts = {"toolName": "STUDENT_PROGRESS", "resourceIds": [], "limit": 8}
+        self.assertSchemaValid("StudentFactsRequest", facts)
+        self.assertNotIn("userId", course)
+        self.assertNotIn("userId", facts)
+        report = {
+            "reportId": "00000000-0000-4000-8000-000000000203", "model": "test-model",
+            "modelCalls": 2, "visionCalls": 0, "toolAttempts": 1,
+            "promptTokens": 10, "completionTokens": 5,
+            "phaseDurationsMs": {"MODEL_MATH_TUTOR": 20}, "terminationReason": "COMPLETED",
+            "memoryCandidates": ["明确偏好：分步讲解"],
+        }
+        self.assertSchemaValid("RunResultReportRequest", report)
 
     def test_retry_keeps_all_logical_and_execution_ids(self):
         """相同逻辑请求重试必须沿用会话、客户端、消息和 run 身份。"""

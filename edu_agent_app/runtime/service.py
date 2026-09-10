@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from time import monotonic
+from time import monotonic, perf_counter
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .budget import LimitReached, RunLimits
@@ -436,14 +436,21 @@ class DynamicAgentRuntime:
         if fact_tool in granted:
             resource_ids = [str(item.factId) for item in request.trustedContext.learningFacts]
             invocations.append(ToolInvocation(fact_tool, {
-                "userId": str(request.trustedContext.userId), "resourceIds": resource_ids, "limit": 8,
+                "resourceIds": resource_ids, "limit": 8,
             }))
 
         evidence: list[SafeToolEvidence] = []
         for invocation in invocations:
             if handle.cancel_event.is_set():
                 raise asyncio.CancelledError
-            result = await self.tools.execute(request, role, intent, invocation, limits)
+            started = perf_counter()
+            try:
+                result = await self.tools.execute(request, role, intent, invocation, limits)
+            finally:
+                limits.add_phase_duration(
+                    "TOOL_" + invocation.tool_name.value,
+                    int((perf_counter() - started) * 1000),
+                )
             if result.status == "SUCCEEDED":
                 evidence.extend(result.evidence)
             elif result.error and result.error.code == "AGENT.IMAGE_UNCLEAR":
@@ -454,10 +461,16 @@ class DynamicAgentRuntime:
         ):
             knowledge_ids = [item.evidenceId for item in evidence if item.evidenceType == "KNOWLEDGE_POINT"]
             if knowledge_ids:
-                result = await self.tools.execute(request, role, intent, ToolInvocation(
-                    ToolName.PREREQUISITE_GRAPH,
-                    {"knowledgePointIds": knowledge_ids[:20], "direction": "PREREQUISITES", "maxDepth": 2},
-                ), limits)
+                started = perf_counter()
+                try:
+                    result = await self.tools.execute(request, role, intent, ToolInvocation(
+                        ToolName.PREREQUISITE_GRAPH,
+                        {"knowledgePointIds": knowledge_ids[:20], "direction": "PREREQUISITES", "maxDepth": 2},
+                    ), limits)
+                finally:
+                    limits.add_phase_duration(
+                        "TOOL_PREREQUISITE_GRAPH", int((perf_counter() - started) * 1000)
+                    )
                 if result.status == "SUCCEEDED":
                     evidence.extend(result.evidence)
         return evidence[:20]
@@ -480,7 +493,7 @@ class DynamicAgentRuntime:
         }.get(remediation, "")
         context = self.sessions.context_text(
             str(request.conversationId), request.trustedContext.memorySummaries,
-            request.trustedContext.preferences,
+            request.trustedContext.preferences, request.recentMessages,
         )
         evidence_text = "\n".join(
             f"- [{item.evidenceType}] {item.title}: {item.summary}" for item in evidence[:8]
@@ -563,27 +576,26 @@ class DynamicAgentRuntime:
         }
 
     async def _record_telemetry(self, request: AgentRunRequest, limits: RunLimits) -> None:
+        durations = dict(limits.usage.phase_latency_ms)
+        durations["RUN_TOTAL"] = min(180_000, int((monotonic() - limits.started) * 1000))
         data = {
             "runId": str(request.runId),
             "model": getattr(getattr(self.model, "settings", None), "chat_model_name", "test-double"),
-            "llmCalls": limits.usage.llm_calls,
+            "modelCalls": max(0, limits.usage.llm_calls - limits.usage.vision_calls),
+            "visionCalls": limits.usage.vision_calls,
             "toolAttempts": limits.usage.tool_attempts,
-            "orchestrationSteps": limits.usage.orchestration_steps,
-            "expertTransfers": limits.usage.expert_transfers,
             "promptTokens": limits.usage.prompt_tokens,
             "completionTokens": limits.usage.completion_tokens,
-            "phaseLatencyMs": limits.usage.phase_latency_ms,
+            "phaseDurationsMs": durations,
             "terminationReason": limits.usage.termination_reason,
+            "memoryCandidates": self.sessions.get(str(request.conversationId)).candidate_memories[:8],
         }
         if self.telemetry:
             result = self.telemetry(data)
             if asyncio.iscoroutine(result):
                 await result
-        LOGGER.info(
-            "agent_run_finished runId=%s model=%s llmCalls=%s toolAttempts=%s promptTokens=%s completionTokens=%s terminationReason=%s",
-            data["runId"], data["model"], data["llmCalls"], data["toolAttempts"],
-            data["promptTokens"], data["completionTokens"], data["terminationReason"],
-        )
+        # 私有结果只允许进入 Java 幂等回调，日志不得复制模型、Token、工具和候选记忆字段。
+        LOGGER.info("agent_run_private_report_completed runId=%s", data["runId"])
 
     async def _release(self, handle: RunHandle) -> None:
         # 终态回放只需要公开事件；短期签名地址必须在本轮结束时从内存请求对象清除。

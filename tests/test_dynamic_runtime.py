@@ -443,7 +443,8 @@ class DynamicRuntimeTests(unittest.TestCase):
         limits = RunLimits(request.budget)
         store.record_turn(
             str(request.conversationId), "未解决：$x^2-5x+6=0$，看 https://secret.invalid/a?token=x",
-            "先因式分解 signature=secret", unresolved=True, source_titles=["一元二次方程"],
+            "先因式分解 signature=secret Authorization: Bearer bearer-secret",
+            unresolved=True, source_titles=["一元二次方程"],
             preferences=request.trustedContext.preferences, limits=limits,
         )
         state = store.get(str(request.conversationId))
@@ -451,7 +452,73 @@ class DynamicRuntimeTests(unittest.TestCase):
         self.assertIn("完整讲解", state.summary)
         self.assertNotIn("https://", state.summary)
         self.assertNotIn("secret", state.summary)
+        self.assertNotIn("bearer-secret", state.summary)
         self.assertTrue(state.candidate_memories)
+
+    def test_t1421_callbacks_use_run_id_and_java_recent_messages_override_process_cache(self):
+        async def scenario():
+            course_id, lesson_id = uuid4(), uuid4()
+            request = run_request(
+                "这节课为什么要移项",
+                grants=[{
+                    "toolName": "COURSE_TEXT_SEARCH",
+                    "resourceScopes": [{"scopeType": "COURSE", "resourceIds": [str(course_id)]}],
+                }],
+                context_extra={"course": {
+                    "courseId": str(course_id), "courseVersionId": "v1", "lessonId": str(lesson_id),
+                    "accessDecision": "AUTHORIZED_BY_JAVA", "textResourceRefs": [str(lesson_id)],
+                }},
+            )
+            observed = []
+
+            async def verify(run_id, candidates, _trace):
+                observed.append(run_id)
+                return {str(candidates[0]["entityId"])}
+
+            course_result = await ToolExecutor(
+                search_service=FakeSearch(course=True), course_verifier=verify, model=FakeModel()
+            ).execute(request, AgentRole.MATH_TUTOR, SecondaryIntent.COURSE_QUESTION,
+                      ToolInvocation(ToolName.COURSE_TEXT_SEARCH, {
+                          "query": "移项", "courseId": str(course_id), "courseVersionId": "v1",
+                          "lessonIds": [str(lesson_id)], "limit": 5,
+                      }), RunLimits(request.budget))
+            self.assertEqual(course_result.status, "SUCCEEDED")
+            self.assertEqual(observed, [str(request.runId)])
+
+            fact_request = run_request(grants=[{
+                "toolName": "STUDENT_PROGRESS", "resourceScopes": [{"scopeType": "USER_SELF"}],
+            }])
+
+            async def read_fact(_tool, run_id, _ids, _limit, _trace):
+                observed.append(run_id)
+                return [SafeToolEvidence(evidenceId=str(uuid4()), evidenceType="STUDENT_FACT",
+                                         title="学习进度", summary="已完成", revision=1)]
+
+            fact_result = await ToolExecutor(student_fact_reader=read_fact, model=FakeModel()).execute(
+                fact_request, AgentRole.STUDY_PLANNER, SecondaryIntent.CREATE_PLAN,
+                ToolInvocation(ToolName.STUDENT_PROGRESS, {"resourceIds": [str(uuid4())], "limit": 8}),
+                RunLimits(fact_request.budget),
+            )
+            self.assertEqual(fact_result.status, "SUCCEEDED")
+            self.assertEqual(observed[-1], str(fact_request.runId))
+
+            recent_request = AgentRunRequest.model_validate({
+                **fact_request.model_dump(mode="json"),
+                "recentMessages": [{
+                    "messageId": str(uuid4()), "role": "ASSISTANT", "content": "数据库部分回答",
+                    "completeness": "PARTIAL", "sequenceNo": 2,
+                }],
+            })
+            store = ConversationStore()
+            store.get(str(recent_request.conversationId)).recent_messages.append(("助手", "进程旧缓存"))
+            store.get(str(recent_request.conversationId)).summary = "进程旧摘要"
+            context = store.context_text(str(recent_request.conversationId), [], [], recent_request.recentMessages)
+            self.assertIn("数据库部分回答", context)
+            self.assertIn("PARTIAL", context)
+            self.assertNotIn("进程旧缓存", context)
+            self.assertNotIn("进程旧摘要", context)
+
+        asyncio.run(scenario())
 
     def test_stream_sequence_unique_terminal_replay_conflict_disconnect_and_limit(self):
         async def scenario():

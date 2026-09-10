@@ -45,6 +45,10 @@ public final class AgentDtos {
     public record Message(UUID id, UUID conversationId, UUID runId, MessageRole role, String content,
             Completeness completeness, MessageContext context, long sequenceNo, Instant createdAt) {}
 
+    /** Java 从已持久化消息构造的有界窗口；不包含当前用户消息、上下文 JSON 或临时授权。 */
+    public record RecentMessage(UUID messageId, MessageRole role, String content,
+            Completeness completeness, long sequenceNo) {}
+
     public record MessagePage(List<Message> items, int page, int size, long total) {}
 
     /** Python SSE 的浏览器安全投影；payload 已经过字段级秘密扫描。 */

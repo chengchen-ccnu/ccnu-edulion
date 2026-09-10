@@ -16,4 +16,8 @@ platform:
     course-base-url: http://127.0.0.1:65532
     domain-request-timeout: 1s
     protocol-version: '1'
+    runtime-callback-token: test-only-runtime-callback-token-32-bytes
+    domain-service-token: test-only-agent-domain-token-32-bytes
+    recent-message-max-turns: 6
+    recent-message-max-chars: 16000
     raw-message-retention-days: 180
