@@ -1106,3 +1106,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 未执行项：RabbitMQ 服务 Running 且 5672 可达，但当前用户没有 `rabbitmq.credential.clixml`，因此没有回退默认账号，未执行真实 Outbox→RabbitMQ→Worker→Qdrant 长链，也不把既有单测写成真实通过。初始化可执行的真实 RabbitMQ 验收需先按仓库脚本交互初始化应用凭据。
 - 数据与清理：创建了用途明确的 `edu_platform_agent_dev`，Flyway 保留 V1/V2/V3 表；没有账号、课程、题目或长期业务伪数据。MySQL 随机验收行和 Qdrant 临时 namespace 均精确清理并确认 0；未写 Redis、Neo4j、OSS 或 RabbitMQ 消息。需要重建时创建空专用 Schema 并由 Flyway 顺序迁移；不得清空用途不明数据库。
 - 边界与风险：没有 Redis 租约/额度、多实例 SSE、Vue、帮助知识库、自主组题、第二套消息链或新向量库。冻结契约尚无 Learning 主动强证据推送，本任务只提供结构化 Java 事务入口并拒绝从答案/成绩文本猜测等级；若后续自动接入，必须先冻结稳定主题、等级、公布权限和 revision 契约。完整命令、配置、演示与风险见 [T14.2.2 交付文档](../delivery/T14.2.2-memory-profile-index-sync.md)。
+- 交付：前置审计 `9750fab`、实现提交 `3532733` 已推送；已创建 [Ready PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61)，保持 Open、未合并。GitHub CI 创建后仍在运行，最终结果不提前写成通过。
