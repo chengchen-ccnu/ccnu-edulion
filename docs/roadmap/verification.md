@@ -26,7 +26,9 @@
 | T14.1 | 独立域表、并发唯一约束与重复请求、用户/会话/媒体/课程授权、分页源和 Outbox；协议替身流中断/超时验证，不虚报真实模型接入 |
 | T13.2 | 真实 Qdrant dense/BM25/重排与阈值；中文、公式、相似但错误题/无命中；跨用户/退课/旧版本/未公布答案泄漏测试；Neo4j 有界查询；重复/乱序/删除事件、DLQ及检查点恢复/备份重建 |
 | T13.3 | 规则否定/含糊槽位/两个子请求/专家工具白名单；不懂三次与所有预算耗尽；多模态低清晰度/模型超时/取消；直接流不多一次无意义汇总；旧 FAISS/诊断/人工转交不再必需 |
-| T14.2 | 全链路真实会话与部分保存/刷新/显式重生成；Redis 故障/租约恢复；证据版本纠正/偏好优先/衰减/摘要保留公式/无聊天伪造掌握；用户额度计入提取与视觉调用；180 天保留与媒体引用释放 |
+| T14.2.1 | 内部协议向前兼容；最近消息窗口边界/顺序/部分标记；课程候选逐项按 run owner、当前版本和当前访问再次授权；Learning 事实只读授权；用量/候选记忆上报不进入浏览器事件且重复上报幂等 |
+| T14.2.2 | 证据版本纠正、强弱证据、偏好优先、主题等级、衰减与保留；摘要保留公式且不复制受限正文；无聊天自述伪造掌握；记忆 Outbox、重复/乱序/tombstone、Qdrant 用户隔离和事实源重建 |
+| T14.2.3 | 全链路真实会话与部分保存/刷新/显式重生成；Redis 故障、租约过期与跨实例恢复；同会话唯一运行和用户总并发/分钟日额度；用量包含提取、视觉和失败调用；180 天消息清理与媒体引用释放 |
 | T13.4 | 用户帮助版本/发布与授权路由，规则和复杂问答，内部文档不泄露，未知问题不猜 |
 | T15A | 顶栏/独立会话历史/图片/公式/来源/偏好，401～429/offline、部分消息、停止、重生成；超过30分钟仍能继续历史，不展示画像或人工转交 |
 | T15B | 跨独立题持续生成不丢内容；每条折叠题目快照/草稿原关联；30分钟只影响悬浮自动沿用；多标签冲突、关闭取消/转完整页；手机/桌面/键盘/资源清理 |
@@ -1057,5 +1059,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - SSE 与故障：`RUN_ACCEPTED` 同步成为首事件，后续 sequence 连续且仅有一个 `FINAL_RESULT`。心跳、总/空闲超时、慢客户端、断线和取消均停止后续模型/工具；`COMPLETED`、`DEGRADED`、`LIMIT_REACHED`、`CANCELLED`、`FAILED` 全覆盖，超时/取消保留已成功文本并标为中断或简化。测试中发现并修复慢客户端生产协程异常未回收问题。
 - 检索与安全：在线工具复用 T13.2 三集合 dense + multilingual BM25 + RRF + 本地 reranker，Neo4j 仅做有界前置知识。离线覆盖成功、空、异常、超时和降级；真实专项 3/3 通过（17.936 秒），覆盖 Qdrant Schema/安全 payload、四阶段与空命中、Neo4j 正常及关闭后降级。课程候选再次授权没有冻结的 Python→Java 端点，因此未自创 API；未注入 verifier 时课程命中 fail-closed 全部剔除，不回退全库。这是明确后续契约风险。
 - 多轮与视觉：进程内最近消息结合 Java 已授权摘要；有限压缩保留公式、未解决问题、明确偏好和来源标题，清除 URL/签名/Token，不写工具原始结果、隐藏画像或受限正文，仅产出 T14.2 候选记忆。图片只消费 Java 授权 media/grant 和短期访问，复核 MIME/大小/过期/重定向，视觉不可靠时澄清；Python 不接 OSS SDK。
-- 自动化结果：Python compileall 通过；默认全量 57 项中 48 项通过、9 项显式真实环境测试跳过、0 失败。百炼真实专项 2/2 通过：服务模型均为 `qwen3.8-flash`，文本 1 次、76/66 Token、1848ms；内存 PNG 视觉 1 次、171/98 Token、2288ms、可靠标记为真，未输出完整回答。Agent Access `clean verify` 的 3 模块成功，shared-kernel 1 项与 Agent Access 5 项通过；wheel `edu_math_agent-0.2.0-py3-none-any.whl` 构建成功，包内容审计确认不再携带旧运行时文件；`git diff --check` 通过。关键实现提交 `8875b88` 已推送并创建 Ready [PR #59](https://github.com/chengchen-ccnu/ccnu-edulion/pull/59)，尚未合并且不能提前视为 CI 通过。
+- 自动化结果：Python compileall 通过；默认全量 57 项中 48 项通过、9 项显式真实环境测试跳过、0 失败。百炼真实专项 2/2 通过：服务模型均为 `qwen3.8-flash`，文本 1 次、76/66 Token、1848ms；内存 PNG 视觉 1 次、171/98 Token、2288ms、可靠标记为真，未输出完整回答。Agent Access `clean verify` 的 3 模块成功，shared-kernel 1 项与 Agent Access 5 项通过；wheel `edu_math_agent-0.2.0-py3-none-any.whl` 构建成功，包内容审计确认不再携带旧运行时文件；`git diff --check` 通过。关键实现提交 `8875b88` 经 Ready [PR #59](https://github.com/chengchen-ccnu/ccnu-edulion/pull/59) 的 8 项 CI 全绿后合并，最终合并事实见下节。
 - 数据边界：未创建或修改 MySQL/Redis 数据、Qdrant 点、Neo4j 节点/关系、RabbitMQ 消息/队列、OSS 对象或伪数据；真实索引专项只读 T13.2 已保留派生数据，Java 使用进程内 H2 并随 JVM 释放，视觉 PNG 只在内存存在。详细实现、命令、演示和风险见 [T13.3 交付文档](../delivery/T13.3-dynamic-multi-agent-runtime.md)。
+
+## 2026-09-10 PR #59 合并与 T14.2 前置审计
+
+- 合并与清理：[PR #59](https://github.com/chengchen-ccnu/ccnu-edulion/pull/59) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项检查全部成功后，以普通 merge 合并为 `main@05050fca1c4f95aad27c6960d105d361e1e05796`；本地 `main` 已快进同步，T13.3 本地和远端分支均已删除。
+- 课程授权缺口：T13.3 的 `COURSE_TEXT_SEARCH` 已按 course/version/lesson 过滤，但最终候选只经过可注入 `course_verifier`；T14.1 没有冻结 Python→Java 批量复核端点。默认 verifier 缺失时全部剔除是正确 fail-closed 行为，但不能作为课程答疑完成态。
+- 恢复与 Learning 事实缺口：Agent Access 能分页读取 MySQL 消息，却未把有界最近消息正文传入内部 run；Python 仅保留进程内最近轮次。内部协议预留四类学生事实工具，Java 尚未授予/实现读取适配，Python 未注入 reader 时返回空。
+- 记忆与用量缺口：Python 已产生候选记忆及模型/视觉/工具/Token 统计，但公开 SSE 有意不承载 Java 私有数据，当前也没有幂等内部结果上报。Agent Access 仅有 T14.1 六张基础表，无摘要、记忆、证据、主题、偏好、用量、安全审计或记忆 Outbox。
+- Redis 与真实流边界：Agent Access 当前未引入 Redis；同会话活动槽由 MySQL 唯一约束保护，进程内 map 只持有本实例上游句柄。基础 WebClient 流、事件先落库、取消和部分检查点已存在，但多实例租约、用户总并发/额度、Redis 故障恢复、真实背压和供应商取消尚未闭环。
+- 拆分结论：旧 T14.2 无法独立验收，拆成 T14.2.1 授权上下文与恢复契约、T14.2.2 长期记忆事实/画像/索引、T14.2.3 Redis 运行治理与真实链路。已从干净 `main@05050fc` 准备 `codex/t14.2.1-agent-context-contract`；本分支只提交规划与审计，不实现业务代码。
+- 页面与数据：拆分不改变现有路由或页面职责，因此未修改 `page-specs.md`。本轮没有连接或修改 MySQL、Redis、Qdrant、Neo4j、RabbitMQ、OSS，也没有创建伪数据或临时业务数据。
