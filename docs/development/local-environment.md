@@ -641,6 +641,21 @@ Python 在线服务现由 `python -m edu_agent_app` 启动 T13.1 v1 内部 HTTP/
 
 T14.2.1 中 Python 使用 `AGENT_ACCESS_BASE_URL`（默认 `http://127.0.0.1:8086`）和 `AGENT_ACCESS_REQUEST_TIMEOUT_SECONDS`（默认 5 秒）访问 Agent Access 私有回调；没有安全包装器注入的 callback token 时，课程候选和学习事实保持 fail-closed，运行结果也不会伪装成已上报。Agent Access 访问 Course/Learning 的超时继续由 `AGENT_DOMAIN_REQUEST_TIMEOUT` 控制。最近消息窗口默认最多 6 轮、16000 字符，可用非敏感变量 `AGENT_RECENT_MESSAGE_MAX_TURNS` 和 `AGENT_RECENT_MESSAGE_MAX_CHARS` 调整，但生产值不得突破代码的 12 轮/32000 字符硬上限。
 
+T14.2.2 在 Agent Access `local` profile 中复用专用 `edu_platform_agent_dev`，由 Flyway V3 向前建立长期记忆事实和 Outbox。`AGENT_INDEX_API_ENABLED=true` 只开放 Gateway 不路由的记忆安全投影；`AGENT_INDEX_PUBLISH_ENABLED=true` 才启动 RabbitMQ exchange 声明和 Outbox 发布，便于 H2/HTTP 测试在没有 MQ 凭据时保持离线。Worker 用 `AGENT_INDEX_AGENT_ACCESS_SOURCE_URL`（默认 `http://127.0.0.1:8086`）读取该投影。服务令牌和 RabbitMQ 密码仍只由 DPAPI/部署 Secret 注入，不能放入 `.env.example` 或日志。
+
+真实 MySQL 专项只允许包装器确认 `AGENT_MYSQL_DATABASE=edu_platform_agent_dev` 后执行：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  $env:AGENT_MEMORY_MYSQL_ACCEPTANCE = "true"
+  mvn.cmd "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml `
+    -pl agent-access-service -am "-Dtest=AgentMemoryMysqlAcceptanceTest" `
+    "-Dsurefire.failIfNoSpecifiedTests=false" test
+}
+```
+
+该用例只写随机 owner/source 的 Agent Access 记忆、证据、画像和 Outbox，并在 `finally` 精确清理；全局 revision 计数允许留下单调递增空洞。真实 Rabbit/Worker 验收还要求先交互运行 `scripts/Initialize-LocalRabbitMq.ps1` 生成 DPAPI 凭据；没有该文件时必须跳过，禁止回退到默认 `guest`。
+
 本机真实验收的文本和内存 PNG 视觉均由百炼 `qwen3.8-flash` 成功处理；真实 Qdrant 混合检索、空命中和 Neo4j 有界查询也通过。真实模型专项必须显式设置 `AGENT_RUNTIME_REAL_ACCEPTANCE=true`，只使用有界样本并仅输出用量指标；默认全量测试不会产生模型费用。课程候选现经 Agent Access 和 Course 按 run owner、当前发布版本、资源字段、revision 与报名事实再次授权；任一私有依赖不可用时必须返回失败或空结果，禁止回退全课程搜索。
 
 项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及所有服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除 `AGENT_RUNTIME_CALLBACK_TOKEN`、`AGENT_ACCESS_DOMAIN_TOKEN` 等明文并重新运行初始化脚本迁入对应加密凭据。Base URL、模型名、模型路径、启用开关、超时和窗口上限属于非敏感配置，可保留在 `local.env`。

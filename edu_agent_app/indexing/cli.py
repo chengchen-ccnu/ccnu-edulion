@@ -25,7 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--restart-rebuild",
         action="store_true",
-        help="仅重置三类 Java 分页检查点；不会删除实体 revision/tombstone 或索引。",
+        help="仅重置四类 Java 分页检查点；不会删除实体 revision/tombstone 或索引。",
     )
     parser.add_argument(
         "--confirm-namespace",
@@ -69,6 +69,7 @@ def _processor(
         settings.agent_index_service_token,
         settings.source_timeout_seconds,
         settings.source_max_attempts,
+        settings.agent_access_source_url,
     )
     encoder = DenseEncoder(settings.bge_model_path, settings.bge_model_version)
     return IndexProcessor(
@@ -78,6 +79,7 @@ def _processor(
         index,
         encoder,
         graph,
+        memory_source=source,
     )
 
 
@@ -138,7 +140,7 @@ def run_index_worker(argv: Sequence[str] | None = None) -> int:
         processor = _processor(settings, state, index, graph)
         if args.mode == "rebuild":
             if args.restart_rebuild:
-                for entity_type in ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT"):
+                for entity_type in ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT", "STUDENT_MEMORY"):
                     state.reset_checkpoint(entity_type)
             results = processor.rebuild_all()
             print(json.dumps([result.__dict__ for result in results], ensure_ascii=False))

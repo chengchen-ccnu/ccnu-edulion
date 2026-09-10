@@ -21,3 +21,9 @@ platform:
     recent-message-max-turns: 6
     recent-message-max-chars: 16000
     raw-message-retention-days: 180
+  agent-index:
+    enabled: true
+    publish-enabled: false
+    service-token: test-only-agent-index-service-token-32-bytes
+    confirm-timeout: 1s
+    max-publish-attempts: 3

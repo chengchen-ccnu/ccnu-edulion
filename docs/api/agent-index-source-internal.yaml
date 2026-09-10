@@ -1,22 +1,41 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Domain Source Internal API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     T14.1 为 T13.2 独立 Index Worker 提供的 Java 事实源只读分页协议。接口只在服务间网络开放，
     使用专用调用方身份与本地加密初始化的共享令牌；Gateway 不路由这些路径。分页按
     (sourceRevision, entityId) 稳定前进，Worker 可做有界全量重建，也可按 Outbox 事件中的 entityId
     获取最新投影。T14.2.1 向前增加 Agent Access 专用课程候选复核和当前用户学习事实读取，
     两者使用独立调用方身份与 AGENT_ACCESS_DOMAIN_TOKEN。响应不含官方答案、解析、其他用户事实、
-    OSS 定位或短期签名 URL。
+    OSS 定位或短期签名 URL。T14.2.2 向前增加 Agent Access 的 USER_PRIVATE 记忆分页/单实体投影；
+    MySQL 仍是事实源，Qdrant 投影不能作为授权依据。
 servers:
   - url: http://learning-service.internal
     description: 题目和知识点事实源。
   - url: http://course-service.internal
     description: 已发布课程文字事实源。
+  - url: http://agent-access-service.internal
+    description: 当前 ACTIVE 且未到期的学生私有记忆安全事实源。
 tags:
   - name: AgentIndexSource
 paths:
+  /internal/v1/agent-index/student-memories:
+    get:
+      tags: [AgentIndexSource]
+      operationId: pageStudentMemoryIndexProjections
+      summary: 分页或按实体读取当前 USER_PRIVATE 学生记忆安全投影
+      parameters:
+        - {$ref: '#/components/parameters/InternalCaller'}
+        - {$ref: '#/components/parameters/InternalToken'}
+        - {$ref: '#/components/parameters/AfterRevision'}
+        - {$ref: '#/components/parameters/AfterEntityId'}
+        - {$ref: '#/components/parameters/EntityId'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: 不含证据明细、隐藏画像、会话原文、用量或秘密的安全页。, content: {application/json: {schema: {$ref: '#/components/schemas/StudentMemoryProjectionPage'}}}}
+        '401': {$ref: '#/components/responses/InternalUnauthorized'}
+        '422': {$ref: '#/components/responses/InternalValidationFailed'}
   /internal/v1/agent-index/questions:
     get:
       tags: [AgentIndexSource]
@@ -142,6 +161,35 @@ components:
       description: 游标或分页参数不合法。
       content: {application/json: {schema: {$ref: '#/components/schemas/InternalError'}}}
   schemas:
+    StudentMemoryIndexProjection:
+      type: object
+      additionalProperties: false
+      required: [entityId, subjectUserId, sourceRevision, educationStage, subject, memoryType, text, visibility, accessScope, requiresCurrentCourseAccess]
+      properties:
+        entityId: {type: string, format: uuid}
+        subjectUserId: {type: string, format: uuid, description: IAM 全局 userId；Worker 必须写为 user_id payload 并在查询时精确过滤。}
+        sourceRevision: {type: integer, minimum: 1}
+        educationStage: {type: string, const: JUNIOR}
+        subject: {type: string, const: MATH}
+        memoryType: {type: string, enum: [PREFERENCE, UNRESOLVED_POINT, SELF_REPORTED_PATTERN, LEARNING_EVIDENCE, TOPIC_EXPERIENCE]}
+        text: {type: string, minLength: 1, maxLength: 500}
+        visibility: {type: string, const: USER_PRIVATE}
+        accessScope: {type: string, const: USER_PRIVATE}
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 64}
+        lessonId: {type: string, format: uuid}
+        requiresCurrentCourseAccess: {type: boolean}
+        expiresAt: {type: string, format: date-time}
+      description: 课程范围字段出现时 requiresCurrentCourseAccess 必须为 true，候选进入模型前由 Java 按当前版本和访问资格复核，依赖失败 fail-closed。
+    StudentMemoryProjectionPage:
+      type: object
+      additionalProperties: false
+      required: [items, hasMore]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/StudentMemoryIndexProjection'}}
+        hasMore: {type: boolean}
+        nextCursor:
+          oneOf: [{$ref: '#/components/schemas/ProjectionCursor'}, {type: 'null'}]
     InternalError:
       type: object
       additionalProperties: false

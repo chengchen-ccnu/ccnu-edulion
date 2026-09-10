@@ -9,6 +9,9 @@ import com.eduplatform.agentaccess.service.AgentException;
 import com.eduplatform.agentaccess.service.AgentRunCoordinator;
 import com.eduplatform.agentaccess.service.AgentDomainClient;
 import com.eduplatform.agentaccess.service.AgentInternalService;
+import com.eduplatform.agentaccess.service.MemoryFactService;
+import com.eduplatform.agentaccess.service.MemoryContextProvider;
+import com.eduplatform.agentaccess.service.MemoryIndexProjectionService;
 import com.eduplatform.agentaccess.service.AuthorizedContextResolver;
 import com.eduplatform.agentaccess.web.AgentDtos;
 import com.eduplatform.agentaccess.web.AgentInternalDtos;
@@ -43,17 +46,29 @@ class AgentAccessIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper mapper;
     @Autowired AgentInternalService internal;
+    @Autowired MemoryFactService memoryFacts;
+    @Autowired MemoryContextProvider memoryContext;
+    @Autowired MemoryIndexProjectionService memoryIndex;
     @Autowired FakeDomain domains;
     @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_agent_index_outbox");
+        jdbc.update("DELETE FROM ai_memory_evidence");
+        jdbc.update("DELETE FROM ai_memory");
+        jdbc.update("DELETE FROM ai_conversation_summary");
+        jdbc.update("DELETE FROM ai_preference");
+        jdbc.update("DELETE FROM ai_profile_topic");
+        jdbc.update("DELETE FROM ai_usage_record");
+        jdbc.update("DELETE FROM ai_safety_event");
         jdbc.update("DELETE FROM ai_tool_call");
         jdbc.update("DELETE FROM ai_run_cancellation");
         jdbc.update("DELETE FROM ai_run_event");
         jdbc.update("DELETE FROM ai_run");
         jdbc.update("DELETE FROM ai_message");
         jdbc.update("DELETE FROM ai_conversation");
+        jdbc.update("UPDATE ai_memory_revision_sequence SET current_revision=0 WHERE singleton_id=1");
         runtime.reset();
         domains.reset();
     }
@@ -276,11 +291,180 @@ class AgentAccessIntegrationTest {
         assertThat(publicJson).doesNotContain("memoryCandidates", "promptTokens", "phaseDurationsMs");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE result_report_id=?", Integer.class,
                 reportId.toString())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_usage_record WHERE run_id=?", Integer.class,
+                prepared.run().id().toString())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory WHERE owner_user_id=?", Integer.class,
+                OWNER.toString())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_index_outbox", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT result_normalization_status FROM ai_run WHERE id=?", String.class,
+                prepared.run().id().toString())).isEqualTo("NORMALIZED");
     }
 
     private AgentInternalDtos.RunResultReportRequest report(UUID id, String reason) {
+        return report(id, reason, List.of("明确偏好：分步讲解"));
+    }
+
+    private AgentInternalDtos.RunResultReportRequest report(UUID id, String reason, List<String> candidates) {
         return new AgentInternalDtos.RunResultReportRequest(id, "test-model", 2, 0, 1, 10, 5,
-                Map.of("MODEL_MATH_TUTOR", 20L), reason, List.of("明确偏好：分步讲解"));
+                Map.of("MODEL_MATH_TUTOR", 20L), reason, candidates);
+    }
+
+    @Test
+    /** 聊天候选是弱证据；“我懂了”和单次“我不会”只记安全拒绝，不形成记忆或画像。 */
+    void chatClaimsCannotCreateMasteryOrPermanentDeficit() {
+        var prepared = terminalRun("trace-chat-weak");
+        internal.report(prepared.run().id(), report(UUID.randomUUID(), "COMPLETED", List.of(
+                "未解决卡点：我懂了", "用户自述的重复卡点：我不会")));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_profile_topic", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_safety_event", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_usage_record", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** V2 存量私有报告解析失败时整次回滚，仅另事务留下脱敏 FAILED 状态和原报告供重试。 */
+    void malformedHistoricalReportRollsBackAllDerivedFactsAndRemainsRetryable() {
+        var prepared = terminalRun("trace-malformed-report");
+        UUID reportId = UUID.randomUUID();
+        jdbc.update("""
+                UPDATE ai_run SET result_report_id=?,result_report_json='{',
+                    result_reported_at=?,result_normalization_status='PENDING'
+                WHERE id=?
+                """, reportId.toString(), java.sql.Timestamp.from(Instant.now()),
+                prepared.run().id().toString());
+        RuntimeException failure = org.junit.jupiter.api.Assertions.assertThrows(
+                RuntimeException.class, () -> memoryFacts.normalize(prepared.run().id()));
+        memoryFacts.recordNormalizationFailure(prepared.run().id(), failure);
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_usage_record", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_index_outbox", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT result_normalization_status FROM ai_run WHERE id=?",
+                String.class, prepared.run().id().toString())).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT result_report_json FROM ai_run WHERE id=?",
+                String.class, prepared.run().id().toString())).isEqualTo("{");
+    }
+
+    @Test
+    /** 推断偏好可到期，后续明确偏好会修正当前值并为旧索引写 tombstone。 */
+    void inferredPreferenceDecaysAndExplicitPreferenceCorrectsIt() {
+        var inferred = terminalRun("trace-inferred-preference");
+        internal.report(inferred.run().id(), report(UUID.randomUUID(), "COMPLETED",
+                List.of("推断偏好：先提示再逐步引导")));
+        assertThat(jdbc.queryForObject("SELECT source_type FROM ai_preference", String.class)).isEqualTo("INFERRED");
+        assertThat(jdbc.queryForObject("SELECT expires_at IS NOT NULL FROM ai_preference", Boolean.class)).isTrue();
+
+        var explicit = terminalRun("trace-explicit-preference");
+        internal.report(explicit.run().id(), report(UUID.randomUUID(), "COMPLETED",
+                List.of("明确偏好：先引导后讲解")));
+        assertThat(jdbc.queryForObject("SELECT source_type FROM ai_preference", String.class)).isEqualTo("EXPLICIT");
+        assertThat(jdbc.queryForObject("SELECT expires_at IS NULL FROM ai_preference", Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory WHERE status='EXPIRED'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_index_outbox WHERE payload_json LIKE '%\"operation\":\"DELETE\"%'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /** 记忆到期产生更高 revision tombstone；画像久未验证只降低可信度并保留历史掌握。 */
+    void expiryAndProfileConfidenceDecayPreserveHistory() {
+        var prepared = terminalRun("trace-memory-expiry");
+        internal.report(prepared.run().id(), report(UUID.randomUUID(), "COMPLETED",
+                List.of("未解决卡点：一次方程移项仍需练习")));
+        jdbc.update("UPDATE ai_memory SET expires_at=?", java.sql.Timestamp.from(Instant.now().minusSeconds(1)));
+        assertThat(memoryFacts.expireDue(Instant.now(), 10)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM ai_memory", String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT MAX(source_revision) FROM ai_agent_index_outbox", Long.class))
+                .isEqualTo(2L);
+
+        UUID source = UUID.randomUUID();
+        memoryFacts.recordLearningEvidence(OWNER, "STUDENT_SUBMISSION", source, 3,
+                "几何证明", "MASTERED", "trace-profile-decay");
+        memoryFacts.recordLearningEvidence(OWNER, "STUDENT_SUBMISSION", source, 2,
+                "几何证明", "NEEDS_SUPPORT", "trace-stale-evidence");
+        jdbc.update("UPDATE ai_profile_topic SET last_verified_at=?,confidence_level='HIGH'",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(100L * 86400)));
+        assertThat(memoryFacts.decayStaleTopicConfidence(Instant.now())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT current_level FROM ai_profile_topic", String.class))
+                .isEqualTo("MASTERED");
+        assertThat(jdbc.queryForObject("SELECT confidence_level FROM ai_profile_topic", String.class))
+                .isEqualTo("LOW");
+        assertThat(jdbc.queryForObject("SELECT historical_mastery FROM ai_profile_topic", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory_evidence WHERE source_id=?", Integer.class,
+                source.toString())).isEqualTo(1);
+    }
+
+    @Test
+    /** 正式作答/批改是强证据；同 revision 幂等，较新修正保留历史掌握但更新当前等级。 */
+    void formalEvidenceCorrectsCurrentTopicWithoutDeletingMasteryHistory() {
+        UUID source = UUID.randomUUID();
+        memoryFacts.recordLearningEvidence(OWNER, "TEACHER_GRADING", source, 1,
+                "一次方程", "MASTERED", "trace-formal-evidence");
+        memoryFacts.recordLearningEvidence(OWNER, "TEACHER_GRADING", source, 1,
+                "一次方程", "MASTERED", "trace-formal-evidence");
+        memoryFacts.recordLearningEvidence(OWNER, "TEACHER_GRADING", source, 3,
+                "一次方程", "NEEDS_SUPPORT", "trace-formal-correction");
+        memoryFacts.recordLearningEvidence(OWNER, "TEACHER_GRADING", source, 2,
+                "一次方程", "MASTERED", "trace-stale-correction");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory_evidence", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_memory_evidence WHERE effective=1", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT current_level FROM ai_profile_topic WHERE owner_user_id=?",
+                String.class, OWNER.toString())).isEqualTo("NEEDS_SUPPORT");
+        assertThat(jdbc.queryForObject("SELECT historical_mastery FROM ai_profile_topic WHERE owner_user_id=?",
+                Integer.class, OWNER.toString())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_index_outbox", Integer.class)).isEqualTo(2);
+        assertThat(memoryIndex.page(0, new UUID(0, 0), null, 100).items())
+                .allMatch(item -> item.subjectUserId().equals(OWNER))
+                .allMatch(item -> item.visibility().equals("USER_PRIVATE"));
+    }
+
+    @Test
+    /** 内部事实源必须同时校验固定调用方和专用令牌，返回体不泄露证据、画像或会话原文。 */
+    void memoryProjectionHttpEndpointIsAuthenticatedAndSafe() throws Exception {
+        UUID source = UUID.randomUUID();
+        memoryFacts.recordLearningEvidence(OWNER, "STUDENT_SUBMISSION", source, 1,
+                "函数图像", "DEVELOPING", "trace-memory-projection");
+        var client = java.net.http.HttpClient.newHttpClient();
+        var uri = java.net.URI.create("http://127.0.0.1:" + port
+                + "/internal/v1/agent-index/student-memories?size=10");
+        var denied = client.send(java.net.http.HttpRequest.newBuilder(uri)
+                        .header("X-Internal-Caller", "agent-index-worker")
+                        .header("X-Internal-Service-Token", "wrong-token-which-is-long-enough-000000")
+                        .GET().build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(denied.statusCode()).isEqualTo(401);
+
+        var allowed = client.send(java.net.http.HttpRequest.newBuilder(uri)
+                        .header("X-Internal-Caller", "agent-index-worker")
+                        .header("X-Internal-Service-Token", "test-only-agent-index-service-token-32-bytes")
+                        .GET().build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(allowed.statusCode()).isEqualTo(200);
+        assertThat(allowed.body()).contains(OWNER.toString(), "USER_PRIVATE", "学习主题：函数图像")
+                .doesNotContain("evidence", "currentLevel", "historicalMastery", "promptTokens",
+                        "completionTokens", "phaseDurationsMs");
+    }
+
+    @Test
+    /** 全局单调游标能看到分页后新建的记忆；运行上下文始终按可信 owner 隔离。 */
+    void lateMemoryIsVisibleAfterCursorAndContextIsOwnerIsolated() {
+        memoryFacts.recordLearningEvidence(OWNER, "STUDENT_SUBMISSION", UUID.randomUUID(), 1,
+                "一次方程", "DEVELOPING", "trace-cursor-first");
+        memoryFacts.recordLearningEvidence(OWNER, "STUDENT_SUBMISSION", UUID.randomUUID(), 1,
+                "函数图像", "DEVELOPING", "trace-cursor-second");
+        var initial = memoryIndex.page(0, new UUID(0, 0), null, 100);
+        assertThat(initial.items()).hasSize(2);
+
+        memoryFacts.recordLearningEvidence(OTHER, "STUDENT_SUBMISSION", UUID.randomUUID(), 1,
+                "几何证明", "DEVELOPING", "trace-cursor-late");
+        var late = memoryIndex.page(initial.nextCursor().sourceRevision(),
+                initial.nextCursor().entityId(), null, 100);
+        assertThat(late.items()).singleElement().satisfies(item ->
+                assertThat(item.subjectUserId()).isEqualTo(OTHER));
+        assertThat(memoryContext.summaries(OWNER, null, null, null))
+                .allMatch(item -> !item.get("text").toString().contains("几何证明"));
+        assertThat(memoryContext.summaries(OTHER, null, null, null))
+                .singleElement().satisfies(item -> assertThat(item.get("text")).isEqualTo("学习主题：几何证明"));
     }
 
     private AgentConversationService.PreparedRun newRun(String traceId) {
@@ -288,6 +472,14 @@ class AgentAccessIntegrationTest {
                 AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
         return conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(UUID.randomUUID(),
                 "请给我一个提示", null), traceId);
+    }
+
+    private AgentConversationService.PreparedRun terminalRun(String traceId) {
+        var prepared = newRun(traceId);
+        coordinator.open(prepared);
+        runtime.emit(event(prepared, 1, "FINAL_RESULT", Map.of("terminal", true,
+                "terminalStatus", "COMPLETED", "finalAnswer", "完成", "answerCompleteness", "COMPLETE")));
+        return prepared;
     }
 
     private JsonNode event(AgentConversationService.PreparedRun run, long sequence, String type,

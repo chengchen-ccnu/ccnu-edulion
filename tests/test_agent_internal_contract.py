@@ -62,6 +62,7 @@ class AgentInternalContractTests(unittest.TestCase):
         self.assertEqual(
             set(paths),
             {
+                "/internal/v1/agent-index/student-memories",
                 "/internal/v1/agent-index/questions",
                 "/internal/v1/agent-index/knowledge-points",
                 "/internal/v1/agent-index/course-texts",
@@ -80,6 +81,10 @@ class AgentInternalContractTests(unittest.TestCase):
         safe_fact = self.index_source_contract["components"]["schemas"]["SafeStudentFact"]
         for forbidden in ("answer", "analysis", "userId", "url", "token"):
             self.assertNotIn(forbidden, safe_fact["properties"])
+        memory = self.index_source_contract["components"]["schemas"]["StudentMemoryIndexProjection"]
+        self.assertTrue({"subjectUserId", "sourceRevision", "text", "visibility"}.issubset(memory["required"]))
+        for forbidden in ("answer", "analysis", "score", "evidence", "hiddenProfile", "token", "url"):
+            self.assertNotIn(forbidden, memory["properties"])
 
     def test_t1421_v1_compatibility_recent_window_and_private_callbacks(self):
         """旧 v1 请求仍合法；新增最近窗口和三个无 userId 的私有回调具有严格 Schema。"""

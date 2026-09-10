@@ -1095,3 +1095,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 权限与保留：所有事实使用 IAM 全局 userId；来源受限记忆保留 course/version 等稳定范围，召回前仍需当前授权。索引不得包含完整聊天、答案、解析、成绩、隐藏画像、Token、URL 或提示词。普通经历与推断偏好按类型衰减，曾掌握证据只降低当前可信度而不按时间改成未掌握；原始消息 180 天清理与媒体引用释放仍由 T14.2.3 验收。
 - 准备结论：代码依赖满足，已从干净 `main@5810fae` 准备 `codex/t14.2.2-memory-profile-index-sync`。T14.2.2 不实现 Redis 租约/额度、多实例 SSE、Vue、帮助知识库或自主组题；RabbitMQ 凭据是最终真实验收门禁而非开工阻断。
 - 环境与数据：为适配 T14.2.1，本机初始化器新增了 DPAPI 加密的 Agent Access 内部令牌，并在未跟踪 `local.env` 补齐非敏感启用开关；没有读取或输出秘密。Docker Desktop/Qdrant 已恢复运行，只读确认 collection 为 0 点；没有连接 MySQL、写 RabbitMQ、修改 Qdrant/Neo4j/OSS 或创建伪数据。
+
+## 2026-09-10 T14.2.2 长期记忆事实、画像与索引同步
+
+- 事实与迁移：只新增 Agent Access Flyway V3，V1/V2 未修改。V3 建立全局投影 revision、会话摘要、长期记忆、证据、少量主题等级、明确/推断偏好、逐 run 用量、安全审计和 Agent Index Outbox；所有 owner 均为 IAM 全局 userId，未跨 Schema 建外键或查询表。
+- 归一化与证据：首次终态报告保存后在外层事务内用 savepoint 归一化；解析/校验失败回滚全部派生写入，保留原报告和脱敏 FAILED 状态供有界重试。run/report 唯一约束及来源 revision 保证重复处理不重复计量、更新画像或产生同 revision 事件。聊天候选只写 WEAK；“我懂了”、单次“我不会”、未知类型、秘密/URL/工具原始结果均不能形成掌握。正式作答/批改只接受 Java 结构化 STRONG 证据入口，旧 revision no-op，新 revision 修正当前效力并保留历史掌握。
+- 衰减与授权：推断偏好、未解决卡点和自述重复卡点按类型到期，明确偏好持续到同类修改；到期写 EXPIRED 与 DELETE tombstone。主题 90 天未验证只把可信度降为 LOW，不删除等级或历史掌握。在线注入只读 owner 本人事实；课程来源记忆必须与当次 Course 已授权的 course/version/lesson 完全相同，缺失或依赖失败 fail-closed。
+- 契约与消息：`agent-index-source-internal.yaml` 向前升至 1.2.0，新增受固定调用方/专用令牌保护的记忆分页及单实体 USER_PRIVATE 投影；事件仍为 `StudentMemoryIndexProjectionChanged` v1。Agent Access Outbox 使用 mandatory、持久消息、publisher confirm/return、有限退避与失败保留；Worker 生产 Memory Provider 复用 eventId、revision、乱序/tombstone、retry/DLQ、重投、重建和现有 `student_memories`，未新增消息链或 collection。
+- 自动化：标准 Java 全仓 `clean verify` 9 模块成功，239 项执行、206 通过、33 项显式真实依赖测试跳过、0 失败/错误；新增 publisher 定向回归后 Agent Access 19/19 通过。Python compileall 通过，全量 60 项中 51 通过、9 项真实依赖测试按开关跳过、0 失败。真实 MySQL 专项 2/2 通过；V1→V2→V3、重复启动、强证据修正及安全投影均验证。真实 Qdrant 记忆专项 1/1 通过并精确清理临时 namespace；真实 Agent Access HTTP 空投影分页返回 200。
+- 未执行项：RabbitMQ 服务 Running 且 5672 可达，但当前用户没有 `rabbitmq.credential.clixml`，因此没有回退默认账号，未执行真实 Outbox→RabbitMQ→Worker→Qdrant 长链，也不把既有单测写成真实通过。初始化可执行的真实 RabbitMQ 验收需先按仓库脚本交互初始化应用凭据。
+- 数据与清理：创建了用途明确的 `edu_platform_agent_dev`，Flyway 保留 V1/V2/V3 表；没有账号、课程、题目或长期业务伪数据。MySQL 随机验收行和 Qdrant 临时 namespace 均精确清理并确认 0；未写 Redis、Neo4j、OSS 或 RabbitMQ 消息。需要重建时创建空专用 Schema 并由 Flyway 顺序迁移；不得清空用途不明数据库。
+- 边界与风险：没有 Redis 租约/额度、多实例 SSE、Vue、帮助知识库、自主组题、第二套消息链或新向量库。冻结契约尚无 Learning 主动强证据推送，本任务只提供结构化 Java 事务入口并拒绝从答案/成绩文本猜测等级；若后续自动接入，必须先冻结稳定主题、等级、公布权限和 revision 契约。完整命令、配置、演示与风险见 [T14.2.2 交付文档](../delivery/T14.2.2-memory-profile-index-sync.md)。

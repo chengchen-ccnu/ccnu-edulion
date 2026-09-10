@@ -25,11 +25,14 @@ public class AgentInternalService {
     private final AgentRepository repository;
     private final AgentDomainClient domains;
     private final ObjectMapper mapper;
+    private final MemoryFactService memoryFacts;
 
-    public AgentInternalService(AgentRepository repository, AgentDomainClient domains, ObjectMapper mapper) {
+    public AgentInternalService(AgentRepository repository, AgentDomainClient domains, ObjectMapper mapper,
+            MemoryFactService memoryFacts) {
         this.repository = repository;
         this.domains = domains;
         this.mapper = mapper;
+        this.memoryFacts = memoryFacts;
     }
 
     public AgentInternalDtos.VerifyCourseCandidatesResponse verify(UUID runId,
@@ -49,7 +52,7 @@ public class AgentInternalService {
 
     /**
      * 终态后保存一次有界私有报告。同 reportId/同内容为幂等重放；任一字段变化返回 409，
-     * 从而不会把不同运行结果静默覆盖。报告只暂存于 ai_run，T14.2.2 再规范化。
+     * 从而不会把不同运行结果静默覆盖。首次保存与 T14.2.2 事实归一化同事务提交。
      */
     @Transactional
     public AgentInternalDtos.RunResultReportResponse report(UUID runId,
@@ -78,6 +81,12 @@ public class AgentInternalService {
         }
         if (!inserted) {
             return sameReport(runId, request, json, repository.findResultReport(runId).orElseThrow());
+        }
+        // 归一化使用 savepoint：失败时回滚全部派生写入，但保留原私有报告和脱敏 FAILED 状态供重试。
+        try {
+            memoryFacts.normalize(runId);
+        } catch (RuntimeException failure) {
+            memoryFacts.recordNormalizationFailure(runId, failure);
         }
         return new AgentInternalDtos.RunResultReportResponse(runId, request.reportId(), false);
     }

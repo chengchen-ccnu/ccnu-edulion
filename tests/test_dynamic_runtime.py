@@ -455,6 +455,31 @@ class DynamicRuntimeTests(unittest.TestCase):
         self.assertNotIn("bearer-secret", state.summary)
         self.assertTrue(state.candidate_memories)
 
+    def test_memory_candidates_come_from_new_messages_not_recalled_preferences(self):
+        store = ConversationStore()
+        request = run_request(context_extra={"preferences": [
+            {"kind": "EXPLANATION_STYLE", "value": "完整讲解", "source": "EXPLICIT"}
+        ]})
+        limits = RunLimits(request.budget)
+        conversation = str(request.conversationId)
+        store.record_turn(conversation, "请分步讲解这道题", "好", unresolved=False,
+                          source_titles=[], preferences=request.trustedContext.preferences, limits=limits)
+        self.assertEqual(store.get(conversation).candidate_memories, ["明确偏好：分步讲解"])
+
+        for attempt in range(3):
+            store.record_turn(conversation, "再给我一个提示", "好", unresolved=False,
+                              source_titles=[], preferences=request.trustedContext.preferences, limits=limits)
+            if attempt < 2:
+                self.assertNotIn("推断偏好：先提示再逐步引导",
+                                 store.get(conversation).candidate_memories)
+        self.assertIn("推断偏好：先提示再逐步引导",
+                      store.get(conversation).candidate_memories)
+
+        other = str(uuid4())
+        store.record_turn(other, "今天继续做题", "好", unresolved=False,
+                          source_titles=[], preferences=request.trustedContext.preferences, limits=limits)
+        self.assertEqual(store.get(other).candidate_memories, [])
+
     def test_t1421_callbacks_use_run_id_and_java_recent_messages_override_process_cache(self):
         async def scenario():
             course_id, lesson_id = uuid4(), uuid4()

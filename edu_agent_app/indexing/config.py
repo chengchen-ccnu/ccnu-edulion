@@ -54,6 +54,7 @@ class IndexSettings:
     source_namespace: str
     learning_source_url: str
     course_source_url: str
+    agent_access_source_url: str
     source_timeout_seconds: float
     source_max_attempts: int
     source_page_size: int
@@ -143,6 +144,9 @@ def load_index_settings() -> IndexSettings:
         ).rstrip("/"),
         course_source_url=os.getenv(
             "AGENT_INDEX_COURSE_SOURCE_URL", "http://127.0.0.1:8082"
+        ).rstrip("/"),
+        agent_access_source_url=os.getenv(
+            "AGENT_INDEX_AGENT_ACCESS_SOURCE_URL", "http://127.0.0.1:8086"
         ).rstrip("/"),
         source_timeout_seconds=_float("AGENT_INDEX_SOURCE_TIMEOUT_SECONDS", 5.0, 0.1, 30.0),
         source_max_attempts=_integer("AGENT_INDEX_SOURCE_MAX_ATTEMPTS", 3, 1, 5),

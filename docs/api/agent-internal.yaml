@@ -174,7 +174,7 @@ paths:
       tags: [AgentRun]
       operationId: reportAgentRunResult
       summary: 终态后幂等保存 Python 私有运行结果报告
-      description: 报告不进入 SSE、日志或公开消息；T14.2.1 暂存于 ai_run，T14.2.2 再规范化到额度/审计/记忆事实。同 reportId 同内容重放成功，不同内容冲突。
+      description: 报告不进入 SSE、日志或公开消息；T14.2.2 在 Agent Access 内与用量、审计和记忆事实事务化归一，V2 存量报告由有界后台任务重试。同 reportId 同内容重放成功，不同内容冲突。
       parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/InternalCaller'}, {$ref: '#/components/parameters/InternalToken'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RunResultReportRequest'}}}}
       responses:
@@ -988,7 +988,7 @@ components:
         phaseDurationsMs: {type: object, maxProperties: 32, additionalProperties: {type: integer, minimum: 0, maximum: 180000}}
         terminationReason: {type: string, minLength: 1, maxLength: 80}
         memoryCandidates: {type: array, maxItems: 8, items: {type: string, maxLength: 500}}
-      description: 私有字段禁止进入浏览器 SSE、公开消息或 INFO 日志；T14.2.1 不创建长期记忆/画像表。
+      description: 私有字段禁止进入浏览器 SSE、公开消息或 INFO 日志；T14.2.2 只归一化白名单安全事实，原报告仍是 Agent Access 私有数据。
     RunResultReportResponse:
       type: object
       additionalProperties: false
