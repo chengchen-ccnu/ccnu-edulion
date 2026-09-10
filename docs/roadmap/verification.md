@@ -1106,4 +1106,15 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实长链：使用当前用户 DPAPI RabbitMQ 应用凭据及 `D:\Anaconda\envs\langgraph\python.exe` 完成。RabbitMQ 专项 1/1（43.106 秒）覆盖 confirm、非法消息三次有限重试、DLQ、重投和临时拓扑清理；真实 Agent Access HTTP 向 MySQL 写入两轮终态 run 报告，精确重放不重复计量，4 个 Outbox 均为 PUBLISHED。Worker 对 Qdrant 执行 3 次 UPSERT、1 次 DELETE，验证 owner 隔离、revision 更新和 tombstone 不复活；独立临时 namespace/SQLite checkpoint 从 Agent Access 事实源重建 2 个 ACTIVE 投影成功。
 - 数据与清理：保留用途明确的 `edu_platform_agent_dev` 及 Flyway V1/V2/V3 表，没有账号、课程、题目或长期业务伪数据。长链创建的随机会话、run、记忆、证据、偏好、摘要、用量和 Outbox 已按稳定 ID 精确删除，相关 MySQL 逐表为 0；Qdrant 验收 owner 为 0，Worker SQLite 删除 4 个 eventId/3 个实体状态，RabbitMQ 主队列、DLQ 和 4 个 retry 队列共 6 个队列均为 0。未写 Redis、OSS 或 Neo4j 图数据；全局记忆 revision 仅保留允许的单调序列空洞。
 - 边界与风险：没有 Redis 租约/额度、多实例 SSE、Vue、帮助知识库、自主组题、第二套消息链或新向量库。冻结契约尚无 Learning 主动强证据推送，本任务只提供结构化 Java 事务入口并拒绝从答案/成绩文本猜测等级；若后续自动接入，必须先冻结稳定主题、等级、公布权限和 revision 契约。完整命令、配置、演示与风险见 [T14.2.2 交付文档](../delivery/T14.2.2-memory-profile-index-sync.md)。
-- 交付：前置审计 `9750fab`、实现提交 `3532733`、首次交付记录 `253d94f` 已推送；已创建 [Ready PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61)，实现提交的两轮 Java、Python、Frontend、OpenAPI 共 8 项 GitHub CI 检查全部通过。真实长链记录将在独立文档提交后触发最新 CI，PR 在其全绿前保持 Open、未合并。
+- 交付：前置审计 `9750fab`、实现提交 `3532733`、首次交付记录 `253d94f` 与真实长链记录 `c19955e` 均已推送；[PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61) 的实现与真实验收记录均通过两轮 Java、Python、Frontend、OpenAPI 共 8 项 GitHub CI 检查，最终合并事实见下一节。
+
+## 2026-09-10 PR #61 合并与 T14.2.3 前置审计
+
+- 合并与清理：[PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61) 在真实长链通过且最新两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@9b2ce10b4ceb55d4d2ce0e7bd7046e07e3185af9`；本地 `main` 已快进同步，T14.2.2 本地和远端分支均已删除。
+- 现状缺口：Agent Access 尚未引入 Redis，活动执行仅存在当前 JVM 的 `ConcurrentHashMap`；MySQL 的 `uk_ai_run_active_conversation` 能阻止同会话重复 run，但不能提供用户跨会话总并发、分钟/日额度或执行实例归属。当前 `@PostConstruct` 会把查询到的全部活动 run 直接标记 FAILED，多实例启动时可能错误终止仍由其他实例运行的请求；幂等重放命中另一实例时也只能返回已保存快照，不能可靠跟随其后续事件。
+- 已冻结实现边界：Redis 只保存有 TTL 的租约、取消标记、最近 run 安全元数据和原子额度计数，本地专用 DB 为 6；不保存消息正文、回答、授权上下文、Token 或唯一业务事实。MySQL 的会话、消息、run、事件、用量和唯一约束继续权威。新运行在 Redis 不可用时于写业务事实前返回 503；读取、已保存事件恢复和幂等取消继续读取 MySQL。持有中的实例失去租约后必须停止新增模型/工具调用并保存唯一中断终态，不能假装完成或启动第二次运行。
+- 跨实例与额度：租约获取、续期和 token 匹配释放必须原子；同 clientRequestId 重放不重复占用额度。错误实例不得直接收口他人 run；只有租约确认过期后才能把孤儿 run 终止。跨实例恢复只重放/跟随已持久化事件，不重新调用 Python。用户级并发和分钟/日预算使用可配置默认值，真实验收用低阈值覆盖 429、TTL 回收与故障恢复，不把 Redis 计数替代 T14.2.2 的最终用量事实。
+- SSE 与保留：继续沿用现有 OpenAPI 0.23.0 和内部协议 1.1.0 的事件、唯一终态、断线取消和部分检查点；若只补充错误语义应向前兼容，不创建第二套 DTO。原始消息默认 180 天的清理必须保留审计/聚合边界，并在同事务写已有媒体引用释放 Outbox；不得解析临时 URL、跨服务查表或直接操作 OSS。
+- 环境：本机 Redis 5.0.14.1 服务 Running，`127.0.0.1:6379` 可达，DB 6 当前为 0 key；MySQL、RabbitMQ、Qdrant、Neo4j、BGE、reranker、百炼 Chat/Vision 和所需内部令牌均已通过安全包装器确认可用。审计发现 `local.env` 的非敏感 `VISION_MODEL_NAME` 曾粘连下一配置，已修正为 `qwen3.8-flash`，未读取或输出密钥。
+- 准备结论：依赖满足，任务保持单个 T14.2.3；已从干净 `main@9b2ce10` 创建 `codex/t14.2.3-agent-runtime-governance`。本分支当前只提交合并状态、前置审计和交付计划，不实现 Java、Python、Flyway、Redis Key、API、事件或 Vue。
+- 数据：前置审计只执行 Redis PING/DBSIZE 和环境配置存在性检查，没有写 Redis Key、MySQL 行、RabbitMQ 消息、Qdrant 点、Neo4j 节点、OSS 对象或伪数据。T14.2.2 真实验收数据已按上一节记录精确清理。
