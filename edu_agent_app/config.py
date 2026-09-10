@@ -1,117 +1,112 @@
-"""读取数学智能体配置，并构造模型、嵌入模型与只读 FAISS 资源。"""
+"""读取 T13.3 在线运行时配置；秘密只从当前进程环境取得。"""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 
 load_dotenv(override=False)
 
 
-def _resolve_path(value: str, base: Path) -> Path:
-    path = Path(value)
-    return path.resolve() if path.is_absolute() else (base / path).resolve()
+def _integer(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} 必须位于 {minimum}..{maximum}")
+    return value
+
+
+def _float(name: str, default: float, minimum: float, maximum: float) -> float:
+    value = float(os.getenv(name, str(default)))
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} 必须位于 {minimum}..{maximum}")
+    return value
 
 
 @dataclass(frozen=True)
-class Settings:
-    """启动期配置快照；路径均解析为绝对路径，秘密只从进程环境读取。"""
-    project_root: Path
-    asset_root: Path
-    bge_model_path: Path
-    model_name: str
-    question_score_threshold: float
-    knowledge_score_threshold: float
-    vector_candidate_k: int
-    keyword_candidate_k: int
-    rerank_top_k: int
-    max_step_retries: int
-    max_llm_calls: int
-    database_url: str | None
-    neo4j_uri: str
-    neo4j_user: str
-    neo4j_password: str | None
+class RuntimeSettings:
+    """在线运行时的不可变配置快照；对象本身不得整体写日志。"""
 
-    @property
-    def question_index_path(self) -> Path:
-        return self.asset_root / "faiss_question_db"
-
-    @property
-    def knowledge_index_path(self) -> Path:
-        return self.asset_root / "faiss_knowledge_points"
+    openai_base_url: str
+    openai_api_key: str | None
+    chat_model_name: str
+    vision_model_name: str
+    model_request_timeout_seconds: float
+    retrieval_enabled: bool
+    conversation_compression_threshold_chars: int
 
 
-def load_settings() -> Settings:
-    """从环境变量读取配置，缺省路径相对项目根目录解析。
+def load_runtime_settings() -> RuntimeSettings:
+    """加载模型、检索和压缩配置；不连接供应商、Qdrant、Neo4j 或数据库。"""
 
-    返回值只保存本进程所需设置，不创建目录或外部资源；数值格式错误会在启动期直接抛出，
-    避免以含糊的回退值运行。
-    """
-    project_root = Path(__file__).resolve().parents[1]
-    asset_root = _resolve_path(
-        os.getenv("EDU_AGENT_ASSET_ROOT", "../edu_agent/智能体项目"),
-        project_root,
-    )
-    bge_model_path = _resolve_path(
-        os.getenv("BGE_MODEL_PATH", "../edu_agent/bge-base-zh"),
-        project_root,
-    )
-    return Settings(
-        project_root=project_root,
-        asset_root=asset_root,
-        bge_model_path=bge_model_path,
-        model_name=os.getenv("MODEL_NAME", "qwen3.5-flash"),
-        question_score_threshold=float(os.getenv("QUESTION_SCORE_THRESHOLD", "0.42")),
-        knowledge_score_threshold=float(os.getenv("KNOWLEDGE_SCORE_THRESHOLD", "0.38")),
-        vector_candidate_k=int(os.getenv("VECTOR_CANDIDATE_K", "30")),
-        keyword_candidate_k=int(os.getenv("KEYWORD_CANDIDATE_K", "30")),
-        rerank_top_k=int(os.getenv("RERANK_TOP_K", "10")),
-        max_step_retries=int(os.getenv("MAX_STEP_RETRIES", "3")),
-        max_llm_calls=int(os.getenv("MAX_LLM_CALLS", "30")),
-        database_url=os.getenv("DATABASE_URL") or None,
-        neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-        neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
-        neo4j_password=os.getenv("NEO4J_PASSWORD") or None,
+    chat_model = os.getenv("CHAT_MODEL_NAME") or os.getenv("MODEL_NAME") or "qwen3.8-flash"
+    vision_model = os.getenv("VISION_MODEL_NAME") or chat_model
+    if not chat_model.strip() or not vision_model.strip():
+        raise ValueError("CHAT_MODEL_NAME 与 VISION_MODEL_NAME 不能为空")
+    return RuntimeSettings(
+        openai_base_url=os.getenv(
+            "OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ).rstrip("/"),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        chat_model_name=chat_model,
+        vision_model_name=vision_model,
+        model_request_timeout_seconds=_float("AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", 30.0, 1.0, 90.0),
+        retrieval_enabled=os.getenv("AGENT_ONLINE_RETRIEVAL_ENABLED", "true").lower() == "true",
+        conversation_compression_threshold_chars=_integer(
+            "AGENT_CONTEXT_COMPRESSION_THRESHOLD_CHARS", 12_000, 2_000, 100_000
+        ),
     )
 
 
-def create_llm(settings: Settings):
-    """创建确定性聊天模型客户端；实际网络调用发生在工作流节点执行时。"""
-    from langchain_openai import ChatOpenAI
+def build_runtime(settings: RuntimeSettings | None = None):
+    """组装模型、T13.2 混合检索和有界知识图；绝不加载旧 FAISS 或 PostgreSQL。"""
 
-    return ChatOpenAI(model=settings.model_name, temperature=0)
+    from .runtime.model import ModelSettings, OpenAICompatibleModel
+    from .runtime.service import DynamicAgentRuntime
+    from .runtime.session import ConversationStore
+    from .runtime.tools import ToolExecutor
 
+    settings = settings or load_runtime_settings()
+    model = OpenAICompatibleModel(ModelSettings(
+        base_url=settings.openai_base_url,
+        api_key=settings.openai_api_key,
+        chat_model_name=settings.chat_model_name,
+        vision_model_name=settings.vision_model_name,
+        request_timeout_seconds=settings.model_request_timeout_seconds,
+    ))
+    search = None
+    graph = None
+    if settings.retrieval_enabled:
+        from .indexing.config import load_index_settings
+        from .indexing.graph_store import Neo4jKnowledgeGraph
+        from .indexing.models_runtime import DenseEncoder, LocalReranker
+        from .indexing.qdrant_store import QdrantIndex
+        from .indexing.retriever import HybridSearchService
 
-def create_embeddings(settings: Settings):
-    """从本地模型目录加载归一化嵌入模型，并按可用性选择 CUDA 或 CPU。"""
-    import torch
-    from langchain_huggingface import HuggingFaceEmbeddings
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    return HuggingFaceEmbeddings(
-        model_name=str(settings.bge_model_path),
-        model_kwargs={"device": device},
-        encode_kwargs={"normalize_embeddings": True},
-    )
-
-
-def load_faiss(path: Path, embeddings):
-    """加载受信任的本地 FAISS 索引，索引缺失时终止启动且不自动重建。
-
-    ``allow_dangerous_deserialization`` 仅因历史索引包含 pickle 而开启，因此调用方必须保证
-    ``path`` 指向项目维护者提供的可信本地资产，不能用于用户上传文件。
-    """
-    from langchain_community.vectorstores import FAISS
-
-    if not path.exists():
-        raise FileNotFoundError(f"找不到 FAISS 索引：{path}")
-    # 索引来自受信任的本地旧项目。不要对不可信的 pickle 文件开启此选项。
-    return FAISS.load_local(
-        folder_path=str(path),
-        embeddings=embeddings,
-        allow_dangerous_deserialization=True,
+        index_settings = load_index_settings()
+        index_settings.validate_runtime(require_secrets=False)
+        encoder = DenseEncoder(index_settings.bge_model_path, index_settings.bge_model_version)
+        reranker = LocalReranker(index_settings.reranker_model_path, index_settings.reranker_model_version)
+        index = QdrantIndex(
+            index_settings.qdrant_url, index_settings.source_namespace,
+            index_settings.bge_model_version, index_settings.qdrant_timeout_seconds,
+        )
+        search = HybridSearchService(index_settings, index, encoder, reranker)
+        if index_settings.neo4j_enabled and index_settings.neo4j_password:
+            graph = Neo4jKnowledgeGraph(
+                index_settings.neo4j_uri, index_settings.neo4j_user,
+                index_settings.neo4j_password, index_settings.source_namespace,
+                index_settings.graph_timeout_seconds,
+            )
+    tools = ToolExecutor(search_service=search, graph=graph, model=model)
+    return DynamicAgentRuntime(
+        model=model,
+        tools=tools,
+        sessions=ConversationStore(settings.conversation_compression_threshold_chars),
     )

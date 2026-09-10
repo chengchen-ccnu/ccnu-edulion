@@ -1,79 +1,64 @@
 # EDU 在线网课平台
 
-本仓库正在按 T01 + T02 + T03 建立在线网课平台 Monorepo 基线：
+本仓库是在线网课平台 Monorepo：
 
 ```text
-java-platform/   Gateway、五个领域服务与 shared-kernel 的 Maven 多模块工程
-edu_agent_app/   已有 Python 数学智能体（原地复用，不重新实现）
+java-platform/   Gateway、领域服务、Agent Access 与 shared-kernel
+edu_agent_app/   T13 动态数学 Agent 在线运行时和独立索引 Worker
 web-apps/        学生端、教师端、管理端与共享 packages
-docs/            OpenAPI、事件、前端、ADR 与路线图事实来源
+docs/            OpenAPI、事件、架构、交付与路线图事实来源
 ```
 
-仓库级规则和完整验证命令见 `AGENTS.md`，本地 MySQL/Redis/OSS/RabbitMQ 配置约定见 `docs/development/local-environment.md`，当前 API 见 `docs/api/openapi.yaml`。登录权限、课程/目录与通用媒体后端纵向切片已经实现；课程页面的媒体绑定与播放由 T08 接入。当前没有引入 MinIO、Docker、支付、Elasticsearch 或 Kubernetes。
+仓库规则和完整验证命令见 `AGENTS.md`，本地依赖与凭据约定见
+`docs/development/local-environment.md`。外部 REST API 以 `docs/api/openapi.yaml` 为唯一事实源，
+Java 与 Python 内部协议以 `docs/api/agent-internal.yaml` 为事实源。
 
-## Python Agent（精简拆分版）
+## Python Agent
 
-这是从相邻旧项目 `../edu_agent/智能体项目` 拆分出的核心服务。代码放在当前项目，大型题库、FAISS 索引、BGE 模型和 EduAgentV7 权重继续按路径复用，避免重复复制约 GB 级资产。
-
-## 目录
+在线入口实现 T13.3 动态五角色运行时：Coordinator 先做规则＋结构化模型意图/槽位识别，
+然后在 Math Tutor、Practice Coach、Study Planner、Platform Help 中选择一个专家；一次最多处理
+两个有序子请求，工具、模型、转交和时限都受 T13.1 每轮预算约束。Platform Help 在 T13.4 前
+明确不可用。旧固定认知诊断、固定解题图、FAISS、人工教师转交、PostgreSQL checkpoint 和
+无界递归已从在线实现及依赖中移除。
 
 ```text
 edu_agent_app/
-  config.py       环境变量、模型和索引加载
-  state.py        LangGraph 状态与结构化输出
-  policy.py       教学降级顺序与模型调用预算
-  retrieval.py    BM25 + FAISS 混合检索、重排、阈值、Neo4j
-  workflow.py     两级检索回退、分步教学、循环保护
-  api.py          FastAPI、SSE、会话中断与恢复
-  __main__.py     标准模块与 console script 入口
-server.py         兼容旧启动方式的入口
-tests/            不依赖外部数据库的核心规则测试
+  api.py                 T13.1 内部 HTTP/SSE、取消、冲突与安全错误
+  config.py              百炼模型和 T13.2 在线检索装配
+  runtime/               意图、预算、五角色、只读工具、多轮压缩和候选记忆
+  indexing/              Qdrant/Neo4j 混合检索与独立 Index Worker
+  __main__.py            在线服务和 index-worker 双启动入口
+tests/                    契约、运行时、检索和 Worker 测试
 ```
 
-## 检索设计
+在线检索严格复用 T13.2 的 Qdrant dense＋multilingual BM25＋RRF＋本地 reranker；Neo4j 只做
+有界前置关系增强。课程候选在进入模型前必须通过 Java 复核适配器；当前冻结契约尚未提供该
+回调端点，因此未配置复核器时 fail-closed 剔除课程候选，不退化为全库搜索。
 
-保留原来的两级设计，但修正“检索失败就等于非数学问题”的误判：
+## 本地运行
 
-1. 题库执行 BM25 关键词召回和 FAISS 向量召回。
-2. 合并候选，以 `向量 0.55 + BM25 0.35 + 术语覆盖 0.10` 重排并应用阈值。
-3. 题库没有可靠知识点时，让 LLM 预估可能的规范知识点名称。
-4. 使用“原问题 + 预估知识点”在知识点库再次执行混合检索和重排。
-5. 两个库都失败时单独判断数学领域：
-   - 高置信度非数学问题：礼貌拒绝。
-   - 仍属于数学但超出索引覆盖：标记为 `math_fallback`，允许低置信度直接解题。
-
-默认阈值只是初始值，必须用真实题目评测集校准。检索跟踪结果会保存到 LangGraph 状态的 `retrieval_trace`，便于分析误召回和漏召回。
-
-## 防止无限循环
-
-同一步骤的补救顺序固定为：
-
-1. 换一种更直白的表述；
-2. 补充简单例子；
-3. 回退讲解前置知识；
-4. 学生仍不理解时停止循环，建议教师介入或稍后复习。
-
-另外设置：
-
-- `MAX_STEP_RETRIES`：单步骤最大补救次数，默认 3；
-- `MAX_LLM_CALLS`：同一 `thread_id` 的模型调用预算，默认 30；
-- LangGraph `recursion_limit=80`：最后一道图执行保险。
-
-## 运行
+先按本地环境文档初始化安全配置，再通过统一包装器运行：
 
 ```powershell
-Copy-Item .env.example .env
-conda activate langgraph
-python -m pip install -e .
-python -m edu_agent_app
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    python -m pip install -e .
+    python -m edu_agent_app
+}
 ```
 
-`.env` 中至少需要配置模型 API 密钥。默认资产路径就是当前目录旁边的旧项目；如果移动了数据，请修改 `EDU_AGENT_ASSET_ROOT` 和 `BGE_MODEL_PATH`。
+在线服务监听 8000，只供 `agent-access-service` 调用。聊天和视觉分别读取
+`CHAT_MODEL_NAME`、`VISION_MODEL_NAME`；API Key 只从安全包装环境注入。独立索引 Worker：
 
-没有配置 `DATABASE_URL` 时，会使用内存 checkpoint，重启后会话消失；配置 PostgreSQL 后可以持久化会话。Neo4j 密码留空时，系统仍可运行，但第三次补救只能让模型推断前置概念。
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+    python -m edu_agent_app index-worker
+}
+```
 
 ## 测试
 
 ```powershell
-conda run -n langgraph python -m unittest discover -s tests -v
+python -m compileall -q edu_agent_app server.py tests
+python -m unittest discover -s tests -v
+python -m pip wheel --no-deps --wheel-dir .m2/python-wheels .
 ```

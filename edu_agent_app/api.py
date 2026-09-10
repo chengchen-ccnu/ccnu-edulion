@@ -1,202 +1,135 @@
-"""数学智能体的 HTTP/SSE 适配层，负责初始化本地模型资产并恢复多轮会话状态。"""
+"""T13.1 内部 HTTP/SSE 适配层；仅供 Java agent-access-service 调用。"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from .config import (
-    create_embeddings,
-    create_llm,
-    load_faiss,
-    load_settings,
-)
-from .retrieval import HybridRetriever, KnowledgeGraph, RetrievalServices
-from .workflow import WorkflowServices, create_workflow
+from .config import build_runtime
+from .runtime.protocol import AgentRunRequest, CancelRunRequest
+from .runtime.service import DynamicAgentRuntime, RunConflict
 
 
-runtime: dict[str, Any] = {}
-
-
-def _build_retrieval(settings, embeddings) -> RetrievalServices:
-    """从只读 FAISS 索引和 Neo4j 连接配置组装检索服务。
-
-    启动时索引或图数据库配置不可用会直接导致应用初始化失败；本函数不创建、覆盖索引，
-    也不向 Java 平台数据库写入数据。
-    """
-    question_store = load_faiss(settings.question_index_path, embeddings)
-    knowledge_store = load_faiss(settings.knowledge_index_path, embeddings)
-    return RetrievalServices(
-        question=HybridRetriever(
-            question_store,
-            score_threshold=settings.question_score_threshold,
-            vector_k=settings.vector_candidate_k,
-            keyword_k=settings.keyword_candidate_k,
-            rerank_top_k=settings.rerank_top_k,
-        ),
-        knowledge=HybridRetriever(
-            knowledge_store,
-            score_threshold=settings.knowledge_score_threshold,
-            vector_k=settings.vector_candidate_k,
-            keyword_k=settings.keyword_candidate_k,
-            rerank_top_k=settings.rerank_top_k,
-        ),
-        graph=KnowledgeGraph(
-            settings.neo4j_uri,
-            settings.neo4j_user,
-            settings.neo4j_password,
-        ),
-    )
+def _safe_error(code: str, message: str, retryable: bool, trace_id: str) -> dict[str, Any]:
+    return {"code": code, "message": message, "retryable": retryable, "traceId": trace_id}
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
-    """在应用生命周期内初始化工作流、检查点存储和知识图谱连接。
+async def lifespan(app: FastAPI):
+    """在工作线程装配本地检索模型，退出时只关闭连接池，不修改派生索引。"""
 
-    配置了 ``DATABASE_URL`` 时会由 LangGraph 在该 PostgreSQL 中维护会话检查点；否则仅使用
-    进程内存。退出时清空运行时引用并关闭 Neo4j 驱动，不修改 FAISS 文件。
-    """
-    settings = load_settings()
-    embeddings = create_embeddings(settings)
-    retrieval = _build_retrieval(settings, embeddings)
-    workflow = create_workflow(
-        WorkflowServices(
-            llm=create_llm(settings),
-            retrieval=retrieval,
-            settings=settings,
-        )
-    )
-
+    if getattr(app.state, "runtime", None) is None:
+        app.state.runtime = await asyncio.to_thread(build_runtime)
     try:
-        if settings.database_url:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-            async with AsyncPostgresSaver.from_conn_string(
-                settings.database_url
-            ) as checkpointer:
-                await checkpointer.setup()
-                runtime["agent"] = workflow.compile(
-                    checkpointer=checkpointer,
-                    interrupt_before=["assess_feedback"],
-                )
-                runtime["settings"] = settings
-                yield
-        else:
-            from langgraph.checkpoint.memory import InMemorySaver
-
-            runtime["agent"] = workflow.compile(
-                checkpointer=InMemorySaver(),
-                interrupt_before=["assess_feedback"],
-            )
-            runtime["settings"] = settings
-            yield
+        yield
     finally:
-        runtime.clear()
-        await retrieval.graph.close()
+        runtime = getattr(app.state, "runtime", None)
+        graph = getattr(getattr(runtime, "tools", None), "graph", None)
+        if graph is not None:
+            await asyncio.to_thread(graph.close)
+        model = getattr(runtime, "model", None)
+        close_model = getattr(model, "close", None)
+        if close_model is not None:
+            await close_model()
 
 
-app = FastAPI(title="Edu Agent API", version="2.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+def create_app(runtime: DynamicAgentRuntime | None = None) -> FastAPI:
+    """创建内部应用；测试可注入完全离线的运行时，不访问真实模型或索引。"""
 
+    app = FastAPI(title="Edu Agent Internal Runtime", version="1.0.0", lifespan=lifespan)
+    app.state.runtime = runtime
 
-class ChatRequest(BaseModel):
-    """一次学生输入；``thread_id`` 是恢复 LangGraph 检查点的会话幂等键。"""
-    prompt: str = Field(min_length=1, max_length=10_000)
-    thread_id: str = Field(min_length=1, max_length=128)
-    image_url: str | None = None
-
-
-@app.get("/health")
-async def health() -> dict:
-    """返回工作流是否完成初始化，不探测外部模型或索引的实时健康状态。"""
-    return {"status": "ok" if runtime.get("agent") else "starting"}
-
-
-def _ai_messages(output: Any) -> list[str]:
-    """从单个节点更新中提取非空 AI 消息，忽略状态字段和学生消息。"""
-    if not isinstance(output, dict):
-        return []
-    messages = output.get("messages") or []
-    return [
-        str(message.content)
-        for message in messages
-        if isinstance(message, AIMessage) and str(message.content).strip()
-    ]
-
-
-@app.post("/generate_stream")
-async def generate_stream(request: ChatRequest):
-    """继续或创建一个教学会话，并以 SSE 逐节点返回完整 AI 消息。
-
-    当 ``thread_id`` 对应快照停在反馈中断点时，请求被视为学生对当前步骤的反馈；否则创建
-    新一轮题目输入。检查点写入由 LangGraph 后端负责，重复使用同一会话 ID 会继续既有状态，
-    而不是重新开始。初始化未完成返回 503，运行期异常则转换为 SSE ``error`` 事件。
-    """
-    agent = runtime.get("agent")
-    settings = runtime.get("settings")
-    if agent is None or settings is None:
-        raise HTTPException(status_code=503, detail="智能体尚未初始化")
-
-    config = {
-        "configurable": {"thread_id": request.thread_id},
-        # 即使业务路由失误，LangGraph 本身也会在达到递归上限时停止。
-        "recursion_limit": 80,
-    }
-    snapshot = await agent.aget_state(config)
-
-    if snapshot.next:
-        await agent.aupdate_state(
-            config,
-            {"messages": [HumanMessage(content=request.prompt)]},
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_request: Request, _exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content=_safe_error("AGENT.REQUEST_INVALID", "请求不符合内部协议。", False, "trace-invalid-request"),
         )
-        run_input = None
-    else:
-        previous_calls = int(snapshot.values.get("llm_call_count", 0)) if snapshot.values else 0
-        run_input = {
-            "messages": [HumanMessage(content=request.prompt)],
-            "user_image_url": request.image_url,
-            "llm_call_count": previous_calls,
-            "max_llm_calls": settings.max_llm_calls,
-            "max_step_retries": settings.max_step_retries,
-            "stop_reason": "",
-        }
 
-    async def event_generator():
-        """把 LangGraph 节点更新转换为 SSE 数据帧，并始终给出结束或错误事件。"""
-        try:
-            async for event in agent.astream(
-                run_input,
-                config=config,
-                stream_mode="updates",
-            ):
-                if not isinstance(event, dict):
-                    continue
-                for node, output in event.items():
-                    for content in _ai_messages(output):
-                        payload = json.dumps(
-                            {"content": content, "node": node, "type": "full"},
-                            ensure_ascii=False,
-                        )
-                        yield f"data: {payload}\n\n"
-            yield "event: end\ndata: [DONE]\n\n"
-        except Exception as exc:
-            payload = json.dumps(
-                {"content": f"AI运行出错：{exc}", "node": "error", "type": "error"},
-                ensure_ascii=False,
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok" if getattr(app.state, "runtime", None) else "starting"}
+
+    @app.post("/internal/v1/agent/runs")
+    async def execute_run(
+        request: AgentRunRequest,
+        x_agent_internal_protocol_version: str = Header(alias="X-Agent-Internal-Protocol-Version"),
+    ):
+        if x_agent_internal_protocol_version != "1":
+            raise HTTPException(
+                status_code=422,
+                detail=_safe_error("AGENT.PROTOCOL_VERSION", "只支持内部协议版本 1。", False, request.traceId),
             )
-            yield f"data: {payload}\n\n"
+        runtime_value = getattr(app.state, "runtime", None)
+        if runtime_value is None:
+            raise HTTPException(
+                status_code=503,
+                detail=_safe_error("AGENT.RUNTIME_UNAVAILABLE", "Agent 服务尚未就绪。", True, request.traceId),
+            )
+        try:
+            handle, replayed = await runtime_value.open_run(request)
+        except RunConflict:
+            return JSONResponse(
+                status_code=409,
+                content=_safe_error("AGENT.RUN_CONFLICT", "此会话正在回答，请等待当前回答结束后重试。", True, request.traceId),
+            )
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+        async def frames():
+            """每个事件只写 data JSON；断线会关闭生成器并触发运行时取消。"""
+
+            async for event in runtime_value.stream(handle, replayed=replayed):
+                yield "data: " + json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+
+        return StreamingResponse(
+            frames(), media_type="text/event-stream",
+            headers={"X-Agent-Internal-Protocol-Version": "1", "Cache-Control": "no-cache"},
+        )
+
+    @app.post("/internal/v1/agent/runs/{run_id}/cancel")
+    async def cancel_run(
+        run_id: str,
+        request: CancelRunRequest,
+        x_agent_internal_protocol_version: str = Header(alias="X-Agent-Internal-Protocol-Version"),
+    ):
+        if x_agent_internal_protocol_version != "1":
+            return JSONResponse(status_code=422, content=_safe_error(
+                "AGENT.PROTOCOL_VERSION", "只支持内部协议版本 1。", False, request.traceId
+            ))
+        runtime_value = getattr(app.state, "runtime", None)
+        if runtime_value is None:
+            return JSONResponse(status_code=503, content=_safe_error(
+                "AGENT.RUNTIME_UNAVAILABLE", "Agent 服务尚未就绪。", True, request.traceId
+            ))
+        try:
+            outcome, status = await runtime_value.cancel(run_id, str(request.cancelRequestId))
+        except KeyError:
+            return JSONResponse(status_code=404, content=_safe_error(
+                "AGENT.RUN_NOT_FOUND", "run 不存在。", False, request.traceId
+            ))
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "cancelRequestId": str(request.cancelRequestId),
+            "outcome": outcome,
+            "traceId": request.traceId,
+        }
+        if status:
+            payload["terminalStatus"] = status.value
+        return payload
+
+    @app.exception_handler(HTTPException)
+    async def safe_http_error(_request: Request, exc: HTTPException):
+        content = exc.detail if isinstance(exc.detail, dict) else _safe_error(
+            "AGENT.HTTP_ERROR", "内部请求失败。", exc.status_code >= 500, "trace-http-error"
+        )
+        return JSONResponse(status_code=exc.status_code, content=content)
+
+    return app
+
+
+app = create_app()
