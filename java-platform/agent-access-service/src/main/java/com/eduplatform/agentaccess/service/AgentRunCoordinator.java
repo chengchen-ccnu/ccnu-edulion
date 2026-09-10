@@ -171,6 +171,7 @@ public class AgentRunCoordinator {
                 Map.entry("traceId", prepared.run().traceId()),
                 Map.entry("requestedAt", prepared.run().createdAt().toString()),
                 Map.entry("userMessage", Map.of("text", prepared.userMessage().content(), "locale", "zh-CN")),
+                Map.entry("recentMessages", prepared.recentMessages()),
                 Map.entry("trustedContext", prepared.context().trustedContext()),
                 Map.entry("budget", budget), Map.entry("timeoutPolicy", timeout));
         return mapper.valueToTree(request);

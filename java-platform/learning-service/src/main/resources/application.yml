@@ -21,6 +21,9 @@ platform:
     agent-index:
       enabled: ${AGENT_INDEX_API_ENABLED:false}
       service-token: ${AGENT_INDEX_SERVICE_TOKEN:}
+    agent-access:
+      enabled: ${AGENT_ACCESS_DOMAIN_API_ENABLED:false}
+      service-token: ${AGENT_ACCESS_DOMAIN_TOKEN:}
     assessment-settlement-poll-delay: ${LEARNING_ASSESSMENT_SETTLEMENT_POLL_DELAY:2s}
     progress-buffer:
       # 默认构建不启用 Redis 缓冲；local profile 由 application-local.yml 显式开启并要求 Redis。

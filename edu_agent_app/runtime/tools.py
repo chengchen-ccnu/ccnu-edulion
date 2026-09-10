@@ -148,10 +148,11 @@ class ToolExecutor:
             scopes = [scope for grant in grants for scope in grant.resourceScopes]
             granted_ids = {value for scope in scopes for value in (scope.resourceIds or [])}
             public = any(scope.scopeType == "PUBLIC_JUNIOR_MATH" for scope in scopes)
-            if not public and not requested_ids.issubset(granted_ids):
+            self_scope = any(scope.scopeType == "USER_SELF" for scope in scopes)
+            if not public and not self_scope and not requested_ids.issubset(granted_ids):
                 raise PermissionError("工具参数超出 Java 授权资源范围")
         elif not any(
-            scope.scopeType == "PUBLIC_JUNIOR_MATH"
+            scope.scopeType in {"PUBLIC_JUNIOR_MATH", "USER_SELF"}
             for grant in grants for scope in grant.resourceScopes
         ):
             raise PermissionError("受限工具必须携带 Java 授权的精确资源 ID")
@@ -178,7 +179,7 @@ class ToolExecutor:
             if self.student_fact_reader is None:
                 return []
             return await self.student_fact_reader(
-                name, str(run.trustedContext.userId), args.get("resourceIds", []),
+                name, str(run.runId), args.get("resourceIds", []),
                 int(args.get("limit", 8)), run.traceId,
             )
         if name is ToolName.USER_HELP_SEARCH:
@@ -221,7 +222,7 @@ class ToolExecutor:
                 }
                 for hit in hits
             ]
-            allowed = await self.course_verifier(str(run.trustedContext.userId), safe_candidates, run.traceId)
+            allowed = await self.course_verifier(str(run.runId), safe_candidates, run.traceId)
             hits = [hit for hit in hits if hit.entity_id in allowed]
         evidence_type = {
             ToolName.QUESTION_SEARCH: "QUESTION",

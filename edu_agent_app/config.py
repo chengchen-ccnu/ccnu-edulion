@@ -40,6 +40,9 @@ class RuntimeSettings:
     model_request_timeout_seconds: float
     retrieval_enabled: bool
     conversation_compression_threshold_chars: int
+    agent_access_base_url: str
+    agent_runtime_callback_token: str | None
+    agent_access_timeout_seconds: float
 
 
 def load_runtime_settings() -> RuntimeSettings:
@@ -61,6 +64,9 @@ def load_runtime_settings() -> RuntimeSettings:
         conversation_compression_threshold_chars=_integer(
             "AGENT_CONTEXT_COMPRESSION_THRESHOLD_CHARS", 12_000, 2_000, 100_000
         ),
+        agent_access_base_url=os.getenv("AGENT_ACCESS_BASE_URL", "http://127.0.0.1:8086").rstrip("/"),
+        agent_runtime_callback_token=os.getenv("AGENT_RUNTIME_CALLBACK_TOKEN") or None,
+        agent_access_timeout_seconds=_float("AGENT_ACCESS_REQUEST_TIMEOUT_SECONDS", 5.0, 0.1, 30.0),
     )
 
 
@@ -104,9 +110,20 @@ def build_runtime(settings: RuntimeSettings | None = None):
                 index_settings.neo4j_password, index_settings.source_namespace,
                 index_settings.graph_timeout_seconds,
             )
-    tools = ToolExecutor(search_service=search, graph=graph, model=model)
+    callback = None
+    if settings.agent_runtime_callback_token:
+        from .runtime.agent_access_client import AgentAccessClient
+        callback = AgentAccessClient(settings.agent_access_base_url,
+                                     settings.agent_runtime_callback_token,
+                                     settings.agent_access_timeout_seconds)
+    tools = ToolExecutor(
+        search_service=search, graph=graph, model=model,
+        course_verifier=callback.verify_course if callback else None,
+        student_fact_reader=callback.read_facts if callback else None,
+    )
     return DynamicAgentRuntime(
         model=model,
         tools=tools,
         sessions=ConversationStore(settings.conversation_compression_threshold_chars),
+        telemetry=callback.report if callback else None,
     )

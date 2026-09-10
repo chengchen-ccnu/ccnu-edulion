@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.0.1
+  version: 1.1.0
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -9,8 +9,8 @@ info:
     复制到 trustedContext。
 
     Python 私有运行状态（提示词、路由草稿、模型推理、工具原始结果、剩余内部工作集等）不是
-    HTTP DTO，也不得出现在流事件、日志或持久消息中。首期只冻结契约，不表示 Java/Python
-    在线运行时已经实现。
+    HTTP DTO，也不得出现在流事件、日志或持久消息中。T14.2.1 向前增加可选最近消息窗口以及
+    Python 回调 Agent Access 的候选复核、学习事实读取和私有结果报告；既有 v1 请求体仍有效。
 servers:
   - url: http://edu-agent.internal
     description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
@@ -143,6 +143,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/SafeError'
 
+  /internal/v1/agent/runs/{runId}/course-candidates:verify:
+    post:
+      tags: [AgentRun]
+      operationId: verifyCourseCandidates
+      summary: 按 run 的数据库 owner 批量复核课程检索候选
+      description: 请求不含 userId。Agent Access 必须从 ai_run 取得 owner，再由 Course 同时校验 entity/course/version/lesson/revision、当前发布状态和当前访问资格；依赖失败返回错误且不得回退整课搜索。
+      parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/InternalCaller'}, {$ref: '#/components/parameters/InternalToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/VerifyCourseCandidatesRequest'}}}}
+      responses:
+        '200': {description: 只返回仍获授权的候选 ID。, content: {application/json: {schema: {$ref: '#/components/schemas/VerifyCourseCandidatesResponse'}}}}
+        '401': {description: Runtime 服务身份无效。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+        '503': {description: Course 不可用；调用方必须 fail-closed。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+
+  /internal/v1/agent/runs/{runId}/student-facts:query:
+    post:
+      tags: [AgentRun]
+      operationId: queryStudentFacts
+      summary: 按 run 的数据库 owner 读取四类安全学习事实
+      description: 请求不含 userId；提交仅允许最终有效 attempt，成绩仅允许已公布成绩，响应不得含官方答案、解析或其他用户事实。
+      parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/InternalCaller'}, {$ref: '#/components/parameters/InternalToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/StudentFactsRequest'}}}}
+      responses:
+        '200': {description: 当前 owner 的安全事实。, content: {application/json: {schema: {$ref: '#/components/schemas/StudentFactsResponse'}}}}
+        '401': {description: Runtime 服务身份无效。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+        '503': {description: Learning 不可用；不得返回缓存或他人数据。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+
+  /internal/v1/agent/runs/{runId}/result-report:
+    put:
+      tags: [AgentRun]
+      operationId: reportAgentRunResult
+      summary: 终态后幂等保存 Python 私有运行结果报告
+      description: 报告不进入 SSE、日志或公开消息；T14.2.1 暂存于 ai_run，T14.2.2 再规范化到额度/审计/记忆事实。同 reportId 同内容重放成功，不同内容冲突。
+      parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/InternalCaller'}, {$ref: '#/components/parameters/InternalToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RunResultReportRequest'}}}}
+      responses:
+        '200': {description: 首次保存或严格幂等重放。, content: {application/json: {schema: {$ref: '#/components/schemas/RunResultReportResponse'}}}}
+        '409': {description: run 未终态或已存在不同报告。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+
 components:
   parameters:
     ProtocolVersion:
@@ -153,6 +191,22 @@ components:
         type: string
         const: '1'
       description: 不兼容变更使用新内部路径和新协议版本，不静默改变 v1。
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    InternalCaller:
+      name: X-Internal-Caller
+      in: header
+      required: true
+      schema: {type: string, const: edu-agent-runtime}
+    InternalToken:
+      name: X-Internal-Service-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 32, writeOnly: true}
+      description: AGENT_RUNTIME_CALLBACK_TOKEN；不得进入日志、响应、SSE 或持久消息。
   headers:
     ProtocolVersion:
       schema:
@@ -193,6 +247,12 @@ components:
         traceId: {$ref: '#/components/schemas/TraceId'}
         requestedAt: {type: string, format: date-time}
         userMessage: {$ref: '#/components/schemas/UserMessage'}
+        recentMessages:
+          type: array
+          maxItems: 12
+          default: []
+          items: {$ref: '#/components/schemas/RecentMessage'}
+          description: 可选向前兼容窗口；按 sequenceNo 升序，总正文最多 16000 字符，且不含当前 messageId。
         trustedContext: {$ref: '#/components/schemas/TrustedContext'}
         budget: {$ref: '#/components/schemas/RunBudget'}
         timeoutPolicy: {$ref: '#/components/schemas/TimeoutPolicy'}
@@ -223,6 +283,18 @@ components:
           description: 只有学生主动勾选附加时才能为 true；页面草稿不得被 Java 自动附带。
         content: {type: string, minLength: 1, maxLength: 20000}
         status: {type: string, const: STUDENT_DRAFT}
+
+    RecentMessage:
+      type: object
+      additionalProperties: false
+      required: [messageId, role, content, completeness, sequenceNo]
+      properties:
+        messageId: {type: string, format: uuid}
+        role: {type: string, enum: [USER, ASSISTANT]}
+        content: {type: string, minLength: 1, maxLength: 10000}
+        completeness: {type: string, enum: [COMPLETE, PARTIAL]}
+        sequenceNo: {type: integer, minimum: 1}
+      description: 只来自 Agent Access 已持久化 ai_message；排除当前消息、临时 URL、Token、工具原始结果和隐藏画像。
 
     TrustedContext:
       type: object
@@ -827,10 +899,14 @@ components:
     StudentFactArguments:
       type: object
       additionalProperties: false
-      required: [userId, limit]
+      required: [limit]
       properties:
-        userId: {type: string, format: uuid}
-        limit: {type: integer, minimum: 1, maximum: 50}
+        userId:
+          type: string
+          format: uuid
+          deprecated: true
+          description: 仅为 v1 旧调用兼容保留；Runtime 和 Agent Access 必须忽略，可信 owner 只按 runId 查询数据库。
+        limit: {type: integer, minimum: 1, maximum: 20}
         resourceIds:
           type: array
           maxItems: 100
@@ -851,6 +927,76 @@ components:
           uniqueItems: true
           items: {type: string, format: uuid}
         limit: {type: integer, minimum: 1, maximum: 20}
+
+    VerifyCourseCandidatesRequest:
+      type: object
+      additionalProperties: false
+      required: [candidates]
+      properties:
+        candidates: {type: array, minItems: 1, maxItems: 20, items: {$ref: '#/components/schemas/CourseCandidate'}}
+    CourseCandidate:
+      type: object
+      additionalProperties: false
+      required: [entityId, courseId, courseVersionId, lessonId, sourceRevision]
+      properties:
+        entityId: {type: string, format: uuid}
+        courseId: {type: string, format: uuid}
+        courseVersionId: {type: string, minLength: 1, maxLength: 80}
+        lessonId: {type: string, format: uuid}
+        sourceRevision: {type: integer, minimum: 1}
+    VerifyCourseCandidatesResponse:
+      type: object
+      additionalProperties: false
+      required: [allowedEntityIds]
+      properties:
+        allowedEntityIds: {type: array, maxItems: 20, uniqueItems: true, items: {type: string, format: uuid}}
+    StudentFactsRequest:
+      type: object
+      additionalProperties: false
+      required: [toolName, limit]
+      properties:
+        toolName: {type: string, enum: [STUDENT_WRONG_QUESTIONS, STUDENT_SUBMISSIONS, STUDENT_PUBLISHED_GRADES, STUDENT_PROGRESS]}
+        resourceIds: {type: array, maxItems: 100, uniqueItems: true, items: {type: string, format: uuid}}
+        limit: {type: integer, minimum: 1, maximum: 20}
+    SafeStudentFact:
+      type: object
+      additionalProperties: false
+      required: [evidenceId, title, summary, revision]
+      properties:
+        evidenceId: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 200}
+        summary: {type: string, minLength: 1, maxLength: 4000}
+        revision: {type: integer, minimum: 0}
+    StudentFactsResponse:
+      type: object
+      additionalProperties: false
+      required: [facts]
+      properties:
+        facts: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/SafeStudentFact'}}
+    RunResultReportRequest:
+      type: object
+      additionalProperties: false
+      required: [reportId, model, modelCalls, visionCalls, toolAttempts, promptTokens, completionTokens, phaseDurationsMs, terminationReason, memoryCandidates]
+      properties:
+        reportId: {type: string, format: uuid}
+        model: {type: string, minLength: 1, maxLength: 120}
+        modelCalls: {type: integer, minimum: 0, maximum: 16}
+        visionCalls: {type: integer, minimum: 0, maximum: 16}
+        toolAttempts: {type: integer, minimum: 0, maximum: 20}
+        promptTokens: {type: integer, minimum: 0, maximum: 10000000}
+        completionTokens: {type: integer, minimum: 0, maximum: 10000000}
+        phaseDurationsMs: {type: object, maxProperties: 32, additionalProperties: {type: integer, minimum: 0, maximum: 180000}}
+        terminationReason: {type: string, minLength: 1, maxLength: 80}
+        memoryCandidates: {type: array, maxItems: 8, items: {type: string, maxLength: 500}}
+      description: 私有字段禁止进入浏览器 SSE、公开消息或 INFO 日志；T14.2.1 不创建长期记忆/画像表。
+    RunResultReportResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, reportId, replayed]
+      properties:
+        runId: {type: string, format: uuid}
+        reportId: {type: string, format: uuid}
+        replayed: {type: boolean}
 
     ImageArguments:
       type: object

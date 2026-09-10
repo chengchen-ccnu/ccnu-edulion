@@ -17,6 +17,9 @@ platform:
     agent-index:
       enabled: false
       service-token: test-only-agent-index-service-token-32-bytes
+    agent-access:
+      enabled: false
+      service-token: test-only-agent-domain-token-32-bytes
     enrollment-messaging:
       enabled: false
     seed:

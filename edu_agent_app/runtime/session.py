@@ -8,11 +8,14 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from .budget import RunLimits
-from .protocol import AuthorizedMemorySummary, LearningPreference
+from .protocol import AuthorizedMemorySummary, LearningPreference, RecentMessage
 
 
 _URL = re.compile(r"https?://\S+", re.I)
-_SIGNED = re.compile(r"(?i)(signature|token|accesskey|x-oss-[a-z-]+)\s*[=:]\s*\S+")
+_SIGNED = re.compile(
+    r"(?i)(signature|token|accesskey|authorization|x-oss-[a-z-]+)\s*"
+    r"(?:[=:]\s*|\s+)(?:bearer\s+)?[^\s,;]+"
+)
 _FORMULA = re.compile(r"(?:\$[^$]{1,300}\$|\\\([^)]{1,300}\\\)|[A-Za-z0-9()^+\-*/=]{3,})")
 
 
@@ -44,14 +47,22 @@ class ConversationStore:
         conversation_id: str,
         java_summaries: Iterable[AuthorizedMemorySummary],
         preferences: Iterable[LearningPreference],
+        recent_messages: Iterable[RecentMessage] | None = None,
     ) -> str:
         """合并 Java 已授权摘要与最近消息；秘密、工具原始结果和隐藏画像从不在输入结构中。"""
 
         state = self.get(conversation_id)
         sections = [item.text for item in java_summaries]
-        if state.summary:
+        java_recent = list(recent_messages or [])
+        if state.summary and not java_recent:
             sections.append(state.summary)
-        recent = "\n".join(f"{role}: {text}" for role, text in state.recent_messages)
+        if java_recent:
+            recent = "\n".join(
+                f"{'学生' if item.role == 'USER' else '助手'}[{item.completeness}]: {item.content}"
+                for item in java_recent
+            )
+        else:
+            recent = "\n".join(f"{role}: {text}" for role, text in state.recent_messages)
         if recent:
             sections.append("最近对话：\n" + recent)
         explicit = [item.value for item in preferences if item.source == "EXPLICIT"]

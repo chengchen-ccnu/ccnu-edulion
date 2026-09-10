@@ -16,8 +16,10 @@ import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentQuestionRow;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.AssessmentRow;
 import com.eduplatform.learning.service.LearningAssessmentService;
+import com.eduplatform.learning.service.AgentAccessFactService;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.web.LearningDtos;
+import com.eduplatform.learning.web.AgentAccessDtos;
 import com.eduplatform.learning.web.QuestionDtos;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -44,7 +46,8 @@ import tools.jackson.databind.ObjectMapper;
  * 测试数据均为固定合成 UUID，不访问真实课程、RabbitMQ、媒体或用户数据。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "spring.datasource.url=jdbc:h2:mem:learning_t11_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
+        properties = {"spring.datasource.url=jdbc:h2:mem:learning_t11_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE",
+                "platform.learning.agent-access.enabled=true"})
 @ActiveProfiles("test")
 class LearningAssessmentIntegrationTest {
     private static final String LEARNER = "00000000-0000-4000-8000-000000011001";
@@ -55,6 +58,7 @@ class LearningAssessmentIntegrationTest {
     private static final String ASSESSMENT = "00000000-0000-4000-8000-000000013001";
 
     @Autowired LearningAssessmentService service;
+    @Autowired AgentAccessFactService agentFacts;
     @Autowired LearningAssessmentRepository repository;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper mapper;
@@ -833,6 +837,69 @@ class LearningAssessmentIntegrationTest {
                 .attemptId()).isEqualTo(second.id());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_attempt WHERE assessment_id=?",
                 Integer.class, ASSESSMENT)).isEqualTo(2);
+    }
+
+    @Test
+    /** Agent 学习事实只返回当前 owner 的最终 attempt 与已公布成绩；旧 attempt、他人和官方解析均不可见。 */
+    void agentFactsRejectOldAttemptOtherUserAndUnpublishedGrade() throws Exception {
+        service.enroll(LEARNER, COURSE, "trace-agent-facts-enroll");
+        seedHomeworkAssessment(2, QuestionModels.Type.SINGLE_CHOICE);
+        var first = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-agent-first");
+        service.submit(LEARNER, first.id(), new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), first.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001", "A"))));
+        var second = service.startCourseTaskAttempt(LEARNER, COURSE, ASSESSMENT,
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()), "trace-agent-second");
+        service.submit(LEARNER, second.id(), new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), second.revision(),
+                List.of(answer("00000000-0000-4000-8000-000000014001",
+                        "B Authorization: Bearer learning-secret"))));
+
+        var old = agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_SUBMISSIONS, List.of(UUID.fromString(first.id())), 8));
+        assertThat(old.facts()).isEmpty();
+        var current = agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_SUBMISSIONS, List.of(UUID.fromString(second.id())), 8));
+        assertThat(current.facts()).singleElement().satisfies(fact ->
+                assertThat(fact.summary()).contains("学生提交")
+                        .doesNotContain("作业解析", "标准答案", "learning-secret"));
+        assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(OTHER),
+                AgentAccessDtos.ToolName.STUDENT_SUBMISSIONS, List.of(), 8)).facts()).isEmpty();
+        assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_PUBLISHED_GRADES, List.of(), 8)).facts()).isEmpty();
+        jdbc.update("UPDATE assessment SET grade_publication_status='PUBLISHED' WHERE id=?", ASSESSMENT);
+        assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_PUBLISHED_GRADES, List.of(), 8)).facts())
+                .singleElement().satisfies(fact -> assertThat(fact.evidenceId()).isEqualTo(UUID.fromString(second.id())));
+        assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_WRONG_QUESTIONS, List.of(), 8)).facts())
+                .singleElement().satisfies(fact -> assertThat(fact.summary())
+                        .doesNotContain("作业解析", "标准答案"));
+        Instant now = Instant.now();
+        String progressId = UUID.randomUUID().toString();
+        jdbc.update("""
+                INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,position_seconds,watched_seconds,
+                    completed,last_event_at,revision,buffer_version,created_at,updated_at)
+                VALUES(?,?,?,?,120,90,TRUE,?,2,0,?,?)
+                """, progressId, LEARNER, COURSE, LESSON, java.sql.Timestamp.from(now),
+                java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
+        assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
+                AgentAccessDtos.ToolName.STUDENT_PROGRESS, List.of(), 8)).facts())
+                .singleElement().satisfies(fact -> assertThat(fact.evidenceId())
+                        .isEqualTo(UUID.fromString(progressId)));
+
+        String body = """
+                {"ownerUserId":"%s","toolName":"STUDENT_PROGRESS","resourceIds":[],"limit":8}
+                """.formatted(LEARNER);
+        var response = java.net.http.HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(
+                        java.net.URI.create("http://127.0.0.1:" + port
+                                + "/internal/v1/agent-access/student-facts:query"))
+                .header("Content-Type", "application/json")
+                .header("X-Internal-Caller", "agent-access-service")
+                .header("X-Internal-Service-Token", "test-only-agent-domain-token-32-bytes")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains(progressId).doesNotContain(OTHER, "answer", "analysis");
     }
 
     @Test

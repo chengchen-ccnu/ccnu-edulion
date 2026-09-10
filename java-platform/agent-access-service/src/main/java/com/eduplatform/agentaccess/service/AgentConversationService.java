@@ -13,8 +13,11 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -33,23 +36,30 @@ import tools.jackson.databind.ObjectMapper;
 @Service
 @ConditionalOnProperty(prefix = "platform.agent", name = "persistence-enabled", havingValue = "true")
 public class AgentConversationService {
+    private static final Pattern URL = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SECRET = Pattern.compile(
+            "(?i)(token|signature|accesskey|authorization|x-oss-[a-z-]+)\\s*"
+                    + "(?:[=:]\\s*|\\s+)(?:bearer\\s+)?[^\\s,;]+");
     private final AgentRepository repository;
     private final AuthorizedContextResolver contexts;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
+    private final com.eduplatform.agentaccess.config.AgentProperties properties;
 
     public record PreparedRun(RunRow run, MessageRow userMessage, AgentDtos.AuthorizedContext context,
-            boolean replayed) {}
+            List<AgentDtos.RecentMessage> recentMessages, boolean replayed) {}
 
     /** 会话创建结果同时标记本次是否真正插入，供 HTTP 层区分 201 与幂等重放的 200。 */
     public record ConversationCreation(AgentDtos.Conversation conversation, boolean created) {}
 
     public AgentConversationService(AgentRepository repository, AuthorizedContextResolver contexts,
-            ObjectMapper mapper, PlatformTransactionManager transactionManager) {
+            ObjectMapper mapper, PlatformTransactionManager transactionManager,
+            com.eduplatform.agentaccess.config.AgentProperties properties) {
         this.repository = repository;
         this.contexts = contexts;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.properties = properties;
     }
 
     /** 重启后的进程没有旧 HTTP 流句柄；补写唯一失败终态后释放活动槽，恢复接口仍有完整事实。 */
@@ -232,7 +242,7 @@ public class AgentConversationService {
         repository.insertMessage(assistant);
         repository.insertRun(run);
         repository.advanceConversation(conversationId, locked.nextMessageSequence() + 2, now);
-        return new PreparedRun(run, user, context, false);
+        return new PreparedRun(run, user, context, recentMessages(conversationId, user.sequenceNo()), false);
     }
 
     private PreparedRun existingRun(ConversationRow conversation, UUID clientRequestId, String fingerprint) {
@@ -246,7 +256,36 @@ public class AgentConversationService {
                 new AgentException(HttpStatus.INTERNAL_SERVER_ERROR, "AGENT.STATE_INVALID", "AI 会话状态异常"));
         AgentDtos.MessageContext stable = existing.contextJson() == null ? null
                 : read(existing.contextJson(), AgentDtos.MessageContext.class);
-        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), true);
+        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), List.of(), true);
+    }
+
+    /**
+     * 从 Agent Access 已持久化消息构造最近完整轮次。输入是当前 user 的 sequenceNo，输出按升序；
+     * 当前消息及其占位助手消息不会进入窗口，URL/Token 会在跨进程前再次删除。
+     */
+    private List<AgentDtos.RecentMessage> recentMessages(UUID conversationId, long currentSequence) {
+        int maxMessages = Math.max(0, Math.min(24, properties.recentMessageMaxTurns() * 2));
+        int maxChars = Math.max(0, Math.min(32_000, properties.recentMessageMaxChars()));
+        if (maxMessages == 0 || maxChars == 0) return List.of();
+        List<AgentDtos.RecentMessage> newest = new ArrayList<>();
+        int chars = 0;
+        for (MessageRow row : repository.listMessagesBefore(conversationId, currentSequence, maxMessages)) {
+            String safe = safeHistoryContent(row.content());
+            if (safe.isBlank()) continue;
+            int remaining = maxChars - chars;
+            if (remaining <= 0) break;
+            if (safe.length() > remaining) safe = safe.substring(0, remaining);
+            newest.add(new AgentDtos.RecentMessage(row.id(), row.role(), safe, row.completeness(), row.sequenceNo()));
+            chars += safe.length();
+        }
+        Collections.reverse(newest);
+        return List.copyOf(newest);
+    }
+
+    private static String safeHistoryContent(String content) {
+        String safe = URL.matcher(content == null ? "" : content).replaceAll("[已移除临时地址]");
+        safe = SECRET.matcher(safe).replaceAll("[已移除秘密]");
+        return safe.replace("rawToolResult", "[已移除工具原始结果]");
     }
 
     private AgentDtos.Conversation sameConversation(ConversationRow existing, String fingerprint) {
