@@ -29,10 +29,12 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     private static final Set<String> IMAGE_MIME = Set.of("image/jpeg", "image/png", "image/webp");
     private final RestClient learning;
     private final RestClient course;
+    private final MemoryContextProvider memories;
 
-    public HttpAuthorizedContextResolver(AgentProperties properties) {
+    public HttpAuthorizedContextResolver(AgentProperties properties, MemoryContextProvider memories) {
         this.learning = client(properties.learningBaseUrl(), properties);
         this.course = client(properties.courseBaseUrl(), properties);
+        this.memories = memories;
     }
 
     @Override
@@ -65,6 +67,12 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         if (question != null) trusted.put("question", authorizedQuestion(question));
         if (lesson != null) trusted.put("course", authorizedCourse(lesson));
         if (!media.isEmpty()) trusted.put("media", media.stream().map(this::authorizedMedia).toList());
+        List<Map<String, Object>> preferences = memories.preferences(userId);
+        if (!preferences.isEmpty()) trusted.put("preferences", preferences);
+        List<Map<String, Object>> memorySummaries = memories.summaries(userId,
+                lesson == null ? null : lesson.courseId(), lesson == null ? null : lesson.courseVersionId(),
+                lesson == null ? null : lesson.lessonId());
+        if (!memorySummaries.isEmpty()) trusted.put("memorySummaries", memorySummaries);
         trusted.put("toolGrants", toolGrants(question, lesson, media));
 
         AgentDtos.MessageContext stable = new AgentDtos.MessageContext(

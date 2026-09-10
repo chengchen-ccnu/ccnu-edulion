@@ -241,22 +241,20 @@ class IndexWorkerTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             RetrievalRequest("student_memories", "我的错题", "REVIEW_WRONG_QUESTION").validate()
 
-    def test_student_memory_uses_protocol_substitute_and_global_user_filter_payload(self):
+    def test_student_memory_production_projection_uses_global_user_filter_payload(self):
         item = event(entity_type="STUDENT_MEMORY", revision=2)
 
-        class MemorySubstitute:
+        class MemoryHttpProvider:
             def fetch(self, incoming):
-                return [
-                    IndexDocument(
-                        "student_memories",
-                        "STUDENT_MEMORY",
-                        incoming.entity_id,
-                        incoming.source_revision,
-                        "记忆协议替身",
-                        "仅用于 T13.2 隔离测试",
-                        {"user_id": incoming.payload["subjectUserId"], "visibility": "USER_PRIVATE"},
-                    )
-                ]
+                return projection_to_documents("STUDENT_MEMORY", {
+                    "entityId": incoming.entity_id,
+                    "subjectUserId": incoming.payload["subjectUserId"],
+                    "sourceRevision": incoming.source_revision,
+                    "educationStage": "JUNIOR", "subject": "MATH",
+                    "memoryType": "UNRESOLVED_POINT", "text": "一元一次方程移项仍需练习",
+                    "visibility": "USER_PRIVATE", "accessScope": "USER_PRIVATE",
+                    "requiresCurrentCourseAccess": False,
+                })
 
         processor = IndexProcessor(
             SimpleNamespace(embedding_batch_size=8),
@@ -264,7 +262,7 @@ class IndexWorkerTests(unittest.TestCase):
             self.source,
             self.index,
             FakeEncoder(),
-            memory_source=MemorySubstitute(),
+            memory_source=MemoryHttpProvider(),
         )
         self.assertEqual(processor.process_event(item).outcome, "APPLIED_UPSERT")
         stored = self.index.live[item.entity_id][0][0]

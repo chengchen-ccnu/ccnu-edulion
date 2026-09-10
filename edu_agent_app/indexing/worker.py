@@ -35,7 +35,7 @@ EVENT_ROUTING = {
 
 
 class MemoryProjectionProvider(Protocol):
-    """T14.2 后续实现的记忆安全投影端口；T13.2 仅可用替身验证隔离。"""
+    """从 Agent Access 内部 API 读取记忆安全投影，不访问 MySQL。"""
 
     def fetch(self, event: IndexEvent) -> list[IndexDocument]: ...
 
@@ -181,8 +181,8 @@ class IndexProcessor:
         )
 
     def rebuild_all(self) -> list[RebuildResult]:
-        """最多三路并发重建 Question/Knowledge/Course；单实体写仍由 SQLite revision 锁串行保护。"""
-        entity_types = ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT")
+        """有界并发重建四类 Java 事实源；单实体写仍由 SQLite revision 锁串行保护。"""
+        entity_types = ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT", "STUDENT_MEMORY")
         results: list[RebuildResult] = []
         with ThreadPoolExecutor(max_workers=self.settings.source_concurrency) as executor:
             futures = {executor.submit(self.rebuild_source, item): item for item in entity_types}

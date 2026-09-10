@@ -200,7 +200,7 @@ events:
     routingKey: agent.index.student-memory.changed.v1
     aggregate: ai_memory
     sourceDomain: agent-access-service
-    availability: RESERVED_FOR_T14.2
+    availability: AVAILABLE_FROM_T14.2.2
     payload:
       type: object
       additionalProperties: false

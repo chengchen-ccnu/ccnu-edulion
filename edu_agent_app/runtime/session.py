@@ -30,6 +30,7 @@ class ConversationState:
     remediation_count: int = 0
     source_titles: list[str] = field(default_factory=list)
     candidate_memories: list[str] = field(default_factory=list)
+    preference_signals: dict[str, int] = field(default_factory=dict)
 
 
 class ConversationStore:
@@ -131,7 +132,21 @@ class ConversationStore:
     def _memory_candidates(
         self, state: ConversationState, user_text: str, preferences: Iterable[LearningPreference]
     ) -> list[str]:
-        candidates = [f"明确偏好：{item.value}" for item in preferences if item.source == "EXPLICIT"]
+        # 候选只由本轮真实消息产生；Java 回注的旧偏好只用于回答，不反向续期或增强自身。
+        del preferences
+        candidates: list[str] = []
+        explicit = re.search(r"(?:以后|请|我希望|我喜欢|我更喜欢).{0,12}(分步|详细|简洁|先提示|直接答案)", user_text)
+        if explicit:
+            value = {
+                "分步": "分步讲解", "详细": "详细讲解", "简洁": "简洁讲解",
+                "先提示": "先提示再逐步引导", "直接答案": "直接给出完整答案",
+            }[explicit.group(1)]
+            candidates.append("明确偏好：" + value)
+        elif re.search(r"(?:再|先|只).{0,8}(?:提示|引导)", user_text):
+            signal = "先提示再逐步引导"
+            state.preference_signals[signal] = state.preference_signals.get(signal, 0) + 1
+            if state.preference_signals[signal] >= 3:
+                candidates.append("推断偏好：" + signal)
         if state.unresolved_problem:
             candidates.append("未解决卡点：" + state.unresolved_problem)
         if re.search(r"我(?:总是|经常).{1,80}(?:错|不懂|忘)", user_text):

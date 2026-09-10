@@ -53,6 +53,36 @@ def _delete_event() -> bytes:
     ).encode("utf-8")
 
 
+def _memory_delete_event() -> bytes:
+    """生成 USER_PRIVATE 记忆 tombstone，消息不携带安全文本或隐藏画像。"""
+    entity_id = str(uuid4())
+    return json.dumps(
+        {
+            "eventId": str(uuid4()),
+            "eventType": "StudentMemoryIndexProjectionChanged",
+            "eventVersion": 1,
+            "aggregateId": entity_id,
+            "occurredAt": "2026-09-10T00:00:00Z",
+            "traceId": "trace-real-memory-rabbit",
+            "payload": {
+                "sourceDomain": "AGENT_ACCESS",
+                "entityType": "STUDENT_MEMORY",
+                "entityId": entity_id,
+                "subjectUserId": str(uuid4()),
+                "sourceRevision": 2,
+                "operation": "DELETE",
+                "sourceState": "EXPIRED",
+                "educationStage": "JUNIOR",
+                "visibility": "USER_PRIVATE",
+                "authorization": {
+                    "ownerScope": "SUBJECT_USER_ONLY",
+                    "projectionApi": "AGENT_ACCESS_MEMORY_SAFE_PROJECTION",
+                },
+            },
+        }
+    ).encode("utf-8")
+
+
 @unittest.skipUnless(REAL_ACCEPTANCE, "设置 AGENT_INDEX_REAL_ACCEPTANCE=true 后执行真实验收")
 class IndexWorkerRealAcceptanceTests(unittest.TestCase):
     """只使用有界样本；临时索引 namespace 和 Rabbit 拓扑在测试结束后精确清理。"""
@@ -79,8 +109,9 @@ class IndexWorkerRealAcceptanceTests(unittest.TestCase):
             self.settings.agent_index_service_token or "",
             self.settings.source_timeout_seconds,
             self.settings.source_max_attempts,
+            self.settings.agent_access_source_url,
         )
-        for entity_type in ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT"):
+        for entity_type in ("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT", "STUDENT_MEMORY"):
             page = client.page(
                 entity_type, 0, "00000000-0000-0000-0000-000000000000", 5
             )
@@ -191,10 +222,18 @@ class IndexWorkerRealAcceptanceTests(unittest.TestCase):
                 "visibility": "COURSE_AUTHORIZED",
             },
         )
+        memory_id, owner_id, other_id = str(uuid4()), str(uuid4()), str(uuid4())
+        memory = IndexDocument(
+            "student_memories", "STUDENT_MEMORY", memory_id, 1, "UNRESOLVED_POINT",
+            "一次方程移项仍需练习。",
+            {"user_id": owner_id, "memory_type": "UNRESOLVED_POINT",
+             "visibility": "USER_PRIVATE", "requires_java_reauthorization": False},
+        )
         try:
             temporary.replace_entity(
                 [document], self.encoder.encode_documents([document.text], 1)
             )
+            temporary.replace_entity([memory], self.encoder.encode_documents([memory.text], 1))
             allowed = RetrievalRequest(
                 "course_content", "勾股定理", "COURSE_QUESTION", 8,
                 course_id=course_id, course_version_id=version_id, lesson_ids=[lesson_id],
@@ -202,13 +241,29 @@ class IndexWorkerRealAcceptanceTests(unittest.TestCase):
             denied_version = replace(allowed, course_version_id="archived-v0")
             self.assertGreater(len(temporary.search_bm25(allowed, 8)), 0)
             self.assertEqual(temporary.search_bm25(denied_version, 8), [])
+            owner_request = RetrievalRequest(
+                "student_memories", "一次方程移项", "REVIEW", 8, user_id=owner_id
+            )
+            other_request = replace(owner_request, user_id=other_id)
+            self.assertEqual(len(temporary.search_bm25(owner_request, 8)), 1)
+            self.assertEqual(temporary.search_bm25(other_request, 8), [])
+            updated = replace(memory, source_revision=2, text="一次方程移项已通过新证据修正。")
+            temporary.replace_entity([updated], self.encoder.encode_documents([updated.text], 1))
+            points = temporary.search_bm25(
+                replace(owner_request, query="新证据修正"), 8
+            )
+            self.assertEqual(points[0].payload["source_revision"], 2)
+            temporary.delete_entity("student_memories", memory_id)
+            self.assertEqual(temporary.search_bm25(owner_request, 8), [])
             with self.assertRaises(PermissionError):
                 RetrievalRequest("course_content", "勾股定理", "COURSE_QUESTION").validate()
             with self.assertRaises(PermissionError):
                 RetrievalRequest("student_memories", "我的错题", "REVIEW").validate()
         finally:
             temporary.cleanup_namespace("course_content")
+            temporary.cleanup_namespace("student_memories")
         self.assertEqual(temporary.namespace_count("course_content"), 0)
+        self.assertEqual(temporary.namespace_count("student_memories"), 0)
 
     def test_neo4j_bounded_query_and_closed_driver_degradation(self):
         from qdrant_client import models
@@ -274,12 +329,11 @@ class IndexWorkerRealAcceptanceTests(unittest.TestCase):
     def test_rabbit_confirm_retry_dlq_redelivery_and_exact_cleanup(self):
         import pika
 
+        if not self.settings.rabbitmq_username or not self.settings.rabbitmq_password:
+            self.skipTest("RabbitMQ DPAPI 凭据未初始化")
         suffix = uuid4().hex
-        defaults = pika.ConnectionParameters().credentials
         settings = replace(
             self.settings,
-            rabbitmq_username=defaults.username,
-            rabbitmq_password=defaults.password,
             rabbitmq_retry_delay_ms=100,
             rabbitmq_max_attempts=3,
         )
@@ -320,6 +374,16 @@ class IndexWorkerRealAcceptanceTests(unittest.TestCase):
             )
             self.assertTrue(consumer.consume_once(2))
             self.assertEqual(len(processor.events), 1)
+
+            channel.basic_publish(
+                event_exchange,
+                ROUTING_KEYS[3],
+                _memory_delete_event(),
+                pika.BasicProperties(delivery_mode=2),
+                mandatory=True,
+            )
+            self.assertTrue(consumer.consume_once(2))
+            self.assertEqual(len(processor.events), 2)
 
             channel.basic_publish(
                 event_exchange,

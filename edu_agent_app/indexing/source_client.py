@@ -17,6 +17,7 @@ SOURCE_PATHS = {
     "QUESTION": "/internal/v1/agent-index/questions",
     "KNOWLEDGE_POINT": "/internal/v1/agent-index/knowledge-points",
     "COURSE_TEXT": "/internal/v1/agent-index/course-texts",
+    "STUDENT_MEMORY": "/internal/v1/agent-index/student-memories",
 }
 
 
@@ -35,12 +36,14 @@ class JavaProjectionClient:
     """固定调用方身份和专用令牌的 Java 事实源客户端。"""
 
     def __init__(
-        self, learning_url: str, course_url: str, token: str, timeout: float, max_attempts: int = 3
+        self, learning_url: str, course_url: str, token: str, timeout: float,
+        max_attempts: int = 3, agent_access_url: str | None = None
     ):
         if len(token) < 32:
             raise ValueError("AGENT_INDEX_SERVICE_TOKEN 缺失或长度不足")
         self.learning_url = learning_url.rstrip("/")
         self.course_url = course_url.rstrip("/")
+        self.agent_access_url = (agent_access_url or learning_url).rstrip("/")
         self.token = token
         self.timeout = timeout
         self.max_attempts = max_attempts
@@ -48,7 +51,11 @@ class JavaProjectionClient:
     def _request(self, entity_type: str, query: Mapping[str, Any]) -> Mapping[str, Any]:
         """执行一次有界 GET；错误不拼接响应正文或令牌，交由 Worker 重试。"""
         path = SOURCE_PATHS[entity_type]
-        base = self.course_url if entity_type == "COURSE_TEXT" else self.learning_url
+        base = (
+            self.course_url if entity_type == "COURSE_TEXT"
+            else self.agent_access_url if entity_type == "STUDENT_MEMORY"
+            else self.learning_url
+        )
         request = Request(
             f"{base}{path}?{urlencode(query)}",
             headers={
@@ -85,8 +92,6 @@ class JavaProjectionClient:
 
     def fetch_entity(self, event: IndexEvent) -> list[IndexDocument]:
         """按事件稳定 ID 获取最新安全投影；不存在时返回空，由调用方写 tombstone。"""
-        if event.entity_type == "STUDENT_MEMORY":
-            raise RuntimeError("T14.2 尚未提供真实学生记忆事实源")
         page = self._request(event.entity_type, {"entityId": event.entity_id, "size": 1})
         items = page.get("items")
         if not isinstance(items, list) or len(items) > 1:
@@ -98,12 +103,18 @@ class JavaProjectionClient:
             raise RuntimeError("Java 投影 revision 落后于事件，等待事实源收敛")
         return documents
 
+    def fetch(self, event: IndexEvent) -> list[IndexDocument]:
+        """实现生产 MemoryProjectionProvider 端口，并复用相同 HTTP 校验与有限重试。"""
+        if event.entity_type != "STUDENT_MEMORY":
+            raise ValueError("记忆投影端口只接受 STUDENT_MEMORY")
+        return self.fetch_entity(event)
+
     def page(
         self, entity_type: str, after_revision: int, after_entity_id: str, size: int
     ) -> ProjectionPage:
         """读取最多 200 项稳定页并转换；下一页游标完全采用 Java 响应。"""
         if entity_type not in SOURCE_PATHS:
-            raise ValueError("T14.2 前不支持记忆全量重建")
+            raise ValueError("不支持的 Java 索引源类型")
         if not 1 <= size <= 200:
             raise ValueError("Java 索引源单页上限为 200")
         raw = self._request(
@@ -156,7 +167,7 @@ def _chunks(text: str, limit: int = 1600, overlap: int = 160) -> Iterable[str]:
 
 
 def projection_to_documents(entity_type: str, item: Mapping[str, Any]) -> list[IndexDocument]:
-    """把三类冻结 Java DTO 转为 Qdrant 文档，并再次执行安全字段白名单校验。"""
+    """把四类冻结 Java DTO 转为 Qdrant 文档，并再次执行安全字段白名单校验。"""
     if not isinstance(item, Mapping):
         raise RuntimeError("Java 索引投影条目不是对象")
     common_required = {"entityId", "sourceRevision", "educationStage", "subject"}
@@ -221,6 +232,33 @@ def projection_to_documents(entity_type: str, item: Mapping[str, Any]) -> list[I
             )
             for index, chunk in enumerate(chunks)
         ]
+    elif entity_type == "STUDENT_MEMORY":
+        allowed = common_required | {
+            "subjectUserId", "memoryType", "text", "visibility", "accessScope",
+            "courseId", "courseVersionId", "lessonId", "requiresCurrentCourseAccess", "expiresAt",
+        }
+        required = common_required | {
+            "subjectUserId", "memoryType", "text", "visibility", "accessScope",
+            "requiresCurrentCourseAccess",
+        }
+        _require_fields(item, allowed, required)
+        if item.get("visibility") != "USER_PRIVATE" or item.get("accessScope") != "USER_PRIVATE":
+            raise PermissionError("学生记忆必须是 USER_PRIVATE 投影")
+        text = str(item["text"]).strip()
+        title = str(item["memoryType"])
+        payload = {
+            "user_id": str(item["subjectUserId"]),
+            "memory_type": str(item["memoryType"]),
+            "visibility": "USER_PRIVATE",
+            "requires_java_reauthorization": bool(item["requiresCurrentCourseAccess"]),
+        }
+        if item.get("courseId"):
+            payload.update({
+                "course_id": str(item["courseId"]),
+                "course_version_id": str(item.get("courseVersionId") or ""),
+                "lesson_id": str(item.get("lessonId") or ""),
+            })
+        collection = "student_memories"
     else:
         raise ValueError("不支持的 Java 索引投影类型")
     if not text:

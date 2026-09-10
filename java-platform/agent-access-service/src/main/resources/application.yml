@@ -29,6 +29,12 @@ platform:
     domain-service-token: ${AGENT_ACCESS_DOMAIN_TOKEN:}
     recent-message-max-turns: ${AGENT_RECENT_MESSAGE_MAX_TURNS:6}
     recent-message-max-chars: ${AGENT_RECENT_MESSAGE_MAX_CHARS:16000}
+  agent-index:
+    enabled: false
+    publish-enabled: false
+    service-token: ${AGENT_INDEX_SERVICE_TOKEN:}
+    confirm-timeout: ${AGENT_INDEX_CONFIRM_TIMEOUT:5s}
+    max-publish-attempts: ${AGENT_INDEX_MAX_PUBLISH_ATTEMPTS:10}
 
 ---
 spring:
