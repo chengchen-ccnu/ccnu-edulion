@@ -49,7 +49,7 @@
 | T13.3 动态多 Agent 与多轮运行时 | 已完成并通过本机真实验收，已合并（PR #59，`05050fc`） | T13.1、T13.2、T14.1 已合并；百炼、Qdrant、Neo4j 与 Agent Access 回归通过 | 冻结五角色/14 意图/工具与 SSE 已落为动态有限运行时；规则+结构化 LLM、最多两个子请求、严格预算/取消/超时/唯一终态、多轮压缩、候选记忆和授权图片已覆盖。旧固定图/FAISS 已移除；课程候选再次授权因缺少冻结 Java 端点保持 fail-closed，由 T14.2.1 补齐 |
 | T14.2 长期记忆与 Agent 真实接入 | 已拆分；旧单任务定义撤销 | 见 T14.2.1～T14.2.3 | 原范围同时跨越内部协议、Course/Learning 授权、长期事实、索引、Redis 多实例治理和真实 SSE，无法在一个可独立验收的任务中安全完成；Python 始终不写 MySQL |
 | T14.2.1 Agent 授权上下文与恢复契约闭环 | 已完成并通过自动化验收，已合并（PR #60，`5810fae`） | T13.2、T13.3、T14.1 已合并 | 内部协议 1.1.0 保持旧 v1 请求兼容；已完成 run owner 反查、课程候选逐项复核、持久消息有界窗口、Learning 四类本人安全事实和 Python→Java 终态幂等私有报告。课程/学习依赖失败保持 fail-closed，未建长期记忆/画像/Outbox/Redis/Vue |
-| T14.2.2 长期记忆事实、画像与索引同步 | 已实现并创建 Ready PR #61，待评审/CI | T14.2.1 已合并 | Flyway V3、摘要/记忆/证据/主题/偏好/逐 run 用量/安全审计/Outbox、事务化幂等归一化、衰减/修正/tombstone、USER_PRIVATE 事实源和生产 Memory Provider 已接入既有 Worker/Qdrant。H2、真实 MySQL 和真实 Qdrant 通过；RabbitMQ 5672 可达但本机缺 DPAPI 应用凭据，真实 Outbox 长链未执行并已如实记录；不接 Redis/Vue，Python 不直连 MySQL |
+| T14.2.2 长期记忆事实、画像与索引同步 | 已实现并创建 Ready PR #61，CI 全绿待评审 | T14.2.1 已合并 | Flyway V3、摘要/记忆/证据/主题/偏好/逐 run 用量/安全审计/Outbox、事务化幂等归一化、衰减/修正/tombstone、USER_PRIVATE 事实源和生产 Memory Provider 已接入既有 Worker/Qdrant。H2、真实 MySQL 和真实 Qdrant 通过；RabbitMQ 5672 可达但本机缺 DPAPI 应用凭据，真实 Outbox 长链未执行并已如实记录；不接 Redis/Vue，Python 不直连 MySQL |
 | T14.2.3 Redis 运行治理与 Agent 真实链路验收 | 待开始 | T14.2.1、T14.2.2 已合并 | Redis 保存有 TTL 的活跃租约、最近运行缓存和用户并发/分钟日额度；MySQL 唯一约束、run/消息/用量仍是事实源。完成 Java↔Python 真实 SSE、断线取消、部分检查点、跨实例恢复、Redis 故障和跨用户/课程安全验收，不实现 Vue |
 | T13.4 用户帮助知识库与 Help 专家接入 | 待开始 | T14.1、T13.3 | Java 提供版本化用户帮助材料；规则优先/复杂检索，不暴露内部 page-specs、不猜路由；无编辑后台和反馈提交 |
 | T15A 独立 AI 答疑前端 | 待开始 | T14.2.1～T14.2.3、T13.4 已合并；复用 T07 | 既有 /ai 导航、历史会话、文本/图片/公式/来源、明确偏好、HTTP 流/停止/重生成；独立会话无 30 分钟换新限制，无画像展示/人工帮助 |
