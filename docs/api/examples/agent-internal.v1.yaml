@@ -165,6 +165,13 @@ validIntentDecisions:
         secondaryIntent: CREATE_PLAN
         role: STUDY_PLANNER
         slots: {planGoal: 复习一元一次方程}
+  platformUsageHelp:
+    primaryIntent: PLATFORM_HELP
+    secondaryIntent: PLATFORM_USAGE_HELP
+    role: PLATFORM_HELP
+    resolution: ROUTED
+    slots: {platformTopic: 怎么登录}
+    subRequests: []
 
 validToolCalls:
   questionSearch:
@@ -189,6 +196,15 @@ validToolCalls:
       courseVersionId: v3
       lessonIds: [40000000-0000-4000-8000-000000000005]
       limit: 5
+  userHelp:
+    toolCallId: 40000000-0000-4000-8000-000000000006
+    runId: 20000000-0000-4000-8000-000000000003
+    traceId: trace-t131-help-0001
+    toolName: USER_HELP_SEARCH
+    timeoutMs: 3000
+    arguments:
+      query: 怎么登录
+      limit: 5
 
 validToolResults:
   safeQuestion:
@@ -204,18 +220,21 @@ validToolResults:
         summary: 题目要求解一个含移项步骤的一元一次方程。
         accessDecision: AUTHORIZED_BY_JAVA
         revision: 2
-  helpUnavailable:
+  safeUserHelp:
     toolCallId: 40000000-0000-4000-8000-000000000006
     toolName: USER_HELP_SEARCH
-    status: REJECTED
+    status: SUCCEEDED
     traceId: trace-t131-help-0001
     elapsedMs: 1
-    evidence: []
-    error:
-      code: AGENT.HELP_KB_NOT_AVAILABLE
-      message: 平台帮助知识库将在 T13.4 接入。
-      retryable: false
-      traceId: trace-t131-help-0001
+    evidence:
+      - evidenceId: help_login_password
+        evidenceType: USER_HELP
+        title: 使用密码登录
+        summary: 在登录页填写已经验证的邮箱或中国大陆手机号，再输入密码即可。
+        accessDecision: AUTHORIZED_BY_JAVA
+        helpVersion: 2026.09.1
+        directAnswer: true
+        appRoute: /login
 
 validStreams:
   completed:

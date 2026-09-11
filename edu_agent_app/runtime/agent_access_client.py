@@ -51,6 +51,26 @@ class AgentAccessClient:
                 revision=int(item["revision"]),
             ) for item in response.json().get("facts", [])]
 
+    async def search_user_help(self, run_id: str, query: str, limit: int,
+                               trace_id: str) -> list[SafeToolEvidence]:
+        """按真实 run 查询 Java 当前帮助版本；请求不携带用户、版本、路由或任意资源范围。"""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+            response = await client.post(
+                f"{self.base_url}/internal/v1/agent/runs/{run_id}/user-help:search",
+                headers=self._headers(trace_id),
+                json={"query": query[:500], "limit": min(5, max(1, limit))},
+            )
+            response.raise_for_status()
+            value = response.json()
+            version = str(value["version"])
+            return [SafeToolEvidence(
+                evidenceId=str(item["evidenceId"]), evidenceType="USER_HELP",
+                title=str(item["title"]), summary=str(item["summary"]),
+                helpVersion=version, directAnswer=item.get("directAnswer") is True,
+                appRoute=item.get("appRoute"),
+            ) for item in value.get("evidence", [])[:5]]
+
     async def report(self, data: dict[str, Any]) -> None:
         """终态网络传播可能略晚于 Python 生成器，固定 reportId 有限重试仍保持严格幂等。"""
 

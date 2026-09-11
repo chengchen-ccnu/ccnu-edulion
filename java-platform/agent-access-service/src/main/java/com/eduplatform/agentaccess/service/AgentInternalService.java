@@ -26,13 +26,15 @@ public class AgentInternalService {
     private final AgentDomainClient domains;
     private final ObjectMapper mapper;
     private final MemoryFactService memoryFacts;
+    private final UserHelpKnowledgeBase userHelp;
 
     public AgentInternalService(AgentRepository repository, AgentDomainClient domains, ObjectMapper mapper,
-            MemoryFactService memoryFacts) {
+            MemoryFactService memoryFacts, UserHelpKnowledgeBase userHelp) {
         this.repository = repository;
         this.domains = domains;
         this.mapper = mapper;
         this.memoryFacts = memoryFacts;
+        this.userHelp = userHelp;
     }
 
     public AgentInternalDtos.VerifyCourseCandidatesResponse verify(UUID runId,
@@ -48,6 +50,26 @@ public class AgentInternalService {
         RunRow run = requireRun(runId);
         List<AgentInternalDtos.SafeFact> facts = domains.readStudentFacts(run.ownerUserId(), request, traceId);
         return new AgentInternalDtos.StudentFactsResponse(facts);
+    }
+
+    /**
+     * 按真实 run 读取当前帮助版本。活动 run 的 owner 只从 ai_run 取得；请求无法选择用户、版本或路由。
+     */
+    public AgentInternalDtos.UserHelpSearchResponse userHelp(UUID runId,
+            AgentInternalDtos.UserHelpSearchRequest request) {
+        RunRow run = requireRun(runId);
+        if (run.terminal()) {
+            throw new AgentException(HttpStatus.CONFLICT, "AGENT.RUN_TERMINAL", "运行已结束，不能继续调用工具");
+        }
+        // 读取 owner 是授权边界的一部分；当前只读帮助不需要把 owner 传给知识库，也不会回显该身份。
+        if (run.ownerUserId() == null) {
+            throw new AgentException(HttpStatus.NOT_FOUND, "AGENT.NOT_FOUND", "运行不存在");
+        }
+        var result = userHelp.search(request.query(), request.limit());
+        return new AgentInternalDtos.UserHelpSearchResponse(result.version(), result.evidence().stream()
+                .map(item -> new AgentInternalDtos.UserHelpEvidence(item.evidenceId(), item.title(), item.summary(),
+                        item.version(), item.directAnswer(), item.appRoute()))
+                .toList());
     }
 
     /**
