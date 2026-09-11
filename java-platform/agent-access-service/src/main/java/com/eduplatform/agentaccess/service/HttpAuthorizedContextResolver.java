@@ -29,11 +29,13 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     private static final Set<String> IMAGE_MIME = Set.of("image/jpeg", "image/png", "image/webp");
     private final RestClient learning;
     private final RestClient course;
+    private final RestClient mediaService;
     private final MemoryContextProvider memories;
 
     public HttpAuthorizedContextResolver(AgentProperties properties, MemoryContextProvider memories) {
         this.learning = client(properties.learningBaseUrl(), properties);
         this.course = client(properties.courseBaseUrl(), properties);
+        this.mediaService = client(properties.mediaBaseUrl(), properties);
         this.memories = memories;
     }
 
@@ -41,7 +43,7 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     public AgentDtos.AuthorizedContext resolve(UUID userId, AgentDtos.EntryPoint entryPoint,
             AgentDtos.MessageContextRequest input, String traceId) {
         AgentDtos.MessageContextRequest context = input == null
-                ? new AgentDtos.MessageContextRequest(null, null, null, List.of()) : input;
+                ? new AgentDtos.MessageContextRequest(null, null, null, List.of(), List.of()) : input;
         if ((context.courseId() == null) != (context.lessonId() == null)) {
             throw invalid("context", "courseId 与 lessonId 必须同时提供");
         }
@@ -56,7 +58,10 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         if (question == null && !selectedMedia.isEmpty()) {
             throw invalid("context.questionMediaIds", "题目图片必须与 questionId 一起提供");
         }
-        List<MediaGrant> media = authorizeMedia(userId, question, selectedMedia, traceId);
+        List<MediaGrant> media = new ArrayList<>(authorizeMedia(userId, question, selectedMedia, traceId));
+        List<UUID> aiMediaIds = context.aiQuestionMediaIds() == null ? List.of()
+                : List.copyOf(new LinkedHashSet<>(context.aiQuestionMediaIds()));
+        media.addAll(authorizeAiMedia(userId, aiMediaIds, traceId));
 
         Map<String, Object> trusted = new LinkedHashMap<>();
         trusted.put("userId", userId.toString());
@@ -80,7 +85,8 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
                 question == null ? null : UUID.fromString(question.versionId()),
                 lesson == null ? null : UUID.fromString(lesson.courseId()),
                 lesson == null ? null : lesson.courseVersionId(),
-                lesson == null ? null : UUID.fromString(lesson.lessonId()), selectedMedia);
+                lesson == null ? null : UUID.fromString(lesson.lessonId()),
+                media.stream().map(item -> UUID.fromString(item.mediaId())).toList());
         return new AgentDtos.AuthorizedContext(stable, trusted);
     }
 
@@ -152,6 +158,39 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         return List.copyOf(grants);
     }
 
+    /** 校验本人上传的 AI 图片为 READY/精确用途，再取得只存在内存中的短期读取投影。 */
+    private List<MediaGrant> authorizeAiMedia(UUID userId, List<UUID> selected, String traceId) {
+        List<MediaGrant> grants = new ArrayList<>();
+        for (UUID mediaId : selected) {
+            try {
+                BindingValidation validation = mediaService.post()
+                        .uri("/api/v1/media/{mediaId}/binding-validations", mediaId)
+                        .headers(headers -> identity(headers, userId, traceId))
+                        .body(Map.of("purpose", "AI_QUESTION_IMAGE"))
+                        .retrieve().body(BindingValidation.class);
+                if (validation == null || !mediaId.toString().equals(validation.mediaId())
+                        || !"AI_QUESTION_IMAGE".equals(validation.purpose()) || !"READY".equals(validation.status())
+                        || !validation.bindable() || !IMAGE_MIME.contains(validation.mimeType())
+                        || validation.size() < 1 || validation.size() > 10_485_760) throw unavailable();
+                MediaGrant grant = mediaService.post().uri("/api/v1/media/{mediaId}/access-grants", mediaId)
+                        .headers(headers -> identity(headers, userId, traceId))
+                        .body(Map.of("variant", "ORIGINAL", "disposition", "INLINE"))
+                        .retrieve().body(MediaGrant.class);
+                if (grant == null || !mediaId.toString().equals(grant.mediaId()) || grant.url() == null
+                        || grant.expiresAt() == null || !IMAGE_MIME.contains(grant.mimeType())) throw unavailable();
+                grants.add(new MediaGrant(grant.mediaId(), grant.mimeType(), grant.sizeBytes(), grant.method(),
+                        grant.url(), grant.headers(), grant.expiresAt(), "AI_QUESTION_IMAGE"));
+            } catch (RestClientResponseException failure) {
+                throw mapDependency(failure, "AI 图片不存在或不可见");
+            } catch (AgentException failure) {
+                throw failure;
+            } catch (RuntimeException failure) {
+                throw unavailable();
+            }
+        }
+        return List.copyOf(grants);
+    }
+
     private Map<String, Object> authorizedQuestion(Question question) {
         Map<String, Object> projection = new LinkedHashMap<>();
         projection.put("questionType", question.type());
@@ -173,7 +212,7 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     }
 
     private Map<String, Object> authorizedMedia(MediaGrant grant) {
-        return Map.of("mediaId", grant.mediaId(), "purpose", "QUESTION_IMAGE", "mimeType", grant.mimeType(),
+        return Map.of("mediaId", grant.mediaId(), "purpose", grant.purpose(), "mimeType", grant.mimeType(),
                 "sizeBytes", grant.sizeBytes(), "accessDecision", "AUTHORIZED_BY_JAVA",
                 "temporaryAccess", Map.of("url", grant.url(), "expiresAt", grant.expiresAt().toString(),
                         "confidentiality", "SHORT_LIVED_SECRET"));
@@ -261,6 +300,13 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     private record CourseLesson(String courseId, String courseVersionId, String lessonId, String title,
             String type, boolean previewable, String articleMarkdown, String playbackResourceId,
             JsonNode poster, List<JsonNode> inlineImages, List<JsonNode> resources) {}
+    private record BindingValidation(String mediaId, String purpose, String status, boolean bindable,
+            String originalFileName, String mimeType, long size, List<JsonNode> variants) {}
     private record MediaGrant(String mediaId, String mimeType, long sizeBytes, String method, String url,
-            Map<String, String> headers, Instant expiresAt) {}
+            Map<String, String> headers, Instant expiresAt, String purpose) {
+        private MediaGrant(String mediaId, String mimeType, long sizeBytes, String method, String url,
+                Map<String, String> headers, Instant expiresAt) {
+            this(mediaId, mimeType, sizeBytes, method, url, headers, expiresAt, "QUESTION_IMAGE");
+        }
+    }
 }

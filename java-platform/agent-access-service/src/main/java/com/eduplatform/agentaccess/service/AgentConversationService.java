@@ -5,22 +5,27 @@ import com.eduplatform.agentaccess.persistence.AgentRepository.ConversationRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.EventRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.MessageRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.RunRow;
+import com.eduplatform.agentaccess.service.RunGovernance.Lease;
+import com.eduplatform.agentaccess.service.RunGovernance.Reservation;
 import com.eduplatform.agentaccess.web.AgentDtos;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.HexFormat;
-import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,28 +50,50 @@ public class AgentConversationService {
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
     private final com.eduplatform.agentaccess.config.AgentProperties properties;
+    private final com.eduplatform.agentaccess.config.AgentGovernanceProperties governanceProperties;
+    private final RunGovernance governance;
 
     public record PreparedRun(RunRow run, MessageRow userMessage, AgentDtos.AuthorizedContext context,
-            List<AgentDtos.RecentMessage> recentMessages, boolean replayed) {}
+            List<AgentDtos.RecentMessage> recentMessages, boolean replayed, Lease lease) {}
 
     /** 会话创建结果同时标记本次是否真正插入，供 HTTP 层区分 201 与幂等重放的 200。 */
     public record ConversationCreation(AgentDtos.Conversation conversation, boolean created) {}
 
     public AgentConversationService(AgentRepository repository, AuthorizedContextResolver contexts,
             ObjectMapper mapper, PlatformTransactionManager transactionManager,
-            com.eduplatform.agentaccess.config.AgentProperties properties) {
+            com.eduplatform.agentaccess.config.AgentProperties properties,
+            com.eduplatform.agentaccess.config.AgentGovernanceProperties governanceProperties,
+            RunGovernance governance) {
         this.repository = repository;
         this.contexts = contexts;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(transactionManager);
         this.properties = properties;
+        this.governanceProperties = governanceProperties;
+        this.governance = governance;
     }
 
-    /** 重启后的进程没有旧 HTTP 流句柄；补写唯一失败终态后释放活动槽，恢复接口仍有完整事实。 */
+    /**
+     * 启动时只收口已超过租约宽限且 Redis 明确没有有效租约的 run。
+     * Redis 不可用或 owner 正在续租时保持 MySQL 活动态，避免新实例误杀其他实例。
+     */
     @PostConstruct
-    void recoverOrphanedRuns() {
-        repository.findOrphanedRuns().forEach(run -> terminate(run.id(), AgentDtos.RunStatus.FAILED,
-                "AGENT.RUNTIME_RESTARTED", "AI 服务重启，本次回答已中断"));
+    @Scheduled(fixedDelayString = "${platform.agent-governance.orphan-scan-interval:15s}")
+    public void recoverOrphanedRuns() {
+        Instant cutoff = Instant.now().minus(governanceProperties.leaseTtl().multipliedBy(2));
+        for (RunRow run : repository.findOrphanedRuns()) {
+            if (run.updatedAt().isAfter(cutoff)) continue;
+            try {
+                if (!governance.hasValidLease(run.id())) {
+                    terminate(run.id(), AgentDtos.RunStatus.FAILED,
+                            "AGENT.ORPHANED_RUN", "AI 服务中断，本次回答未完成");
+                }
+            } catch (AgentException unavailable) {
+                return;
+            } catch (RuntimeException raced) {
+                // owner 刚好持久化了新事件时条件序号会拒绝恢复写；下一轮只读事实即可。
+            }
+        }
     }
 
     /** 创建或按 owner+clientRequestId 找回会话；同键不同内容返回 409。 */
@@ -117,9 +144,37 @@ public class AgentConversationService {
         String requestFingerprint = fingerprint(input);
         PreparedRun existing = existingRun(conversation, input.clientRequestId(), requestFingerprint);
         if (existing != null) return existing;
-        AgentDtos.AuthorizedContext context = contexts.resolve(owner, conversation.entryPoint(), input.context(), traceId);
-        return transactions.execute(status -> createRunLocked(owner, conversationId, input, requestFingerprint,
-                context, traceId));
+        Reservation reservation = governance.reserve(owner, conversationId, input.clientRequestId());
+        if (!reservation.acquired()) return awaitIdempotentWinner(conversation, input, requestFingerprint);
+        AgentDtos.AuthorizedContext context;
+        try {
+            context = contexts.resolve(owner, conversation.entryPoint(), input.context(), traceId);
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            throw failure;
+        }
+        PreparedRun prepared;
+        try {
+            prepared = transactions.execute(status -> createRunLocked(owner, conversationId, input,
+                    requestFingerprint, context, traceId));
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            throw failure;
+        }
+        if (prepared.replayed()) {
+            governance.rollback(reservation);
+            return prepared;
+        }
+        try {
+            Lease lease = governance.bind(reservation, prepared.run());
+            return new PreparedRun(prepared.run(), prepared.userMessage(), prepared.context(),
+                    prepared.recentMessages(), false, lease);
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            terminate(prepared.run().id(), AgentDtos.RunStatus.FAILED,
+                    "AGENT.GOVERNANCE_UNAVAILABLE", "AI 服务暂时不可用，请稍后重试");
+            throw failure;
+        }
     }
 
     /** 保存一个经内部协议校验的连续公开事件，并同步终态答案/部分检查点。 */
@@ -231,18 +286,25 @@ public class AgentConversationService {
         UUID runId = UUID.randomUUID();
         String contextJson = write(context.stableContext());
         MessageRow user = new MessageRow(userMessageId, conversationId, input.clientRequestId(), requestFingerprint,
-                AgentDtos.MessageRole.USER, input.content().strip(), AgentDtos.Completeness.COMPLETE, contextJson,
-                locked.nextMessageSequence(), runId, now);
+                AgentDtos.MessageRole.USER, input.content().strip(), AgentDtos.Completeness.COMPLETE,
+                AgentDtos.ContentState.RETAINED, contextJson, locked.nextMessageSequence(), runId, now);
         MessageRow assistant = new MessageRow(assistantMessageId, conversationId, null, null,
-                AgentDtos.MessageRole.ASSISTANT, "", AgentDtos.Completeness.PARTIAL, contextJson,
-                locked.nextMessageSequence() + 1, runId, now);
+                AgentDtos.MessageRole.ASSISTANT, "", AgentDtos.Completeness.PARTIAL,
+                AgentDtos.ContentState.RETAINED, contextJson, locked.nextMessageSequence() + 1, runId, now);
         RunRow run = new RunRow(runId, conversationId, userMessageId, assistantMessageId, owner, traceId,
                 AgentDtos.RunStatus.ACCEPTED, 0L, null, null, null, now, now);
         repository.insertMessage(user);
         repository.insertMessage(assistant);
+        if (input.context() != null && input.context().aiQuestionMediaIds() != null) {
+            for (UUID mediaId : new LinkedHashSet<>(input.context().aiQuestionMediaIds())) {
+                repository.insertMessageMediaReference(userMessageId, mediaId, now);
+                repository.insertMediaOutbox(mediaReferenceEvent("MediaReferenceBound", mediaId,
+                        userMessageId, traceId, now), now);
+            }
+        }
         repository.insertRun(run);
         repository.advanceConversation(conversationId, locked.nextMessageSequence() + 2, now);
-        return new PreparedRun(run, user, context, recentMessages(conversationId, user.sequenceNo()), false);
+        return new PreparedRun(run, user, context, recentMessages(conversationId, user.sequenceNo()), false, null);
     }
 
     private PreparedRun existingRun(ConversationRow conversation, UUID clientRequestId, String fingerprint) {
@@ -256,7 +318,24 @@ public class AgentConversationService {
                 new AgentException(HttpStatus.INTERNAL_SERVER_ERROR, "AGENT.STATE_INVALID", "AI 会话状态异常"));
         AgentDtos.MessageContext stable = existing.contextJson() == null ? null
                 : read(existing.contextJson(), AgentDtos.MessageContext.class);
-        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), List.of(), true);
+        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), List.of(), true, null);
+    }
+
+    /** 同一幂等键正在另一线程授权时有界等待其 MySQL 事实；超时返回冲突而不再占额度。 */
+    private PreparedRun awaitIdempotentWinner(ConversationRow conversation, AgentDtos.SendMessageRequest input,
+            String fingerprint) {
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(2));
+        while (Instant.now().isBefore(deadline)) {
+            PreparedRun existing = existingRun(conversation, input.clientRequestId(), fingerprint);
+            if (existing != null) return existing;
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AgentException(HttpStatus.CONFLICT, "AGENT.REQUEST_IN_PROGRESS", "相同请求正在处理中，请稍后重试");
     }
 
     /**
@@ -288,6 +367,20 @@ public class AgentConversationService {
         return safe.replace("rawToolResult", "[已移除工具原始结果]");
     }
 
+    /** 构造既有 Media v1 引用信封；正文只含稳定 ID，不含图片 URL、对象 Key 或凭据。 */
+    private AgentRepository.MediaOutboxRow mediaReferenceEvent(String eventType, UUID mediaId,
+            UUID messageId, String traceId, Instant now) {
+        UUID eventId = UUID.randomUUID();
+        String routing = "MediaReferenceBound".equals(eventType)
+                ? "media.reference.bound.v1" : "media.reference.released.v1";
+        Map<String, Object> payload = Map.of("mediaId", mediaId, "ownerService", "agent-access",
+                "referenceType", "AI_MESSAGE_IMAGE", "referenceId", messageId.toString());
+        String envelope = write(Map.of("eventId", eventId, "eventType", eventType, "eventVersion", 1,
+                "aggregateId", mediaId, "occurredAt", now, "traceId", traceId, "payload", payload));
+        return new AgentRepository.MediaOutboxRow(eventId, eventType, mediaId, "edu.media.events.v1",
+                routing, traceId, envelope, 0);
+    }
+
     private AgentDtos.Conversation sameConversation(ConversationRow existing, String fingerprint) {
         if (!fingerprint.equals(existing.requestFingerprint())) {
             throw new AgentException(HttpStatus.CONFLICT, "AGENT.IDEMPOTENCY_CONFLICT",
@@ -315,7 +408,7 @@ public class AgentConversationService {
         AgentDtos.MessageContext context = row.contextJson() == null ? null
                 : read(row.contextJson(), AgentDtos.MessageContext.class);
         return new AgentDtos.Message(row.id(), row.conversationId(), row.runId(), row.role(), row.content(),
-                row.completeness(), context, row.sequenceNo(), row.createdAt());
+                row.completeness(), row.contentState(), context, row.sequenceNo(), row.createdAt());
     }
 
     private AgentDtos.StreamEvent event(EventRow row) {

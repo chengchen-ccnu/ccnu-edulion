@@ -221,7 +221,8 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
     } else { @() }
     $agentConfigurationValid = ($existingLocalLines -match '^AGENT_MYSQL_DATABASE=').Count -gt 0 `
         -and ($existingLocalLines -match '^AGENT_INDEX_API_ENABLED=').Count -gt 0 `
-        -and ($existingLocalLines -match '^AGENT_ACCESS_DOMAIN_API_ENABLED=').Count -gt 0
+        -and ($existingLocalLines -match '^AGENT_ACCESS_DOMAIN_API_ENABLED=').Count -gt 0 `
+        -and ($existingLocalLines -match '^AGENT_REDIS_DATABASE=').Count -gt 0
     if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid `
             -or -not $learningIamCredentialValid -or -not $agentIndexCredentialValid `
             -or -not $agentAccessCredentialValid `
@@ -255,6 +256,9 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
         }
         if (($existingLocalLines -match '^AGENT_ACCESS_DOMAIN_API_ENABLED=').Count -eq 0) {
             Add-Content -LiteralPath $configPath -Value "AGENT_ACCESS_DOMAIN_API_ENABLED=true" -Encoding UTF8
+        }
+        if (($existingLocalLines -match '^AGENT_REDIS_DATABASE=').Count -eq 0) {
+            Add-Content -LiteralPath $configPath -Value "AGENT_REDIS_DATABASE=6" -Encoding UTF8
         }
         if (-not $agentConfigurationValid) {
             Write-Host "Added the non-secret Agent local configuration."
@@ -398,6 +402,7 @@ New-AgentAccessInternalCredential | Export-Clixml -LiteralPath $agentAccessCrede
     "MEDIA_REDIS_DATABASE=3"
     "LEARNING_REDIS_DATABASE=4"
     "OPERATION_REDIS_DATABASE=5"
+    "AGENT_REDIS_DATABASE=6"
     "IAM_SEED_ENABLED=false"
     "IAM_VERIFICATION_DELIVERY_MODE=fixed-local"
     "COURSE_SEED_ENABLED=false"

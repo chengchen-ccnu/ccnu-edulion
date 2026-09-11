@@ -171,7 +171,7 @@ events:
     routingKey: media.reference.bound.v1
     aggregate: media_asset
     producer: owning-domain-service
-    description: Idempotently records that one domain entity retains a stable mediaId; it does not grant read access by itself. T08A course references use COURSE_VERSION_COVER or LESSON_RESOURCE and a referenceId stable for that exact course-version row.
+    description: Idempotently records that one domain entity retains a stable mediaId; it does not grant read access by itself. T08A course references use COURSE_VERSION_COVER or LESSON_RESOURCE. T14.2.3 agent-access uses AI_MESSAGE_IMAGE with the stable messageId as referenceId for an AI_QUESTION_IMAGE asset.
     payload:
       type: object
       additionalProperties: false
@@ -186,7 +186,7 @@ events:
           type: string
           minLength: 1
           maxLength: 80
-          description: T08A course-service emits COURSE_VERSION_COVER for a course_version row and LESSON_RESOURCE for a lesson_media_resource row.
+          description: T08A course-service emits COURSE_VERSION_COVER for a course_version row and LESSON_RESOURCE for a lesson_media_resource row; agent-access emits AI_MESSAGE_IMAGE for an ai_message row.
         referenceId:
           type: string
           minLength: 1
@@ -195,7 +195,7 @@ events:
     routingKey: media.reference.released.v1
     aggregate: media_asset
     producer: owning-domain-service
-    description: Idempotently removes one exact domain reference; retention expiry, not this event alone, controls reclamation. The tuple must exactly match the earlier bound event.
+    description: Idempotently removes one exact domain reference; retention expiry, not this event alone, controls reclamation. The tuple must exactly match the earlier bound event, including agent-access AI_MESSAGE_IMAGE/messageId references.
     payload:
       type: object
       additionalProperties: false

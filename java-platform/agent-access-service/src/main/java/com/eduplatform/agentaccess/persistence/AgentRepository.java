@@ -5,11 +5,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -31,7 +32,8 @@ public class AgentRepository {
             long nextMessageSequence, Instant createdAt, Instant updatedAt, Instant lastMessageAt) {}
 
     public record MessageRow(UUID id, UUID conversationId, UUID clientRequestId, String requestFingerprint,
-            AgentDtos.MessageRole role, String content, AgentDtos.Completeness completeness, String contextJson,
+            AgentDtos.MessageRole role, String content, AgentDtos.Completeness completeness,
+            AgentDtos.ContentState contentState, String contextJson,
             long sequenceNo, UUID runId, Instant createdAt) {}
 
     public record RunRow(UUID id, UUID conversationId, UUID userMessageId, UUID assistantMessageId,
@@ -47,6 +49,11 @@ public class AgentRepository {
 
     public record EventRow(UUID runId, long sequence, String eventType, String eventJson, Instant occurredAt) {}
     public record ResultReportRow(UUID reportId, String json, Instant reportedAt) {}
+    public record RetentionCursor(Instant createdAt, UUID messageId) {}
+    public record MessageRetentionRow(UUID messageId, UUID conversationId, UUID ownerUserId, Instant createdAt) {}
+    public record MediaReferenceRow(UUID messageId, UUID mediaId, String purpose) {}
+    public record MediaOutboxRow(UUID eventId, String eventType, UUID aggregateId, String exchange,
+            String routingKey, String traceId, String payloadJson, int attempts) {}
 
     public Optional<ConversationRow> findConversationByCreateRequest(UUID owner, UUID requestId) {
         return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND create_request_id=?",
@@ -114,10 +121,102 @@ public class AgentRepository {
     public void insertMessage(MessageRow row) {
         jdbc.update("""
                 INSERT INTO ai_message(id,conversation_id,client_request_id,request_fingerprint,role,content,
-                    completeness,context_json,sequence_no,run_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    completeness,content_state,context_json,sequence_no,run_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                 """, row.id().toString(), row.conversationId().toString(), string(row.clientRequestId()),
-                row.requestFingerprint(), row.role().name(), row.content(), row.completeness().name(), row.contextJson(),
+                row.requestFingerprint(), row.role().name(), row.content(), row.completeness().name(),
+                row.contentState().name(), row.contextJson(),
                 row.sequenceNo(), string(row.runId()), timestamp(row.createdAt()));
+    }
+
+    /** 与用户消息同事务建立稳定 AI 图片引用及绑定 Outbox；只接受 mediaId，不保存临时 URL。 */
+    public void insertMessageMediaReference(UUID messageId, UUID mediaId, Instant now) {
+        jdbc.update("INSERT INTO ai_message_media_reference(message_id,media_id,purpose,status,created_at) "
+                        + "VALUES(?,?,'AI_QUESTION_IMAGE','BOUND',?)",
+                messageId.toString(), mediaId.toString(), timestamp(now));
+    }
+
+    /** 与引用状态变更同事务写 Media 事件；发布结果由后台任务另行回写。 */
+    public void insertMediaOutbox(MediaOutboxRow row, Instant now) {
+        jdbc.update("""
+                INSERT INTO ai_media_outbox(event_id,event_type,aggregate_id,exchange_name,routing_key,trace_id,
+                    payload_json,status,attempts,next_attempt_at,last_error,occurred_at,published_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,'PENDING',0,?,NULL,?,NULL,?)
+                """, row.eventId().toString(), row.eventType(), row.aggregateId().toString(), row.exchange(),
+                row.routingKey(), row.traceId(), row.payloadJson(), timestamp(now), timestamp(now), timestamp(now));
+    }
+
+    /** 锁定单例稳定游标，确保多个实例不会同时清理同一批消息。 */
+    public RetentionCursor lockRetentionCursor() {
+        return jdbc.query("SELECT last_created_at,last_message_id FROM ai_message_retention_cursor "
+                        + "WHERE singleton_id=1 FOR UPDATE", (rs, ignored) -> new RetentionCursor(
+                        nullableInstant(rs, "last_created_at"), nullableUuid(rs, "last_message_id")))
+                .stream().findFirst().orElseThrow();
+    }
+
+    /** 按 (created_at,id) 稳定游标读取有限过期批次，不扫描或删除整张消息表。 */
+    public List<MessageRetentionRow> retentionBatch(RetentionCursor cursor, Instant cutoff, int size) {
+        String after = cursor.createdAt() == null ? "" : " AND (m.created_at>? OR (m.created_at=? AND m.id>?))";
+        List<Object> args = new ArrayList<>();
+        args.add(timestamp(cutoff));
+        if (cursor.createdAt() != null) {
+            args.add(timestamp(cursor.createdAt())); args.add(timestamp(cursor.createdAt()));
+            args.add(cursor.messageId().toString());
+        }
+        args.add(size);
+        return jdbc.query("SELECT m.id,m.conversation_id,c.owner_user_id,m.created_at FROM ai_message m "
+                        + "JOIN ai_conversation c ON c.id=m.conversation_id WHERE m.content_state='RETAINED' "
+                        + "AND m.created_at<? AND NOT EXISTS (SELECT 1 FROM ai_run r WHERE r.id=m.run_id "
+                        + "AND r.active_slot=1)" + after + " ORDER BY m.created_at,m.id LIMIT ?",
+                (rs, ignored) -> new MessageRetentionRow(uuid(rs, "id"), uuid(rs, "conversation_id"),
+                        uuid(rs, "owner_user_id"), instant(rs, "created_at")), args.toArray());
+    }
+
+    /** 读取一条消息仍为 BOUND 的稳定媒体引用；返回值不含 URL 或存储定位信息。 */
+    public List<MediaReferenceRow> boundMessageMedia(UUID messageId) {
+        return jdbc.query("SELECT message_id,media_id,purpose FROM ai_message_media_reference "
+                        + "WHERE message_id=? AND status='BOUND' ORDER BY media_id",
+                (rs, ignored) -> new MediaReferenceRow(uuid(rs, "message_id"), uuid(rs, "media_id"),
+                        rs.getString("purpose")), messageId.toString());
+    }
+
+    /** 清空原正文和稳定上下文并明确标为 PURGED；审计、run、事件、用量和记忆事实均保留。 */
+    public boolean purgeMessage(UUID messageId, Instant now) {
+        return jdbc.update("UPDATE ai_message SET content='',content_state='PURGED',content_purged_at=?,context_json=NULL "
+                        + "WHERE id=? AND content_state='RETAINED'", timestamp(now), messageId.toString()) == 1;
+    }
+
+    /** 只把一个已绑定的稳定图片引用转为 RELEASED，重复调用无副作用。 */
+    public void releaseMessageMedia(UUID messageId, UUID mediaId, Instant now) {
+        jdbc.update("UPDATE ai_message_media_reference SET status='RELEASED',released_at=? "
+                        + "WHERE message_id=? AND media_id=? AND status='BOUND'",
+                timestamp(now), messageId.toString(), mediaId.toString());
+    }
+
+    /** 事务内推进或重置清理游标，下轮从该稳定位置继续。 */
+    public void advanceRetentionCursor(RetentionCursor cursor, Instant now) {
+        jdbc.update("UPDATE ai_message_retention_cursor SET last_created_at=?,last_message_id=?,updated_at=? "
+                        + "WHERE singleton_id=1", timestamp(cursor.createdAt()), string(cursor.messageId()),
+                timestamp(now));
+    }
+
+    /** 读取已到重试时间的有界 Outbox 批次，不返回已发布/终止失败事件。 */
+    public List<MediaOutboxRow> pendingMediaOutbox(Instant now, int limit) {
+        return jdbc.query("SELECT * FROM ai_media_outbox WHERE status='PENDING' AND next_attempt_at<=? "
+                        + "ORDER BY occurred_at,event_id LIMIT ?", this::mediaOutbox, timestamp(now), limit);
+    }
+
+    /** broker confirm 成功后标记已发布；输出是持久的 PUBLISHED 事实。 */
+    public void markMediaOutboxPublished(UUID eventId, Instant now) {
+        jdbc.update("UPDATE ai_media_outbox SET status='PUBLISHED',published_at=?,updated_at=? WHERE event_id=?",
+                timestamp(now), timestamp(now), eventId.toString());
+    }
+
+    /** 记录安全错误类型和下次退避时间；到上限时改为 FAILED 保留人工追查。 */
+    public void markMediaOutboxFailure(UUID eventId, int attempts, boolean failed, Instant next,
+            String error, Instant now) {
+        jdbc.update("UPDATE ai_media_outbox SET status=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? "
+                        + "WHERE event_id=?", failed ? "FAILED" : "PENDING", attempts, timestamp(next), error,
+                timestamp(now), eventId.toString());
     }
 
     public void insertRun(RunRow row) {
@@ -221,7 +320,8 @@ public class AgentRepository {
         return new MessageRow(uuid(rs, "id"), uuid(rs, "conversation_id"), nullableUuid(rs, "client_request_id"),
                 rs.getString("request_fingerprint"), AgentDtos.MessageRole.valueOf(rs.getString("role")),
                 rs.getString("content"), AgentDtos.Completeness.valueOf(rs.getString("completeness")),
-                rs.getString("context_json"), rs.getLong("sequence_no"), nullableUuid(rs, "run_id"),
+                AgentDtos.ContentState.valueOf(rs.getString("content_state")), rs.getString("context_json"),
+                rs.getLong("sequence_no"), nullableUuid(rs, "run_id"),
                 instant(rs, "created_at"));
     }
 
@@ -236,6 +336,12 @@ public class AgentRepository {
     private EventRow event(ResultSet rs, int ignored) throws SQLException {
         return new EventRow(uuid(rs, "run_id"), rs.getLong("sequence_no"), rs.getString("event_type"),
                 rs.getString("event_json"), instant(rs, "occurred_at"));
+    }
+
+    private MediaOutboxRow mediaOutbox(ResultSet rs, int ignored) throws SQLException {
+        return new MediaOutboxRow(uuid(rs, "event_id"), rs.getString("event_type"), uuid(rs, "aggregate_id"),
+                rs.getString("exchange_name"), rs.getString("routing_key"), rs.getString("trace_id"),
+                rs.getString("payload_json"), rs.getInt("attempts"));
     }
 
     private static UUID uuid(ResultSet rs, String column) throws SQLException { return UUID.fromString(rs.getString(column)); }

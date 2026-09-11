@@ -22,6 +22,7 @@ public final class AgentDtos {
     public enum RunStatus { ACCEPTED, RUNNING, COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED }
     public enum MessageRole { USER, ASSISTANT }
     public enum Completeness { COMPLETE, PARTIAL }
+    public enum ContentState { RETAINED, PURGED }
     public enum CancelReason { USER_STOP, CLIENT_DISCONNECTED, PAGE_CLOSED }
 
     public record CreateConversationRequest(@NotNull UUID clientRequestId, @NotNull EntryPoint entryPoint,
@@ -33,7 +34,11 @@ public final class AgentDtos {
     public record ConversationPage(List<Conversation> items, int page, int size, long total) {}
 
     public record MessageContextRequest(UUID questionId, UUID courseId, UUID lessonId,
-            @Size(max = 8) List<UUID> questionMediaIds) {}
+            @Size(max = 8) List<UUID> questionMediaIds, @Size(max = 8) List<UUID> aiQuestionMediaIds) {
+        public MessageContextRequest(UUID questionId, UUID courseId, UUID lessonId, List<UUID> questionMediaIds) {
+            this(questionId, courseId, lessonId, questionMediaIds, List.of());
+        }
+    }
 
     public record SendMessageRequest(@NotNull UUID clientRequestId,
             @NotBlank @Size(max = 10000) String content, @Valid MessageContextRequest context) {}
@@ -43,7 +48,8 @@ public final class AgentDtos {
             String courseVersionId, UUID lessonId, List<UUID> mediaIds) {}
 
     public record Message(UUID id, UUID conversationId, UUID runId, MessageRole role, String content,
-            Completeness completeness, MessageContext context, long sequenceNo, Instant createdAt) {}
+            Completeness completeness, ContentState contentState, MessageContext context,
+            long sequenceNo, Instant createdAt) {}
 
     /** Java 从已持久化消息构造的有界窗口；不包含当前用户消息、上下文 JSON 或临时授权。 */
     public record RecentMessage(UUID messageId, MessageRole role, String content,

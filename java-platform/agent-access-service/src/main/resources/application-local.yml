@@ -14,9 +14,24 @@ spring:
     password: ${RABBITMQ_PASSWORD:}
     publisher-confirm-type: correlated
     publisher-returns: true
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      database: ${AGENT_REDIS_DATABASE:6}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+      timeout: ${AGENT_REDIS_TIMEOUT:2s}
 platform:
   agent:
     persistence-enabled: true
+  agent-governance:
+    enabled: true
   agent-index:
     enabled: ${AGENT_INDEX_API_ENABLED:false}
     publish-enabled: ${AGENT_INDEX_PUBLISH_ENABLED:false}
+  agent-retention:
+    enabled: ${AGENT_MESSAGE_RETENTION_ENABLED:false}
+    media-publish-enabled: ${AGENT_MEDIA_OUTBOX_PUBLISH_ENABLED:false}

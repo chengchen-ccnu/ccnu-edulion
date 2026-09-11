@@ -1106,4 +1106,26 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实长链：使用当前用户 DPAPI RabbitMQ 应用凭据及 `D:\Anaconda\envs\langgraph\python.exe` 完成。RabbitMQ 专项 1/1（43.106 秒）覆盖 confirm、非法消息三次有限重试、DLQ、重投和临时拓扑清理；真实 Agent Access HTTP 向 MySQL 写入两轮终态 run 报告，精确重放不重复计量，4 个 Outbox 均为 PUBLISHED。Worker 对 Qdrant 执行 3 次 UPSERT、1 次 DELETE，验证 owner 隔离、revision 更新和 tombstone 不复活；独立临时 namespace/SQLite checkpoint 从 Agent Access 事实源重建 2 个 ACTIVE 投影成功。
 - 数据与清理：保留用途明确的 `edu_platform_agent_dev` 及 Flyway V1/V2/V3 表，没有账号、课程、题目或长期业务伪数据。长链创建的随机会话、run、记忆、证据、偏好、摘要、用量和 Outbox 已按稳定 ID 精确删除，相关 MySQL 逐表为 0；Qdrant 验收 owner 为 0，Worker SQLite 删除 4 个 eventId/3 个实体状态，RabbitMQ 主队列、DLQ 和 4 个 retry 队列共 6 个队列均为 0。未写 Redis、OSS 或 Neo4j 图数据；全局记忆 revision 仅保留允许的单调序列空洞。
 - 边界与风险：没有 Redis 租约/额度、多实例 SSE、Vue、帮助知识库、自主组题、第二套消息链或新向量库。冻结契约尚无 Learning 主动强证据推送，本任务只提供结构化 Java 事务入口并拒绝从答案/成绩文本猜测等级；若后续自动接入，必须先冻结稳定主题、等级、公布权限和 revision 契约。完整命令、配置、演示与风险见 [T14.2.2 交付文档](../delivery/T14.2.2-memory-profile-index-sync.md)。
-- 交付：前置审计 `9750fab`、实现提交 `3532733`、首次交付记录 `253d94f` 已推送；已创建 [Ready PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61)，实现提交的两轮 Java、Python、Frontend、OpenAPI 共 8 项 GitHub CI 检查全部通过。真实长链记录将在独立文档提交后触发最新 CI，PR 在其全绿前保持 Open、未合并。
+- 交付：前置审计 `9750fab`、实现提交 `3532733`、首次交付记录 `253d94f` 与真实长链记录 `c19955e` 均已推送；[PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61) 的实现与真实验收记录均通过两轮 Java、Python、Frontend、OpenAPI 共 8 项 GitHub CI 检查，最终合并事实见下一节。
+
+## 2026-09-10 PR #61 合并与 T14.2.3 前置审计
+
+- 合并与清理：[PR #61](https://github.com/chengchen-ccnu/ccnu-edulion/pull/61) 在真实长链通过且最新两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@9b2ce10b4ceb55d4d2ce0e7bd7046e07e3185af9`；本地 `main` 已快进同步，T14.2.2 本地和远端分支均已删除。
+- 现状缺口：Agent Access 尚未引入 Redis，活动执行仅存在当前 JVM 的 `ConcurrentHashMap`；MySQL 的 `uk_ai_run_active_conversation` 能阻止同会话重复 run，但不能提供用户跨会话总并发、分钟/日额度或执行实例归属。当前 `@PostConstruct` 会把查询到的全部活动 run 直接标记 FAILED，多实例启动时可能错误终止仍由其他实例运行的请求；幂等重放命中另一实例时也只能返回已保存快照，不能可靠跟随其后续事件。
+- 已冻结实现边界：Redis 只保存有 TTL 的租约、取消标记、最近 run 安全元数据和原子额度计数，本地专用 DB 为 6；不保存消息正文、回答、授权上下文、Token 或唯一业务事实。MySQL 的会话、消息、run、事件、用量和唯一约束继续权威。新运行在 Redis 不可用时于写业务事实前返回 503；读取、已保存事件恢复和幂等取消继续读取 MySQL。持有中的实例失去租约后必须停止新增模型/工具调用并保存唯一中断终态，不能假装完成或启动第二次运行。
+- 跨实例与额度：租约获取、续期和 token 匹配释放必须原子；同 clientRequestId 重放不重复占用额度。错误实例不得直接收口他人 run；只有租约确认过期后才能把孤儿 run 终止。跨实例恢复只重放/跟随已持久化事件，不重新调用 Python。用户级并发和分钟/日预算使用可配置默认值，真实验收用低阈值覆盖 429、TTL 回收与故障恢复，不把 Redis 计数替代 T14.2.2 的最终用量事实。
+- SSE 与保留：继续沿用现有 OpenAPI 0.23.0 和内部协议 1.1.0 的事件、唯一终态、断线取消和部分检查点；若只补充错误语义应向前兼容，不创建第二套 DTO。原始消息默认 180 天的清理必须保留审计/聚合边界，并在同事务写已有媒体引用释放 Outbox；不得解析临时 URL、跨服务查表或直接操作 OSS。
+- 环境：本机 Redis 5.0.14.1 服务 Running，`127.0.0.1:6379` 可达，DB 6 当前为 0 key；MySQL、RabbitMQ、Qdrant、Neo4j、BGE、reranker、百炼 Chat/Vision 和所需内部令牌均已通过安全包装器确认可用。审计发现 `local.env` 的非敏感 `VISION_MODEL_NAME` 曾粘连下一配置，已修正为 `qwen3.8-flash`，未读取或输出密钥。
+- 准备结论：依赖满足，任务保持单个 T14.2.3；已从干净 `main@9b2ce10` 创建 `codex/t14.2.3-agent-runtime-governance`。本分支当前只提交合并状态、前置审计和交付计划，不实现 Java、Python、Flyway、Redis Key、API、事件或 Vue。
+- 数据：前置审计只执行 Redis PING/DBSIZE 和环境配置存在性检查，没有写 Redis Key、MySQL 行、RabbitMQ 消息、Qdrant 点、Neo4j 节点、OSS 对象或伪数据。T14.2.2 真实验收数据已按上一节记录精确清理。
+
+## 2026-09-10 T14.2.3 Redis 运行治理与真实 Agent 链路
+
+- 事实与治理：Agent Access 增加 Redis 5 兼容短 Lua，原子完成幂等预留、单用户跨会话并发、分钟/日额度、run 租约绑定/续租/错 token 释放、取消和失败回退。Redis DB 6 只有 TTL 运行元数据，MySQL 的唯一约束、消息、run、事件、用量和记忆仍是事实源。新 run 在 Redis 不可用时于写消息/run 前 503，超额统一 429。
+- 多实例：启动及默认每 15 秒的低频恢复，仅对超过两倍租约窗口、Redis 明确无租约且 MySQL 仍活动的 run 补写条件 FAILED；有效租约或 Redis 故障都不误杀。非 owner 实例的取消写有界标记，重连按浏览器实际收到的 sequence 每 250 ms 有界跟随 MySQL 事件，最长 30 秒，不启动 Python 或第二次模型调用。
+- 保留与媒体：仅新增 Agent Access Flyway V4，建立 `contentState`、稳定 AI 消息媒体引用、Media Outbox 和 `(created_at,id)` 单例游标。默认 180 天清理仅清空原正文/上下文，保留审计、run/事件/用量和归一化记忆；实际 BOUND 图片与清理事务同时写 `MediaReferenceReleased`。OpenAPI 向前升至 0.23.1，仅增可选 `contentState`/`aiQuestionMediaIds`并重新生成客户端；内部 9 类 SSE 协议不变。
+- 自动化：Agent Access/H2 命令通过，V1→V4、运行/恢复/取消/权限/保留/Outbox 覆盖无失败；真实 Redis 专项 1/1 通过并精确清理。Python `compileall` 通过，全量 60 项中 51 通过、9 项真实开关跳过；前端 typecheck 连同 OpenAPI 生成全部通过，未修改 Vue。
+- 真实链路：使用安全包装器、`D:\Anaconda\envs\langgraph\python.exe`、Java `18086/18087` 两实例与 Python `8000`。唯一低成本初中代数请求在首个 `TEXT_DELTA` 后断开；Python 仅 1 次 run POST/1 次 cancel，MySQL 终态 `CANCELLED`、助手 `PARTIAL`、32 个连续事件且仅 1 个 `FINAL_RESULT`。B 实例使用同 `clientRequestId` 重放同 run 的 32 个已存事件，Python 无第二次 run POST。另以 Java `18088`+错误 Redis 端口实验验证新 run 为 503、0 消息/run，已存会话读仍正常。验收未输出完整问答、Token、API Key 或临时 URL。
+- 数据与清理：用途明确的 `edu_platform_agent_dev` 由 V3 前进 V4，不创建数据库/Seed。固定验收范围精确删除 1 会话、2 消息、1 run、32 事件和 1 用量，范围复核 0；无媒体引用/Rabbit 消息/Qdrant 点/Neo4j 图/OSS 对象。Redis 专项按随机前缀与已知 Key 清理，未 `FLUSHDB`、未清空表或删除固定 collection。
+- 边界：不承诺已发给模型供应商的请求不计费。生产需确认额度数值与 Redis 容量/高可用性；T13.4 仍负责用户帮助事实，T15A 仅消费本任务的流、停止、恢复、图片 ID 和正文保留投影，不在前端重建治理逻辑。完整命令、Key/TTL、配置、演示与风险见 [T14.2.3 交付文档](../delivery/T14.2.3-agent-runtime-governance.md)。
+- 交付：实现提交 `9085ff9` 与交付记录均已推送；[Ready PR #62](https://github.com/chengchen-ccnu/ccnu-edulion/pull/62) 已创建且未合并。最新 push 与 pull_request 两轮的 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功；Node 20 action runtime 弃用提示不影响本轮测试结论。

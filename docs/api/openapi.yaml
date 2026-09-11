@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.23.0
-  description: T14.1 Agent Access contract. Adds authenticated AI conversation, message, run streaming, saved-event recovery and idempotent cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. This contract does not claim that the real Python multi-Agent runtime, Qdrant, Neo4j or frontend is connected.
+  version: 0.23.1
+  description: T14.2.3 Agent Access contract. Provides authenticated AI conversations, messages, run streaming, saved-event recovery and idempotent cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. Redis coordinates only short-lived execution governance while MySQL remains the conversation and event source of truth.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -3462,7 +3462,7 @@ components:
             path: /api/v1/ai/conversations/0199c000-0000-7000-8000-000000000001/messages
             fieldErrors: []
     AgentUnavailable:
-      description: The internal Agent runtime or an authorization dependency is unavailable before a safe run can start.
+      description: Redis governance, the internal Agent runtime, or an authorization dependency is unavailable before a safe run can start.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -3763,6 +3763,12 @@ components:
           uniqueItems: true
           items: {type: string, format: uuid}
           description: Optional subset of media bound to the authorized question. Arbitrary media IDs are rejected.
+        aiQuestionMediaIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: {type: string, format: uuid}
+          description: Optional stable AI_QUESTION_IMAGE media IDs uploaded by the current user. Java validates owner, exact purpose and READY state before binding them to this message; URLs are never accepted or stored.
     SendAgentMessageRequest:
       type: object
       additionalProperties: false
@@ -3799,6 +3805,10 @@ components:
         role: {$ref: '#/components/schemas/AgentMessageRole'}
         content: {type: string, maxLength: 100000}
         completeness: {$ref: '#/components/schemas/AgentMessageCompleteness'}
+        contentState:
+          type: string
+          enum: [RETAINED, PURGED]
+          description: Optional forward-compatible retention projection. PURGED means the original body was removed by policy; empty content must not be presented as the original text.
         context: {$ref: '#/components/schemas/AgentMessageContext'}
         sequenceNo: {type: integer, minimum: 1}
         createdAt: {type: string, format: date-time}
