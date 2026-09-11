@@ -1151,3 +1151,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 启动 Java Agent Access 与 Python runtime。高精度登录帮助为 `COMPLETED`、0 次模型、1 次帮助工具；复合进度/成绩帮助为 `COMPLETED`、1 次真实百炼模型、1 次帮助工具。验收显式关闭在线检索、Redis 治理、索引发布、保留任务和 Media Outbox 发布，只输出状态与计数，未输出完整问题/回答、提示词、Token、密钥或内部正文。
 - 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收仅在已有 `edu_platform_agent_dev` 创建随机 owner 的 2 个会话及其消息/run/事件/用量，`finally` 按 owner 和外键顺序精确删除全部关联事实，复核残留为 0；未写 Redis、RabbitMQ、Qdrant、Neo4j 或 OSS。
 - 边界与后续：历史帮助修订必须新增版本文件并更新 manifest，不得原地改写；当前小规模规范化匹配不扩展为新向量索引。T15A 只消费既有 SSE、安全来源和相对路由，不读取知识库文件或复制帮助规则。完整启动、测试、演示、清理和风险见 [T13.4 交付文档](../delivery/T13.4-user-help-knowledge-base.md)。
+- 交付：实现提交 `a992a89`、验收记录提交 `0fd8790` 已推送；[PR #63](https://github.com/chengchen-ccnu/ccnu-edulion/pull/63) 已创建为 Ready，等待评审与 CI，不自动合并。
