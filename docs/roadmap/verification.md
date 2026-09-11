@@ -1176,3 +1176,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与清理：只在既有 `edu_platform_agent_dev`、`edu_platform_media_dev` 保留 Flyway V5/V6 结构迁移，不创建数据库、账号、课程、题目或长期 Seed。随机 Agent/MySQL、Media/MySQL、Redis key 与 OSS 精确前缀对象均在 `finally` 删除，复核三类验收残留均为 0；所有本地服务已停止。
 - 边界：没有实现 Vue、悬浮答疑、画像查看、自主组题、第二套 SSE/媒体客户端或新基础设施。T15A 必须等待本 PR 合并后从最新 main 开工。完整命令、演示与风险见 [T14.2.4 交付文档](../delivery/T14.2.4-agent-web-contract.md)。
 - 交付：前置规划提交 `ea12214`、实现/本机验收提交 `618006f` 与首次 PR 记录提交 `a01131c` 已推送；[Ready PR #64](https://github.com/chengchen-ccnu/ccnu-edulion/pull/64) 已创建且可合并。`a01131c` 的 push/pull_request 两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功；等待人工评审，不在本任务自动合并。
+
+## 2026-09-11 PR #64 合并与 T15A 前置审计
+
+- 合并事实：[PR #64](https://github.com/chengchen-ccnu/ccnu-edulion/pull/64) 在 Ready、可合并且两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@f7d0d8ed4db906657fb2c4681d093296d66473d5`；本地 `main` 已 `--ff-only` 同步且工作区干净。
+- 契约前置：OpenAPI 已为 0.23.2，浏览器可从生成客户端取得九类可判别 SSE、会话/消息/保存事件、停止、最后一问重新生成和明确讲解偏好；`AI_QUESTION_IMAGE` 已按 `learning:access` 启用，并保持 owner、用途、READY、类型、大小和短期授权边界。T15A 不需要手写 DTO 或修改 Java/Python 契约。
+- 页面前置：已完整复核 `page-specs.md`。学生端固定第五槽和 `/ai`、`/ai/conversations/:conversationId` 的页面职责已冻结；当前导航仍为 `coming-soon` 且路由/业务页尚不存在，属于 T15A 应交付内容，不是前置阻断。课程播放器、HOMEWORK/EXAM 和普通题目悬浮窗继续排除在 T15A 外。
+- 工具与环境：Node 20.19.5、pnpm 10.22.0、标准本地环境包装脚本及项目 `langgraph` Python 环境存在；T14.2.4 当日已完成 Gateway、Agent Access、Media/OSS、Redis、Python/百炼的真实链路与精确清理，没有新增环境变量。真实浏览器验收仍须由 T15A 实施任务启动这些依赖后逐项执行，不能只用 Mock 或组件测试替代。
+- 准备结论：T13.1～T13.4、T14.1、T14.2.1～T14.2.4 与 T07 均已合并，T15A 前置条件满足。已从最新 `main@f7d0d8e` 创建 `codex/t15a-student-ai-chat-web`，当前只记录状态与前置审计，不实现 Vue、SSE 适配、媒体上传或其他业务代码。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
