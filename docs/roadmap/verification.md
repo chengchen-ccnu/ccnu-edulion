@@ -1175,3 +1175,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：安全包装器启动 Gateway、Media/OSS、Agent Access、Python runtime/model。真实 `USER_PRIVATE/READY` PNG 随问题运行，原问题与一次重新生成共 1 条用户消息、2 条 assistant 消息、2 个 run；同重生成 key 重放相同 run。偏好更新为 `COMPLETE_SOLUTION` revision 1，后续新 run 完成；SSE 含阶段、文本和唯一终态，验收输出无敏感 payload。
 - 数据与清理：只在既有 `edu_platform_agent_dev`、`edu_platform_media_dev` 保留 Flyway V5/V6 结构迁移，不创建数据库、账号、课程、题目或长期 Seed。随机 Agent/MySQL、Media/MySQL、Redis key 与 OSS 精确前缀对象均在 `finally` 删除，复核三类验收残留均为 0；所有本地服务已停止。
 - 边界：没有实现 Vue、悬浮答疑、画像查看、自主组题、第二套 SSE/媒体客户端或新基础设施。T15A 必须等待本 PR 合并后从最新 main 开工。完整命令、演示与风险见 [T14.2.4 交付文档](../delivery/T14.2.4-agent-web-contract.md)。
+- 交付：前置规划提交 `ea12214` 与实现/本机验收提交 `618006f` 已推送；[Ready PR #64](https://github.com/chengchen-ccnu/ccnu-edulion/pull/64) 已创建，等待 GitHub CI 与评审，不在本任务自动合并。
