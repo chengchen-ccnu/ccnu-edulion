@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.eduplatform.agentaccess.runtime.AgentRuntimeClient;
+import com.eduplatform.agentaccess.persistence.AgentRepository;
 import com.eduplatform.agentaccess.service.AgentConversationService;
 import com.eduplatform.agentaccess.service.AgentException;
 import com.eduplatform.agentaccess.service.AgentRunCoordinator;
@@ -12,6 +13,8 @@ import com.eduplatform.agentaccess.service.AgentInternalService;
 import com.eduplatform.agentaccess.service.MemoryFactService;
 import com.eduplatform.agentaccess.service.MemoryContextProvider;
 import com.eduplatform.agentaccess.service.MemoryIndexProjectionService;
+import com.eduplatform.agentaccess.service.MessageRetentionService;
+import com.eduplatform.agentaccess.service.RunGovernance;
 import com.eduplatform.agentaccess.service.AuthorizedContextResolver;
 import com.eduplatform.agentaccess.web.AgentDtos;
 import com.eduplatform.agentaccess.web.AgentInternalDtos;
@@ -49,11 +52,15 @@ class AgentAccessIntegrationTest {
     @Autowired MemoryFactService memoryFacts;
     @Autowired MemoryContextProvider memoryContext;
     @Autowired MemoryIndexProjectionService memoryIndex;
+    @Autowired MessageRetentionService retention;
     @Autowired FakeDomain domains;
+    @Autowired FakeGovernance governance;
     @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_media_outbox");
+        jdbc.update("DELETE FROM ai_message_media_reference");
         jdbc.update("DELETE FROM ai_agent_index_outbox");
         jdbc.update("DELETE FROM ai_memory_evidence");
         jdbc.update("DELETE FROM ai_memory");
@@ -69,8 +76,10 @@ class AgentAccessIntegrationTest {
         jdbc.update("DELETE FROM ai_message");
         jdbc.update("DELETE FROM ai_conversation");
         jdbc.update("UPDATE ai_memory_revision_sequence SET current_revision=0 WHERE singleton_id=1");
+        jdbc.update("UPDATE ai_message_retention_cursor SET last_created_at=NULL,last_message_id=NULL WHERE singleton_id=1");
         runtime.reset();
         domains.reset();
+        governance.reset();
     }
 
     @Test
@@ -101,6 +110,25 @@ class AgentAccessIntegrationTest {
                         error -> assertThat(error.code()).isEqualTo("AGENT.RUN_CONFLICT"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE conversation_id=? AND active_slot=1",
                 Integer.class, first.id().toString())).isEqualTo(1);
+    }
+
+    @Test
+    /** Redis 治理不可用时新运行在写 message/run 前返回 503，既有会话读取仍来自 MySQL。 */
+    void governanceFailureRejectsNewRunBeforeBusinessFactsButKeepsReadsAvailable() {
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
+        governance.failure = true;
+        assertThatThrownBy(() -> conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "不会被写入", null), "trace-governance-down"))
+                .isInstanceOfSatisfying(AgentException.class, error -> {
+                    assertThat(error.status().value()).isEqualTo(503);
+                    assertThat(error.code()).isEqualTo("AGENT.GOVERNANCE_UNAVAILABLE");
+                });
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=?", Integer.class,
+                conversation.id().toString())).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE conversation_id=?", Integer.class,
+                conversation.id().toString())).isZero();
+        assertThat(conversations.get(OWNER, conversation.id()).id()).isEqualTo(conversation.id());
     }
 
     @Test
@@ -146,7 +174,7 @@ class AgentAccessIntegrationTest {
     }
 
     @Test
-    /** 无本地执行句柄的幂等恢复只返回保存快照，不会把其他实例可能仍执行的 run 误标失败。 */
+    /** 无本地执行句柄的幂等恢复只跟随 MySQL 保存事件，不会误杀 run 或重启 Python。 */
     void replayWithoutLocalHandleDoesNotTerminateActiveRun() {
         var prepared = newRun("trace-agent-replay-snapshot");
         var replayed = conversations.prepareRun(OWNER, prepared.run().conversationId(),
@@ -156,9 +184,27 @@ class AgentAccessIntegrationTest {
 
         coordinator.open(replayed);
 
+        assertThat(runtime.streamCalls).isZero();
         assertThat(conversations.requireRun(OWNER, prepared.run().id()).status())
                 .isEqualTo(AgentDtos.RunStatus.ACCEPTED);
         assertThat(conversations.events(OWNER, prepared.run().id(), 0).items()).isEmpty();
+    }
+
+    @Test
+    /** 新实例恢复时保留有有效租约的他实例 run；租约明确不存在后才有界写唯一失败终态。 */
+    void startupRecoveryIsLeaseAwareAndClosesOnlyRealOrphan() {
+        var prepared = newRun("trace-lease-aware-recovery");
+        jdbc.update("UPDATE ai_run SET updated_at=? WHERE id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(60)), prepared.run().id().toString());
+        governance.valid.add(prepared.run().id());
+        conversations.recoverOrphanedRuns();
+        assertThat(conversations.requireRun(OWNER, prepared.run().id()).terminal()).isFalse();
+
+        governance.valid.remove(prepared.run().id());
+        conversations.recoverOrphanedRuns();
+        assertThat(conversations.requireRun(OWNER, prepared.run().id()).status()).isEqualTo(AgentDtos.RunStatus.FAILED);
+        assertThat(conversations.events(OWNER, prepared.run().id(), 0).items())
+                .filteredOn(event -> "FINAL_RESULT".equals(event.eventType())).hasSize(1);
     }
 
     @Test
@@ -182,6 +228,51 @@ class AgentAccessIntegrationTest {
         assertThat(conversations.events(OWNER, cancelled.run().id(), 0).items())
                 .filteredOn(event -> "FINAL_RESULT".equals(event.eventType())).hasSize(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE active_slot=1", Integer.class)).isZero();
+    }
+
+    @Test
+    /** 过期正文按有限批次清空并显式标记 PURGED，真实存在的 AI 图片引用只释放一次。 */
+    void messageRetentionPurgesBodyAndReleasesStableMediaReference() {
+        var prepared = terminalRun("trace-retention");
+        UUID mediaId = UUID.randomUUID();
+        Instant old = Instant.now().minusSeconds(181L * 86400);
+        jdbc.update("UPDATE ai_message SET created_at=? WHERE id IN (?,?)", java.sql.Timestamp.from(old),
+                prepared.run().userMessageId().toString(), prepared.run().assistantMessageId().toString());
+        jdbc.update("INSERT INTO ai_message_media_reference(message_id,media_id,purpose,status,created_at) "
+                        + "VALUES(?,?,'AI_QUESTION_IMAGE','BOUND',?)",
+                prepared.run().userMessageId().toString(), mediaId.toString(), java.sql.Timestamp.from(old));
+
+        retention.purgeDue();
+        retention.purgeDue();
+
+        assertThat(jdbc.queryForObject("SELECT content_state FROM ai_message WHERE id=?", String.class,
+                prepared.run().userMessageId().toString())).isEqualTo("PURGED");
+        assertThat(jdbc.queryForObject("SELECT content FROM ai_message WHERE id=?", String.class,
+                prepared.run().userMessageId().toString())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT status FROM ai_message_media_reference WHERE message_id=?",
+                String.class, prepared.run().userMessageId().toString())).isEqualTo("RELEASED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_media_outbox WHERE event_type='MediaReferenceReleased'",
+                Integer.class)).isEqualTo(1);
+        assertThat(conversations.messages(OWNER, prepared.run().conversationId(), 1, 20).items())
+                .filteredOn(item -> item.id().equals(prepared.run().userMessageId())).singleElement()
+                .satisfies(item -> assertThat(item.contentState()).isEqualTo(AgentDtos.ContentState.PURGED));
+    }
+
+    @Test
+    /** AI 图片请求只写稳定 mediaId/messageId 和既有 MediaReferenceBound v1，不保存短期地址。 */
+    void aiQuestionImageCreatesStableReferenceAndOutbox() {
+        UUID mediaId = UUID.randomUUID();
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
+        var context = new AgentDtos.MessageContextRequest(null, null, null, List.of(), List.of(mediaId));
+        var prepared = conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "请看这张题图", context), "trace-ai-image-reference");
+
+        assertThat(jdbc.queryForObject("SELECT media_id FROM ai_message_media_reference WHERE message_id=?",
+                String.class, prepared.userMessage().id().toString())).isEqualTo(mediaId.toString());
+        String payload = jdbc.queryForObject("SELECT payload_json FROM ai_media_outbox", String.class);
+        assertThat(payload).contains("MediaReferenceBound", mediaId.toString(), prepared.userMessage().id().toString())
+                .doesNotContain("http://", "https://", "objectKey", "bucket", "token");
     }
 
     @Test
@@ -509,17 +600,23 @@ class AgentAccessIntegrationTest {
         @Bean
         @Primary
         FakeDomain fakeDomain() { return new FakeDomain(); }
+
+        @Bean
+        @Primary
+        FakeGovernance fakeGovernance() { return new FakeGovernance(); }
     }
 
     static final class FakeRuntime implements AgentRuntimeClient {
         private Consumer<JsonNode> events;
         private Consumer<Throwable> errors;
+        private int streamCalls;
 
         @Override
         public StreamHandle stream(JsonNode request, Consumer<JsonNode> onEvent,
                 Consumer<Throwable> onError, Runnable onComplete) {
             this.events = onEvent;
             this.errors = onError;
+            this.streamCalls++;
             return () -> { };
         }
 
@@ -528,7 +625,7 @@ class AgentAccessIntegrationTest {
 
         void emit(JsonNode event) { events.accept(event); }
         void fail() { errors.accept(new IllegalStateException("fixture failure")); }
-        void reset() { events = null; errors = null; }
+        void reset() { events = null; errors = null; streamCalls = 0; }
     }
 
     static final class FakeDomain implements AgentDomainClient {
@@ -558,5 +655,30 @@ class AgentAccessIntegrationTest {
         }
 
         void reset() { lastOwner = null; allowed = Set.of(); failure = false; }
+    }
+
+    static final class FakeGovernance implements RunGovernance {
+        final Set<UUID> valid = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        final Set<UUID> cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        boolean failure;
+
+        public Reservation reserve(UUID owner, UUID conversation, UUID request) {
+            if (failure) throw new AgentException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "AGENT.GOVERNANCE_UNAVAILABLE", "fixture unavailable");
+            return new Reservation(UUID.randomUUID(), owner, conversation, request, "idem", "active", "minute",
+                    "day", true);
+        }
+        public Lease bind(Reservation reservation, AgentRepository.RunRow run) {
+            valid.add(run.id());
+            return new Lease(run.id(), run.ownerUserId(), UUID.randomUUID().toString(), "lease", "active");
+        }
+        public boolean renew(Lease lease) { return valid.contains(lease.runId()) && !cancelled.contains(lease.runId()); }
+        public boolean hasValidLease(UUID runId) { return valid.contains(runId); }
+        public boolean cancellationRequested(UUID runId) { return cancelled.contains(runId); }
+        public void recordProgress(Lease lease, String status, long lastSequence) { }
+        public void requestCancellation(UUID runId) { cancelled.add(runId); }
+        public void release(Lease lease) { valid.remove(lease.runId()); cancelled.remove(lease.runId()); }
+        public void rollback(Reservation reservation) { }
+        void reset() { valid.clear(); cancelled.clear(); failure = false; }
     }
 }

@@ -660,6 +660,27 @@ T14.2.2 在 Agent Access `local` profile 中复用专用 `edu_platform_agent_dev
 
 项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及所有服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除 `AGENT_RUNTIME_CALLBACK_TOKEN`、`AGENT_ACCESS_DOMAIN_TOKEN` 等明文并重新运行初始化脚本迁入对应加密凭据。Base URL、模型名、模型路径、启用开关、超时和窗口上限属于非敏感配置，可保留在 `local.env`。
 
+## T14.2.3 Agent Redis 治理、保留期与媒体 Outbox
+
+Agent Access 在 `local` profile 强制启用 Redis 运行治理，使用独立 `AGENT_REDIS_DATABASE=6` 和默认前缀 `edu:agent:runtime:v1`。Redis 只保存租约、取消标记、最近 run 安全元数据、活动 run 集合和短期额度计数；不得改用 DB 0～5，不得写消息/回答/提示词/工具结果/临时 URL 或秘密。租约默认 15 秒、5 秒续租，取消标记 2 分钟，最近 run 元数据 24 小时，孤儿 run 每 15 秒低频复核；单用户默认并发 2、每分钟 10 个新 run、当日 200000 Token、每 run 预留 8000 Token。这些只是可调开发默认，生产值需另行容量/成本确认。
+
+`Initialize-LocalEnvironment.ps1` 仅向当前用户的未跟踪 `local.env` 补入 DB 6 等非敏感配置。启动、真实测试和 MySQL/Redis/RabbitMQ 操作仍必须包装在 `scripts/Invoke-WithLocalEnvironment.ps1` 中；该包装器在子进程内注入现有 DPAPI 密码、百炼 Key 和 Agent 内部令牌，不读取、打印或将其拼入命令参数。两实例本地启动时使用不同 `SERVER_PORT` 和 `AGENT_INSTANCE_ID`，但共享 Agent MySQL/Redis；Python 继续使用 `D:\Anaconda\envs\langgraph\python.exe`。
+
+原始消息默认保留 180 天，使用 `AGENT_RAW_MESSAGE_RETENTION_DAYS`调整。定时清理默认关闭，发布前应显式开启 `AGENT_MESSAGE_RETENTION_ENABLED`，并配置每批数/轮询间隔。AI 图片 Bound/Released Outbox 发布使用 `AGENT_MEDIA_OUTBOX_PUBLISH_ENABLED=true`，需要已安全注入的 RabbitMQ 帐号；未开启时事件保留在 `ai_media_outbox` 而不伪装已发布。精确变量与默认值见 `.env.example` 和 [T14.2.3 交付文档](../delivery/T14.2.3-agent-runtime-governance.md)。
+
+默认真实 Redis 专项不执行；只能在确认 DB 6 后通过安全包装器打开：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  $env:AGENT_RUNTIME_REDIS_ACCEPTANCE = "true"
+  mvn.cmd "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml `
+    -pl agent-access-service -am "-Dtest=AgentRedisGovernanceRealAcceptanceTest" `
+    "-Dsurefire.failIfNoSpecifiedTests=false" test
+}
+```
+
+专项每轮使用随机前缀并在 `finally` 按已知 Key 删除；错误端口只用于模拟 503，不停止共享 Redis。禁止 `FLUSHDB`、按整前缀模糊删除他人 Key 或为通过测试修改 DB 0～5。
+
 ## 全量验证
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。

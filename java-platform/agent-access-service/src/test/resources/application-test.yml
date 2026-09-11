@@ -21,9 +21,30 @@ platform:
     recent-message-max-turns: 6
     recent-message-max-chars: 16000
     raw-message-retention-days: 180
+    media-base-url: http://127.0.0.1:65533
+  agent-governance:
+    enabled: false
+    key-prefix: edu:agent:test:v1
+    instance-id: test-instance
+    lease-ttl: 15s
+    renew-interval: 1h
+    cancellation-ttl: 2m
+    recent-run-ttl: 24h
+    max-concurrent-runs-per-user: 2
+    max-runs-per-minute: 10
+    max-reserved-tokens-per-day: 200000
+    reserved-tokens-per-run: 8000
+    orphan-scan-interval: 1h
+    follower-poll-interval: 50ms
+    follower-max-duration: 1s
   agent-index:
     enabled: true
     publish-enabled: false
     service-token: test-only-agent-index-service-token-32-bytes
     confirm-timeout: 1s
+    max-publish-attempts: 3
+  agent-retention:
+    enabled: true
+    batch-size: 10
+    media-publish-enabled: false
     max-publish-attempts: 3

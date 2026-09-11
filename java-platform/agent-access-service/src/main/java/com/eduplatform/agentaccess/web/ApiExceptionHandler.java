@@ -5,6 +5,7 @@ import com.eduplatform.agentaccess.service.AgentException;
 import com.eduplatform.shared.api.ApiError;
 import com.eduplatform.shared.api.FieldError;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
 import java.util.List;
@@ -37,8 +38,15 @@ public class ApiExceptionHandler {
         return invalid(request, List.of(new FieldError("request", "请求字段格式或范围不合法")));
     }
 
+    /**
+     * 处理未预期错误；SSE 响应已开始后的客户端断连不再尝试写 JSON 错误信封。
+     *
+     * <p>输入是当前 HTTP 请求/响应；普通请求返回统一 500，已承诺为
+     * {@code text/event-stream} 的请求则仅结束当前流。run 的取消和部分终态由协调器另行持久化。</p>
+     */
     @ExceptionHandler(Exception.class)
-    ResponseEntity<ApiError> handleUnexpected(HttpServletRequest request) {
+    ResponseEntity<ApiError> handleUnexpected(HttpServletRequest request, HttpServletResponse response) {
+        if (response.isCommitted() || "text/event-stream".equals(response.getContentType())) return null;
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(error("COMMON.INTERNAL_ERROR", "服务暂时不可用", request, List.of()));
     }

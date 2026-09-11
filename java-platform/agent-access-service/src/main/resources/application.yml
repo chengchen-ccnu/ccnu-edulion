@@ -29,12 +29,36 @@ platform:
     domain-service-token: ${AGENT_ACCESS_DOMAIN_TOKEN:}
     recent-message-max-turns: ${AGENT_RECENT_MESSAGE_MAX_TURNS:6}
     recent-message-max-chars: ${AGENT_RECENT_MESSAGE_MAX_CHARS:16000}
+    raw-message-retention-days: ${AGENT_RAW_MESSAGE_RETENTION_DAYS:180}
+    media-base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
+  agent-governance:
+    enabled: false
+    key-prefix: ${AGENT_REDIS_KEY_PREFIX:edu:agent:runtime:v1}
+    instance-id: ${AGENT_INSTANCE_ID:${random.uuid}}
+    lease-ttl: ${AGENT_RUN_LEASE_TTL:15s}
+    renew-interval: ${AGENT_RUN_LEASE_RENEW_INTERVAL:5s}
+    cancellation-ttl: ${AGENT_CANCEL_MARKER_TTL:2m}
+    recent-run-ttl: ${AGENT_RECENT_RUN_TTL:24h}
+    max-concurrent-runs-per-user: ${AGENT_MAX_CONCURRENT_RUNS_PER_USER:2}
+    max-runs-per-minute: ${AGENT_MAX_RUNS_PER_MINUTE:10}
+    max-reserved-tokens-per-day: ${AGENT_MAX_RESERVED_TOKENS_PER_DAY:200000}
+    reserved-tokens-per-run: ${AGENT_RESERVED_TOKENS_PER_RUN:8000}
+    orphan-scan-interval: ${AGENT_ORPHAN_SCAN_INTERVAL:15s}
+    follower-poll-interval: ${AGENT_FOLLOWER_POLL_INTERVAL:250ms}
+    follower-max-duration: ${AGENT_FOLLOWER_MAX_DURATION:30s}
   agent-index:
     enabled: false
     publish-enabled: false
     service-token: ${AGENT_INDEX_SERVICE_TOKEN:}
     confirm-timeout: ${AGENT_INDEX_CONFIRM_TIMEOUT:5s}
     max-publish-attempts: ${AGENT_INDEX_MAX_PUBLISH_ATTEMPTS:10}
+  agent-retention:
+    enabled: ${AGENT_MESSAGE_RETENTION_ENABLED:false}
+    batch-size: ${AGENT_MESSAGE_RETENTION_BATCH_SIZE:100}
+    poll-delay: ${AGENT_MESSAGE_RETENTION_POLL_DELAY:1h}
+    media-publish-enabled: ${AGENT_MEDIA_OUTBOX_PUBLISH_ENABLED:false}
+    media-outbox-poll-delay: ${AGENT_MEDIA_OUTBOX_POLL_DELAY:2s}
+    max-publish-attempts: ${AGENT_MEDIA_OUTBOX_MAX_ATTEMPTS:10}
 
 ---
 spring:
@@ -44,3 +68,4 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration

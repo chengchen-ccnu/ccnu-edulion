@@ -68,6 +68,10 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 
 独立 AI 页与普通自主练习浮窗使用同一媒体授权链。AI 消息持久化只保存 mediaId 和安全元信息，Python 只取得 Java 批准的短期读取投影，不接受浏览器任意 image_url、不接 OSS SDK。多模态读取检查地址/重定向/大小/时限，退出时清理临时文件；识别不清先请学生确认，不新增 OCR 微服务。
 
+## 2026-09-10 Agent 消息引用与保留期收口
+
+T14.2.3 中 `agent-access-service` 仅对当前用户、`READY` 且用途精确为 `AI_QUESTION_IMAGE` 的稳定 `mediaId` 建立引用。本地表以消息 ID 为稳定引用身份，与消息事务同时写 `MediaReferenceBound` Outbox，媒体事件的 `referenceType=AI_MESSAGE_IMAGE` 且 `referenceId=messageId`。默认 180 天正文保留期到期时，清理事务只对实际 BOUND 引用写匹配的 `MediaReferenceReleased` Outbox；发布重试耗尽保留 FAILED 供追查，不直连 OSS，不在数据库、Redis 或事件中保存 Bucket、Object Key 或签名 URL。
+
 原始消息默认保留 180 天可配置，临时下载文件与未绑定上传资产使用各自较短生命周期；不能把 30 分钟悬浮会话空闲期限当作媒体删除期限。保留期结束由 Agent Access 事务写引用释放 Outbox，Media 按引用/宽限期回收；题库共享图片不能随一次聊天删除。受限课程资料的来源访问校验不被 AI 缓存或历史摘要取代。真实验收按任务精确前缀/ID 记录清理，不枚举整桶。
 
 ## 后果

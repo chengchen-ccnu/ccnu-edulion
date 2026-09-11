@@ -1118,3 +1118,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 环境：本机 Redis 5.0.14.1 服务 Running，`127.0.0.1:6379` 可达，DB 6 当前为 0 key；MySQL、RabbitMQ、Qdrant、Neo4j、BGE、reranker、百炼 Chat/Vision 和所需内部令牌均已通过安全包装器确认可用。审计发现 `local.env` 的非敏感 `VISION_MODEL_NAME` 曾粘连下一配置，已修正为 `qwen3.8-flash`，未读取或输出密钥。
 - 准备结论：依赖满足，任务保持单个 T14.2.3；已从干净 `main@9b2ce10` 创建 `codex/t14.2.3-agent-runtime-governance`。本分支当前只提交合并状态、前置审计和交付计划，不实现 Java、Python、Flyway、Redis Key、API、事件或 Vue。
 - 数据：前置审计只执行 Redis PING/DBSIZE 和环境配置存在性检查，没有写 Redis Key、MySQL 行、RabbitMQ 消息、Qdrant 点、Neo4j 节点、OSS 对象或伪数据。T14.2.2 真实验收数据已按上一节记录精确清理。
+
+## 2026-09-10 T14.2.3 Redis 运行治理与真实 Agent 链路
+
+- 事实与治理：Agent Access 增加 Redis 5 兼容短 Lua，原子完成幂等预留、单用户跨会话并发、分钟/日额度、run 租约绑定/续租/错 token 释放、取消和失败回退。Redis DB 6 只有 TTL 运行元数据，MySQL 的唯一约束、消息、run、事件、用量和记忆仍是事实源。新 run 在 Redis 不可用时于写消息/run 前 503，超额统一 429。
+- 多实例：启动及默认每 15 秒的低频恢复，仅对超过两倍租约窗口、Redis 明确无租约且 MySQL 仍活动的 run 补写条件 FAILED；有效租约或 Redis 故障都不误杀。非 owner 实例的取消写有界标记，重连按浏览器实际收到的 sequence 每 250 ms 有界跟随 MySQL 事件，最长 30 秒，不启动 Python 或第二次模型调用。
+- 保留与媒体：仅新增 Agent Access Flyway V4，建立 `contentState`、稳定 AI 消息媒体引用、Media Outbox 和 `(created_at,id)` 单例游标。默认 180 天清理仅清空原正文/上下文，保留审计、run/事件/用量和归一化记忆；实际 BOUND 图片与清理事务同时写 `MediaReferenceReleased`。OpenAPI 向前升至 0.23.1，仅增可选 `contentState`/`aiQuestionMediaIds`并重新生成客户端；内部 9 类 SSE 协议不变。
+- 自动化：Agent Access/H2 命令通过，V1→V4、运行/恢复/取消/权限/保留/Outbox 覆盖无失败；真实 Redis 专项 1/1 通过并精确清理。Python `compileall` 通过，全量 60 项中 51 通过、9 项真实开关跳过；前端 typecheck 连同 OpenAPI 生成全部通过，未修改 Vue。
+- 真实链路：使用安全包装器、`D:\Anaconda\envs\langgraph\python.exe`、Java `18086/18087` 两实例与 Python `8000`。唯一低成本初中代数请求在首个 `TEXT_DELTA` 后断开；Python 仅 1 次 run POST/1 次 cancel，MySQL 终态 `CANCELLED`、助手 `PARTIAL`、32 个连续事件且仅 1 个 `FINAL_RESULT`。B 实例使用同 `clientRequestId` 重放同 run 的 32 个已存事件，Python 无第二次 run POST。另以 Java `18088`+错误 Redis 端口实验验证新 run 为 503、0 消息/run，已存会话读仍正常。验收未输出完整问答、Token、API Key 或临时 URL。
+- 数据与清理：用途明确的 `edu_platform_agent_dev` 由 V3 前进 V4，不创建数据库/Seed。固定验收范围精确删除 1 会话、2 消息、1 run、32 事件和 1 用量，范围复核 0；无媒体引用/Rabbit 消息/Qdrant 点/Neo4j 图/OSS 对象。Redis 专项按随机前缀与已知 Key 清理，未 `FLUSHDB`、未清空表或删除固定 collection。
+- 边界：不承诺已发给模型供应商的请求不计费。生产需确认额度数值与 Redis 容量/高可用性；T13.4 仍负责用户帮助事实，T15A 仅消费本任务的流、停止、恢复、图片 ID 和正文保留投影，不在前端重建治理逻辑。完整命令、Key/TTL、配置、演示与风险见 [T14.2.3 交付文档](../delivery/T14.2.3-agent-runtime-governance.md)。

@@ -2397,6 +2397,8 @@ export interface components {
             lessonId?: string;
             /** @description Optional subset of media bound to the authorized question. Arbitrary media IDs are rejected. */
             questionMediaIds?: string[];
+            /** @description Optional stable AI_QUESTION_IMAGE media IDs uploaded by the current user. Java validates owner, exact purpose and READY state before binding them to this message; URLs are never accepted or stored. */
+            aiQuestionMediaIds?: string[];
         };
         SendAgentMessageRequest: {
             /**
@@ -2430,6 +2432,11 @@ export interface components {
             role: components["schemas"]["AgentMessageRole"];
             content: string;
             completeness: components["schemas"]["AgentMessageCompleteness"];
+            /**
+             * @description Optional forward-compatible retention projection. PURGED means the original body was removed by policy; empty content must not be presented as the original text.
+             * @enum {string}
+             */
+            contentState?: "RETAINED" | "PURGED";
             context?: components["schemas"]["AgentMessageContext"];
             sequenceNo: number;
             /** Format: date-time */
@@ -4976,7 +4983,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description The internal Agent runtime or an authorization dependency is unavailable before a safe run can start. */
+        /** @description Redis governance, the internal Agent runtime, or an authorization dependency is unavailable before a safe run can start. */
         AgentUnavailable: {
             headers: {
                 [name: string]: unknown;
