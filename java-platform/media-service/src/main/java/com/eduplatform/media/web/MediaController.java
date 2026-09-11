@@ -57,10 +57,12 @@ public class MediaController {
     ResponseEntity<MediaDtos.UploadSession> create(
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @Valid @RequestBody MediaDtos.CreateUploadRequest request,
             HttpServletRequest servletRequest) {
-        MediaIdentity identity = MediaIdentity.require(userId, roles);
-        MediaAssetService.CreateResult result = service.create(identity.userId(), identity.roles(), request, trace(servletRequest));
+        MediaIdentity identity = MediaIdentity.require(userId, roles, permissions);
+        MediaAssetService.CreateResult result = service.create(identity.userId(), identity.roles(),
+                identity.permissions(), request, trace(servletRequest));
         if (result.created()) {
             return ResponseEntity.created(URI.create("/api/v1/media/uploads/" + result.session().uploadId()))
                     .body(result.session());

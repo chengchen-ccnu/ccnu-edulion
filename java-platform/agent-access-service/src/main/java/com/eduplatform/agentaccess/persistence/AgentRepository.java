@@ -104,8 +104,28 @@ public class AgentRepository {
     }
 
     public Optional<RunRow> findRunByUserMessage(UUID messageId) {
-        return jdbc.query("SELECT * FROM ai_run WHERE user_message_id=?", this::run,
+        return jdbc.query("SELECT * FROM ai_run WHERE user_message_id=? ORDER BY created_at,id LIMIT 1", this::run,
                 messageId.toString()).stream().findFirst();
+    }
+
+    /** 按会话内稳定重新生成请求查找唯一 run；用于网络重试只读恢复。 */
+    public Optional<RunRow> findRunByRegenerationRequest(UUID conversationId, UUID clientRequestId) {
+        return jdbc.query("SELECT * FROM ai_run WHERE conversation_id=? AND regeneration_request_id=?",
+                this::run, conversationId.toString(), clientRequestId.toString()).stream().findFirst();
+    }
+
+    /** 只返回当前 owner 会话中的指定用户消息；其他身份和资源关系统一不可枚举。 */
+    public Optional<MessageRow> findUserMessage(UUID owner, UUID conversationId, UUID messageId) {
+        return jdbc.query("SELECT m.* FROM ai_message m JOIN ai_conversation c ON c.id=m.conversation_id "
+                        + "WHERE c.owner_user_id=? AND m.conversation_id=? AND m.id=? AND m.role='USER'",
+                this::message, owner.toString(), conversationId.toString(), messageId.toString()).stream().findFirst();
+    }
+
+    /** 返回会话最后一条仍保留正文的有效用户消息，重新生成不得从更早历史建立分叉。 */
+    public Optional<MessageRow> findLastRetainedUserMessage(UUID conversationId) {
+        return jdbc.query("SELECT * FROM ai_message WHERE conversation_id=? AND role='USER' "
+                        + "AND content_state='RETAINED' ORDER BY sequence_no DESC LIMIT 1",
+                this::message, conversationId.toString()).stream().findFirst();
     }
 
     public Optional<RunRow> findRun(UUID owner, UUID runId) {
@@ -220,12 +240,18 @@ public class AgentRepository {
     }
 
     public void insertRun(RunRow row) {
+        insertRun(row, null);
+    }
+
+    /** 插入普通或重新生成 run；只有后者写稳定 regenerationRequestId。 */
+    public void insertRun(RunRow row, UUID regenerationRequestId) {
         jdbc.update("""
-                INSERT INTO ai_run(id,conversation_id,user_message_id,assistant_message_id,owner_user_id,trace_id,
+                INSERT INTO ai_run(id,conversation_id,user_message_id,regeneration_request_id,assistant_message_id,owner_user_id,trace_id,
                     status,active_slot,last_event_sequence,terminal_event_sequence,started_at,completed_at,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, row.id().toString(), row.conversationId().toString(), row.userMessageId().toString(),
-                row.assistantMessageId().toString(), row.ownerUserId().toString(), row.traceId(), row.status().name(),
+                string(regenerationRequestId), row.assistantMessageId().toString(), row.ownerUserId().toString(),
+                row.traceId(), row.status().name(),
                 row.terminal() ? null : 1, row.lastEventSequence(), row.terminalEventSequence(),
                 timestamp(row.startedAt()), timestamp(row.completedAt()), timestamp(row.createdAt()), timestamp(row.updatedAt()));
     }

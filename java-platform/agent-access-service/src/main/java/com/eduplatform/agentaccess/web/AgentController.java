@@ -3,6 +3,7 @@ package com.eduplatform.agentaccess.web;
 import com.eduplatform.agentaccess.config.TraceFilter;
 import com.eduplatform.agentaccess.service.AgentConversationService;
 import com.eduplatform.agentaccess.service.AgentRunCoordinator;
+import com.eduplatform.agentaccess.service.ExplanationPreferenceService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -16,6 +17,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,10 +33,13 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AgentController {
     private final AgentConversationService conversations;
     private final AgentRunCoordinator runs;
+    private final ExplanationPreferenceService preferences;
 
-    public AgentController(AgentConversationService conversations, AgentRunCoordinator runs) {
+    public AgentController(AgentConversationService conversations, AgentRunCoordinator runs,
+            ExplanationPreferenceService preferences) {
         this.conversations = conversations;
         this.runs = runs;
+        this.preferences = preferences;
     }
 
     @PostMapping("/conversations")
@@ -82,6 +87,20 @@ public class AgentController {
                 .body(runs.open(prepared));
     }
 
+    /** 仅基于最后一条已保存用户消息及其授权快照重新生成，不接受浏览器重传正文或媒体。 */
+    @PostMapping(value = "/conversations/{conversationId}/messages/{messageId}/regenerations",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public ResponseEntity<SseEmitter> regenerate(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID conversationId, @PathVariable UUID messageId,
+            @Valid @RequestBody AgentDtos.RegenerateMessageRequest input, HttpServletRequest servlet) {
+        UUID owner = AgentIdentity.requireLearner(userId, permissions);
+        var prepared = conversations.prepareRegeneration(owner, conversationId, messageId, input,
+                (String) servlet.getAttribute(TraceFilter.ATTRIBUTE));
+        return ResponseEntity.ok().header("X-Agent-Run-Id", prepared.run().id().toString())
+                .body(runs.open(prepared));
+    }
+
     @GetMapping("/runs/{runId}/events")
     public AgentDtos.RunEventPage events(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
@@ -94,5 +113,20 @@ public class AgentController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable UUID runId, @Valid @RequestBody AgentDtos.CancelRunRequest input) {
         return runs.cancel(AgentIdentity.requireLearner(userId, permissions), runId, input);
+    }
+
+    /** 只返回本人主动设置的讲解偏好；未设置时返回分步引导默认值。 */
+    @GetMapping("/preferences/explanation")
+    public AgentDtos.ExplanationPreferenceView getExplanationPreference(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions) {
+        return preferences.get(AgentIdentity.requireLearner(userId, permissions));
+    }
+
+    /** 使用 expectedRevision 修改本人偏好；稳定 clientRequestId 重试返回同一次结果。 */
+    @PutMapping("/preferences/explanation")
+    public AgentDtos.ExplanationPreferenceView putExplanationPreference(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @Valid @RequestBody AgentDtos.UpdateExplanationPreferenceRequest input) {
+        return preferences.update(AgentIdentity.requireLearner(userId, permissions), input);
     }
 }

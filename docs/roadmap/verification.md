@@ -1164,3 +1164,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 拆分结论：上述四项是同一个“浏览器消费稳定契约”缺口，集中在外部 OpenAPI、Agent Access 和 Media 的最小向前实现，可独立验收；记录为 T14.2.4，不把后端补口塞入 T15A。T14.2.4 不实现 Vue、第二套 SSE、画像查看、悬浮答疑、自主组题或新的基础设施。
 - 准备结论：T15A 前置不满足，因此没有创建 `codex/t15a-student-ai-chat-web`。已从干净 `main@c6bd8f6` 准备 `codex/t14.2.4-agent-web-contract`；当前分支只提交 T13.4 合并状态、T15A 前置审计和 T14.2.4 计划，不实现业务代码、不推送。
 - 数据：本次合并与只读审计未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-11 T14.2.4 Agent 浏览器消费契约补口
+
+- SSE 与生成客户端：外部 OpenAPI 升至 0.23.2，以九个 `eventType const` 分支把公开流冻结为可收窄 `oneOf`；Java 在持久化和回显前严格校验信封、各类 payload、字段上限、授权来源、安全错误和终态组合。生成 TypeScript 的类型级编译测试覆盖全部九类，浏览器无需手写 DTO。
+- 偏好与重新生成：新增本人 `learning:access` 的明确讲解偏好 GET/PUT，默认 `GUIDED_STEP_BY_STEP`，CAS revision 与稳定命令 key 同时防止覆盖和重试重复。最后一问重新生成只读取已存正文/授权快照并重新授权精确 ID，新增 assistant/run、保留旧回答，重复 key 恢复同 run，继续经过 Redis 配额、租约、取消和 MySQL 用量事实。
+- 图片：Media 启用 `AI_QUESTION_IMAGE` 的 JPG/JPEG、PNG、WebP 单对象上传，最大 10 MiB；权限由 `learning:access` 决定，资产 scope 为 `USER_PRIVATE`，读取和 Agent 绑定继续校验 owner、用途、READY。Agent Access 不接 OSS SDK，其他用途策略不变。
+- 迁移：Agent Access V5 先增加普通消息索引，再解除单消息单 run 唯一约束，新增重新生成请求唯一键和偏好命令幂等表；Media V6 向前扩展 scope 检查约束。旧迁移未改写，无跨服务外键或共享事实。
+- 自动化：Java 全仓 `clean verify` 9 模块成功，共 264 项执行、229 通过、35 项真实开关跳过，Agent Access 42 项中 39 通过、3 项跳过，Media 33 项中 25 通过、8 项跳过；Python 使用项目 `langgraph` 环境后 `compileall`、wheel 成功，全量 66 项中 57 通过、9 项真实开关跳过；前端 generate/typecheck、43 文件 294 项 Vitest 和三个应用 build 全过。默认 Anaconda 解释器缺声明依赖的首次失败已如实记录，不影响项目环境结果。
+- 真实链路：安全包装器启动 Gateway、Media/OSS、Agent Access、Python runtime/model。真实 `USER_PRIVATE/READY` PNG 随问题运行，原问题与一次重新生成共 1 条用户消息、2 条 assistant 消息、2 个 run；同重生成 key 重放相同 run。偏好更新为 `COMPLETE_SOLUTION` revision 1，后续新 run 完成；SSE 含阶段、文本和唯一终态，验收输出无敏感 payload。
+- 数据与清理：只在既有 `edu_platform_agent_dev`、`edu_platform_media_dev` 保留 Flyway V5/V6 结构迁移，不创建数据库、账号、课程、题目或长期 Seed。随机 Agent/MySQL、Media/MySQL、Redis key 与 OSS 精确前缀对象均在 `finally` 删除，复核三类验收残留均为 0；所有本地服务已停止。
+- 边界：没有实现 Vue、悬浮答疑、画像查看、自主组题、第二套 SSE/媒体客户端或新基础设施。T15A 必须等待本 PR 合并后从最新 main 开工。完整命令、演示与风险见 [T14.2.4 交付文档](../delivery/T14.2.4-agent-web-contract.md)。

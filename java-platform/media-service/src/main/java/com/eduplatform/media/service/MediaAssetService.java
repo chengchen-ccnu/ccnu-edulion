@@ -86,8 +86,9 @@ public class MediaAssetService {
      * @return 会话和是否首次创建；小文件同时包含短期 PUT 授权
      * @throws MediaException 角色/用途/文件/配额不合法，或幂等键冲突时抛出
      */
-    public CreateResult create(String ownerId, Set<String> roles, MediaDtos.CreateUploadRequest request, String traceId) {
-        MediaPurposePolicy.ValidatedUpload validated = policy.validate(request, roles,
+    public CreateResult create(String ownerId, Set<String> roles, Set<String> permissions,
+            MediaDtos.CreateUploadRequest request, String traceId) {
+        MediaPurposePolicy.ValidatedUpload validated = policy.validate(request, roles, permissions,
                 properties.upload().multipartThreshold());
         String fingerprint = fingerprint(request.purpose().name(), validated.filename(), Long.toString(request.size()),
                 validated.mimeType(), request.sha256().toLowerCase());
@@ -208,7 +209,7 @@ public class MediaAssetService {
                 return requireAssetOwned(locked.mediaId(), ownerId);
             }
             String mediaId = UUID.randomUUID().toString();
-            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, MediaAssetScope.TEACHER,
+            MediaAsset asset = new MediaAsset(mediaId, uploadId, ownerId, assetScope(locked.purpose()),
                     locked.purpose(), MediaStatus.PROCESSING,
                     ProcessingStatus.PENDING, locked.purpose() == MediaPurpose.LESSON_VIDEO ? LESSON_VIDEO_V5 : null,
                     locked.objectKey(), locked.originalFilename(), metadata.mimeType(),
@@ -376,11 +377,16 @@ public class MediaAssetService {
         return repository.findAssetOwned(mediaId, ownerId).orElseThrow(this::notFound);
     }
 
-    /** SYSTEM 资产允许任一已认证访问者只读；TEACHER 资产继续严格校验 owner。 */
+    /** SYSTEM 资产允许任一已认证访问者只读；TEACHER 与 USER_PRIVATE 都继续严格校验 owner。 */
     private MediaAsset requireAssetReadable(String mediaId, String ownerId) {
         MediaAsset asset = repository.findAsset(mediaId).orElseThrow(this::notFound);
         if (asset.scope() != MediaAssetScope.SYSTEM && !asset.ownerId().equals(ownerId)) throw notFound();
         return asset;
+    }
+
+    /** AI 题图属于普通用户本人私有资产；其他现有上传用途保持教师资产语义。 */
+    private static MediaAssetScope assetScope(MediaPurpose purpose) {
+        return purpose == MediaPurpose.AI_QUESTION_IMAGE ? MediaAssetScope.USER_PRIVATE : MediaAssetScope.TEACHER;
     }
 
     private List<CompletedPart> validateCompletionParts(UploadSession session, List<MediaDtos.CompletedPart> submitted) {
