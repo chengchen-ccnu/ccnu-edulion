@@ -32,6 +32,7 @@ ALLOWED_TOOLS: dict[SecondaryIntent, frozenset[ToolName]] = {
     SecondaryIntent.CREATE_PLAN: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
     SecondaryIntent.ADJUST_PLAN: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
     SecondaryIntent.LEARNING_ADVICE: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
+    SecondaryIntent.PLATFORM_USAGE_HELP: frozenset({ToolName.USER_HELP_SEARCH}),
     SecondaryIntent.SMALL_TALK: frozenset(),
     SecondaryIntent.UNSUPPORTED: frozenset(),
     SecondaryIntent.ACTION_CONFIRMATION: frozenset(),
@@ -66,6 +67,7 @@ class ToolInvocation:
 
 CourseVerifier = Callable[[str, Sequence[Mapping[str, Any]], str], Awaitable[set[str]]]
 StudentFactReader = Callable[[ToolName, str, Sequence[str], int, str], Awaitable[list[SafeToolEvidence]]]
+UserHelpReader = Callable[[str, str, int, str], Awaitable[list[SafeToolEvidence]]]
 
 
 class ImageUnclear(PermissionError):
@@ -83,6 +85,7 @@ class ToolExecutor:
         model: Any | None = None,
         course_verifier: CourseVerifier | None = None,
         student_fact_reader: StudentFactReader | None = None,
+        user_help_reader: UserHelpReader | None = None,
         http_client: Any | None = None,
     ):
         self.search_service = search_service
@@ -90,6 +93,7 @@ class ToolExecutor:
         self.model = model
         self.course_verifier = course_verifier
         self.student_fact_reader = student_fact_reader
+        self.user_help_reader = user_help_reader
         self.http_client = http_client
 
     async def execute(
@@ -152,7 +156,7 @@ class ToolExecutor:
             if not public and not self_scope and not requested_ids.issubset(granted_ids):
                 raise PermissionError("工具参数超出 Java 授权资源范围")
         elif not any(
-            scope.scopeType in {"PUBLIC_JUNIOR_MATH", "USER_SELF"}
+            scope.scopeType in {"PUBLIC_JUNIOR_MATH", "USER_SELF", "HELP_KB"}
             for grant in grants for scope in grant.resourceScopes
         ):
             raise PermissionError("受限工具必须携带 Java 授权的精确资源 ID")
@@ -183,7 +187,12 @@ class ToolExecutor:
                 int(args.get("limit", 8)), run.traceId,
             )
         if name is ToolName.USER_HELP_SEARCH:
-            raise PermissionError("平台帮助知识库将在 T13.4 接入。")
+            if self.user_help_reader is None:
+                return []
+            return await self.user_help_reader(
+                str(run.runId), str(args.get("query", ""))[:500],
+                min(5, max(1, int(args.get("limit", 5)))), run.traceId,
+            )
         raise ValueError("不支持的工具")
 
     async def _search(

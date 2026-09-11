@@ -37,6 +37,7 @@ class SecondaryIntent(str, Enum):
     CREATE_PLAN = "CREATE_PLAN"
     ADJUST_PLAN = "ADJUST_PLAN"
     LEARNING_ADVICE = "LEARNING_ADVICE"
+    PLATFORM_USAGE_HELP = "PLATFORM_USAGE_HELP"
     SMALL_TALK = "SMALL_TALK"
     UNSUPPORTED = "UNSUPPORTED"
     ACTION_CONFIRMATION = "ACTION_CONFIRMATION"
@@ -299,6 +300,9 @@ class SafeToolEvidence(StrictModel):
     summary: str = Field(min_length=1, max_length=4_000)
     accessDecision: Literal["AUTHORIZED_BY_JAVA"] = "AUTHORIZED_BY_JAVA"
     revision: int | None = Field(default=None, ge=0)
+    helpVersion: str | None = Field(default=None, pattern=r"^[0-9]{4}\.[0-9]{2}\.[0-9]+$")
+    directAnswer: bool = False
+    appRoute: str | None = Field(default=None, pattern=r"^/[a-z0-9-]+(?:/[a-z0-9-]+)*$", max_length=120)
 
 
 class ToolResult(StrictModel):

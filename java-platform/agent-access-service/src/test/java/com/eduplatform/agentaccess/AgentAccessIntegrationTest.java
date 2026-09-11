@@ -350,6 +350,43 @@ class AgentAccessIntegrationTest {
     }
 
     @Test
+    /** 帮助 HTTP 只接受固定 Runtime 身份与活动真实 run；未知字段、未知 run 和终态都安全失败。 */
+    void userHelpHttpUsesCurrentVersionAndRejectsIdentityOrBoundaryEscalation() throws Exception {
+        var prepared = newRun("trace-user-help-http");
+        var base = "http://127.0.0.1:" + port + "/internal/v1/agent/runs/";
+        var uri = java.net.URI.create(base + prepared.run().id() + "/user-help:search");
+        var client = java.net.http.HttpClient.newHttpClient();
+        var valid = helpRequest(uri, "edu-agent-runtime", "test-only-runtime-callback-token-32-bytes",
+                "{\"query\":\"怎么登录\",\"limit\":5}");
+        var response = client.send(valid, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("2026.09.1", "help_login_password", "\"directAnswer\":true",
+                "\"appRoute\":\"/login\"")
+                .doesNotContain("owner", "keywords", "highPrecisionRules", "currentFile");
+
+        assertThat(client.send(helpRequest(uri, "wrong-runtime",
+                        "test-only-runtime-callback-token-32-bytes", "{\"query\":\"怎么登录\",\"limit\":1}"),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+        assertThat(client.send(helpRequest(uri, "edu-agent-runtime", "wrong-token-value-that-is-long-enough-123",
+                        "{\"query\":\"怎么登录\",\"limit\":1}"),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+        assertThat(client.send(helpRequest(uri, "edu-agent-runtime",
+                        "test-only-runtime-callback-token-32-bytes",
+                        "{\"query\":\"怎么登录\",\"limit\":1,\"userId\":\"" + OTHER + "\"}"),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(422);
+        var unknown = java.net.URI.create(base + UUID.randomUUID() + "/user-help:search");
+        assertThat(client.send(helpRequest(unknown, "edu-agent-runtime",
+                        "test-only-runtime-callback-token-32-bytes", "{\"query\":\"怎么登录\",\"limit\":1}"),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(404);
+
+        var terminal = terminalRun("trace-user-help-terminal");
+        var terminalUri = java.net.URI.create(base + terminal.run().id() + "/user-help:search");
+        assertThat(client.send(helpRequest(terminalUri, "edu-agent-runtime",
+                        "test-only-runtime-callback-token-32-bytes", "{\"query\":\"怎么登录\",\"limit\":1}"),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(409);
+    }
+
+    @Test
     /** 私有结果报告只允许终态保存；同 ID 同内容重放，不同内容冲突且不进入公开消息/事件。 */
     void privateResultReportIsTerminalAndIdempotent() {
         var prepared = newRun("trace-private-report");
@@ -563,6 +600,13 @@ class AgentAccessIntegrationTest {
                 AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
         return conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(UUID.randomUUID(),
                 "请给我一个提示", null), traceId);
+    }
+
+    private static java.net.http.HttpRequest helpRequest(java.net.URI uri, String caller, String token,
+            String body) {
+        return java.net.http.HttpRequest.newBuilder(uri).header("Content-Type", "application/json")
+                .header("X-Internal-Caller", caller).header("X-Internal-Service-Token", token)
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build();
     }
 
     private AgentConversationService.PreparedRun terminalRun(String traceId) {

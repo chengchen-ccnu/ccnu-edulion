@@ -50,6 +50,16 @@ public class AgentInternalController {
         return service.facts(runId, request, traceId);
     }
 
+    /** 固定 Runtime 身份可按活动 run 查询当前帮助版本；浏览器请求不会经过 Gateway 到达这里。 */
+    @PostMapping("/internal/v1/agent/runs/{runId}/user-help:search")
+    public AgentInternalDtos.UserHelpSearchResponse userHelp(@PathVariable UUID runId,
+            @RequestHeader("X-Internal-Caller") String caller,
+            @RequestHeader("X-Internal-Service-Token") String token,
+            @Valid @RequestBody AgentInternalDtos.UserHelpSearchRequest request) {
+        authorize(caller, token);
+        return service.userHelp(runId, request);
+    }
+
     @PutMapping("/internal/v1/agent/runs/{runId}/result-report")
     public AgentInternalDtos.RunResultReportResponse report(@PathVariable UUID runId,
             @RequestHeader("X-Internal-Caller") String caller,

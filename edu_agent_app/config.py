@@ -120,6 +120,7 @@ def build_runtime(settings: RuntimeSettings | None = None):
         search_service=search, graph=graph, model=model,
         course_verifier=callback.verify_course if callback else None,
         student_fact_reader=callback.read_facts if callback else None,
+        user_help_reader=callback.search_user_help if callback else None,
     )
     return DynamicAgentRuntime(
         model=model,

@@ -33,6 +33,17 @@ public final class AgentInternalDtos {
             @NotBlank @Size(max = 4000) String summary, @NotNull Long revision) {}
     public record StudentFactsResponse(List<SafeFact> facts) {}
 
+    /** 帮助查询不接受 userId、版本或路由，可信 owner 与当前版本均由 Agent Access 决定。 */
+    public record UserHelpSearchRequest(@NotBlank @Size(max = 500) String query,
+            @Positive @Max(5) int limit) {}
+    public record UserHelpEvidence(@NotBlank @Size(max = 128) String evidenceId,
+            @NotBlank @Size(max = 200) String title,
+            @NotBlank @Size(max = 4000) String summary,
+            @NotBlank @Size(max = 32) String version,
+            boolean directAnswer,
+            @Size(max = 120) String appRoute) {}
+    public record UserHelpSearchResponse(@NotBlank String version, List<UserHelpEvidence> evidence) {}
+
     public record RunResultReportRequest(@NotNull UUID reportId,
             @NotBlank @Size(max = 120) String model,
             @PositiveOrZero @Max(16) int modelCalls,

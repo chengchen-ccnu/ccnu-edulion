@@ -31,6 +31,7 @@ ROLE_BY_INTENT: dict[SecondaryIntent, AgentRole] = {
     SecondaryIntent.CREATE_PLAN: AgentRole.STUDY_PLANNER,
     SecondaryIntent.ADJUST_PLAN: AgentRole.STUDY_PLANNER,
     SecondaryIntent.LEARNING_ADVICE: AgentRole.STUDY_PLANNER,
+    SecondaryIntent.PLATFORM_USAGE_HELP: AgentRole.PLATFORM_HELP,
     SecondaryIntent.SMALL_TALK: AgentRole.COORDINATOR,
     SecondaryIntent.UNSUPPORTED: AgentRole.COORDINATOR,
     SecondaryIntent.ACTION_CONFIRMATION: AgentRole.COORDINATOR,
@@ -54,6 +55,7 @@ REQUIRED_SLOTS: dict[SecondaryIntent, tuple[tuple[str, ...], ...]] = {
     SecondaryIntent.RECOMMEND_PRACTICE: (("practiceTopic",),),
     SecondaryIntent.CREATE_PLAN: (("planGoal",),),
     SecondaryIntent.ADJUST_PLAN: (("planGoal",),),
+    SecondaryIntent.PLATFORM_USAGE_HELP: (("platformTopic",),),
     SecondaryIntent.ACTION_CONFIRMATION: (("actionId",),),
     SecondaryIntent.ACTION_CANCELLATION: (("actionId",),),
 }
@@ -119,6 +121,8 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
             values["practiceTopic"] = topic[:200]
     elif intent in {SecondaryIntent.CREATE_PLAN, SecondaryIntent.ADJUST_PLAN}:
         values["planGoal"] = text[:500]
+    elif intent is SecondaryIntent.PLATFORM_USAGE_HELP:
+        values["platformTopic"] = text[:200]
     return IntentSlots(**{key: value for key, value in values.items() if value is not None})
 
 
@@ -148,8 +152,16 @@ def _rule_intent(text: str, context: TrustedContext) -> SecondaryIntent | None:
         return SecondaryIntent.CREATE_PLAN
     if re.search(r"怎么学|学习建议|学习方法|提高成绩", normalized):
         return SecondaryIntent.LEARNING_ADVICE
-    if re.search(r"怎么用|在哪里|账号|登录|平台|课程入口", normalized):
-        return None  # Platform Help 需由一级路由识别，但 T13.4 前固定不可用。
+    if re.search(
+        r"(?:怎么|如何|在哪|哪里|什么时候|为什么|能不能|看不到|收不到|无法|区别).{0,20}"
+        r"(?:登录|注册|验证码|密码|账号|课程|视频|图文|资料|题库|练习|作业|考试|提交|成绩|答案|进度|AI)|"
+        r"(?:登录|注册|验证码|密码|账号|课程|视频|图文|资料|题库|练习|作业|考试|提交|成绩|答案|进度|AI)"
+        r".{0,24}(?:怎么|如何|在哪|哪里|什么时候|为什么|能不能|看不到|收不到|无法|区别)|"
+        r"(?:公共题库|课程练习).{0,12}(?:区别|不同|入口)|AI(?:能|不|会)",
+        normalized,
+        re.I,
+    ):
+        return SecondaryIntent.PLATFORM_USAGE_HELP
     if re.search(r"课程|课上|这节课|老师讲", normalized):
         return SecondaryIntent.COURSE_QUESTION
     if re.search(r"解释|概念|什么是|为什么", normalized) and not re.search(r"求|解|计算", normalized):
@@ -225,16 +237,6 @@ class IntentClassifier:
         for part in selected:
             intent = _rule_intent(part, context)
             if intent is None:
-                if re.search(r"怎么用|在哪里|账号|登录|平台|课程入口", part):
-                    decisions.append(IntentDecision(
-                        primaryIntent=PrimaryIntent.PLATFORM_HELP,
-                        secondaryIntent=SecondaryIntent.UNSUPPORTED,
-                        role=AgentRole.PLATFORM_HELP,
-                        resolution="ROUTED",
-                        slots=IntentSlots(platformTopic=part[:200]),
-                        subRequests=[],
-                    ))
-                    continue
                 decision = await self._model_decision(part, context, limits)
             else:
                 decision = _make_decision(intent, part, context)

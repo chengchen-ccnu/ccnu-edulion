@@ -1128,4 +1128,27 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：使用安全包装器、`D:\Anaconda\envs\langgraph\python.exe`、Java `18086/18087` 两实例与 Python `8000`。唯一低成本初中代数请求在首个 `TEXT_DELTA` 后断开；Python 仅 1 次 run POST/1 次 cancel，MySQL 终态 `CANCELLED`、助手 `PARTIAL`、32 个连续事件且仅 1 个 `FINAL_RESULT`。B 实例使用同 `clientRequestId` 重放同 run 的 32 个已存事件，Python 无第二次 run POST。另以 Java `18088`+错误 Redis 端口实验验证新 run 为 503、0 消息/run，已存会话读仍正常。验收未输出完整问答、Token、API Key 或临时 URL。
 - 数据与清理：用途明确的 `edu_platform_agent_dev` 由 V3 前进 V4，不创建数据库/Seed。固定验收范围精确删除 1 会话、2 消息、1 run、32 事件和 1 用量，范围复核 0；无媒体引用/Rabbit 消息/Qdrant 点/Neo4j 图/OSS 对象。Redis 专项按随机前缀与已知 Key 清理，未 `FLUSHDB`、未清空表或删除固定 collection。
 - 边界：不承诺已发给模型供应商的请求不计费。生产需确认额度数值与 Redis 容量/高可用性；T13.4 仍负责用户帮助事实，T15A 仅消费本任务的流、停止、恢复、图片 ID 和正文保留投影，不在前端重建治理逻辑。完整命令、Key/TTL、配置、演示与风险见 [T14.2.3 交付文档](../delivery/T14.2.3-agent-runtime-governance.md)。
-- 交付：实现提交 `9085ff9` 与交付记录均已推送；[Ready PR #62](https://github.com/chengchen-ccnu/ccnu-edulion/pull/62) 已创建且未合并。最新 push 与 pull_request 两轮的 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功；Node 20 action runtime 弃用提示不影响本轮测试结论。
+- 交付：实现提交 `9085ff9`、交付记录提交 `33e3feb` 与 CI 记录提交 `d9afebd` 均已推送；[PR #62](https://github.com/chengchen-ccnu/ccnu-edulion/pull/62) 的最新 push/pull_request 两轮共 8 项 CI 全部成功，最终合并事实见下一节。
+
+## 2026-09-11 PR #62 合并与 T13.4 前置审计
+
+- 合并与清理：[PR #62](https://github.com/chengchen-ccnu/ccnu-edulion/pull/62) 在 Ready、可合并且最新两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@6577abfc8eab45b4f0aedd99428692e25a950f55`；本地 `main` 已快进同步，T14.2.3 本地和远端分支均已删除。
+- 既有预留：内部协议 1.1.0 已有 `PLATFORM_HELP` 角色、`USER_HELP_SEARCH` 工具、`HELP_KB` scope、`USER_HELP` evidence/reference 类型与 SearchArguments；Python 角色白名单也只允许 Platform Help 使用该工具。这些基础类型可向前演进，不需要第二套工具或外部浏览器接口。
+- 当前缺口：规则意图目前把平台问题路由为 `PLATFORM_HELP + UNSUPPORTED`，而 `UNSUPPORTED` 不允许工具；运行时对 Platform Help 直接返回“T13.4 尚未接入”，`ToolExecutor` 也固定拒绝。Java 的可信上下文没有授予 `USER_HELP_SEARCH`，内部 Controller/客户端没有帮助检索回调。这四处必须在同一任务闭环，否则只添加帮助文件仍然不可用。
+- 事实源方案：遵循 `agent-platform-design.md`，首期帮助知识随 `agent-access-service` 以版本化 JSON 资源发布，由 Git 审查和 manifest 选择当前版本；不放入 operation-service，不新建 MySQL 表或管理后台。历史文件不可原地改写，新内容新增版本并更新 manifest；启动和测试必须校验唯一 ID、版本、语言、关键词、正文和路由白名单。
+- 查询与回答：新增按 `runId`、固定 Runtime 身份和内部令牌保护的只读帮助检索。Java 从 MySQL run 反查 owner 后才查询当前帮助版本，并返回有界 `USER_HELP` 安全证据。强规则命中直接使用已维护正文，不消耗模型；复合/自然语言问题可把有限命中材料交给现有模型组织答案。无可靠命中时明确不知道并建议用户换一种描述，禁止模型凭经验猜按钮、路由或未交付功能。
+- 契约边界：内部协议应向前增加明确的 `PLATFORM_USAGE_HELP` 二级意图、帮助查询 DTO，以及 `AuthorizedReference` 的可选白名单相对路由；现有 v1 run/SSE/取消兼容。只允许仓库已交付的公共页面相对路径，禁止外部 URL、`/internal/**`、服务端 API、动态占位 ID、page-specs 原文、roadmap、测试账号、权限枚举和“建设中”能力。
+- 范围判断：实现集中在 Agent Access 资源加载/只读内部 API、Python AgentAccessClient/工具/意图/回答与契约测试，范围可独立验收，不再拆分。T13.4 不修改 Vue、公共 `/help` 页面、数据库迁移、Redis、RabbitMQ、OSS、Qdrant/Neo4j 索引或 T14.3 自主组题。
+- 前置与数据：T14.1、T13.3、T14.2.1～T14.2.3 均已合并，Agent Access↔Python 私有身份和真实 SSE 可复用；百炼配置可用于一个有界复杂帮助问题验收。审计没有连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，没有创建伪数据或调用收费模型。
+- 准备结论：前置满足，已从干净 `main@6577abf` 创建 `codex/t13.4-user-help-knowledge-base`。当前分支只提交 T14.2.3 合并状态、T13.4 前置审计和交付计划，不实现业务代码、不推送。
+
+## 2026-09-11 T13.4 用户帮助知识库与 Help 专家接入
+
+- 版本化事实：Agent Access 新增 manifest、Draft 2020-12 JSON Schema 和 `2026.09.1` 中文帮助版本，共 11 篇文章，覆盖登录/注册/验证码/找回密码、账号安全、课程与我的学习、视频/图文/资料、题库边界、作业考试、成绩答案、进度和 AI 边界。启动加载严格检查结构、版本、唯一 ID/规则、正文和精确路由白名单；失败时阻止启动，不回退模型猜测。
+- 契约与授权：内部协议向前升至 1.2.0，新增 `PLATFORM_USAGE_HELP` 与 `POST /internal/v1/agent/runs/{runId}/user-help:search`，请求只含有界 `query/limit`。现有固定 `edu-agent-runtime` caller、内部令牌和 MySQL run owner 反查继续生效；合法学生 run 获得 `USER_HELP_SEARCH + HELP_KB`，返回最多 5 条 `USER_HELP` 安全证据和可选白名单相对路由，不返回权重、内部路径、owner 或未命中内容。
+- Python 闭环：移除 `UNSUPPORTED` 映射和固定未接入降级，AgentAccessClient/ToolExecutor 接通唯一帮助工具。强规则命中直接使用维护正文且不调用模型；复杂问题仅把有限帮助正文作为不可信数据交给现有模型；空命中明确请求补充页面与目标操作。五角色、工具/意图/scope 白名单、预算、SSE、取消、部分回答和用量上报保持既有边界。
+- 自动化：Java 全仓 `clean verify` 9 模块成功，253 项执行、219 通过、34 项真实依赖开关跳过、0 failure/error；Agent Access 33 项中 30 通过、3 跳过。Python `compileall`、wheel 成功，全量 66 项中 57 通过、9 项真实开关跳过、0 failure；内部协议/资源/动态运行时定向 42 项通过。外部 OpenAPI 客户端重生成无差异，未修改 Vue，`git diff --check` 通过。
+- 真实链路：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 启动 Java Agent Access 与 Python runtime。高精度登录帮助为 `COMPLETED`、0 次模型、1 次帮助工具；复合进度/成绩帮助为 `COMPLETED`、1 次真实百炼模型、1 次帮助工具。验收显式关闭在线检索、Redis 治理、索引发布、保留任务和 Media Outbox 发布，只输出状态与计数，未输出完整问题/回答、提示词、Token、密钥或内部正文。
+- 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收仅在已有 `edu_platform_agent_dev` 创建随机 owner 的 2 个会话及其消息/run/事件/用量，`finally` 按 owner 和外键顺序精确删除全部关联事实，复核残留为 0；未写 Redis、RabbitMQ、Qdrant、Neo4j 或 OSS。
+- 边界与后续：历史帮助修订必须新增版本文件并更新 manifest，不得原地改写；当前小规模规范化匹配不扩展为新向量索引。T15A 只消费既有 SSE、安全来源和相对路由，不读取知识库文件或复制帮助规则。完整启动、测试、演示、清理和风险见 [T13.4 交付文档](../delivery/T13.4-user-help-knowledge-base.md)。
+- 交付：实现提交 `a992a89`、验收记录提交 `0fd8790` 已推送；[PR #63](https://github.com/chengchen-ccnu/ccnu-edulion/pull/63) 已创建为 Ready，等待评审与 CI，不自动合并。
