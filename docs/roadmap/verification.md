@@ -1141,3 +1141,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 范围判断：实现集中在 Agent Access 资源加载/只读内部 API、Python AgentAccessClient/工具/意图/回答与契约测试，范围可独立验收，不再拆分。T13.4 不修改 Vue、公共 `/help` 页面、数据库迁移、Redis、RabbitMQ、OSS、Qdrant/Neo4j 索引或 T14.3 自主组题。
 - 前置与数据：T14.1、T13.3、T14.2.1～T14.2.3 均已合并，Agent Access↔Python 私有身份和真实 SSE 可复用；百炼配置可用于一个有界复杂帮助问题验收。审计没有连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，没有创建伪数据或调用收费模型。
 - 准备结论：前置满足，已从干净 `main@6577abf` 创建 `codex/t13.4-user-help-knowledge-base`。当前分支只提交 T14.2.3 合并状态、T13.4 前置审计和交付计划，不实现业务代码、不推送。
+
+## 2026-09-11 T13.4 用户帮助知识库与 Help 专家接入
+
+- 版本化事实：Agent Access 新增 manifest、Draft 2020-12 JSON Schema 和 `2026.09.1` 中文帮助版本，共 11 篇文章，覆盖登录/注册/验证码/找回密码、账号安全、课程与我的学习、视频/图文/资料、题库边界、作业考试、成绩答案、进度和 AI 边界。启动加载严格检查结构、版本、唯一 ID/规则、正文和精确路由白名单；失败时阻止启动，不回退模型猜测。
+- 契约与授权：内部协议向前升至 1.2.0，新增 `PLATFORM_USAGE_HELP` 与 `POST /internal/v1/agent/runs/{runId}/user-help:search`，请求只含有界 `query/limit`。现有固定 `edu-agent-runtime` caller、内部令牌和 MySQL run owner 反查继续生效；合法学生 run 获得 `USER_HELP_SEARCH + HELP_KB`，返回最多 5 条 `USER_HELP` 安全证据和可选白名单相对路由，不返回权重、内部路径、owner 或未命中内容。
+- Python 闭环：移除 `UNSUPPORTED` 映射和固定未接入降级，AgentAccessClient/ToolExecutor 接通唯一帮助工具。强规则命中直接使用维护正文且不调用模型；复杂问题仅把有限帮助正文作为不可信数据交给现有模型；空命中明确请求补充页面与目标操作。五角色、工具/意图/scope 白名单、预算、SSE、取消、部分回答和用量上报保持既有边界。
+- 自动化：Java 全仓 `clean verify` 9 模块成功，253 项执行、219 通过、34 项真实依赖开关跳过、0 failure/error；Agent Access 33 项中 30 通过、3 跳过。Python `compileall`、wheel 成功，全量 66 项中 57 通过、9 项真实开关跳过、0 failure；内部协议/资源/动态运行时定向 42 项通过。外部 OpenAPI 客户端重生成无差异，未修改 Vue，`git diff --check` 通过。
+- 真实链路：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 启动 Java Agent Access 与 Python runtime。高精度登录帮助为 `COMPLETED`、0 次模型、1 次帮助工具；复合进度/成绩帮助为 `COMPLETED`、1 次真实百炼模型、1 次帮助工具。验收显式关闭在线检索、Redis 治理、索引发布、保留任务和 Media Outbox 发布，只输出状态与计数，未输出完整问题/回答、提示词、Token、密钥或内部正文。
+- 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收仅在已有 `edu_platform_agent_dev` 创建随机 owner 的 2 个会话及其消息/run/事件/用量，`finally` 按 owner 和外键顺序精确删除全部关联事实，复核残留为 0；未写 Redis、RabbitMQ、Qdrant、Neo4j 或 OSS。
+- 边界与后续：历史帮助修订必须新增版本文件并更新 manifest，不得原地改写；当前小规模规范化匹配不扩展为新向量索引。T15A 只消费既有 SSE、安全来源和相对路由，不读取知识库文件或复制帮助规则。完整启动、测试、演示、清理和风险见 [T13.4 交付文档](../delivery/T13.4-user-help-knowledge-base.md)。
