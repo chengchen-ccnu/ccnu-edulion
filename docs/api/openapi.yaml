@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.23.1
-  description: T14.2.3 Agent Access contract. Provides authenticated AI conversations, messages, run streaming, saved-event recovery and idempotent cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. Redis coordinates only short-lived execution governance while MySQL remains the conversation and event source of truth.
+  version: 0.23.2
+  description: T14.2.4 Agent browser contract. Provides authenticated AI conversations, typed run streaming, explicit explanation preferences, last-question regeneration, saved-event recovery and cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. Redis coordinates only short-lived execution governance while MySQL remains the conversation and event source of truth.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -3034,6 +3034,34 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/v1/ai/preferences/explanation:
+    get:
+      tags: [Agent]
+      operationId: getAgentExplanationPreference
+      summary: Read the current user's explicit explanation preference
+      description: Requires learning:access. When no explicit value exists, returns GUIDED_STEP_BY_STEP with revision 0. Inferred preferences, profiles, evidence and memories are never exposed.
+      responses:
+        '200': {description: Explicit preference or the public default., content: {application/json: {schema: {$ref: '#/components/schemas/AgentExplanationPreference'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [Agent]
+      operationId: updateAgentExplanationPreference
+      summary: Update the current user's explicit explanation preference
+      description: Requires learning:access. expectedRevision prevents lost updates; retrying the same clientRequestId with the same body returns the original result without advancing revision again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateAgentExplanationPreferenceRequest'}
+      responses:
+        '200': {description: Updated preference or idempotently recovered result., content: {application/json: {schema: {$ref: '#/components/schemas/AgentExplanationPreference'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/ai/conversations:
     post:
       tags: [Agent]
@@ -3115,6 +3143,38 @@ paths:
       responses:
         '200':
           description: UTF-8 SSE. data is AgentClientStreamEvent JSON; sequence is strictly consecutive and exactly one FINAL_RESULT terminates the run.
+          headers:
+            X-Agent-Run-Id:
+              description: Stable run identity used for cancel and saved-event recovery.
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string}
+              x-event-schema: {$ref: '#/components/schemas/AgentClientStreamEvent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/AgentUnavailable'}
+  /api/v1/ai/conversations/{conversationId}/messages/{messageId}/regenerations:
+    post:
+      tags: [Agent]
+      operationId: regenerateAgentMessage
+      summary: Regenerate the last valid user message
+      description: Requires learning:access and owner access. The server reuses and re-authorizes the persisted text, media and context snapshot, appends one assistant message and run, and preserves all old answers and events. The same clientRequestId only replays saved events.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+        - {$ref: '#/components/parameters/AgentMessageId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegenerateAgentMessageRequest'}
+      responses:
+        '200':
+          description: UTF-8 SSE using the same discriminated AgentClientStreamEvent union as a normal send.
           headers:
             X-Agent-Run-Id:
               description: Stable run identity used for cancel and saved-event recovery.
@@ -3215,6 +3275,12 @@ components:
       in: path
       required: true
       description: Owner-scoped AI conversation ID; foreign IDs are reported as not found.
+      schema: {type: string, format: uuid}
+    AgentMessageId:
+      name: messageId
+      in: path
+      required: true
+      description: Owner-scoped retained user message ID; foreign, stale or non-last messages are reported as not found.
       schema: {type: string, format: uuid}
     AgentRunId:
       name: runId
@@ -3780,6 +3846,33 @@ components:
           description: Stable logical-send key unique within the conversation.
         content: {type: string, minLength: 1, maxLength: 10000}
         context: {$ref: '#/components/schemas/AgentMessageContextRequest'}
+    AgentExplanationStyle:
+      type: string
+      enum: [GUIDED_STEP_BY_STEP, COMPLETE_SOLUTION]
+      description: User-selected explanation mode. GUIDED_STEP_BY_STEP is the default until the user explicitly changes it.
+    AgentExplanationPreference:
+      type: object
+      additionalProperties: false
+      required: [value, revision, explicitlySet]
+      properties:
+        value: {$ref: '#/components/schemas/AgentExplanationStyle'}
+        revision: {type: integer, format: int64, minimum: 0}
+        explicitlySet: {type: boolean, description: False only when the returned value is the default and no explicit setting exists.}
+      description: Public explicit setting only. It never includes inferred preferences, profile evidence or memory.
+    UpdateAgentExplanationPreferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, value, expectedRevision]
+      properties:
+        clientRequestId: {type: string, format: uuid, description: Stable logical update key for safe network retry.}
+        value: {$ref: '#/components/schemas/AgentExplanationStyle'}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+    RegenerateAgentMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId]
+      properties:
+        clientRequestId: {type: string, format: uuid, description: Stable key for one regeneration. No message body, media or context may be resubmitted.}
     AgentMessageContext:
       type: object
       additionalProperties: false
@@ -3822,21 +3915,171 @@ components:
         size: {type: integer, minimum: 1, maximum: 100}
         total: {type: integer, format: int64, minimum: 0}
     AgentClientStreamEvent:
+      oneOf:
+        - {$ref: '#/components/schemas/AgentRunAcceptedEvent'}
+        - {$ref: '#/components/schemas/AgentStageChangedEvent'}
+        - {$ref: '#/components/schemas/AgentTextDeltaEvent'}
+        - {$ref: '#/components/schemas/AgentClarificationRequiredEvent'}
+        - {$ref: '#/components/schemas/AgentReferenceEvent'}
+        - {$ref: '#/components/schemas/AgentPartialCheckpointEvent'}
+        - {$ref: '#/components/schemas/AgentHeartbeatEvent'}
+        - {$ref: '#/components/schemas/AgentRunErrorEvent'}
+        - {$ref: '#/components/schemas/AgentFinalResultEvent'}
+      description: Browser-safe projection of the internal typed event. FINAL_RESULT occurs exactly once and carries the terminal AgentRunStatus.
+    AgentStreamEventBase:
       type: object
-      additionalProperties: false
-      required: [eventType, runId, messageId, sequence, occurredAt, payload]
+      required: [runId, messageId, sequence, occurredAt]
       properties:
-        eventType:
-          type: string
-          enum: [RUN_ACCEPTED, STAGE_CHANGED, TEXT_DELTA, CLARIFICATION_REQUIRED, REFERENCE, PARTIAL_CHECKPOINT, HEARTBEAT, RUN_ERROR, FINAL_RESULT]
         runId: {type: string, format: uuid}
         messageId: {type: string, format: uuid}
         sequence: {type: integer, minimum: 1}
         occurredAt: {type: string, format: date-time}
-        payload:
-          type: object
-          description: Public protocol payload for the named eventType. It never includes prompts, chain-of-thought, raw tool output, credentials or temporary media URLs.
-      description: Browser-safe projection of the internal typed event. FINAL_RESULT occurs exactly once and carries the terminal AgentRunStatus.
+    AgentRunAcceptedEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: RUN_ACCEPTED}, payload: {$ref: '#/components/schemas/AgentRunAcceptedPayload'}}}
+      unevaluatedProperties: false
+    AgentStageChangedEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: STAGE_CHANGED}, payload: {$ref: '#/components/schemas/AgentStageChangedPayload'}}}
+      unevaluatedProperties: false
+    AgentTextDeltaEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: TEXT_DELTA}, payload: {$ref: '#/components/schemas/AgentTextDeltaPayload'}}}
+      unevaluatedProperties: false
+    AgentClarificationRequiredEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: CLARIFICATION_REQUIRED}, payload: {$ref: '#/components/schemas/AgentClarificationPayload'}}}
+      unevaluatedProperties: false
+    AgentReferenceEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: REFERENCE}, payload: {$ref: '#/components/schemas/AgentReferencePayload'}}}
+      unevaluatedProperties: false
+    AgentPartialCheckpointEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: PARTIAL_CHECKPOINT}, payload: {$ref: '#/components/schemas/AgentPartialCheckpointPayload'}}}
+      unevaluatedProperties: false
+    AgentHeartbeatEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: HEARTBEAT}, payload: {$ref: '#/components/schemas/AgentHeartbeatPayload'}}}
+      unevaluatedProperties: false
+    AgentRunErrorEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: RUN_ERROR}, payload: {$ref: '#/components/schemas/AgentRunErrorPayload'}}}
+      unevaluatedProperties: false
+    AgentFinalResultEvent:
+      allOf:
+        - {$ref: '#/components/schemas/AgentStreamEventBase'}
+        - {type: object, required: [eventType, payload], properties: {eventType: {type: string, const: FINAL_RESULT}, payload: {$ref: '#/components/schemas/AgentFinalResultPayload'}}}
+      unevaluatedProperties: false
+    AgentRunAcceptedPayload:
+      type: object
+      additionalProperties: false
+      required: [conversationId, messageId, replayed]
+      properties:
+        conversationId: {type: string, format: uuid}
+        messageId: {type: string, format: uuid}
+        replayed: {type: boolean}
+    AgentStage:
+      type: string
+      enum: [UNDERSTANDING, RETRIEVING, CHECKING_WORK, PLANNING, EXPLAINING, FINALIZING]
+    AgentStageChangedPayload:
+      type: object
+      additionalProperties: false
+      required: [stage, message]
+      properties:
+        stage: {$ref: '#/components/schemas/AgentStage'}
+        message: {type: string, minLength: 1, maxLength: 120}
+    AgentTextDeltaPayload:
+      type: object
+      additionalProperties: false
+      required: [delta]
+      properties:
+        delta: {type: string, minLength: 1, maxLength: 4000}
+    AgentClarificationPayload:
+      type: object
+      additionalProperties: false
+      required: [question, missingSlots]
+      properties:
+        question: {type: string, minLength: 1, maxLength: 500}
+        missingSlots: {type: array, minItems: 1, maxItems: 8, uniqueItems: true, items: {type: string, enum: [problemText, conceptName, questionId, courseId, lessonId, studentWork, hintLevel, wrongQuestionId, practiceTopic, planGoal, platformTopic, actionId]}}
+    AgentAuthorizedReference:
+      type: object
+      additionalProperties: false
+      required: [referenceId, sourceType, title, accessDecision]
+      properties:
+        referenceId: {type: string, minLength: 1, maxLength: 128}
+        sourceType: {type: string, enum: [QUESTION, KNOWLEDGE_POINT, COURSE_TEXT, STUDENT_FACT, USER_HELP]}
+        title: {type: string, minLength: 1, maxLength: 200}
+        accessDecision: {type: string, const: AUTHORIZED_BY_JAVA}
+        courseId: {type: string, format: uuid}
+        lessonId: {type: string, format: uuid}
+        appRoute: {type: string, pattern: '^/[a-z0-9-]+(?:/[a-z0-9-]+)*$', maxLength: 120, description: Allowed only for USER_HELP and only from the Java whitelist.}
+    AgentReferencePayload:
+      type: object
+      additionalProperties: false
+      required: [reference]
+      properties:
+        reference: {$ref: '#/components/schemas/AgentAuthorizedReference'}
+    AgentPartialCheckpointPayload:
+      type: object
+      additionalProperties: false
+      required: [text, complete, persisted]
+      properties:
+        text: {type: string, minLength: 1, maxLength: 30000}
+        complete: {type: boolean, const: false}
+        persisted: {type: boolean, const: true}
+    AgentHeartbeatPayload:
+      type: object
+      additionalProperties: false
+      required: [stage]
+      properties:
+        stage: {$ref: '#/components/schemas/AgentStage'}
+    AgentSafeError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable, traceId]
+      properties:
+        code: {type: string, pattern: '^AGENT\\.[A-Z0-9_]{3,48}$'}
+        message: {type: string, minLength: 1, maxLength: 300}
+        retryable: {type: boolean}
+        traceId: {type: string, pattern: '^[A-Za-z0-9_-]{8,64}$'}
+      description: Safe browser error only; no prompts, reasoning, raw tool output, credentials, stack traces or temporary URLs.
+    AgentRunErrorPayload:
+      type: object
+      additionalProperties: false
+      required: [error, terminal]
+      properties:
+        error: {$ref: '#/components/schemas/AgentSafeError'}
+        terminal: {type: boolean, const: false}
+    AgentFinalResultPayload:
+      type: object
+      additionalProperties: false
+      required: [terminal, terminalStatus, answerCompleteness]
+      properties:
+        terminal: {type: boolean, const: true}
+        terminalStatus: {type: string, enum: [COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED]}
+        finalAnswer: {type: string, minLength: 1, maxLength: 60000}
+        answerCompleteness: {type: string, enum: [COMPLETE, SIMPLIFIED, INTERRUPTED]}
+        interruptionNotice: {type: string, const: 回答已中断}
+        savedCheckpointSequence: {type: integer, minimum: 1}
+        references: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AgentAuthorizedReference'}}
+        error: {$ref: '#/components/schemas/AgentSafeError'}
+      description: COMPLETED requires COMPLETE plus finalAnswer; DEGRADED/LIMIT_REACHED require SIMPLIFIED plus finalAnswer; CANCELLED/FAILED require INTERRUPTED plus the fixed interruptionNotice.
+      allOf:
+        - if: {properties: {terminalStatus: {const: COMPLETED}}}
+          then: {required: [finalAnswer], properties: {answerCompleteness: {const: COMPLETE}}}
+        - if: {properties: {terminalStatus: {enum: [DEGRADED, LIMIT_REACHED]}}}
+          then: {required: [finalAnswer], properties: {answerCompleteness: {const: SIMPLIFIED}}}
+        - if: {properties: {terminalStatus: {enum: [CANCELLED, FAILED]}}}
+          then: {required: [interruptionNotice], properties: {answerCompleteness: {const: INTERRUPTED}}}
     AgentRunEventPage:
       type: object
       additionalProperties: false
@@ -6777,7 +7020,7 @@ components:
           description: QUESTION_IMAGE and QUESTION_AUDIO require INLINE; QUESTION_ATTACHMENT requires ATTACHMENT. The service derives and validates the exact purpose from the assessment snapshot.
     MediaPurpose:
       type: string
-      description: Stable business purpose. T12F.1 enables ARTICLE_IMAGE only for teacher-owned JPG/JPEG, PNG or WebP single-object uploads up to 10 MiB. SVG and GIF are rejected. Existing SUBTITLE policy remains enabled for backend READY binding validation, but no subtitle access/UI is added.
+      description: Stable business purpose. ARTICLE_IMAGE and AI_QUESTION_IMAGE accept JPG/JPEG, PNG or WebP single-object uploads up to 10 MiB; SVG and GIF are rejected. AI_QUESTION_IMAGE requires learning:access and becomes USER_PRIVATE. Existing SUBTITLE policy remains enabled, but no subtitle access/UI is added.
       enum: [COURSE_COVER, LESSON_VIDEO, VIDEO_POSTER, SUBTITLE, COURSEWARE, ARTICLE_ATTACHMENT, ARTICLE_IMAGE, QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT, QUESTION_IMPORT_SOURCE, AI_QUESTION_IMAGE, USER_AVATAR, TEACHER_QUALIFICATION, BANNER_IMAGE, TOPIC_COVER, REPORT_EXPORT]
     MediaUploadMode:
       type: string
@@ -6793,8 +7036,8 @@ components:
       enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED]
     MediaAssetScope:
       type: string
-      description: SYSTEM assets are administrator-owned. Authenticated metadata reads remain available, but direct content grants require ownership; other users require a domain-authorized content grant. TEACHER assets remain owner-only outside an authorized domain grant.
-      enum: [SYSTEM, TEACHER]
+      description: SYSTEM assets are authorized platform assets. TEACHER assets are teacher business assets. USER_PRIVATE assets belong to an ordinary authenticated user. TEACHER and USER_PRIVATE remain owner-only outside an authorized domain grant.
+      enum: [SYSTEM, TEACHER, USER_PRIVATE]
     CreateMediaUploadRequest:
       type: object
       additionalProperties: false

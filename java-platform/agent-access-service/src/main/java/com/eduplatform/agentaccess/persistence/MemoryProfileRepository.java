@@ -36,6 +36,8 @@ public class MemoryProfileRepository {
     public record ProjectionPage(List<MemoryRow> items, boolean hasMore) {}
     public record OutboxRow(UUID eventId, String eventType, UUID aggregateId, String exchange,
             String routingKey, long sourceRevision, String traceId, String payloadJson, int attempts) {}
+    public record PreferenceRow(UUID id, String kind, String value, String source, long revision) {}
+    public record PreferenceCommandRow(String fingerprint, String value, long revision) {}
 
     /** 锁定一份待归一化报告，避免多个实例重复计量或产生同 revision 事件。 */
     public Optional<PendingReport> lockPendingReport(UUID runId) {
@@ -275,8 +277,6 @@ public class MemoryProfileRepository {
                 """, this::memory, owner.toString(), type, timestamp(now));
     }
 
-    public record PreferenceRow(UUID id, String kind, String value, String source, long revision) {}
-
     public List<PreferenceRow> activePreferences(UUID owner, int limit, Instant now) {
         return jdbc.query("""
                 SELECT id,preference_kind,preference_value,source_type,revision FROM ai_preference
@@ -284,6 +284,68 @@ public class MemoryProfileRepository {
                 ORDER BY CASE source_type WHEN 'EXPLICIT' THEN 0 ELSE 1 END,updated_at DESC,id LIMIT ?
                 """, (rs, ignored) -> new PreferenceRow(UUID.fromString(rs.getString(1)), rs.getString(2),
                         rs.getString(3), rs.getString(4), rs.getLong(5)), owner.toString(), timestamp(now), limit);
+    }
+
+    /**
+     * 使用既有 revision 单例行串行化短偏好命令，封住“首次设置尚无 owner 行”时的并发空隙。
+     * 该锁只覆盖一次本地事务，不改变 revision，也不创建新的偏好事实源。
+     */
+    public void lockPreferenceCommandLane() {
+        jdbc.queryForObject("SELECT current_revision FROM ai_memory_revision_sequence WHERE singleton_id=1 FOR UPDATE",
+                Long.class);
+    }
+
+    /** 锁定讲解偏好本体；不存在时由后续 INSERT 的唯一约束裁决首次并发写。 */
+    public Optional<PreferenceRow> lockExplanationPreference(UUID owner) {
+        return jdbc.query("SELECT id,preference_kind,preference_value,source_type,revision FROM ai_preference "
+                        + "WHERE owner_user_id=? AND preference_kind='EXPLANATION_STYLE' FOR UPDATE",
+                (rs, ignored) -> new PreferenceRow(UUID.fromString(rs.getString(1)), rs.getString(2),
+                        rs.getString(3), rs.getString(4), rs.getLong(5)), owner.toString()).stream().findFirst();
+    }
+
+    /** 查询本人讲解偏好；调用方负责只公开 EXPLICIT 值。 */
+    public Optional<PreferenceRow> findExplanationPreference(UUID owner) {
+        return jdbc.query("SELECT id,preference_kind,preference_value,source_type,revision FROM ai_preference "
+                        + "WHERE owner_user_id=? AND preference_kind='EXPLANATION_STYLE'",
+                (rs, ignored) -> new PreferenceRow(UUID.fromString(rs.getString(1)), rs.getString(2),
+                        rs.getString(3), rs.getString(4), rs.getLong(5)), owner.toString()).stream().findFirst();
+    }
+
+    /**
+     * 把同一偏好本体原子改为用户明确值。推断值对公开 revision 视为 0，用户可直接覆盖；
+     * 已有明确值必须精确匹配 expectedRevision，否则返回 -1 且不写入。
+     */
+    public long saveExplicitExplanationPreference(UUID owner, String value, long expectedRevision, Instant now) {
+        PreferenceRow current = lockExplanationPreference(owner).orElse(null);
+        long publicRevision = current != null && "EXPLICIT".equals(current.source()) ? current.revision() : 0;
+        if (publicRevision != expectedRevision) return -1;
+        if (current == null) {
+            jdbc.update("INSERT INTO ai_preference(id,owner_user_id,preference_kind,preference_value,source_type,"
+                            + "status,revision,expires_at,created_at,updated_at) "
+                            + "VALUES(?,?,'EXPLANATION_STYLE',?,'EXPLICIT','ACTIVE',1,NULL,?,?)",
+                    UUID.randomUUID().toString(), owner.toString(), value, timestamp(now), timestamp(now));
+            return 1;
+        }
+        long next = current.revision() + 1;
+        jdbc.update("UPDATE ai_preference SET preference_value=?,source_type='EXPLICIT',status='ACTIVE',"
+                        + "revision=?,expires_at=NULL,updated_at=? WHERE id=? AND revision=?",
+                value, next, timestamp(now), current.id().toString(), current.revision());
+        return next;
+    }
+
+    /** 读取公开偏好命令的历史结果；该记录不包含推断偏好或画像。 */
+    public Optional<PreferenceCommandRow> findPreferenceCommand(UUID owner, UUID clientRequestId) {
+        return jdbc.query("SELECT request_fingerprint,preference_value,result_revision FROM ai_preference_command "
+                        + "WHERE owner_user_id=? AND client_request_id=?",
+                (rs, ignored) -> new PreferenceCommandRow(rs.getString(1), rs.getString(2), rs.getLong(3)),
+                owner.toString(), clientRequestId.toString()).stream().findFirst();
+    }
+
+    public void insertPreferenceCommand(UUID owner, UUID clientRequestId, String fingerprint,
+            String value, long revision, Instant now) {
+        jdbc.update("INSERT INTO ai_preference_command(owner_user_id,client_request_id,request_fingerprint,"
+                        + "preference_value,result_revision,created_at) VALUES(?,?,?,?,?,?)",
+                owner.toString(), clientRequestId.toString(), fingerprint, value, revision, timestamp(now));
     }
 
     public MemoryRow expire(MemoryRow row, Instant now) {

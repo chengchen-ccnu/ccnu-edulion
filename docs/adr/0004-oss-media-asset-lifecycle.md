@@ -28,7 +28,7 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 | `COURSEWARE`、`ARTICLE_ATTACHMENT`、`ARTICLE_IMAGE` | `course-service` 的课时资源 | 按课程访问权限；正文图片只能通过受保护内容投影内联 | T07/T08 保留通用附件，T12F.1 增加正文图片和资源动作授权，T12F.2 交付页面 |
 | `QUESTION_IMAGE`、`QUESTION_AUDIO`、`QUESTION_ATTACHMENT` | `learning-service` 的题目版本 | 按题目/测评权限 | T09 数据与绑定，T10 编辑上传与预览 |
 | `QUESTION_IMPORT_SOURCE` | `learning-service` 的导入任务 | 教师私有、限期保留 | T09 导入任务，T10 上传与结果页 |
-| `AI_QUESTION_IMAGE` | 独立 agent-access-service 的会话消息 | 首期仅学生本人会话可见；按引用与保留期回收 | T14.1/T14.2 鉴权与短期转交，T15A/T15B 图片提问 |
+| `AI_QUESTION_IMAGE` | 独立 agent-access-service 的会话消息 | `learning:access` 能力开放，资产为 `USER_PRIVATE` 且仅 owner 可读；按引用与保留期回收 | T14.1/T14.2 鉴权与短期转交，T15A/T15B 图片提问 |
 | `USER_AVATAR` | `iam-service` 的用户资料 | 审核后公开读取 | T17 资料页面与绑定，不在 T04 回填 |
 | `TEACHER_QUALIFICATION` | `iam-service` 的教师审核记录 | 严格私有 | T16/T17 审核流程与管理端预览 |
 | `BANNER_IMAGE`、`TOPIC_COVER` | `operation-service` 的运营配置 | 发布后公开 CDN | T16 数据/发布规则，T17 管理上传与学生展示 |
@@ -71,6 +71,8 @@ T04～T06 为了先完成登录和课程纵向切片，部分契约使用了 `av
 ## 2026-09-10 Agent 消息引用与保留期收口
 
 T14.2.3 中 `agent-access-service` 仅对当前用户、`READY` 且用途精确为 `AI_QUESTION_IMAGE` 的稳定 `mediaId` 建立引用。本地表以消息 ID 为稳定引用身份，与消息事务同时写 `MediaReferenceBound` Outbox，媒体事件的 `referenceType=AI_MESSAGE_IMAGE` 且 `referenceId=messageId`。默认 180 天正文保留期到期时，清理事务只对实际 BOUND 引用写匹配的 `MediaReferenceReleased` Outbox；发布重试耗尽保留 FAILED 供追查，不直连 OSS，不在数据库、Redis 或事件中保存 Bucket、Object Key 或签名 URL。
+
+T14.2.4 正式启用 `AI_QUESTION_IMAGE` 的上传用途。授权判断使用 `learning:access` 能力而不是固定角色，因此同时具备教学与学习能力的账号也能使用本人学习空间；只接受 JPG/JPEG、PNG、WebP 单对象且最大 10 MiB。Media V6 新增 `USER_PRIVATE` scope，创建、读取及后续 Agent 绑定均保持 owner 隔离，SVG、GIF、外部 URL 与 `data:` 不进入该链路。该变更只补齐既有会话消息引用的供给端，不改变 Agent Access 不接 OSS SDK 的边界。
 
 原始消息默认保留 180 天可配置，临时下载文件与未绑定上传资产使用各自较短生命周期；不能把 30 分钟悬浮会话空闲期限当作媒体删除期限。保留期结束由 Agent Access 事务写引用释放 Outbox，Media 按引用/宽限期回收；题库共享图片不能随一次聊天删除。受限课程资料的来源访问校验不被 AI 缓存或历史摘要取代。真实验收按任务精确前缀/ID 记录清理，不枚举整桶。
 

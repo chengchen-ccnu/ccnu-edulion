@@ -43,7 +43,7 @@ import tools.jackson.databind.ObjectMapper;
 public class AgentConversationService {
     private static final Pattern URL = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET = Pattern.compile(
-            "(?i)(token|signature|accesskey|authorization|x-oss-[a-z-]+)\\s*"
+            "(?i)(token|signature|access[ _-]?key|api[ _-]?key|authorization|x-oss-[a-z-]+)\\s*"
                     + "(?:[=:]\\s*|\\s+)(?:bearer\\s+)?[^\\s,;]+");
     private final AgentRepository repository;
     private final AuthorizedContextResolver contexts;
@@ -177,9 +177,60 @@ public class AgentConversationService {
         }
     }
 
+    /**
+     * 从当前会话最后一条有效用户消息启动一次新 run。请求不接受正文或上下文，始终复用已保存快照；
+     * 同 clientRequestId 重试只恢复同一 run，且继续经过既有 Redis 额度、租约和 SSE 协调器。
+     */
+    public PreparedRun prepareRegeneration(UUID owner, UUID conversationId, UUID messageId,
+            AgentDtos.RegenerateMessageRequest input, String traceId) {
+        ConversationRow conversation = requireConversation(owner, conversationId);
+        PreparedRun existing = existingRegeneration(conversation, messageId, input.clientRequestId());
+        if (existing != null) return existing;
+        MessageRow original = requireLastUserMessage(owner, conversationId, messageId);
+        if (repository.findActiveRun(conversationId).isPresent()) {
+            throw new AgentException(HttpStatus.CONFLICT, "AGENT.RUN_CONFLICT", "当前会话已有回答正在生成");
+        }
+        UUID governanceRequest = UUID.nameUUIDFromBytes(
+                ("regeneration:" + input.clientRequestId()).getBytes(StandardCharsets.UTF_8));
+        Reservation reservation = governance.reserve(owner, conversationId, governanceRequest);
+        if (!reservation.acquired()) {
+            return awaitRegenerationWinner(conversation, messageId, input.clientRequestId());
+        }
+        AgentDtos.AuthorizedContext context;
+        try {
+            context = reauthorizeSavedContext(owner, conversation.entryPoint(), original, traceId);
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            throw failure;
+        }
+        PreparedRun prepared;
+        try {
+            prepared = transactions.execute(status -> createRegenerationLocked(owner, conversationId, messageId,
+                    input.clientRequestId(), context, traceId));
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            throw failure;
+        }
+        if (prepared.replayed()) {
+            governance.rollback(reservation);
+            return prepared;
+        }
+        try {
+            Lease lease = governance.bind(reservation, prepared.run());
+            return new PreparedRun(prepared.run(), prepared.userMessage(), prepared.context(),
+                    prepared.recentMessages(), false, lease);
+        } catch (RuntimeException failure) {
+            governance.rollback(reservation);
+            terminate(prepared.run().id(), AgentDtos.RunStatus.FAILED,
+                    "AGENT.GOVERNANCE_UNAVAILABLE", "AI 服务暂时不可用，请稍后重试");
+            throw failure;
+        }
+    }
+
     /** 保存一个经内部协议校验的连续公开事件，并同步终态答案/部分检查点。 */
     public AgentDtos.StreamEvent appendRuntimeEvent(UUID runId, JsonNode internal) {
         RunRow run = findRunWithoutOwner(runId);
+        AgentStreamEventValidator.validate(internal, runId, run.traceId());
         long sequence = internal.path("sequence").asLong(-1);
         String eventType = internal.path("eventType").asText();
         Instant occurredAt;
@@ -190,8 +241,7 @@ public class AgentConversationService {
         }
         if (!runId.toString().equals(internal.path("runId").asText())
                 || !run.traceId().equals(internal.path("traceId").asText())
-                || sequence != run.lastEventSequence() + 1 || !allowedEvent(eventType)
-                || internal.path("payload").isMissingNode()) {
+                || sequence != run.lastEventSequence() + 1) {
             throw protocolFailure();
         }
         JsonNode payload = internal.path("payload");
@@ -307,6 +357,100 @@ public class AgentConversationService {
         return new PreparedRun(run, user, context, recentMessages(conversationId, user.sequenceNo()), false, null);
     }
 
+    /** 会话锁内再次确认最后一问和活动槽，随后仅追加 assistant 消息与新 run，旧记录不修改。 */
+    private PreparedRun createRegenerationLocked(UUID owner, UUID conversationId, UUID messageId,
+            UUID clientRequestId, AgentDtos.AuthorizedContext context, String traceId) {
+        ConversationRow locked = repository.lockConversation(owner, conversationId)
+                .orElseThrow(AgentConversationService::notFound);
+        PreparedRun existing = existingRegeneration(locked, messageId, clientRequestId);
+        if (existing != null) return existing;
+        MessageRow original = requireLastUserMessage(owner, conversationId, messageId);
+        if (repository.findActiveRun(conversationId).isPresent()) {
+            throw new AgentException(HttpStatus.CONFLICT, "AGENT.RUN_CONFLICT", "当前会话已有回答正在生成");
+        }
+        Instant now = Instant.now();
+        UUID assistantMessageId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        MessageRow assistant = new MessageRow(assistantMessageId, conversationId, null, null,
+                AgentDtos.MessageRole.ASSISTANT, "", AgentDtos.Completeness.PARTIAL,
+                AgentDtos.ContentState.RETAINED, original.contextJson(), locked.nextMessageSequence(), runId, now);
+        RunRow run = new RunRow(runId, conversationId, original.id(), assistantMessageId, owner, traceId,
+                AgentDtos.RunStatus.ACCEPTED, 0L, null, null, null, now, now);
+        repository.insertMessage(assistant);
+        repository.insertRun(run, clientRequestId);
+        repository.advanceConversation(conversationId, locked.nextMessageSequence() + 1, now);
+        return new PreparedRun(run, original, context, recentMessages(conversationId, original.sequenceNo()),
+                false, null);
+    }
+
+    private PreparedRun existingRegeneration(ConversationRow conversation, UUID requestedMessageId,
+            UUID clientRequestId) {
+        RunRow run = repository.findRunByRegenerationRequest(conversation.id(), clientRequestId).orElse(null);
+        if (run == null) return null;
+        if (!run.userMessageId().equals(requestedMessageId)) {
+            throw new AgentException(HttpStatus.CONFLICT, "AGENT.IDEMPOTENCY_CONFLICT",
+                    "clientRequestId 已用于不同的重新生成请求");
+        }
+        MessageRow original = repository.findUserMessage(conversation.ownerUserId(), conversation.id(),
+                run.userMessageId()).orElseThrow(AgentConversationService::notFound);
+        AgentDtos.MessageContext stable = original.contextJson() == null ? null
+                : read(original.contextJson(), AgentDtos.MessageContext.class);
+        return new PreparedRun(run, original, new AgentDtos.AuthorizedContext(stable, null), List.of(), true, null);
+    }
+
+    /** 重新校验原快照中的稳定 ID；当前领域投影若已变化则拒绝，而不是偷换为最新页面上下文。 */
+    private AgentDtos.AuthorizedContext reauthorizeSavedContext(UUID owner, AgentDtos.EntryPoint entryPoint,
+            MessageRow original, String traceId) {
+        AgentDtos.MessageContext stable = original.contextJson() == null ? null
+                : read(original.contextJson(), AgentDtos.MessageContext.class);
+        if (stable == null) return contexts.resolve(owner, entryPoint, null, traceId);
+        List<UUID> aiMedia = repository.boundMessageMedia(original.id()).stream()
+                .map(AgentRepository.MediaReferenceRow::mediaId).toList();
+        List<UUID> questionMedia = stable.mediaIds() == null ? List.of() : stable.mediaIds().stream()
+                .filter(id -> !aiMedia.contains(id)).toList();
+        AgentDtos.AuthorizedContext refreshed = contexts.resolve(owner, entryPoint,
+                new AgentDtos.MessageContextRequest(stable.questionId(), stable.courseId(), stable.lessonId(),
+                        questionMedia, aiMedia), traceId);
+        if (!sameStableContext(stable, refreshed.stableContext())) throw notFound();
+        return new AgentDtos.AuthorizedContext(stable, refreshed.trustedContext());
+    }
+
+    private static boolean sameStableContext(AgentDtos.MessageContext expected, AgentDtos.MessageContext actual) {
+        return actual != null && java.util.Objects.equals(expected.questionId(), actual.questionId())
+                && java.util.Objects.equals(expected.questionVersionId(), actual.questionVersionId())
+                && java.util.Objects.equals(expected.courseId(), actual.courseId())
+                && java.util.Objects.equals(expected.courseVersionId(), actual.courseVersionId())
+                && java.util.Objects.equals(expected.lessonId(), actual.lessonId())
+                && new LinkedHashSet<>(expected.mediaIds() == null ? List.of() : expected.mediaIds())
+                        .equals(new LinkedHashSet<>(actual.mediaIds() == null ? List.of() : actual.mediaIds()));
+    }
+
+    private MessageRow requireLastUserMessage(UUID owner, UUID conversationId, UUID messageId) {
+        MessageRow selected = repository.findUserMessage(owner, conversationId, messageId)
+                .orElseThrow(AgentConversationService::notFound);
+        MessageRow last = repository.findLastRetainedUserMessage(conversationId)
+                .orElseThrow(AgentConversationService::notFound);
+        if (!selected.id().equals(last.id()) || selected.content().isBlank()) throw notFound();
+        return selected;
+    }
+
+    /** 相同重新生成请求在另一实例创建时有界等待 MySQL 唯一事实，不第二次占用额度。 */
+    private PreparedRun awaitRegenerationWinner(ConversationRow conversation, UUID messageId,
+            UUID clientRequestId) {
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(2));
+        while (Instant.now().isBefore(deadline)) {
+            PreparedRun existing = existingRegeneration(conversation, messageId, clientRequestId);
+            if (existing != null) return existing;
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AgentException(HttpStatus.CONFLICT, "AGENT.REQUEST_IN_PROGRESS", "相同请求正在处理中，请稍后重试");
+    }
+
     private PreparedRun existingRun(ConversationRow conversation, UUID clientRequestId, String fingerprint) {
         MessageRow existing = repository.findUserMessageByRequest(conversation.id(), clientRequestId).orElse(null);
         if (existing == null) return null;
@@ -415,12 +559,7 @@ public class AgentConversationService {
         return read(row.eventJson(), AgentDtos.StreamEvent.class);
     }
 
-    private static boolean allowedEvent(String value) {
-        return List.of("RUN_ACCEPTED", "STAGE_CHANGED", "TEXT_DELTA", "CLARIFICATION_REQUIRED", "REFERENCE",
-                "PARTIAL_CHECKPOINT", "HEARTBEAT", "RUN_ERROR", "FINAL_RESULT").contains(value);
-    }
-
-    /** 校验运行身份和终态最关键的不变量；字段级完整 Schema 仍由 T13.1 Python 端和契约测试约束。 */
+    /** 在字段级白名单后再次校验与数据库 run 绑定的身份和终态不变量。 */
     private static void validateCorePayload(RunRow run, String eventType, JsonNode payload,
             AgentDtos.RunStatus status) {
         if ("RUN_ACCEPTED".equals(eventType)) {
@@ -467,6 +606,15 @@ public class AgentConversationService {
             });
         } else if (node.isArray()) {
             node.forEach(AgentConversationService::rejectSecrets);
+        } else if (node.isTextual()) {
+            String value = node.asText();
+            String normalized = value.toLowerCase(java.util.Locale.ROOT);
+            if (URL.matcher(value).find() || SECRET.matcher(value).find()
+                    || normalized.contains("rawtoolresult") || normalized.contains("chainofthought")
+                    || normalized.contains("chain of thought") || normalized.contains("system prompt")
+                    || normalized.contains("prompt=")) {
+                throw protocolFailure();
+            }
         }
     }
 

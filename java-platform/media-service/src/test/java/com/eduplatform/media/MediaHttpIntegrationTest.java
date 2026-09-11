@@ -126,6 +126,51 @@ class MediaHttpIntegrationTest {
     }
 
     @Test
+    /** AI 题图按 learning:access 开放并保存为 USER_PRIVATE；角色不能替代能力，非 owner 不可读写。 */
+    void aiQuestionImageUsesLearningPermissionAndUserPrivateOwnership() throws Exception {
+        byte[] bytes = "small-ai-question-image".getBytes(StandardCharsets.UTF_8);
+        String sha = sha256(bytes);
+        String body = """
+                {"clientRequestId":"00000000-0000-4000-8000-000000007401","purpose":"AI_QUESTION_IMAGE",
+                 "fileName":"question.webp","size":%d,"mimeType":"image/webp","sha256":"%s"}
+                """.formatted(bytes.length, sha);
+        assertThat(sendAs("POST", "/api/v1/media/uploads", body, "STUDENT", STUDENT).statusCode()).isEqualTo(403);
+
+        HttpResponse<String> created = sendAsWithPermissions("POST", "/api/v1/media/uploads", body,
+                "TEACHER", "teaching:access,learning:access", STUDENT);
+        assertThat(created.statusCode()).isEqualTo(201);
+        JsonNode session = mapper.readTree(created.body());
+        storage.upload(session.get("uploadGrant").get("url").asString(), bytes, "image/webp", sha);
+        HttpResponse<String> completed = sendAsWithPermissions("POST", "/api/v1/media/uploads/"
+                + session.get("uploadId").asString() + "/complete", "{\"sha256\":\"" + sha
+                + "\",\"parts\":[]}", "TEACHER", "learning:access", STUDENT);
+        assertThat(completed.statusCode()).isEqualTo(202);
+        JsonNode asset = mapper.readTree(completed.body());
+        assertThat(asset.get("scope").asString()).isEqualTo("USER_PRIVATE");
+        assertThat(asset.get("purpose").asString()).isEqualTo("AI_QUESTION_IMAGE");
+        String mediaId = asset.get("mediaId").asString();
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(mediaId) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        assertThat(sendAsWithPermissions("GET", "/api/v1/media/" + mediaId, null,
+                "STUDENT", "learning:access", STUDENT).statusCode()).isEqualTo(200);
+        assertThat(sendAsWithPermissions("GET", "/api/v1/media/" + mediaId, null,
+                "STUDENT", "learning:access", TEACHER).statusCode()).isEqualTo(404);
+        assertThat(sendAsWithPermissions("POST", "/api/v1/media/" + mediaId + "/binding-validations",
+                "{\"purpose\":\"AI_QUESTION_IMAGE\"}", "STUDENT", "learning:access", TEACHER)
+                .statusCode()).isEqualTo(404);
+
+        for (String invalid : List.of(
+                "{\"clientRequestId\":\"00000000-0000-4000-8000-000000007402\",\"purpose\":\"AI_QUESTION_IMAGE\",\"fileName\":\"x.svg\",\"size\":1,\"mimeType\":\"image/svg+xml\",\"sha256\":\"" + sha + "\"}",
+                "{\"clientRequestId\":\"00000000-0000-4000-8000-000000007403\",\"purpose\":\"AI_QUESTION_IMAGE\",\"fileName\":\"x.gif\",\"size\":1,\"mimeType\":\"image/gif\",\"sha256\":\"" + sha + "\"}",
+                "{\"clientRequestId\":\"00000000-0000-4000-8000-000000007404\",\"purpose\":\"AI_QUESTION_IMAGE\",\"fileName\":\"x.png\",\"size\":10485761,\"mimeType\":\"image/png\",\"sha256\":\"" + sha + "\"}")) {
+            assertThat(sendAsWithPermissions("POST", "/api/v1/media/uploads", invalid,
+                    "STUDENT", "learning:access", STUDENT).statusCode()).isEqualTo(422);
+        }
+    }
+
+    @Test
     /** Given 虚构 HTTPS 图片，When 转存并重放，Then 只建一个 READY 资产且数据库/事件不保存 URL。 */
     void externalQuestionImageTransferIsIdempotentAndPersistsNoSourceUrl() throws Exception {
         String request = """

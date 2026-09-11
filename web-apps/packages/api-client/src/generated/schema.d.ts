@@ -2224,6 +2224,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/preferences/explanation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the current user's explicit explanation preference
+         * @description Requires learning:access. When no explicit value exists, returns GUIDED_STEP_BY_STEP with revision 0. Inferred preferences, profiles, evidence and memories are never exposed.
+         */
+        get: operations["getAgentExplanationPreference"];
+        /**
+         * Update the current user's explicit explanation preference
+         * @description Requires learning:access. expectedRevision prevents lost updates; retrying the same clientRequestId with the same body returns the original result without advancing revision again.
+         */
+        put: operations["updateAgentExplanationPreference"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/conversations": {
         parameters: {
             query?: never;
@@ -2286,6 +2310,26 @@ export interface paths {
          *     A different request while the conversation has an active run fails with 409 and is never queued.
          */
         post: operations["sendAgentMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/conversations/{conversationId}/messages/{messageId}/regenerations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate the last valid user message
+         * @description Requires learning:access and owner access. The server reuses and re-authorizes the persisted text, media and context snapshot, appends one assistant message and run, and preserves all old answers and events. The same clientRequestId only replays saved events.
+         */
+        post: operations["regenerateAgentMessage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2409,6 +2453,36 @@ export interface components {
             content: string;
             context?: components["schemas"]["AgentMessageContextRequest"];
         };
+        /**
+         * @description User-selected explanation mode. GUIDED_STEP_BY_STEP is the default until the user explicitly changes it.
+         * @enum {string}
+         */
+        AgentExplanationStyle: "GUIDED_STEP_BY_STEP" | "COMPLETE_SOLUTION";
+        /** @description Public explicit setting only. It never includes inferred preferences, profile evidence or memory. */
+        AgentExplanationPreference: {
+            value: components["schemas"]["AgentExplanationStyle"];
+            /** Format: int64 */
+            revision: number;
+            /** @description False only when the returned value is the default and no explicit setting exists. */
+            explicitlySet: boolean;
+        };
+        UpdateAgentExplanationPreferenceRequest: {
+            /**
+             * Format: uuid
+             * @description Stable logical update key for safe network retry.
+             */
+            clientRequestId: string;
+            value: components["schemas"]["AgentExplanationStyle"];
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        RegenerateAgentMessageRequest: {
+            /**
+             * Format: uuid
+             * @description Stable key for one regeneration. No message body
+             */
+            clientRequestId: string;
+        };
         /** @description Persisted stable authorized identifiers only. Temporary URLs and hidden answer fields are never stored. */
         AgentMessageContext: {
             /** Format: uuid */
@@ -2450,9 +2524,8 @@ export interface components {
             total: number;
         };
         /** @description Browser-safe projection of the internal typed event. FINAL_RESULT occurs exactly once and carries the terminal AgentRunStatus. */
-        AgentClientStreamEvent: {
-            /** @enum {string} */
-            eventType: "RUN_ACCEPTED" | "STAGE_CHANGED" | "TEXT_DELTA" | "CLARIFICATION_REQUIRED" | "REFERENCE" | "PARTIAL_CHECKPOINT" | "HEARTBEAT" | "RUN_ERROR" | "FINAL_RESULT";
+        AgentClientStreamEvent: components["schemas"]["AgentRunAcceptedEvent"] | components["schemas"]["AgentStageChangedEvent"] | components["schemas"]["AgentTextDeltaEvent"] | components["schemas"]["AgentClarificationRequiredEvent"] | components["schemas"]["AgentReferenceEvent"] | components["schemas"]["AgentPartialCheckpointEvent"] | components["schemas"]["AgentHeartbeatEvent"] | components["schemas"]["AgentRunErrorEvent"] | components["schemas"]["AgentFinalResultEvent"];
+        AgentStreamEventBase: {
             /** Format: uuid */
             runId: string;
             /** Format: uuid */
@@ -2460,9 +2533,126 @@ export interface components {
             sequence: number;
             /** Format: date-time */
             occurredAt: string;
-            /** @description Public protocol payload for the named eventType. It never includes prompts, chain-of-thought, raw tool output, credentials or temporary media URLs. */
-            payload: Record<string, never>;
         };
+        AgentRunAcceptedEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "RUN_ACCEPTED";
+            payload: components["schemas"]["AgentRunAcceptedPayload"];
+        };
+        AgentStageChangedEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "STAGE_CHANGED";
+            payload: components["schemas"]["AgentStageChangedPayload"];
+        };
+        AgentTextDeltaEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "TEXT_DELTA";
+            payload: components["schemas"]["AgentTextDeltaPayload"];
+        };
+        AgentClarificationRequiredEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "CLARIFICATION_REQUIRED";
+            payload: components["schemas"]["AgentClarificationPayload"];
+        };
+        AgentReferenceEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "REFERENCE";
+            payload: components["schemas"]["AgentReferencePayload"];
+        };
+        AgentPartialCheckpointEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "PARTIAL_CHECKPOINT";
+            payload: components["schemas"]["AgentPartialCheckpointPayload"];
+        };
+        AgentHeartbeatEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "HEARTBEAT";
+            payload: components["schemas"]["AgentHeartbeatPayload"];
+        };
+        AgentRunErrorEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "RUN_ERROR";
+            payload: components["schemas"]["AgentRunErrorPayload"];
+        };
+        AgentFinalResultEvent: components["schemas"]["AgentStreamEventBase"] & {
+            /** @constant */
+            eventType: "FINAL_RESULT";
+            payload: components["schemas"]["AgentFinalResultPayload"];
+        };
+        AgentRunAcceptedPayload: {
+            /** Format: uuid */
+            conversationId: string;
+            /** Format: uuid */
+            messageId: string;
+            replayed: boolean;
+        };
+        /** @enum {string} */
+        AgentStage: "UNDERSTANDING" | "RETRIEVING" | "CHECKING_WORK" | "PLANNING" | "EXPLAINING" | "FINALIZING";
+        AgentStageChangedPayload: {
+            stage: components["schemas"]["AgentStage"];
+            message: string;
+        };
+        AgentTextDeltaPayload: {
+            delta: string;
+        };
+        AgentClarificationPayload: {
+            question: string;
+            missingSlots: ("problemText" | "conceptName" | "questionId" | "courseId" | "lessonId" | "studentWork" | "hintLevel" | "wrongQuestionId" | "practiceTopic" | "planGoal" | "platformTopic" | "actionId")[];
+        };
+        AgentAuthorizedReference: {
+            referenceId: string;
+            /** @enum {string} */
+            sourceType: "QUESTION" | "KNOWLEDGE_POINT" | "COURSE_TEXT" | "STUDENT_FACT" | "USER_HELP";
+            title: string;
+            /** @constant */
+            accessDecision: "AUTHORIZED_BY_JAVA";
+            /** Format: uuid */
+            courseId?: string;
+            /** Format: uuid */
+            lessonId?: string;
+            /** @description Allowed only for USER_HELP and only from the Java whitelist. */
+            appRoute?: string;
+        };
+        AgentReferencePayload: {
+            reference: components["schemas"]["AgentAuthorizedReference"];
+        };
+        AgentPartialCheckpointPayload: {
+            text: string;
+            /** @constant */
+            complete: false;
+            /** @constant */
+            persisted: true;
+        };
+        AgentHeartbeatPayload: {
+            stage: components["schemas"]["AgentStage"];
+        };
+        /** @description Safe browser error only; no prompts, reasoning, raw tool output, credentials, stack traces or temporary URLs. */
+        AgentSafeError: {
+            code: string;
+            message: string;
+            retryable: boolean;
+            traceId: string;
+        };
+        AgentRunErrorPayload: {
+            error: components["schemas"]["AgentSafeError"];
+            /** @constant */
+            terminal: false;
+        };
+        /** @description COMPLETED requires COMPLETE plus finalAnswer; DEGRADED/LIMIT_REACHED require SIMPLIFIED plus finalAnswer; CANCELLED/FAILED require INTERRUPTED plus the fixed interruptionNotice. */
+        AgentFinalResultPayload: {
+            /** @constant */
+            terminal: true;
+            /** @enum {string} */
+            terminalStatus: "COMPLETED" | "DEGRADED" | "LIMIT_REACHED" | "CANCELLED" | "FAILED";
+            finalAnswer?: string;
+            /** @enum {string} */
+            answerCompleteness: "COMPLETE" | "SIMPLIFIED" | "INTERRUPTED";
+            /** @constant */
+            interruptionNotice?: "回答已中断";
+            savedCheckpointSequence?: number;
+            references?: components["schemas"]["AgentAuthorizedReference"][];
+            error?: components["schemas"]["AgentSafeError"];
+        } & (unknown & unknown & unknown);
         AgentRunEventPage: {
             /** Format: uuid */
             runId: string;
@@ -4531,7 +4721,7 @@ export interface components {
             disposition: "INLINE" | "ATTACHMENT";
         };
         /**
-         * @description Stable business purpose. T12F.1 enables ARTICLE_IMAGE only for teacher-owned JPG/JPEG, PNG or WebP single-object uploads up to 10 MiB. SVG and GIF are rejected. Existing SUBTITLE policy remains enabled for backend READY binding validation, but no subtitle access/UI is added.
+         * @description Stable business purpose. ARTICLE_IMAGE and AI_QUESTION_IMAGE accept JPG/JPEG, PNG or WebP single-object uploads up to 10 MiB; SVG and GIF are rejected. AI_QUESTION_IMAGE requires learning:access and becomes USER_PRIVATE. Existing SUBTITLE policy remains enabled, but no subtitle access/UI is added.
          * @enum {string}
          */
         MediaPurpose: "COURSE_COVER" | "LESSON_VIDEO" | "VIDEO_POSTER" | "SUBTITLE" | "COURSEWARE" | "ARTICLE_ATTACHMENT" | "ARTICLE_IMAGE" | "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT" | "QUESTION_IMPORT_SOURCE" | "AI_QUESTION_IMAGE" | "USER_AVATAR" | "TEACHER_QUALIFICATION" | "BANNER_IMAGE" | "TOPIC_COVER" | "REPORT_EXPORT";
@@ -4544,10 +4734,10 @@ export interface components {
         /** @enum {string} */
         MediaProcessingStatus: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
         /**
-         * @description SYSTEM assets are administrator-owned. Authenticated metadata reads remain available, but direct content grants require ownership; other users require a domain-authorized content grant. TEACHER assets remain owner-only outside an authorized domain grant.
+         * @description SYSTEM assets are authorized platform assets. TEACHER assets are teacher business assets. USER_PRIVATE assets belong to an ordinary authenticated user. TEACHER and USER_PRIVATE remain owner-only outside an authorized domain grant.
          * @enum {string}
          */
-        MediaAssetScope: "SYSTEM" | "TEACHER";
+        MediaAssetScope: "SYSTEM" | "TEACHER" | "USER_PRIVATE";
         CreateMediaUploadRequest: {
             /** Format: uuid */
             clientRequestId: string;
@@ -5303,6 +5493,8 @@ export interface components {
         Size: number;
         /** @description Owner-scoped AI conversation ID; foreign IDs are reported as not found. */
         AgentConversationId: string;
+        /** @description Owner-scoped retained user message ID; foreign, stale or non-last messages are reported as not found. */
+        AgentMessageId: string;
         /** @description Owner-scoped Agent run ID; foreign IDs are reported as not found. */
         AgentRunId: string;
         CourseId: string;
@@ -9214,6 +9406,58 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    getAgentExplanationPreference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Explicit preference or the public default. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentExplanationPreference"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateAgentExplanationPreference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAgentExplanationPreferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated preference or idempotently recovered result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentExplanationPreference"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["AgentConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listAgentConversations: {
         parameters: {
             query?: {
@@ -9355,6 +9599,44 @@ export interface operations {
         };
         responses: {
             /** @description UTF-8 SSE. data is AgentClientStreamEvent JSON; sequence is strictly consecutive and exactly one FINAL_RESULT terminates the run. */
+            200: {
+                headers: {
+                    /** @description Stable run identity used for cancel and saved-event recovery. */
+                    "X-Agent-Run-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            409: components["responses"]["AgentConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["AgentUnavailable"];
+        };
+    };
+    regenerateAgentMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Owner-scoped AI conversation ID; foreign IDs are reported as not found. */
+                conversationId: components["parameters"]["AgentConversationId"];
+                /** @description Owner-scoped retained user message ID; foreign, stale or non-last messages are reported as not found. */
+                messageId: components["parameters"]["AgentMessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegenerateAgentMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description UTF-8 SSE using the same discriminated AgentClientStreamEvent union as a normal send. */
             200: {
                 headers: {
                     /** @description Stable run identity used for cancel and saved-event recovery. */

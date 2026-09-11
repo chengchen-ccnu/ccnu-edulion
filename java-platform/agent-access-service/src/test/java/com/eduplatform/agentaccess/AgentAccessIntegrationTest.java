@@ -10,6 +10,7 @@ import com.eduplatform.agentaccess.service.AgentException;
 import com.eduplatform.agentaccess.service.AgentRunCoordinator;
 import com.eduplatform.agentaccess.service.AgentDomainClient;
 import com.eduplatform.agentaccess.service.AgentInternalService;
+import com.eduplatform.agentaccess.service.ExplanationPreferenceService;
 import com.eduplatform.agentaccess.service.MemoryFactService;
 import com.eduplatform.agentaccess.service.MemoryContextProvider;
 import com.eduplatform.agentaccess.service.MemoryIndexProjectionService;
@@ -53,9 +54,26 @@ class AgentAccessIntegrationTest {
     @Autowired MemoryContextProvider memoryContext;
     @Autowired MemoryIndexProjectionService memoryIndex;
     @Autowired MessageRetentionService retention;
+    @Autowired ExplanationPreferenceService explanationPreferences;
     @Autowired FakeDomain domains;
     @Autowired FakeGovernance governance;
     @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
+
+    @Test
+    /** 浏览器消息 JSON 的数组与 UUID 必须能由 Spring 同一 ObjectMapper 精确绑定。 */
+    void browserMessageJsonShapeBinds() throws Exception {
+        String json = "{\"clientRequestId\":\"00000000-0000-4000-8000-000000000999\","
+                + "\"content\":\"请识别图片中的数学内容并简要说明\",\"context\":{"
+                + "\"aiQuestionMediaIds\":[\"00000000-0000-4000-8000-000000000998\"],"
+                + "\"questionMediaIds\":[]}}";
+        assertThat(mapper.readValue(json, AgentDtos.SendMessageRequest.class).context().aiQuestionMediaIds())
+                .containsExactly(UUID.fromString("00000000-0000-4000-8000-000000000998"));
+        assertThat(mapper.readValue("{\"clientRequestId\":\"00000000-0000-4000-8000-000000000999\","
+                + "\"content\":\"请计算一加一\"}", AgentDtos.SendMessageRequest.class).context()).isNull();
+        assertThat(mapper.readValue("{\"clientRequestId\":\"00000000-0000-4000-8000-000000000999\","
+                + "\"entryPoint\":\"INDEPENDENT_CHAT\"}", AgentDtos.CreateConversationRequest.class).title())
+                .isNull();
+    }
 
     @BeforeEach
     void clean() {
@@ -65,6 +83,7 @@ class AgentAccessIntegrationTest {
         jdbc.update("DELETE FROM ai_memory_evidence");
         jdbc.update("DELETE FROM ai_memory");
         jdbc.update("DELETE FROM ai_conversation_summary");
+        jdbc.update("DELETE FROM ai_preference_command");
         jdbc.update("DELETE FROM ai_preference");
         jdbc.update("DELETE FROM ai_profile_topic");
         jdbc.update("DELETE FROM ai_usage_record");
@@ -155,6 +174,156 @@ class AgentAccessIntegrationTest {
     }
 
     @Test
+    /** 明确讲解偏好只公开本人主动值；默认、CAS、稳定重试和下一轮可信上下文保持一致。 */
+    void explicitExplanationPreferenceIsPrivateIdempotentAndEffectiveOnNextRun() {
+        assertThat(explanationPreferences.get(OWNER)).satisfies(view -> {
+            assertThat(view.value()).isEqualTo(AgentDtos.ExplanationPreference.GUIDED_STEP_BY_STEP);
+            assertThat(view.revision()).isZero();
+            assertThat(view.explicitlySet()).isFalse();
+        });
+        jdbc.update("""
+                INSERT INTO ai_preference(id,owner_user_id,preference_kind,preference_value,source_type,status,
+                    revision,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,'ACTIVE',1,?,?,?)
+                """, UUID.randomUUID().toString(), OWNER.toString(), "EXPLANATION_STYLE", "INFERRED_GUIDANCE",
+                "INFERRED", java.sql.Timestamp.from(Instant.now().plusSeconds(3600)),
+                java.sql.Timestamp.from(Instant.now()), java.sql.Timestamp.from(Instant.now()));
+        assertThat(explanationPreferences.get(OWNER).explicitlySet()).isFalse();
+
+        UUID requestId = UUID.randomUUID();
+        var request = new AgentDtos.UpdateExplanationPreferenceRequest(requestId,
+                AgentDtos.ExplanationPreference.COMPLETE_SOLUTION, 0L);
+        var first = explanationPreferences.update(OWNER, request);
+        var replay = explanationPreferences.update(OWNER, request);
+        assertThat(replay).isEqualTo(first);
+        assertThat(first.revision()).isEqualTo(2L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_preference_command", Integer.class)).isEqualTo(1);
+        assertThat(explanationPreferences.get(OTHER).explicitlySet()).isFalse();
+        assertThatThrownBy(() -> explanationPreferences.update(OWNER,
+                new AgentDtos.UpdateExplanationPreferenceRequest(UUID.randomUUID(),
+                        AgentDtos.ExplanationPreference.GUIDED_STEP_BY_STEP, 0L)))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.PREFERENCE_REVISION_CONFLICT"));
+
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
+        var next = conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "验证明确偏好", null), "trace-preference-next-run");
+        assertThat(next.context().trustedContext().get("preferences").toString())
+                .contains("COMPLETE_SOLUTION", "EXPLICIT")
+                .doesNotContain("evidence", "profile");
+    }
+
+    @Test
+    /** 偏好 HTTP 端点必须有 learning:access，只返回 value/revision/explicitlySet 的本人投影。 */
+    void explanationPreferenceHttpRequiresLearningAccessAndHidesPrivateFacts() throws Exception {
+        var client = java.net.http.HttpClient.newHttpClient();
+        var uri = java.net.URI.create("http://127.0.0.1:" + port + "/api/v1/ai/preferences/explanation");
+        var denied = java.net.http.HttpRequest.newBuilder(uri).header("X-User-Id", OWNER.toString()).GET().build();
+        assertThat(client.send(denied, java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode())
+                .isEqualTo(403);
+
+        UUID requestId = UUID.randomUUID();
+        String body = """
+                {"clientRequestId":"%s","value":"COMPLETE_SOLUTION","expectedRevision":0}
+                """.formatted(requestId);
+        var put = java.net.http.HttpRequest.newBuilder(uri).header("X-User-Id", OWNER.toString())
+                .header("X-User-Permissions", "learning:access").header("Content-Type", "application/json")
+                .PUT(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build();
+        var updated = client.send(put, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(updated.statusCode()).isEqualTo(200);
+        assertThat(updated.body()).contains("COMPLETE_SOLUTION", "\"revision\":1", "\"explicitlySet\":true")
+                .doesNotContain("source", "profile", "evidence", "memory", "ownerUserId");
+
+        var other = java.net.http.HttpRequest.newBuilder(uri).header("X-User-Id", OTHER.toString())
+                .header("X-User-Permissions", "learning:access").GET().build();
+        var otherResponse = client.send(other, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(otherResponse.statusCode()).isEqualTo(200);
+        assertThat(otherResponse.body()).contains("GUIDED_STEP_BY_STEP", "\"revision\":0")
+                .doesNotContain("COMPLETE_SOLUTION");
+    }
+
+    @Test
+    /** 完整回答可基于最后一问追加新回答；同 key 只恢复，换 key 才创建另一个 run。 */
+    void regenerationPreservesOriginalHistoryAndIsIdempotent() {
+        var original = newRun("trace-regeneration-original");
+        complete(original, "原回答");
+        String originalContext = jdbc.queryForObject("SELECT context_json FROM ai_message WHERE id=?", String.class,
+                original.userMessage().id().toString());
+        UUID requestId = UUID.randomUUID();
+        var regenerated = conversations.prepareRegeneration(OWNER, original.run().conversationId(),
+                original.userMessage().id(), new AgentDtos.RegenerateMessageRequest(requestId),
+                "trace-regeneration-first");
+        coordinator.open(regenerated);
+        assertThat(runtime.streamCalls).isEqualTo(2);
+        var replay = conversations.prepareRegeneration(OWNER, original.run().conversationId(),
+                original.userMessage().id(), new AgentDtos.RegenerateMessageRequest(requestId),
+                "trace-regeneration-retry");
+        coordinator.open(replay);
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.run().id()).isEqualTo(regenerated.run().id());
+        assertThat(runtime.streamCalls).isEqualTo(2);
+        assertThatThrownBy(() -> conversations.prepareRegeneration(OWNER, original.run().conversationId(),
+                UUID.randomUUID(), new AgentDtos.RegenerateMessageRequest(requestId),
+                "trace-regeneration-key-reuse"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.IDEMPOTENCY_CONFLICT"));
+        assertThat(jdbc.queryForObject("SELECT context_json FROM ai_message WHERE id=?", String.class,
+                original.userMessage().id().toString())).isEqualTo(originalContext);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE user_message_id=?", Integer.class,
+                original.userMessage().id().toString())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=? AND role='USER'",
+                Integer.class, original.run().conversationId().toString())).isEqualTo(1);
+
+        complete(regenerated, "重新回答一");
+        var another = conversations.prepareRegeneration(OWNER, original.run().conversationId(),
+                original.userMessage().id(), new AgentDtos.RegenerateMessageRequest(UUID.randomUUID()),
+                "trace-regeneration-second");
+        assertThat(another.run().id()).isNotEqualTo(regenerated.run().id());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE user_message_id=?", Integer.class,
+                original.userMessage().id().toString())).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=? AND role='ASSISTANT'",
+                Integer.class, original.run().conversationId().toString())).isEqualTo(3);
+    }
+
+    @Test
+    /** 中断回答仍可重生成；活动 run、非最后问题和其他 owner 均在创建新事实前安全拒绝。 */
+    void regenerationAcceptsInterruptedAnswerAndRejectsUnsafeTargets() {
+        var firstConversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
+        var first = conversations.prepareRun(OWNER, firstConversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "较早问题", null), "trace-regeneration-old");
+        coordinator.open(first);
+        conversations.terminate(first.run().id(), AgentDtos.RunStatus.CANCELLED,
+                "AGENT.CANCELLED", "回答已取消");
+        var second = conversations.prepareRun(OWNER, firstConversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "最后问题", null), "trace-regeneration-interrupted");
+        coordinator.open(second);
+        conversations.terminate(second.run().id(), AgentDtos.RunStatus.CANCELLED,
+                "AGENT.CANCELLED", "回答已取消");
+
+        var regeneration = conversations.prepareRegeneration(OWNER, firstConversation.id(), second.userMessage().id(),
+                new AgentDtos.RegenerateMessageRequest(UUID.randomUUID()), "trace-regeneration-after-cancel");
+        assertThat(regeneration.userMessage().content()).isEqualTo("最后问题");
+        assertThatThrownBy(() -> conversations.prepareRegeneration(OWNER, firstConversation.id(),
+                first.userMessage().id(), new AgentDtos.RegenerateMessageRequest(UUID.randomUUID()),
+                "trace-regeneration-old-message"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.NOT_FOUND"));
+        assertThatThrownBy(() -> conversations.prepareRegeneration(OTHER, firstConversation.id(),
+                second.userMessage().id(), new AgentDtos.RegenerateMessageRequest(UUID.randomUUID()),
+                "trace-regeneration-other-owner"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.NOT_FOUND"));
+
+        coordinator.open(regeneration);
+        assertThatThrownBy(() -> conversations.prepareRegeneration(OWNER, firstConversation.id(),
+                second.userMessage().id(), new AgentDtos.RegenerateMessageRequest(UUID.randomUUID()),
+                "trace-regeneration-active"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.RUN_CONFLICT"));
+    }
+
+    @Test
     /** Python 若混入错误 trace 或跳过首事件，Java 不代理该事件，并用唯一 FAILED 终态安全收口。 */
     void protocolSubstituteRejectsMismatchedRunIdentity() {
         var prepared = newRun("trace-agent-invalid");
@@ -171,6 +340,24 @@ class AgentAccessIntegrationTest {
                 .containsExactly("RUN_ACCEPTED", "FINAL_RESULT");
         assertThat(saved.items().get(1).payload().path("error").path("traceId").asText())
                 .isEqualTo(prepared.run().traceId());
+    }
+
+    @Test
+    /** 合法外壳中的提示词、推理、Token、工具原始结果或临时 URL 都不会被保存或回显。 */
+    void publicStreamRejectsSecretsHiddenInTextFields() {
+        for (String unsafe : List.of("system prompt: private", "chainOfThought", "token=secret-value",
+                "API Key: secret-value", "rawToolResult", "https://temporary.invalid/signed")) {
+            var prepared = newRun("trace-secret-" + Math.abs(unsafe.hashCode()));
+            coordinator.open(prepared);
+            runtime.emit(event(prepared, 1, "RUN_ACCEPTED", Map.of(
+                    "conversationId", prepared.run().conversationId().toString(),
+                    "messageId", prepared.userMessage().id().toString(), "replayed", false)));
+            runtime.emit(event(prepared, 2, "TEXT_DELTA", Map.of("delta", unsafe)));
+            var saved = conversations.events(OWNER, prepared.run().id(), 0);
+            assertThat(saved.items()).extracting(AgentDtos.StreamEvent::eventType)
+                    .containsExactly("RUN_ACCEPTED", "FINAL_RESULT");
+            assertThat(saved.items().toString()).doesNotContain(unsafe);
+        }
     }
 
     @Test
@@ -617,6 +804,16 @@ class AgentAccessIntegrationTest {
         return prepared;
     }
 
+    /** 让 Fake Runtime 产生真实的首事件与唯一完成终态，供重新生成用例结束活动槽。 */
+    private void complete(AgentConversationService.PreparedRun prepared, String answer) {
+        if (runtime.events == null) coordinator.open(prepared);
+        runtime.emit(event(prepared, 1, "RUN_ACCEPTED", Map.of(
+                "conversationId", prepared.run().conversationId().toString(),
+                "messageId", prepared.userMessage().id().toString(), "replayed", false)));
+        runtime.emit(event(prepared, 2, "FINAL_RESULT", Map.of("terminal", true,
+                "terminalStatus", "COMPLETED", "finalAnswer", answer, "answerCompleteness", "COMPLETE")));
+    }
+
     private JsonNode event(AgentConversationService.PreparedRun run, long sequence, String type,
             Map<String, Object> payload) {
         return mapper.valueToTree(Map.of("eventType", type, "runId", run.run().id().toString(),
@@ -628,13 +825,25 @@ class AgentAccessIntegrationTest {
     static class Fixtures {
         @Bean
         @Primary
-        AuthorizedContextResolver contextResolver() {
-            return (user, entry, input, trace) -> new AgentDtos.AuthorizedContext(
-                    new AgentDtos.MessageContext(null, null, null, null, null, List.of()),
-                    Map.of("userId", user.toString(), "educationStage", "JUNIOR", "entryPoint", entry.name(),
-                            "authorizedAt", Instant.now().toString(), "toolGrants", List.of(Map.of(
-                                    "toolName", "QUESTION_SEARCH", "resourceScopes",
-                                    List.of(Map.of("scopeType", "PUBLIC_JUNIOR_MATH"))))));
+        AuthorizedContextResolver contextResolver(MemoryContextProvider memories) {
+            return (user, entry, input, trace) -> {
+                List<UUID> media = input == null ? List.of() : java.util.stream.Stream.concat(
+                        input.questionMediaIds() == null ? java.util.stream.Stream.empty()
+                                : input.questionMediaIds().stream(),
+                        input.aiQuestionMediaIds() == null ? java.util.stream.Stream.empty()
+                                : input.aiQuestionMediaIds().stream()).distinct().toList();
+                Map<String, Object> trusted = new java.util.LinkedHashMap<>();
+                trusted.put("userId", user.toString());
+                trusted.put("educationStage", "JUNIOR");
+                trusted.put("entryPoint", entry.name());
+                trusted.put("authorizedAt", Instant.now().toString());
+                List<Map<String, Object>> preferences = memories.preferences(user);
+                if (!preferences.isEmpty()) trusted.put("preferences", preferences);
+                trusted.put("toolGrants", List.of(Map.of("toolName", "QUESTION_SEARCH", "resourceScopes",
+                        List.of(Map.of("scopeType", "PUBLIC_JUNIOR_MATH")))));
+                return new AgentDtos.AuthorizedContext(
+                        new AgentDtos.MessageContext(null, null, null, null, null, media), trusted);
+            };
         }
 
         @Bean
