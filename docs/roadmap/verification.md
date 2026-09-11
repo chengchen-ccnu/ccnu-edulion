@@ -1151,4 +1151,16 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 启动 Java Agent Access 与 Python runtime。高精度登录帮助为 `COMPLETED`、0 次模型、1 次帮助工具；复合进度/成绩帮助为 `COMPLETED`、1 次真实百炼模型、1 次帮助工具。验收显式关闭在线检索、Redis 治理、索引发布、保留任务和 Media Outbox 发布，只输出状态与计数，未输出完整问题/回答、提示词、Token、密钥或内部正文。
 - 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收仅在已有 `edu_platform_agent_dev` 创建随机 owner 的 2 个会话及其消息/run/事件/用量，`finally` 按 owner 和外键顺序精确删除全部关联事实，复核残留为 0；未写 Redis、RabbitMQ、Qdrant、Neo4j 或 OSS。
 - 边界与后续：历史帮助修订必须新增版本文件并更新 manifest，不得原地改写；当前小规模规范化匹配不扩展为新向量索引。T15A 只消费既有 SSE、安全来源和相对路由，不读取知识库文件或复制帮助规则。完整启动、测试、演示、清理和风险见 [T13.4 交付文档](../delivery/T13.4-user-help-knowledge-base.md)。
-- 交付：实现提交 `a992a89`、验收记录提交 `0fd8790` 已推送；[PR #63](https://github.com/chengchen-ccnu/ccnu-edulion/pull/63) 已创建为 Ready，等待评审与 CI，不自动合并。
+- 交付：实现提交 `a992a89`、验收记录提交 `0fd8790` 与 PR 记录提交 `9734a3d` 均已推送；[PR #63](https://github.com/chengchen-ccnu/ccnu-edulion/pull/63) 的最新 push/pull_request 两轮共 8 项 CI 全部成功，最终合并事实见下一节。
+
+## 2026-09-11 PR #63 合并与 T15A 前置审计
+
+- 合并与清理：[PR #63](https://github.com/chengchen-ccnu/ccnu-edulion/pull/63) 在 Ready、可合并且最新两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@c6bd8f60213377781be4e32e7eb1b64016cab12e`；本地 `main` 已快进同步，T13.4 本地和远端分支均已删除。
+- 已满足依赖：T13.1～T13.4、T14.1、T14.2.1～T14.2.3 和 T07 均已合并；Agent Access 已具备 owner 会话/消息、运行、保存事件、停止、恢复、Redis 治理、180 天保留、AI 图片引用和 Help 来源，Python 动态运行时与真实百炼链路也已验收。
+- SSE 阻断：外部 OpenAPI 0.23.1 的 `AgentClientStreamEvent.payload` 仍是无字段 object。内部协议虽有类型，但浏览器只能以外部 OpenAPI 为事实源；T15A 若手写 `delta/stage/reference/finalAnswer` 会形成第二套 DTO，并且无法由生成类型保证 9 类事件的失败和空值语义。
+- 偏好阻断：Agent Access 已有 `ai_preference` 及明确/推断事实，但外部没有本人明确讲解偏好读写接口。T15A 目标要求学生修改讲解偏好，同时禁止展示画像；用普通聊天消息代替设置无法提供 revision、409、默认值或稳定 UI 状态。
+- 重新生成阻断：现有发送接口的新 key 会创建新用户消息，旧 key 只恢复原 run；没有“基于原消息及其授权快照启动新 run”的命令。目标设计明确重新生成需要新 run、计入用量且恢复不调用模型，前端无法可靠推导该语义；V1 的用户消息到 run 唯一约束也需向前处理，不能改写旧迁移。
+- 图片阻断：OpenAPI 与 Agent Access 已预留 `AI_QUESTION_IMAGE`，但 `MediaPurposePolicy.ENABLED` 没有该用途，当前学习账号创建上传会话会得到用途未启用，故“图片提问”不能由 T15A 单独完成。新策略须按 `learning:access` 而非固定角色开放，并保持 owner、用途、READY、MIME、大小和回收边界。
+- 拆分结论：上述四项是同一个“浏览器消费稳定契约”缺口，集中在外部 OpenAPI、Agent Access 和 Media 的最小向前实现，可独立验收；记录为 T14.2.4，不把后端补口塞入 T15A。T14.2.4 不实现 Vue、第二套 SSE、画像查看、悬浮答疑、自主组题或新的基础设施。
+- 准备结论：T15A 前置不满足，因此没有创建 `codex/t15a-student-ai-chat-web`。已从干净 `main@c6bd8f6` 准备 `codex/t14.2.4-agent-web-contract`；当前分支只提交 T13.4 合并状态、T15A 前置审计和 T14.2.4 计划，不实现业务代码、不推送。
+- 数据：本次合并与只读审计未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、伪数据、消息、索引点或媒体对象。
