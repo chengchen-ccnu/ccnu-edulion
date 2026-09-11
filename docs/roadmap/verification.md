@@ -1128,3 +1128,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实链路：使用安全包装器、`D:\Anaconda\envs\langgraph\python.exe`、Java `18086/18087` 两实例与 Python `8000`。唯一低成本初中代数请求在首个 `TEXT_DELTA` 后断开；Python 仅 1 次 run POST/1 次 cancel，MySQL 终态 `CANCELLED`、助手 `PARTIAL`、32 个连续事件且仅 1 个 `FINAL_RESULT`。B 实例使用同 `clientRequestId` 重放同 run 的 32 个已存事件，Python 无第二次 run POST。另以 Java `18088`+错误 Redis 端口实验验证新 run 为 503、0 消息/run，已存会话读仍正常。验收未输出完整问答、Token、API Key 或临时 URL。
 - 数据与清理：用途明确的 `edu_platform_agent_dev` 由 V3 前进 V4，不创建数据库/Seed。固定验收范围精确删除 1 会话、2 消息、1 run、32 事件和 1 用量，范围复核 0；无媒体引用/Rabbit 消息/Qdrant 点/Neo4j 图/OSS 对象。Redis 专项按随机前缀与已知 Key 清理，未 `FLUSHDB`、未清空表或删除固定 collection。
 - 边界：不承诺已发给模型供应商的请求不计费。生产需确认额度数值与 Redis 容量/高可用性；T13.4 仍负责用户帮助事实，T15A 仅消费本任务的流、停止、恢复、图片 ID 和正文保留投影，不在前端重建治理逻辑。完整命令、Key/TTL、配置、演示与风险见 [T14.2.3 交付文档](../delivery/T14.2.3-agent-runtime-governance.md)。
+- 交付：实现提交 `9085ff9` 已推送；[Ready PR #62](https://github.com/chengchen-ccnu/ccnu-edulion/pull/62) 已创建且未合并，最新 CI 在交付记录提交推送后执行并据实追记。
