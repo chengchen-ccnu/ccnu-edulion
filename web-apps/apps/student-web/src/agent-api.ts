@@ -1,12 +1,12 @@
 import { createGatewayClient, gatewayRequestError } from "@edu/api-client";
 import type { AgentConversation, AgentConversationPage, AgentExplanationPreference, AgentMessagePage,
-  AgentRunEventPage, CancelAgentRunResponse, GatewayClient, SendAgentMessageRequest } from "@edu/api-client";
+  AgentRunEventPage, CancelAgentRunResponse, GatewayClient, MediaAccessGrant, SendAgentMessageRequest } from "@edu/api-client";
 import type { AuthStore } from "@edu/auth";
 import { authStore } from "./auth";
 
 export interface StudentAgentApi {
   conversations(page?: number, size?: number, signal?: AbortSignal): Promise<AgentConversationPage>;
-  createConversation(clientRequestId: string): Promise<AgentConversation>;
+  createConversation(clientRequestId: string, entryPoint?: AgentConversation["entryPoint"]): Promise<AgentConversation>;
   conversation(id: string, signal?: AbortSignal): Promise<AgentConversation>;
   messages(id: string, page?: number, size?: number, signal?: AbortSignal): Promise<AgentMessagePage>;
   preference(signal?: AbortSignal): Promise<AgentExplanationPreference>;
@@ -17,6 +17,8 @@ export interface StudentAgentApi {
   send(conversationId: string, body: SendAgentMessageRequest, signal: AbortSignal): Promise<Response>;
   regenerate(conversationId: string, messageId: string, clientRequestId: string,
     signal: AbortSignal): Promise<Response>;
+  messageQuestionMediaGrant(conversationId: string, messageId: string, mediaId: string,
+    signal?: AbortSignal): Promise<MediaAccessGrant>;
 }
 
 /** 学生独立答疑 API，只以生成路径/DTO调用 Gateway；流响应同样通过 AuthStore 完成一次 401 刷新。 */
@@ -27,7 +29,7 @@ export function createStudentAgentApi(client: GatewayClient = createGatewayClien
   };
   return {
     async conversations(page = 1, size = 30, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations", { headers: { Authorization }, params: { query: { page, size } }, signal }))); },
-    async createConversation(clientRequestId) { return data(await authorized(Authorization => client.POST("/api/v1/ai/conversations", { headers: { Authorization }, body: { clientRequestId, entryPoint: "INDEPENDENT_CHAT" } }))); },
+    async createConversation(clientRequestId, entryPoint = "INDEPENDENT_CHAT") { return data(await authorized(Authorization => client.POST("/api/v1/ai/conversations", { headers: { Authorization }, body: { clientRequestId, entryPoint } }))); },
     async conversation(conversationId, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations/{conversationId}", { headers: { Authorization }, params: { path: { conversationId } }, signal }))); },
     async messages(conversationId, page = 1, size = 100, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations/{conversationId}/messages", { headers: { Authorization }, params: { path: { conversationId }, query: { page, size } }, signal }))); },
     async preference(signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/preferences/explanation", { headers: { Authorization }, signal }))); },
@@ -35,7 +37,13 @@ export function createStudentAgentApi(client: GatewayClient = createGatewayClien
     async events(runId, afterSequence) { return data(await authorized(Authorization => client.GET("/api/v1/ai/runs/{runId}/events", { headers: { Authorization }, params: { path: { runId }, query: { afterSequence } } }))); },
     async cancel(runId, reason) { return data(await authorized(Authorization => client.POST("/api/v1/ai/runs/{runId}/cancel", { headers: { Authorization }, params: { path: { runId } }, body: { cancelRequestId: crypto.randomUUID(), reason } }))); },
     async send(conversationId, body, signal) { const result = await authorized(Authorization => client.POST("/api/v1/ai/conversations/{conversationId}/messages", { headers: { Authorization }, params: { path: { conversationId } }, body, parseAs: "stream", signal })); if (!result.response.ok) throw gatewayRequestError(result.response, result.error as never); return result.response; },
-    async regenerate(conversationId, messageId, clientRequestId, signal) { const result = await authorized(Authorization => client.POST("/api/v1/ai/conversations/{conversationId}/messages/{messageId}/regenerations", { headers: { Authorization }, params: { path: { conversationId, messageId } }, body: { clientRequestId }, parseAs: "stream", signal })); if (!result.response.ok) throw gatewayRequestError(result.response, result.error as never); return result.response; }
+    async regenerate(conversationId, messageId, clientRequestId, signal) { const result = await authorized(Authorization => client.POST("/api/v1/ai/conversations/{conversationId}/messages/{messageId}/regenerations", { headers: { Authorization }, params: { path: { conversationId, messageId } }, body: { clientRequestId }, parseAs: "stream", signal })); if (!result.response.ok) throw gatewayRequestError(result.response, result.error as never); return result.response; },
+    async messageQuestionMediaGrant(conversationId, messageId, mediaId, signal) {
+      return data(await authorized(Authorization => client.POST("/api/v1/ai/conversations/{conversationId}/messages/{messageId}/question-media/{mediaId}/access-grants", {
+        headers: { Authorization }, params: { path: { conversationId, messageId, mediaId } },
+        body: { variant: "ORIGINAL", disposition: "INLINE" }, signal
+      })));
+    }
   };
 }
 

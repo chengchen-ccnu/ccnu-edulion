@@ -1243,3 +1243,14 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 状态前置：`AgentConversation.entryPoint/lastMessageAt/activeRunId` 与消息上下文足以实现只对悬浮会话生效的 30 分钟空闲换新、同会话单运行、多标签冲突和切题不换会话。关闭/转完整页继续使用既有取消与部分回答保存语义，不需要新增 Redis、数据库迁移或后端会话状态机。
 - 准备结论：T15B 前置条件满足。已从干净 `main@d544840` 创建 `codex/t15b-practice-floating-chat`；当前只更新 T14.2.5 合并状态和 T15B 前置审计，没有实现 Vue、修改 OpenAPI/Java/Python 或扩大自主组题/评分范围。
 - 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-12 T15B 普通自主练习悬浮答疑
+
+- 页面与边界：只在学生端 `/practice/questions/:questionId` 增加桌面右下角/手机近全屏答疑；课程播放器、HOMEWORK、EXAM、结果页和错题本没有入口。打开只读最近会话，首次发送才创建 `PRACTICE_FLOATING`；不提交答案、判分或修改进度。
+- 会话与草稿：只复用 ACTIVE 悬浮会话；无活动 run 时按 `max(updatedAt,lastMessageAt)` 小于 30 分钟判断，活动 run 永不因空闲窗口换新。切题不重置会话/消息/流，未发送草稿继续绑定原题并提供显式切换；409、停止、断线恢复、部分回答、重新生成和转完整页沿用 T15A 协议。
+- 历史与媒体：USER 消息默认折叠 OpenAPI 0.23.3 精确版本投影，AVAILABLE 渲染题型、题干、选项、有序小问和正文题图，UNAVAILABLE 明确失败关闭且不查当前题。历史图只使用 conversation/message/version/media 绑定授权和共享安全 Blob loader/cache，签名 URL 不落 DOM/存储。
+- 联调缺陷修复：真实带图发送暴露 Agent Access 既有 `MediaGrant` 反序列化缺省用途为 null、`Map.of` NPE 的 500；现仅将缺省用途归一为 `QUESTION_IMAGE`，显式 `AI_QUESTION_IMAGE` 不变，并增加构造回归测试。OpenAPI、事件、数据库和服务边界未改变。
+- 自动化：前端 generate/typecheck 的 8 个 workspace 通过，Vitest 49 文件 325 项通过，三端 build 通过（仅既有大 chunk 警告）；Java 全仓 `clean verify` 的 9 个 Reactor 模块成功，270 项执行、235 项通过、35 项真实开关跳过，Agent Access 47 项中 44 项通过、3 项跳过。T15B 定向 3 文件 11 项覆盖懒创建、30 分钟/活动运行、草稿关联、精确投影/授权、UNAVAILABLE、焦点和边界。
+- 真实验收：固定学生经真实 Gateway 打开含两张 OSS 图片的 ACTIVE SYSTEM 题；`localhost` Origin 两图可见。首次带图问题完整经过 Agent Access、Learning、Media/OSS、Redis、Python/模型，收到阶段、连续文本和唯一 COMPLETED 终态；历史折叠题目显示发送时版本。390×844 近全屏、Escape 焦点恢复和 console 0 error 通过。`127.0.0.1` 不在本地 OSS CORS allowlist，会显示现有安全失败态，验收因此使用文档约定的 `localhost`。
+- 数据与清理：未新建数据库、表、迁移、Seed、账号、题目或媒体。真实验收创建 1 会话、4 消息、2 run，并产生本轮题图授权、刷新会话和登录审计；已按精确 ID 逆依赖删除，Agent/Media/IAM 残留均为 0，Redis 对应 key 为 0，没有 OSS 写入。所有 5173、8000、8080、8081、8083、8084、8086 服务已停止，临时脚本和日志已删除。
+- 配置与文档：没有新增环境变量或修改 `local.env`，没有需要删除/迁移的本地明文配置。实现、启动、演示、清理与风险见 [T15B 交付文档](../delivery/T15B-practice-floating-chat.md)；实现提交与 Ready PR 创建后回填，不自动合并。

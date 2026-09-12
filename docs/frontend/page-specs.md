@@ -137,7 +137,7 @@ T17C 之前未交付的管理入口必须显示“建设中”且不可进入占
 | `/learn/:courseId/tasks/:assessmentId` | 课程上下文中的练习/作业/考试作答、草稿恢复、多次提交、服务端时间与截止裁决 | `learning:access` + 课程访问 + 本人应交事实；旧 attempt 不可枚举 | T11C.2；复用既有答题组件，不复制第二套答题器 |
 | `/learn/:courseId/tasks/:assessmentId/result` | 最后一次有效提交的回执及按公布事实裁剪的安全结果 | `learning:access` + 课程访问 + 最终有效 attempt 所有权 | T11C.2；不提供历史 attempt 切换入口 |
 | `/practice` | 顶部题库：公共 SYSTEM 题筛选、打开独立题目，以及后续无课程归属的自主练习入口 | `learning:access`；安全题目投影 | T10C.1/T10C.2 已交付公共题浏览；自主组题与正式单题作答仍后移 |
-| `/practice/questions/:questionId` | 独立公共题目内容与自主练习区域；可折叠附带题目上下文的悬浮答疑 | `learning:access` + ACTIVE SYSTEM 题目与媒体授权 | T10C.2；T15B 增加答疑。单题作答能力依 T10C.1 真实审计，不新增未经确认的评分规则 |
+| `/practice/questions/:questionId` | 独立公共题目内容与自主练习区域；可折叠附带题目上下文的悬浮答疑 | `learning:access` + ACTIVE SYSTEM 题目与媒体授权 | T10C.2；T15B 悬浮答疑已交付（待 PR 合并）。单题作答能力依 T10C.1 真实审计，不新增未经确认的评分规则 |
 | `/practice/:assessmentId` | 无课程归属自主练习的暂存、提交和恢复 | `learning:access` + 自主 PRACTICE 访问事实 | T10C.1/T10C.2 补归属区分，课程关联练习按服务端事实转入本课程任务；旧链接安全迁移不删记录 |
 | `/attempt/:attemptId/result` | 提交回执、本人答案，以及按服务端公布事实安全展示的成绩、参考答案、解析、知识点和错题归档 | 作答所有者或授权教师 | T11B 已提供公布事实；T12B 已实现页面 |
 | `/wrong-questions` | 错题筛选、重做和掌握状态 | `learning:access` | T12B 已实现 |

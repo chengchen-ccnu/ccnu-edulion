@@ -369,6 +369,15 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
             String originalFileName, String mimeType, long size, List<JsonNode> variants) {}
     private record MediaGrant(String mediaId, String mimeType, long sizeBytes, String method, String url,
             Map<String, String> headers, Instant expiresAt, String purpose) {
+        /**
+         * Learning 的公开访问授权响应不携带业务用途；反序列化走 record 主构造器时在此补回题图用途。
+         * AI 图片授权会显式传入 {@code AI_QUESTION_IMAGE}，因此不会被这个默认值覆盖。
+         */
+        private MediaGrant {
+            if (purpose == null || purpose.isBlank()) purpose = "QUESTION_IMAGE";
+            if (headers == null) headers = Map.of();
+        }
+
         private MediaGrant(String mediaId, String mimeType, long sizeBytes, String method, String url,
                 Map<String, String> headers, Instant expiresAt) {
             this(mediaId, mimeType, sizeBytes, method, url, headers, expiresAt, "QUESTION_IMAGE");
