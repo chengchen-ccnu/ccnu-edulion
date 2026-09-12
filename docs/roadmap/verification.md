@@ -1234,3 +1234,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：Java 全仓 `clean verify` 的 8 个业务/基础模块 Reactor 全部成功；Learning 103 项通过、19 项条件跳过，Agent Access 46 项通过、3 项条件跳过。新增覆盖历史/当前版本差异、选择题、组合题、题图、批量去重、非 owner、错配、归档、依赖不可用、敏感字段排除、消息绑定授权和重新生成历史恢复。前端 `generate:api`、8 workspace typecheck、46 文件/314 项测试和三端 build 全部通过，仅保留既有大 chunk 警告；`git diff --check` 通过。
 - 数据：仅使用测试进程内 H2 与 Mockito 媒体替身，测试结束随进程销毁；未连接或修改任何现有 MySQL、Redis、RabbitMQ、Qdrant、Neo4j 或 OSS，未创建迁移、长期 Seed、伪数据、真实消息或媒体对象，无需清理业务数据。
 - 交付：分支 `codex/t14.2.5-agent-question-context-projection` 基于 `main@494d359`，规划提交 `d47e2c0` 已先行推送，关键实现提交为 `1aba37f`。[Ready PR #66](https://github.com/chengchen-ccnu/ccnu-edulion/pull/66) 目标为 `main`，保持 Open 且未自行合并。
+
+## 2026-09-12 PR #66 合并与 T15B 前置审计
+
+- 合并与清理：[PR #66](https://github.com/chengchen-ccnu/ccnu-edulion/pull/66) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@d544840b31597339f3a336c8f1aef2e6051f7002`；本地 `main` 已 `--ff-only` 同步，T14.2.5 本地和远端分支均已删除。
+- 契约前置：OpenAPI 0.23.3 已提供 `PRACTICE_FLOATING`、历史消息的 AVAILABLE/UNAVAILABLE 精确题目版本投影，以及绑定 conversation/message/version/media 的题图短期授权。Agent Access 继续校验 owner，Learning 继续拥有题目事实；历史版本不回退当前版本，生成客户端无需手写 DTO。
+- 页面前置：T10C.2 已交付 `/practice/questions/:questionId` 与公共题图安全渲染，T15A 已交付会话 API、SSE、停止/恢复、消息渲染和响应式基础。T15B 可在既有题目页增加桌面右下角/手机近全屏悬浮承载，复用这些能力，不修改全局导航、课程播放器、HOMEWORK/EXAM、结果页或错题本。
+- 状态前置：`AgentConversation.entryPoint/lastMessageAt/activeRunId` 与消息上下文足以实现只对悬浮会话生效的 30 分钟空闲换新、同会话单运行、多标签冲突和切题不换会话。关闭/转完整页继续使用既有取消与部分回答保存语义，不需要新增 Redis、数据库迁移或后端会话状态机。
+- 准备结论：T15B 前置条件满足。已从干净 `main@d544840` 创建 `codex/t15b-practice-floating-chat`；当前只更新 T14.2.5 合并状态和 T15B 前置审计，没有实现 Vue、修改 OpenAPI/Java/Python 或扩大自主组题/评分范围。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
