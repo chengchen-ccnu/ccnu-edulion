@@ -1214,4 +1214,5 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 失败与资源边界：网络、502/503/504、授权过期和 429 最多自动重试一次，429 使用 `Retry-After`；403/404/422 不自动重试，失败不入缓存且提供用户主动重试。稳定四元组并发请求合并；缓存上限为 24 项/32 MiB；每组件创建并撤销自己的 Object URL。未把签名 URL 写入 DOM、持久缓存或日志，未新增 OpenAPI、Java、数据库、OSS 或派生图契约。
 - 自动化：`pnpm.cmd --dir web-apps run typecheck` 的 8 个 workspace 全过；`pnpm.cmd --dir web-apps run test` 为 46 文件 314 项全过；`pnpm.cmd --dir web-apps run build` 的 admin/student/teacher 全过，仅保留既有大 chunk 警告。新增测试覆盖统一壳、响应式/焦点、重新生成显示条件、瞬时与非瞬时错误、429、手动重试、请求合并、授权串行/下载小并发、LRU 上限和 URL 撤销。
 - 数据与清理：未创建数据库、表、迁移、账号、课程、题目或 OSS 对象。真实 AI 会话产生 1 个会话、3 条消息、2 个 run，已按 conversationId 精确删除并复核为 0；8 个既有 SYSTEM mediaId 的本轮 `ORIGINAL/INLINE` 授权审计按 actor/mediaId/时间窗精确删除为 0，过期 nonce 为 0，既有其他会话和 HLS/poster 审计未动。
-- 结论：三项阻断均关闭，T15A 可创建 Ready PR 等待评审；不自行合并。浏览器 Origin 并发授权的后端 500 仍记录为后续 Gateway 专项风险，但当前前端调用模式不再触发该故障。
+- 交付：实现提交 `1955bcc` 已按规则推送；Ready [PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 已创建、保持 Open 且不自行合并。
+- 结论：三项阻断均关闭，T15A 等待 PR #65 评审。浏览器 Origin 并发授权的后端 500 仍记录为后续 Gateway 专项风险，但当前前端调用模式不再触发该故障。

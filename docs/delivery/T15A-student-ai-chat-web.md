@@ -1,6 +1,6 @@
 # T15A 独立 AI 答疑前端
 
-日期：2026-09-12。状态：首版 `e7a1ad2` 与验收修订设计 `6348a77` 之后的三项人工产品阻断均已关闭；自动化、真实公共题图与真实 AI 会话已重新验收，等待 Ready PR 评审，不自行合并。
+日期：2026-09-12。状态：首版 `e7a1ad2` 与验收修订设计 `6348a77` 之后的三项人工产品阻断均已关闭；自动化、真实公共题图与真实 AI 会话已重新验收，Ready [PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 等待评审，不自行合并。
 
 ## 目标与功能边界
 
@@ -69,4 +69,5 @@
 - 分支：`codex/t15a-student-ai-chat-web`
 - 起点：`main@f7d0d8e`
 - 首版实现提交：`e7a1ad2`
-- Ready PR：将在本分支推送后创建并回填；本任务不自行合并。
+- 实现提交：`1955bcc`
+- Ready PR：[PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 已创建并保持 Open；本任务不自行合并。
