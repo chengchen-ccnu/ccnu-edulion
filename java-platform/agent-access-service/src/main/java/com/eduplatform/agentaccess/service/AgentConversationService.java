@@ -8,6 +8,7 @@ import com.eduplatform.agentaccess.persistence.AgentRepository.RunRow;
 import com.eduplatform.agentaccess.service.RunGovernance.Lease;
 import com.eduplatform.agentaccess.service.RunGovernance.Reservation;
 import com.eduplatform.agentaccess.web.AgentDtos;
+import com.eduplatform.agentaccess.web.AgentInternalDtos;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -52,6 +53,7 @@ public class AgentConversationService {
     private final com.eduplatform.agentaccess.config.AgentProperties properties;
     private final com.eduplatform.agentaccess.config.AgentGovernanceProperties governanceProperties;
     private final RunGovernance governance;
+    private final AgentDomainClient domains;
 
     public record PreparedRun(RunRow run, MessageRow userMessage, AgentDtos.AuthorizedContext context,
             List<AgentDtos.RecentMessage> recentMessages, boolean replayed, Lease lease) {}
@@ -63,7 +65,7 @@ public class AgentConversationService {
             ObjectMapper mapper, PlatformTransactionManager transactionManager,
             com.eduplatform.agentaccess.config.AgentProperties properties,
             com.eduplatform.agentaccess.config.AgentGovernanceProperties governanceProperties,
-            RunGovernance governance) {
+            RunGovernance governance, AgentDomainClient domains) {
         this.repository = repository;
         this.contexts = contexts;
         this.mapper = mapper;
@@ -71,6 +73,7 @@ public class AgentConversationService {
         this.properties = properties;
         this.governanceProperties = governanceProperties;
         this.governance = governance;
+        this.domains = domains;
     }
 
     /**
@@ -130,9 +133,38 @@ public class AgentConversationService {
     }
 
     public AgentDtos.MessagePage messages(UUID owner, UUID conversationId, int page, int size) {
-        requireConversation(owner, conversationId);
-        return new AgentDtos.MessagePage(repository.listMessages(conversationId, page, size).stream()
-                .map(this::message).toList(), page, size, repository.countMessages(conversationId));
+        return messages(owner, conversationId, page, size, "message-page");
+    }
+
+    /**
+     * 读取本人消息页并为悬浮会话批量补充精确历史题目版本。
+     *
+     * <p>一页先按 questionId+questionVersionId 去重，再进行一次最多 100 项的 Learning 调用。
+     * 单项不存在或依赖不可用时显式返回 UNAVAILABLE，绝不改查题库当前版本，也不影响其他消息读取。</p>
+     */
+    public AgentDtos.MessagePage messages(UUID owner, UUID conversationId, int page, int size, String traceId) {
+        ConversationRow conversation = requireConversation(owner, conversationId);
+        List<MessageRow> rows = repository.listMessages(conversationId, page, size);
+        Map<String, AgentDtos.QuestionContextQuestion> questions = conversation.entryPoint()
+                == AgentDtos.EntryPoint.PRACTICE_FLOATING ? resolveQuestionProjections(owner, rows, traceId) : Map.of();
+        return new AgentDtos.MessagePage(rows.stream().map(row -> message(row, conversation.entryPoint(), questions))
+                .toList(), page, size, repository.countMessages(conversationId));
+    }
+
+    /** 为本人悬浮会话的已保存 USER 消息题图申请短期访问，题目版本不接受浏览器覆盖。 */
+    public AgentDtos.MediaAccessGrant authorizeQuestionMedia(UUID owner, UUID conversationId, UUID messageId,
+            UUID mediaId, AgentDtos.QuestionMediaAccessRequest input, String traceId) {
+        ConversationRow conversation = requireConversation(owner, conversationId);
+        if (conversation.entryPoint() != AgentDtos.EntryPoint.PRACTICE_FLOATING) throw notFound();
+        MessageRow message = repository.findUserMessage(owner, conversationId, messageId)
+                .orElseThrow(AgentConversationService::notFound);
+        AgentDtos.MessageContext context = message.contextJson() == null ? null
+                : read(message.contextJson(), AgentDtos.MessageContext.class);
+        if (context == null || context.questionId() == null || context.questionVersionId() == null) throw notFound();
+        var grant = domains.authorizeQuestionVersionMedia(owner, context.questionId(), context.questionVersionId(),
+                mediaId, input.variant(), input.disposition().name(), traceId);
+        return new AgentDtos.MediaAccessGrant(grant.mediaId(), grant.mimeType(), grant.sizeBytes(), grant.method(),
+                grant.url(), grant.headers(), grant.expiresAt());
     }
 
     /**
@@ -408,9 +440,8 @@ public class AgentConversationService {
                 .map(AgentRepository.MediaReferenceRow::mediaId).toList();
         List<UUID> questionMedia = stable.mediaIds() == null ? List.of() : stable.mediaIds().stream()
                 .filter(id -> !aiMedia.contains(id)).toList();
-        AgentDtos.AuthorizedContext refreshed = contexts.resolve(owner, entryPoint,
-                new AgentDtos.MessageContextRequest(stable.questionId(), stable.courseId(), stable.lessonId(),
-                        questionMedia, aiMedia), traceId);
+        AgentDtos.AuthorizedContext refreshed = contexts.resolveSaved(owner, entryPoint, stable,
+                questionMedia, aiMedia, traceId);
         if (!sameStableContext(stable, refreshed.stableContext())) throw notFound();
         return new AgentDtos.AuthorizedContext(stable, refreshed.trustedContext());
     }
@@ -549,10 +580,73 @@ public class AgentConversationService {
     }
 
     private AgentDtos.Message message(MessageRow row) {
+        return message(row, null, Map.of());
+    }
+
+    private AgentDtos.Message message(MessageRow row, AgentDtos.EntryPoint entryPoint,
+            Map<String, AgentDtos.QuestionContextQuestion> questions) {
         AgentDtos.MessageContext context = row.contextJson() == null ? null
                 : read(row.contextJson(), AgentDtos.MessageContext.class);
+        AgentDtos.QuestionContextProjection projection = null;
+        if (entryPoint == AgentDtos.EntryPoint.PRACTICE_FLOATING
+                && row.role() == AgentDtos.MessageRole.USER && context != null
+                && context.questionId() != null && context.questionVersionId() != null) {
+            var question = questions.get(questionKey(context.questionId(), context.questionVersionId()));
+            projection = new AgentDtos.QuestionContextProjection(question == null
+                    ? AgentDtos.QuestionProjectionStatus.UNAVAILABLE : AgentDtos.QuestionProjectionStatus.AVAILABLE,
+                    question);
+        }
         return new AgentDtos.Message(row.id(), row.conversationId(), row.runId(), row.role(), row.content(),
-                row.completeness(), row.contentState(), context, row.sequenceNo(), row.createdAt());
+                row.completeness(), row.contentState(), context, projection, row.sequenceNo(), row.createdAt());
+    }
+
+    private Map<String, AgentDtos.QuestionContextQuestion> resolveQuestionProjections(UUID owner,
+            List<MessageRow> rows, String traceId) {
+        var keys = new java.util.LinkedHashMap<String, AgentInternalDtos.QuestionVersionKey>();
+        for (MessageRow row : rows) {
+            if (row.role() != AgentDtos.MessageRole.USER || row.contextJson() == null) continue;
+            AgentDtos.MessageContext context = read(row.contextJson(), AgentDtos.MessageContext.class);
+            if (context.questionId() == null || context.questionVersionId() == null) continue;
+            keys.putIfAbsent(questionKey(context.questionId(), context.questionVersionId()),
+                    new AgentInternalDtos.QuestionVersionKey(context.questionId(), context.questionVersionId()));
+        }
+        if (keys.isEmpty()) return Map.of();
+        try {
+            Map<String, AgentDtos.QuestionContextQuestion> result = new java.util.LinkedHashMap<>();
+            for (var value : domains.projectQuestionVersions(owner, List.copyOf(keys.values()), traceId)) {
+                if (value == null || value.questionId() == null || value.questionVersionId() == null) continue;
+                String key = questionKey(value.questionId(), value.questionVersionId());
+                if (!keys.containsKey(key)) continue;
+                result.put(key, question(value));
+            }
+            return Map.copyOf(result);
+        } catch (AgentException unavailable) {
+            if (unavailable.status() == HttpStatus.SERVICE_UNAVAILABLE) return Map.of();
+            throw unavailable;
+        }
+    }
+
+    private static AgentDtos.QuestionContextQuestion question(
+            AgentInternalDtos.QuestionVersionProjection value) {
+        return new AgentDtos.QuestionContextQuestion(value.questionId(), value.questionVersionId(), value.type(),
+                value.stem(), options(value.options()), media(value.media()), value.children().stream().map(child ->
+                new AgentDtos.QuestionContextChild(child.questionId(), child.questionVersionId(), child.sequence(),
+                        child.type(), child.stem(), options(child.options()), media(child.media()))).toList());
+    }
+
+    private static List<AgentDtos.QuestionContextOption> options(List<AgentInternalDtos.QuestionOption> values) {
+        return values == null ? List.of() : values.stream()
+                .map(value -> new AgentDtos.QuestionContextOption(value.key(), value.content())).toList();
+    }
+
+    private static List<AgentDtos.QuestionContextMedia> media(List<AgentInternalDtos.QuestionMedia> values) {
+        return values == null ? List.of() : values.stream()
+                .map(value -> new AgentDtos.QuestionContextMedia(value.id(), value.mediaId(), value.purpose(),
+                        value.sequence())).toList();
+    }
+
+    private static String questionKey(UUID questionId, UUID questionVersionId) {
+        return questionId + ":" + questionVersionId;
     }
 
     private AgentDtos.StreamEvent event(EventRow row) {

@@ -70,8 +70,22 @@ public class AgentController {
     public AgentDtos.MessagePage messages(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable UUID conversationId, @RequestParam(defaultValue = "1") @Min(1) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        return conversations.messages(AgentIdentity.requireLearner(userId, permissions), conversationId, page, size);
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
+        return conversations.messages(AgentIdentity.requireLearner(userId, permissions), conversationId, page, size,
+                (String) servlet.getAttribute(TraceFilter.ATTRIBUTE));
+    }
+
+    /** 题目身份来自本人已保存消息，浏览器只选择该投影中展示的 mediaId 与访问动作。 */
+    @PostMapping("/conversations/{conversationId}/messages/{messageId}/question-media/{mediaId}/access-grants")
+    public ResponseEntity<AgentDtos.MediaAccessGrant> authorizeQuestionMedia(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID conversationId, @PathVariable UUID messageId, @PathVariable UUID mediaId,
+            @Valid @RequestBody AgentDtos.QuestionMediaAccessRequest input, HttpServletRequest servlet) {
+        var grant = conversations.authorizeQuestionMedia(AgentIdentity.requireLearner(userId, permissions),
+                conversationId, messageId, mediaId, input,
+                (String) servlet.getAttribute(TraceFilter.ATTRIBUTE));
+        return ResponseEntity.status(HttpStatus.CREATED).body(grant);
     }
 
     /** 消息写入和 run 创建先提交，再开始 SSE；响应头返回稳定 runId 供取消和恢复。 */

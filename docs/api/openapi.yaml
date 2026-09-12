@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.23.2
-  description: T14.2.4 Agent browser contract. Provides authenticated AI conversations, typed run streaming, explicit explanation preferences, last-question regeneration, saved-event recovery and cancellation through Gateway. The browser may submit only stable context identifiers; Java re-authorizes question, course and media facts before constructing the internal Agent request. Redis coordinates only short-lived execution governance while MySQL remains the conversation and event source of truth.
+  version: 0.23.3
+  description: T14.2.5 Agent question-context projection contract. Owner-visible PRACTICE_FLOATING message pages resolve the exact persisted questionVersionId through a bounded Learning batch API and return only learner-safe immutable content. Historical question media uses a message-bound authorization endpoint; no answer, analysis, storage coordinate or signed URL is persisted in the projection. Existing typed streaming, regeneration, quota, Redis governance and cancellation semantics remain unchanged.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -3190,6 +3190,28 @@ paths:
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/AgentUnavailable'}
+  /api/v1/ai/conversations/{conversationId}/messages/{messageId}/question-media/{mediaId}/access-grants:
+    post:
+      tags: [Agent]
+      operationId: createAgentMessageQuestionMediaAccessGrant
+      summary: Authorize one historical question image bound to an owner-visible message
+      description: Requires learning:access and an owner-visible PRACTICE_FLOATING conversation. Agent Access derives questionId and the exact questionVersionId from the persisted USER message, then Learning verifies that immutable ACTIVE SYSTEM version and its safe content binding before issuing a short-lived grant. The browser cannot submit or override question identity, version, purpose, variant ownership or visibility. Foreign conversations/messages, mismatched versions, archived questions and unrelated media are indistinguishable from missing resources.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+        - {$ref: '#/components/parameters/AgentMessageId'}
+        - {$ref: '#/components/parameters/MediaId'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CreateAssessmentMediaAccessGrantRequest'}}}
+      responses:
+        '201': {description: Short-lived grant for the exact historical question content binding., content: {application/json: {schema: {$ref: '#/components/schemas/MediaAccessGrant'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/AgentUnavailable'}
   /api/v1/ai/runs/{runId}/events:
     get:
       tags: [Agent]
@@ -3887,6 +3909,63 @@ components:
           maxItems: 8
           items: {type: string, format: uuid}
       description: Persisted stable authorized identifiers only. Temporary URLs and hidden answer fields are never stored.
+    AgentQuestionContextProjectionStatus:
+      type: string
+      enum: [AVAILABLE, UNAVAILABLE]
+      description: UNAVAILABLE is a fail-closed historical state; clients must not substitute the current public question or render an empty question.
+    AgentQuestionContextOption:
+      type: object
+      additionalProperties: false
+      required: [key, content]
+      properties:
+        key: {type: string, minLength: 1, maxLength: 16}
+        content: {type: string, minLength: 1, maxLength: 20000}
+    AgentQuestionContextMedia:
+      type: object
+      additionalProperties: false
+      required: [id, mediaId, purpose, sequence]
+      description: Stable learner-visible content binding metadata only. It contains no Bucket, Object Key, URL, credential, answer-only media or storage details.
+      properties:
+        id: {type: string, format: uuid, description: Immutable Learning version-media row ID.}
+        mediaId: {type: string, format: uuid}
+        purpose: {type: string, enum: [QUESTION_IMAGE, QUESTION_AUDIO, QUESTION_ATTACHMENT]}
+        sequence: {type: integer, minimum: 1}
+    AgentQuestionContextChild:
+      type: object
+      additionalProperties: false
+      required: [questionId, questionVersionId, sequence, type, stem, options, media]
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1, maximum: 100}
+        type: {$ref: '#/components/schemas/QuestionInputType'}
+        stem: {type: string, minLength: 1, maxLength: 50000}
+        options: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/AgentQuestionContextOption'}}
+        media: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AgentQuestionContextMedia'}}
+    AgentQuestionContextQuestion:
+      type: object
+      additionalProperties: false
+      required: [questionId, questionVersionId, type, stem, options, media, children]
+      description: Exact immutable learner-safe question version. Correct answers, analysis, grading facts, private runtime state and temporary media access are intentionally absent.
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        type: {$ref: '#/components/schemas/QuestionType'}
+        stem: {type: string, minLength: 1, maxLength: 50000}
+        options: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/AgentQuestionContextOption'}}
+        media: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AgentQuestionContextMedia'}}
+        children: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AgentQuestionContextChild'}}
+    AgentQuestionContextProjection:
+      type: object
+      additionalProperties: false
+      required: [status, question]
+      description: Message-time question context resolution result. A single unavailable historical context does not fail the whole message page and is never represented as an empty question.
+      properties:
+        status: {$ref: '#/components/schemas/AgentQuestionContextProjectionStatus'}
+        question:
+          oneOf:
+            - {$ref: '#/components/schemas/AgentQuestionContextQuestion'}
+            - type: 'null'
     AgentMessage:
       type: object
       additionalProperties: false
@@ -3903,6 +3982,9 @@ components:
           enum: [RETAINED, PURGED]
           description: Optional forward-compatible retention projection. PURGED means the original body was removed by policy; empty content must not be presented as the original text.
         context: {$ref: '#/components/schemas/AgentMessageContext'}
+        questionContextProjection:
+          $ref: '#/components/schemas/AgentQuestionContextProjection'
+          description: Present only for USER messages in PRACTICE_FLOATING conversations that persisted questionId and questionVersionId. UNAVAILABLE explicitly forbids current-version fallback.
         sequenceNo: {type: integer, minimum: 1}
         createdAt: {type: string, format: date-time}
     AgentMessagePage:

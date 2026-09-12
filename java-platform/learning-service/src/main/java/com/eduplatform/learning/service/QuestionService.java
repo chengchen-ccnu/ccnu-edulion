@@ -229,6 +229,77 @@ public class QuestionService {
                 .map(this::systemChild).toList(), aggregate.createdAt(), aggregate.updatedAt());
     }
 
+    /**
+     * 为 Agent 历史消息批量解析精确不可变版本。
+     *
+     * <p>输入已由 Agent Access 按页去重且最多 100 项；这里只返回仍为 ACTIVE SYSTEM 根题、且
+     * questionId/versionId 精确匹配的安全正文。答案、解析、知识点和答案专用媒体从未进入 DTO，
+     * 单项失效时直接省略，调用方必须显式标为不可用，禁止回退当前版本。</p>
+     */
+    @Transactional(readOnly = true)
+    public com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionProjectionResponse agentQuestionVersions(
+            com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionProjectionRequest request) {
+        var seen = new java.util.LinkedHashSet<String>();
+        var items = new ArrayList<com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionProjection>();
+        for (var key : request.versions()) {
+            String identity = key.questionId() + ":" + key.questionVersionId();
+            if (!seen.add(identity)) continue;
+            Aggregate aggregate = repository.findActiveSystemRootAggregate(key.questionId().toString()).orElse(null);
+            if (aggregate == null) continue;
+            Version version = repository.findVersion(key.questionId().toString(), key.questionVersionId().toString())
+                    .orElse(null);
+            if (version == null) continue;
+            var children = new ArrayList<com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionChildProjection>();
+            boolean valid = true;
+            for (var child : repository.versionChildren(version.id())) {
+                Version childVersion = repository.findVersion(child.questionId(), child.versionId()).orElse(null);
+                if (childVersion == null) { valid = false; break; }
+                children.add(new com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionChildProjection(
+                        java.util.UUID.fromString(child.questionId()), java.util.UUID.fromString(childVersion.id()),
+                        child.sequence(), childVersion.type(), childVersion.difficulty(), childVersion.stage(),
+                        childVersion.grade(), childVersion.subject(), childVersion.stem(), options(childVersion),
+                        agentSafeMedia(childVersion)));
+            }
+            if (!valid) continue;
+            items.add(new com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionProjection(
+                    key.questionId(), key.questionVersionId(), version.type(), version.difficulty(), version.stage(),
+                    version.grade(), version.subject(), version.stem(), options(version),
+                    agentSafeMedia(version), List.copyOf(children)));
+        }
+        return new com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionProjectionResponse(List.copyOf(items));
+    }
+
+    /**
+     * 校验 ACTIVE SYSTEM 根题的精确历史版本及安全正文媒体绑定并签发短期访问。
+     * 版本失效、媒体属于答案/解析、组合小问不匹配或用途/处置错误均 fail-closed。
+     */
+    @Transactional(readOnly = true)
+    public com.eduplatform.learning.web.LearningDtos.MediaAccessGrant agentQuestionVersionMediaAccess(
+            com.eduplatform.learning.web.AgentAccessDtos.QuestionVersionMediaAccessRequest request,
+            String traceId) {
+        Aggregate aggregate = repository.findActiveSystemRootAggregate(request.questionId().toString())
+                .orElseThrow(QuestionService::notFound);
+        Version version = repository.findVersion(aggregate.id(), request.questionVersionId().toString())
+                .orElseThrow(QuestionService::notFound);
+        var candidates = new ArrayList<>(agentSafeMedia(version));
+        for (var child : repository.versionChildren(version.id())) {
+            Version childVersion = repository.findVersion(child.questionId(), child.versionId())
+                    .orElseThrow(QuestionService::notFound);
+            candidates.addAll(agentSafeMedia(childVersion));
+        }
+        var binding = candidates.stream().filter(item -> item.mediaId().equals(request.mediaId().toString()))
+                .findFirst().orElseThrow(QuestionService::notFound);
+        var expected = binding.purpose() == QuestionModels.MediaPurpose.QUESTION_ATTACHMENT
+                ? com.eduplatform.learning.web.LearningDtos.MediaDisposition.ATTACHMENT
+                : com.eduplatform.learning.web.LearningDtos.MediaDisposition.INLINE;
+        if (!"ORIGINAL".equals(request.variant()) || request.disposition() != expected) {
+            throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT,
+                    "QUESTION.MEDIA_REQUEST_INVALID", "媒体变体或处置方式不匹配");
+        }
+        return mediaClient.issueSystemQuestionAccess(request.mediaId().toString(), request.ownerUserId().toString(),
+                binding.purpose().name(), expected, traceId);
+    }
+
     /** 当前 ACTIVE SYSTEM 根题和有序子题的可见正文绑定才可授权；错版本、答案专用或他题媒体统一 404。 */
     public com.eduplatform.learning.web.LearningDtos.MediaAccessGrant systemMediaAccess(String learnerId,
             String questionId, String mediaId,
@@ -468,6 +539,15 @@ public class QuestionService {
     private List<QuestionDtos.MediaResponse> safeMedia(Version version) {
         return QuestionMediaVisibility.content(version.stem(), options(version), version.answers(),
                 version.analysis(), media(version));
+    }
+
+    /** Agent 历史卡片只回显题目内容资产，导入源文件即使误绑定到版本也不可见。 */
+    private List<QuestionDtos.MediaResponse> agentSafeMedia(Version version) {
+        return safeMedia(version).stream()
+                .filter(item -> item.purpose() == QuestionModels.MediaPurpose.QUESTION_IMAGE
+                        || item.purpose() == QuestionModels.MediaPurpose.QUESTION_AUDIO
+                        || item.purpose() == QuestionModels.MediaPurpose.QUESTION_ATTACHMENT)
+                .toList();
     }
 
     private QuestionDtos.SystemQuestionChild systemChild(QuestionRepository.ChildSnapshotRow child) {

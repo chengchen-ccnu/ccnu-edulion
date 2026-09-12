@@ -71,7 +71,7 @@ class UserHelpKnowledgeBaseTest {
                 Duration.ofSeconds(2), "http://127.0.0.1:65531", "http://127.0.0.1:65532",
                 Duration.ofSeconds(1), "1", "test-only-runtime-callback-token-32-bytes",
                 "test-only-agent-domain-token-32-bytes", 6, 16_000);
-        var context = new HttpAuthorizedContextResolver(properties, memories).resolve(owner,
+        var context = new HttpAuthorizedContextResolver(properties, memories, mock(AgentDomainClient.class)).resolve(owner,
                 AgentDtos.EntryPoint.INDEPENDENT_CHAT,
                 new AgentDtos.MessageContextRequest(null, null, null, List.of(), List.of()),
                 "trace-help-grant");

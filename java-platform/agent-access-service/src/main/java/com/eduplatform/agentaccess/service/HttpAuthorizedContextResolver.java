@@ -2,6 +2,7 @@ package com.eduplatform.agentaccess.service;
 
 import com.eduplatform.agentaccess.config.AgentProperties;
 import com.eduplatform.agentaccess.web.AgentDtos;
+import com.eduplatform.agentaccess.web.AgentInternalDtos;
 import java.net.http.HttpClient;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -31,17 +32,35 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
     private final RestClient course;
     private final RestClient mediaService;
     private final MemoryContextProvider memories;
+    private final AgentDomainClient domains;
 
-    public HttpAuthorizedContextResolver(AgentProperties properties, MemoryContextProvider memories) {
+    public HttpAuthorizedContextResolver(AgentProperties properties, MemoryContextProvider memories,
+            AgentDomainClient domains) {
         this.learning = client(properties.learningBaseUrl(), properties);
         this.course = client(properties.courseBaseUrl(), properties);
         this.mediaService = client(properties.mediaBaseUrl(), properties);
         this.memories = memories;
+        this.domains = domains;
     }
 
     @Override
     public AgentDtos.AuthorizedContext resolve(UUID userId, AgentDtos.EntryPoint entryPoint,
             AgentDtos.MessageContextRequest input, String traceId) {
+        return resolveInternal(userId, entryPoint, input, null, traceId);
+    }
+
+    /** 重新生成按消息保存的 questionVersionId 读取历史版本；不会用当前版本替换。 */
+    @Override
+    public AgentDtos.AuthorizedContext resolveSaved(UUID userId, AgentDtos.EntryPoint entryPoint,
+            AgentDtos.MessageContext stable, List<UUID> questionMediaIds, List<UUID> aiQuestionMediaIds,
+            String traceId) {
+        var input = new AgentDtos.MessageContextRequest(stable.questionId(), stable.courseId(), stable.lessonId(),
+                questionMediaIds, aiQuestionMediaIds);
+        return resolveInternal(userId, entryPoint, input, stable.questionVersionId(), traceId);
+    }
+
+    private AgentDtos.AuthorizedContext resolveInternal(UUID userId, AgentDtos.EntryPoint entryPoint,
+            AgentDtos.MessageContextRequest input, UUID savedQuestionVersionId, String traceId) {
         AgentDtos.MessageContextRequest context = input == null
                 ? new AgentDtos.MessageContextRequest(null, null, null, List.of(), List.of()) : input;
         if ((context.courseId() == null) != (context.lessonId() == null)) {
@@ -50,7 +69,9 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         if (entryPoint == AgentDtos.EntryPoint.PRACTICE_FLOATING && context.questionId() == null) {
             throw invalid("context.questionId", "普通练习悬浮入口必须提供当前题目");
         }
-        Question question = context.questionId() == null ? null : question(userId, context.questionId(), traceId);
+        Question question = context.questionId() == null ? null : savedQuestionVersionId == null
+                ? question(userId, context.questionId(), traceId)
+                : historicalQuestion(userId, context.questionId(), savedQuestionVersionId, traceId);
         CourseLesson lesson = context.courseId() == null ? null
                 : lesson(userId, context.courseId(), context.lessonId(), traceId);
         List<UUID> selectedMedia = context.questionMediaIds() == null ? List.of()
@@ -58,7 +79,9 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
         if (question == null && !selectedMedia.isEmpty()) {
             throw invalid("context.questionMediaIds", "题目图片必须与 questionId 一起提供");
         }
-        List<MediaGrant> media = new ArrayList<>(authorizeMedia(userId, question, selectedMedia, traceId));
+        List<MediaGrant> media = new ArrayList<>(savedQuestionVersionId == null
+                ? authorizeMedia(userId, question, selectedMedia, traceId)
+                : authorizeHistoricalMedia(userId, question, selectedMedia, traceId));
         List<UUID> aiMediaIds = context.aiQuestionMediaIds() == null ? List.of()
                 : List.copyOf(new LinkedHashSet<>(context.aiQuestionMediaIds()));
         media.addAll(authorizeAiMedia(userId, aiMediaIds, traceId));
@@ -88,6 +111,47 @@ public class HttpAuthorizedContextResolver implements AuthorizedContextResolver 
                 lesson == null ? null : UUID.fromString(lesson.lessonId()),
                 media.stream().map(item -> UUID.fromString(item.mediaId())).toList());
         return new AgentDtos.AuthorizedContext(stable, trusted);
+    }
+
+    private Question historicalQuestion(UUID userId, UUID questionId, UUID versionId, String traceId) {
+        List<AgentInternalDtos.QuestionVersionProjection> values = domains.projectQuestionVersions(userId,
+                List.of(new AgentInternalDtos.QuestionVersionKey(questionId, versionId)), traceId);
+        if (values.size() != 1) throw new AgentException(HttpStatus.NOT_FOUND,
+                "AGENT.CONTEXT_NOT_FOUND", "题目版本不存在或不可见");
+        var value = values.get(0);
+        if (!questionId.equals(value.questionId()) || !versionId.equals(value.questionVersionId())
+                || !"JUNIOR".equals(value.stage())) throw unavailable();
+        List<Child> children = value.children() == null ? List.of() : value.children().stream().map(child ->
+                new Child(child.questionId().toString(), child.questionVersionId().toString(), child.sequence(),
+                        child.type(), child.difficulty(), child.stage(), child.grade(), child.subject(), child.stem(),
+                        child.options().stream().map(option -> new Option(option.key(), option.content())).toList(),
+                        List.of(), child.media().stream().map(item ->
+                        new Media(item.mediaId().toString(), item.purpose())).toList(), Instant.EPOCH)).toList();
+        return new Question(value.questionId().toString(), value.questionVersionId().toString(), "SYSTEM",
+                value.type(), value.difficulty(), value.stage(), value.grade(), value.subject(), value.stem(),
+                value.options().stream().map(option -> new Option(option.key(), option.content())).toList(),
+                List.of(), value.media().stream().map(item ->
+                new Media(item.mediaId().toString(), item.purpose())).toList(), children, Instant.EPOCH, Instant.EPOCH);
+    }
+
+    private List<MediaGrant> authorizeHistoricalMedia(UUID userId, Question question, List<UUID> selected,
+            String traceId) {
+        if (selected.isEmpty()) return List.of();
+        Set<String> bound = new LinkedHashSet<>();
+        question.media().forEach(item -> bound.add(item.mediaId()));
+        question.children().forEach(child -> child.media().forEach(item -> bound.add(item.mediaId())));
+        List<MediaGrant> grants = new ArrayList<>();
+        for (UUID mediaId : selected) {
+            if (!bound.contains(mediaId.toString())) throw invalid("context.questionMediaIds", "题目图片不属于该历史版本");
+            var grant = domains.authorizeQuestionVersionMedia(userId, UUID.fromString(question.id()),
+                    UUID.fromString(question.versionId()), mediaId, "ORIGINAL", "INLINE", traceId);
+            if (grant == null || !mediaId.equals(grant.mediaId()) || !IMAGE_MIME.contains(grant.mimeType())
+                    || grant.sizeBytes() < 1 || grant.sizeBytes() > 10_485_760 || grant.url() == null
+                    || grant.expiresAt() == null) throw unavailable();
+            grants.add(new MediaGrant(grant.mediaId().toString(), grant.mimeType(), grant.sizeBytes(),
+                    grant.method(), grant.url(), grant.headers(), grant.expiresAt(), "QUESTION_IMAGE"));
+        }
+        return List.copyOf(grants);
     }
 
     private Question question(UUID userId, UUID questionId, String traceId) {

@@ -26,6 +26,8 @@ public final class AgentDtos {
     public enum ContentState { RETAINED, PURGED }
     public enum CancelReason { USER_STOP, CLIENT_DISCONNECTED, PAGE_CLOSED }
     public enum ExplanationPreference { GUIDED_STEP_BY_STEP, COMPLETE_SOLUTION }
+    public enum QuestionProjectionStatus { AVAILABLE, UNAVAILABLE }
+    public enum MediaDisposition { INLINE, ATTACHMENT }
 
     /** 普通 bean 允许浏览器省略可选 title；必填字段仍由 Bean Validation 拒绝。 */
     public static final class CreateConversationRequest {
@@ -122,8 +124,24 @@ public final class AgentDtos {
     public record MessageContext(UUID questionId, UUID questionVersionId, UUID courseId,
             String courseVersionId, UUID lessonId, List<UUID> mediaIds) {}
 
+    public record QuestionContextOption(String key, String content) {}
+    public record QuestionContextMedia(UUID id, UUID mediaId, String purpose, int sequence) {}
+    public record QuestionContextChild(UUID questionId, UUID questionVersionId, int sequence, String type,
+            String stem, List<QuestionContextOption> options, List<QuestionContextMedia> media) {}
+    public record QuestionContextQuestion(UUID questionId, UUID questionVersionId, String type, String stem,
+            List<QuestionContextOption> options, List<QuestionContextMedia> media,
+            List<QuestionContextChild> children) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record QuestionContextProjection(QuestionProjectionStatus status, QuestionContextQuestion question) {}
+
+    public record QuestionMediaAccessRequest(@NotBlank @Size(max = 80) String variant,
+            @NotNull MediaDisposition disposition) {}
+    public record MediaAccessGrant(UUID mediaId, String mimeType, long sizeBytes, String method, String url,
+            Map<String, String> headers, Instant expiresAt) {}
+
     public record Message(UUID id, UUID conversationId, UUID runId, MessageRole role, String content,
             Completeness completeness, ContentState contentState, MessageContext context,
+            QuestionContextProjection questionContextProjection,
             long sequenceNo, Instant createdAt) {}
 
     /** Java 从已持久化消息构造的有界窗口；不包含当前用户消息、上下文 JSON 或临时授权。 */

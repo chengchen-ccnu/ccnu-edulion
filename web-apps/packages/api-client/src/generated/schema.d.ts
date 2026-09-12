@@ -2336,6 +2336,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/conversations/{conversationId}/messages/{messageId}/question-media/{mediaId}/access-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize one historical question image bound to an owner-visible message
+         * @description Requires learning:access and an owner-visible PRACTICE_FLOATING conversation. Agent Access derives questionId and the exact questionVersionId from the persisted USER message, then Learning verifies that immutable ACTIVE SYSTEM version and its safe content binding before issuing a short-lived grant. The browser cannot submit or override question identity, version, purpose, variant ownership or visibility. Foreign conversations/messages, mismatched versions, archived questions and unrelated media are indistinguishable from missing resources.
+         */
+        post: operations["createAgentMessageQuestionMediaAccessGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/runs/{runId}/events": {
         parameters: {
             query?: never;
@@ -2496,6 +2516,56 @@ export interface components {
             lessonId?: string;
             mediaIds?: string[];
         };
+        /**
+         * @description UNAVAILABLE is a fail-closed historical state; clients must not substitute the current public question or render an empty question.
+         * @enum {string}
+         */
+        AgentQuestionContextProjectionStatus: "AVAILABLE" | "UNAVAILABLE";
+        AgentQuestionContextOption: {
+            key: string;
+            content: string;
+        };
+        /** @description Stable learner-visible content binding metadata only. It contains no Bucket, Object Key, URL, credential, answer-only media or storage details. */
+        AgentQuestionContextMedia: {
+            /**
+             * Format: uuid
+             * @description Immutable Learning version-media row ID.
+             */
+            id: string;
+            /** Format: uuid */
+            mediaId: string;
+            /** @enum {string} */
+            purpose: "QUESTION_IMAGE" | "QUESTION_AUDIO" | "QUESTION_ATTACHMENT";
+            sequence: number;
+        };
+        AgentQuestionContextChild: {
+            /** Format: uuid */
+            questionId: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            sequence: number;
+            type: components["schemas"]["QuestionInputType"];
+            stem: string;
+            options: components["schemas"]["AgentQuestionContextOption"][];
+            media: components["schemas"]["AgentQuestionContextMedia"][];
+        };
+        /** @description Exact immutable learner-safe question version. Correct answers, analysis, grading facts, private runtime state and temporary media access are intentionally absent. */
+        AgentQuestionContextQuestion: {
+            /** Format: uuid */
+            questionId: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            type: components["schemas"]["QuestionType"];
+            stem: string;
+            options: components["schemas"]["AgentQuestionContextOption"][];
+            media: components["schemas"]["AgentQuestionContextMedia"][];
+            children: components["schemas"]["AgentQuestionContextChild"][];
+        };
+        /** @description Message-time question context resolution result. A single unavailable historical context does not fail the whole message page and is never represented as an empty question. */
+        AgentQuestionContextProjection: {
+            status: components["schemas"]["AgentQuestionContextProjectionStatus"];
+            question: components["schemas"]["AgentQuestionContextQuestion"] | null;
+        };
         AgentMessage: {
             /** Format: uuid */
             id: string;
@@ -2512,6 +2582,8 @@ export interface components {
              */
             contentState?: "RETAINED" | "PURGED";
             context?: components["schemas"]["AgentMessageContext"];
+            /** @description Present only for USER messages in PRACTICE_FLOATING conversations that persisted questionId and questionVersionId. UNAVAILABLE explicitly forbids current-version fallback. */
+            questionContextProjection?: components["schemas"]["AgentQuestionContextProjection"];
             sequenceNo: number;
             /** Format: date-time */
             createdAt: string;
@@ -9645,6 +9717,43 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            409: components["responses"]["AgentConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["AgentUnavailable"];
+        };
+    };
+    createAgentMessageQuestionMediaAccessGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Owner-scoped AI conversation ID; foreign IDs are reported as not found. */
+                conversationId: components["parameters"]["AgentConversationId"];
+                /** @description Owner-scoped retained user message ID; foreign, stale or non-last messages are reported as not found. */
+                messageId: components["parameters"]["AgentMessageId"];
+                mediaId: components["parameters"]["MediaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAssessmentMediaAccessGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived grant for the exact historical question content binding. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAccessGrant"];
                 };
             };
             401: components["responses"]["Unauthorized"];

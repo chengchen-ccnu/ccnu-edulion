@@ -11,4 +11,8 @@ public interface AgentDomainClient {
             String traceId);
     List<AgentInternalDtos.SafeFact> readStudentFacts(UUID ownerUserId,
             AgentInternalDtos.StudentFactsRequest request, String traceId);
+    List<AgentInternalDtos.QuestionVersionProjection> projectQuestionVersions(UUID ownerUserId,
+            List<AgentInternalDtos.QuestionVersionKey> versions, String traceId);
+    AgentInternalDtos.MediaAccessGrant authorizeQuestionVersionMedia(UUID ownerUserId, UUID questionId,
+            UUID questionVersionId, UUID mediaId, String variant, String disposition, String traceId);
 }
