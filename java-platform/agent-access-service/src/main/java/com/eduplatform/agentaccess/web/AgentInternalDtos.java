@@ -12,6 +12,7 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 
 /** Python 与 Agent Access 之间的私有 DTO；从类型层面排除浏览器 userId、Token 和临时 URL。 */
 public final class AgentInternalDtos {
@@ -32,6 +33,25 @@ public final class AgentInternalDtos {
     public record SafeFact(@NotNull UUID evidenceId, @NotBlank @Size(max = 200) String title,
             @NotBlank @Size(max = 4000) String summary, @NotNull Long revision) {}
     public record StudentFactsResponse(List<SafeFact> facts) {}
+
+    public record QuestionVersionKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
+    public record QuestionVersionProjectionRequest(@NotNull UUID ownerUserId,
+            @NotEmpty @Size(max = 100) List<@Valid QuestionVersionKey> versions) {}
+    public record QuestionOption(String key, String content) {}
+    public record QuestionMedia(UUID id, UUID mediaId, String purpose, int sequence) {}
+    public record QuestionVersionChildProjection(UUID questionId, UUID questionVersionId, int sequence,
+            String type, String difficulty, String stage, String grade, String subject, String stem,
+            List<QuestionOption> options, List<QuestionMedia> media) {}
+    public record QuestionVersionProjection(UUID questionId, UUID questionVersionId, String type,
+            String difficulty, String stage, String grade, String subject, String stem,
+            List<QuestionOption> options, List<QuestionMedia> media,
+            List<QuestionVersionChildProjection> children) {}
+    public record QuestionVersionProjectionResponse(List<QuestionVersionProjection> items) {}
+    public record QuestionVersionMediaAccessRequest(@NotNull UUID ownerUserId, @NotNull UUID questionId,
+            @NotNull UUID questionVersionId, @NotNull UUID mediaId, @NotBlank String variant,
+            @NotBlank String disposition) {}
+    public record MediaAccessGrant(UUID mediaId, String mimeType, long sizeBytes, String method, String url,
+            Map<String, String> headers, Instant expiresAt) {}
 
     /** 帮助查询不接受 userId、版本或路由，可信 owner 与当前版本均由 Agent Access 决定。 */
     public record UserHelpSearchRequest(@NotBlank @Size(max = 500) String query,

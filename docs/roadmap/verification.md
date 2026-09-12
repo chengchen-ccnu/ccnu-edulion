@@ -1225,3 +1225,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 拆分结论：新增最小 T14.2.5“Agent 题目上下文安全回显契约”。优先向前扩展既有本人消息投影或增加其专用安全子投影，复用 Learning 版本事实和已有媒体授权；非 owner、版本不匹配、已归档或无权媒体必须 fail-closed/安全降级。不得返回答案、解析、Object Key、Bucket、签名 URL、Python 私有状态或画像，不新增第二套会话/题库/媒体客户端。
 - 准备结论：T15B 前置条件尚未完全满足，未创建 `codex/t15b-practice-floating-chat`。已从干净 `main@494d359` 准备 `codex/t14.2.5-agent-question-context-projection`，当前仅记录 T15A 合并状态、T15B 前置审计和补口规划，不实现 OpenAPI、Java、Python 或 Vue 业务代码。
 - 数据：本次只执行 Git/PR 操作和只读代码审计，未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-12 T14.2.5 Agent 题目上下文安全回显契约
+
+- 契约：OpenAPI 0.23.3 为 `AgentMessage` 增加 `questionContextProjection` 的 AVAILABLE/UNAVAILABLE 安全联合，并增加只接受 conversationId、messageId、mediaId 的历史题图短期授权端点。生成客户端已同步；投影没有答案、解析、成绩/对错、Object Key、Bucket、URL、提示词、画像或工具原始结果。
+- 架构：Agent Access 在 owner 404 校验后，对一页 `PRACTICE_FLOATING` USER 消息中的 `questionId + questionVersionId` 去重，以一次最多 100 项的既有领域客户端调用 Learning。Learning 只按精确不可变版本读取自身表；ACTIVE SYSTEM、题目/版本匹配、有序子版本与安全媒体绑定任一不满足时省略单项，Agent Access 显式降级为 UNAVAILABLE，禁止当前版本回退。
+- 媒体与重新生成：历史题图授权从已保存消息派生题目版本，Learning 再校验正文媒体用途并复用 Media 短期授权；非 owner、错消息、错版本、归档或无权媒体 fail-closed。重新生成改为恢复原 `questionVersionId` 的历史投影与媒体授权，既有 run、额度、Redis 并发、SSE 和取消语义未变。
+- 自动化：Java 全仓 `clean verify` 的 8 个业务/基础模块 Reactor 全部成功；Learning 103 项通过、19 项条件跳过，Agent Access 46 项通过、3 项条件跳过。新增覆盖历史/当前版本差异、选择题、组合题、题图、批量去重、非 owner、错配、归档、依赖不可用、敏感字段排除、消息绑定授权和重新生成历史恢复。前端 `generate:api`、8 workspace typecheck、46 文件/314 项测试和三端 build 全部通过，仅保留既有大 chunk 警告；`git diff --check` 通过。
+- 数据：仅使用测试进程内 H2 与 Mockito 媒体替身，测试结束随进程销毁；未连接或修改任何现有 MySQL、Redis、RabbitMQ、Qdrant、Neo4j 或 OSS，未创建迁移、长期 Seed、伪数据、真实消息或媒体对象，无需清理业务数据。
+- 交付：分支 `codex/t14.2.5-agent-question-context-projection` 基于 `main@494d359`，规划提交 `d47e2c0` 已先行推送。实现提交、全仓门禁与 Ready PR 在完成后补记；不自行合并。

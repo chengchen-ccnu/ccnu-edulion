@@ -132,6 +132,76 @@ class AgentAccessIntegrationTest {
     }
 
     @Test
+    /** 同页重复历史版本只批量解析一次；失效依赖显式降级，owner 检查先于领域调用。 */
+    void practiceMessagePageBatchesExactQuestionProjectionAndFailsClosed() {
+        UUID questionId = UUID.randomUUID();
+        UUID versionId = UUID.nameUUIDFromBytes((questionId + ":version").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID mediaId = UUID.randomUUID();
+        domains.projections = List.of(new AgentInternalDtos.QuestionVersionProjection(questionId, versionId,
+                "SINGLE_CHOICE", "EASY", "JUNIOR", "SEVEN", "MATHEMATICS", "历史题干",
+                List.of(new AgentInternalDtos.QuestionOption("A", "历史选项")),
+                List.of(new AgentInternalDtos.QuestionMedia(UUID.randomUUID(), mediaId, "QUESTION_IMAGE", 1)),
+                List.of()));
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.PRACTICE_FLOATING, null));
+        var context = new AgentDtos.MessageContextRequest(questionId, null, null, List.of(mediaId), List.of());
+        var first = conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "第一问", context), "trace-projection-first");
+        complete(first, "第一答");
+        runtime.reset();
+        var second = conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "第二问", context), "trace-projection-second");
+        complete(second, "第二答");
+
+        var page = conversations.messages(OWNER, conversation.id(), 1, 20, "trace-projection-page");
+        assertThat(domains.projectionCalls).isEqualTo(1);
+        assertThat(domains.lastVersions).containsExactly(new AgentInternalDtos.QuestionVersionKey(questionId, versionId));
+        assertThat(page.items()).filteredOn(item -> item.role() == AgentDtos.MessageRole.USER)
+                .allSatisfy(item -> assertThat(item.questionContextProjection()).satisfies(projection -> {
+                    assertThat(projection.status()).isEqualTo(AgentDtos.QuestionProjectionStatus.AVAILABLE);
+                    assertThat(projection.question().questionVersionId()).isEqualTo(versionId);
+                    assertThat(projection.question().stem()).isEqualTo("历史题干");
+                    assertThat(projection.question().media()).extracting(AgentDtos.QuestionContextMedia::mediaId)
+                            .containsExactly(mediaId);
+                }));
+        assertThatThrownBy(() -> conversations.messages(OTHER, conversation.id(), 1, 20, "trace-foreign"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.status()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));
+        assertThat(domains.projectionCalls).isEqualTo(1);
+
+        domains.failure = true;
+        assertThat(conversations.messages(OWNER, conversation.id(), 1, 20, "trace-unavailable").items())
+                .filteredOn(item -> item.role() == AgentDtos.MessageRole.USER)
+                .allSatisfy(item -> assertThat(item.questionContextProjection()).satisfies(projection -> {
+                    assertThat(projection.status()).isEqualTo(AgentDtos.QuestionProjectionStatus.UNAVAILABLE);
+                    assertThat(projection.question()).isNull();
+                }));
+    }
+
+    @Test
+    /** 历史题图授权只使用本人悬浮消息保存的版本；非 owner 与非悬浮会话统一 404。 */
+    void messageBoundQuestionMediaAuthorizationUsesPersistedVersion() {
+        UUID questionId = UUID.randomUUID();
+        UUID versionId = UUID.nameUUIDFromBytes((questionId + ":version").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID mediaId = UUID.randomUUID();
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.PRACTICE_FLOATING, null));
+        var run = conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(
+                UUID.randomUUID(), "看图", new AgentDtos.MessageContextRequest(questionId, null, null,
+                        List.of(mediaId), List.of())), "trace-media-message");
+        var grant = conversations.authorizeQuestionMedia(OWNER, conversation.id(), run.userMessage().id(), mediaId,
+                new AgentDtos.QuestionMediaAccessRequest("ORIGINAL", AgentDtos.MediaDisposition.INLINE),
+                "trace-message-grant");
+        assertThat(grant.mediaId()).isEqualTo(mediaId);
+        assertThat(domains.lastQuestionVersionId).isEqualTo(versionId);
+        assertThatThrownBy(() -> conversations.authorizeQuestionMedia(OTHER, conversation.id(),
+                run.userMessage().id(), mediaId,
+                new AgentDtos.QuestionMediaAccessRequest("ORIGINAL", AgentDtos.MediaDisposition.INLINE), "trace-other"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.status()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));
+    }
+
+    @Test
     /** Redis 治理不可用时新运行在写 message/run 前返回 503，既有会话读取仍来自 MySQL。 */
     void governanceFailureRejectsNewRunBeforeBusinessFactsButKeepsReadsAvailable() {
         var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
@@ -841,8 +911,11 @@ class AgentAccessIntegrationTest {
                 if (!preferences.isEmpty()) trusted.put("preferences", preferences);
                 trusted.put("toolGrants", List.of(Map.of("toolName", "QUESTION_SEARCH", "resourceScopes",
                         List.of(Map.of("scopeType", "PUBLIC_JUNIOR_MATH")))));
+                UUID questionId = input == null ? null : input.questionId();
+                UUID versionId = questionId == null ? null : UUID.nameUUIDFromBytes(
+                        (questionId + ":version").getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 return new AgentDtos.AuthorizedContext(
-                        new AgentDtos.MessageContext(null, null, null, null, null, media), trusted);
+                        new AgentDtos.MessageContext(questionId, versionId, null, null, null, media), trusted);
             };
         }
 
@@ -885,6 +958,10 @@ class AgentAccessIntegrationTest {
         UUID lastOwner;
         Set<UUID> allowed = Set.of();
         boolean failure;
+        int projectionCalls;
+        List<AgentInternalDtos.QuestionVersionKey> lastVersions = List.of();
+        List<AgentInternalDtos.QuestionVersionProjection> projections = List.of();
+        UUID lastQuestionVersionId;
 
         @Override
         public Set<UUID> verifyCourseCandidates(UUID owner, List<AgentInternalDtos.CourseCandidate> candidates,
@@ -902,12 +979,33 @@ class AgentAccessIntegrationTest {
             return List.of();
         }
 
+        @Override
+        public List<AgentInternalDtos.QuestionVersionProjection> projectQuestionVersions(UUID owner,
+                List<AgentInternalDtos.QuestionVersionKey> versions, String traceId) {
+            this.lastOwner = owner;
+            this.projectionCalls++;
+            this.lastVersions = List.copyOf(versions);
+            if (failure) throw unavailable();
+            return projections;
+        }
+
+        @Override
+        public AgentInternalDtos.MediaAccessGrant authorizeQuestionVersionMedia(UUID owner, UUID questionId,
+                UUID questionVersionId, UUID mediaId, String variant, String disposition, String traceId) {
+            this.lastOwner = owner;
+            this.lastQuestionVersionId = questionVersionId;
+            if (failure) throw unavailable();
+            return new AgentInternalDtos.MediaAccessGrant(mediaId, "image/png", 128, "GET",
+                    "https://temporary.invalid/object", Map.of(), Instant.now().plusSeconds(60));
+        }
+
         private AgentException unavailable() {
             return new AgentException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
                     "AGENT.DEPENDENCY_UNAVAILABLE", "fixture unavailable");
         }
 
-        void reset() { lastOwner = null; allowed = Set.of(); failure = false; }
+        void reset() { lastOwner = null; allowed = Set.of(); failure = false; projectionCalls = 0;
+            lastVersions = List.of(); projections = List.of(); lastQuestionVersionId = null; }
     }
 
     static final class FakeGovernance implements RunGovernance {

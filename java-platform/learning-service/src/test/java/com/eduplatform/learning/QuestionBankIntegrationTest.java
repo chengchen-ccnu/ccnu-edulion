@@ -19,6 +19,7 @@ import com.eduplatform.learning.service.LegacyQuestionImportService;
 import com.eduplatform.learning.service.QuestionService;
 import com.eduplatform.learning.web.QuestionDtos;
 import com.eduplatform.learning.web.LearningDtos;
+import com.eduplatform.learning.web.AgentAccessDtos;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -185,6 +186,70 @@ class QuestionBankIntegrationTest {
     }
 
     @Test
+    /** Agent 批量投影读取消息绑定的历史版本，不用聚合当前指针替换，并排除答案与存储秘密。 */
+    void agentProjectionReturnsExactHistoricalVersionAndFailsClosed() throws Exception {
+        UUID visible = UUID.randomUUID();
+        UUID answerOnly = UUID.randomUUID();
+        var base = single("A", List.of(
+                new QuestionDtos.MediaInput(visible, QuestionModels.MediaPurpose.QUESTION_IMAGE, 1),
+                new QuestionDtos.MediaInput(answerOnly, QuestionModels.MediaPurpose.QUESTION_IMAGE, 2)));
+        var historicalInput = new QuestionDtos.VersionInput(base.type(), base.difficulty(), base.stage(), base.grade(),
+                base.subject(), "历史选择题 {{media:" + visible + "}}", base.options(), base.answers(),
+                "隐藏解析 {{media:" + answerOnly + "}}", base.knowledgePointIds(), base.media());
+        var system = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                historicalInput, "trace-agent-history").response();
+        UUID historicalVersionId = UUID.fromString(system.currentVersion().id());
+        UUID currentVersionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        jdbc.update("""
+                INSERT INTO question_version(id,question_id,version_number,question_type,difficulty,stage,grade,
+                    subject,stem_md,options_json,answers_json,analysis_md,created_by,created_at)
+                SELECT ?,question_id,2,question_type,difficulty,stage,grade,subject,?,options_json,answers_json,
+                    analysis_md,created_by,? FROM question_version WHERE id=?
+                """, currentVersionId.toString(), "当前版本题干", Timestamp.from(now), historicalVersionId.toString());
+        jdbc.update("UPDATE question_aggregate SET current_version_id=?,revision=revision+1,updated_at=? WHERE id=?",
+                currentVersionId.toString(), Timestamp.from(now), system.id());
+
+        assertThat(questions.getSystem(system.id()).versionId()).isEqualTo(currentVersionId.toString());
+        var response = questions.agentQuestionVersions(new AgentAccessDtos.QuestionVersionProjectionRequest(
+                UUID.fromString(TEACHER), List.of(
+                new AgentAccessDtos.QuestionVersionKey(UUID.fromString(system.id()), historicalVersionId),
+                new AgentAccessDtos.QuestionVersionKey(UUID.fromString(system.id()), historicalVersionId))));
+        assertThat(response.items()).singleElement().satisfies(item -> {
+            assertThat(item.questionVersionId()).isEqualTo(historicalVersionId);
+            assertThat(item.stem()).contains("历史选择题");
+            assertThat(item.options()).extracting(QuestionDtos.OptionInput::key).containsExactly("A", "B");
+            assertThat(item.media()).extracting(QuestionDtos.MediaResponse::mediaId)
+                    .containsExactly(visible.toString());
+        });
+        assertThat(objectMapper.writeValueAsString(response)).doesNotContain("answers", "analysis", "answerOnly",
+                answerOnly.toString(), "objectKey", "bucket", "signature", "url");
+        assertThat(questions.agentQuestionVersions(new AgentAccessDtos.QuestionVersionProjectionRequest(
+                UUID.fromString(TEACHER), List.of(new AgentAccessDtos.QuestionVersionKey(
+                UUID.fromString(system.id()), UUID.randomUUID())))).items()).isEmpty();
+
+        var grant = new LearningDtos.MediaAccessGrant("GET", "https://fixture.invalid/history", java.util.Map.of(), now);
+        org.mockito.Mockito.when(media.issueSystemQuestionAccess(visible.toString(), TEACHER,
+                "QUESTION_IMAGE", LearningDtos.MediaDisposition.INLINE, "trace-agent-history-media"))
+                .thenReturn(grant);
+        assertThat(questions.agentQuestionVersionMediaAccess(new AgentAccessDtos.QuestionVersionMediaAccessRequest(
+                UUID.fromString(TEACHER), UUID.fromString(system.id()), historicalVersionId, visible,
+                "ORIGINAL", LearningDtos.MediaDisposition.INLINE), "trace-agent-history-media").url())
+                .isEqualTo(grant.url());
+        assertThatThrownBy(() -> questions.agentQuestionVersionMediaAccess(
+                new AgentAccessDtos.QuestionVersionMediaAccessRequest(UUID.fromString(TEACHER),
+                        UUID.fromString(system.id()), historicalVersionId, answerOnly,
+                        "ORIGINAL", LearningDtos.MediaDisposition.INLINE), "trace-agent-answer-media"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+
+        jdbc.update("UPDATE question_aggregate SET status='ARCHIVED' WHERE id=?", system.id());
+        assertThat(questions.agentQuestionVersions(new AgentAccessDtos.QuestionVersionProjectionRequest(
+                UUID.fromString(TEACHER), List.of(new AgentAccessDtos.QuestionVersionKey(
+                UUID.fromString(system.id()), historicalVersionId)))).items()).isEmpty();
+    }
+
+    @Test
     /** 组合题的子题沿用同一媒体投影：题干图片可见，答案专用图片不随父题详情或授权接口泄露。 */
     void systemCompositeChildMediaUsesTheSameSafeProjection() {
         UUID visible = UUID.randomUUID();
@@ -227,6 +292,18 @@ class QuestionBankIntegrationTest {
                 new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE),
                 "trace-child-hidden"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+        var agent = questions.agentQuestionVersions(new AgentAccessDtos.QuestionVersionProjectionRequest(
+                UUID.fromString(TEACHER), List.of(new AgentAccessDtos.QuestionVersionKey(
+                UUID.fromString(system.id()), UUID.fromString(system.currentVersion().id())))));
+        assertThat(agent.items()).singleElement().satisfies(item -> {
+            assertThat(item.type()).isEqualTo(QuestionModels.Type.COMPOSITE);
+            assertThat(item.children()).singleElement().satisfies(projected -> {
+                assertThat(projected.sequence()).isEqualTo(1);
+                assertThat(projected.type()).isEqualTo(QuestionModels.Type.SINGLE_CHOICE);
+                assertThat(projected.media()).extracting(QuestionDtos.MediaResponse::mediaId)
+                        .containsExactly(visible.toString());
+            });
+        });
     }
 
     @Test
