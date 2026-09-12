@@ -1233,4 +1233,4 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 媒体与重新生成：历史题图授权从已保存消息派生题目版本，Learning 再校验正文媒体用途并复用 Media 短期授权；非 owner、错消息、错版本、归档或无权媒体 fail-closed。重新生成改为恢复原 `questionVersionId` 的历史投影与媒体授权，既有 run、额度、Redis 并发、SSE 和取消语义未变。
 - 自动化：Java 全仓 `clean verify` 的 8 个业务/基础模块 Reactor 全部成功；Learning 103 项通过、19 项条件跳过，Agent Access 46 项通过、3 项条件跳过。新增覆盖历史/当前版本差异、选择题、组合题、题图、批量去重、非 owner、错配、归档、依赖不可用、敏感字段排除、消息绑定授权和重新生成历史恢复。前端 `generate:api`、8 workspace typecheck、46 文件/314 项测试和三端 build 全部通过，仅保留既有大 chunk 警告；`git diff --check` 通过。
 - 数据：仅使用测试进程内 H2 与 Mockito 媒体替身，测试结束随进程销毁；未连接或修改任何现有 MySQL、Redis、RabbitMQ、Qdrant、Neo4j 或 OSS，未创建迁移、长期 Seed、伪数据、真实消息或媒体对象，无需清理业务数据。
-- 交付：分支 `codex/t14.2.5-agent-question-context-projection` 基于 `main@494d359`，规划提交 `d47e2c0` 已先行推送。实现提交、全仓门禁与 Ready PR 在完成后补记；不自行合并。
+- 交付：分支 `codex/t14.2.5-agent-question-context-projection` 基于 `main@494d359`，规划提交 `d47e2c0` 已先行推送，关键实现提交为 `1aba37f`。[Ready PR #66](https://github.com/chengchen-ccnu/ccnu-edulion/pull/66) 目标为 `main`，保持 Open 且未自行合并。
