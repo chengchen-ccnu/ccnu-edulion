@@ -7,6 +7,8 @@ export { renderArticleMarkdown } from "./render-article-markdown";
 export { createResourceActionController } from "./resource-actions";
 export type { ResourceActionController } from "./resource-actions";
 export type { AssessmentContentMedia, AssessmentMediaGrant, AssessmentMediaResolver } from "./SafeAssessmentContent.vue";
+export { AssessmentMediaLoadError, loadAssessmentMedia, resetAssessmentMediaSessionCache } from "./assessment-media-loader";
+export type { AssessmentMediaFailureKind, AssessmentMediaMetrics } from "./assessment-media-loader";
 export { renderAssessmentContent } from "./render-assessment-content";
 export { playbackErrorMessage } from "./playback-runtime";
 export { createPlaybackProgressTracker } from "./playback-progress";

@@ -96,21 +96,21 @@ function messageFor(error: unknown) {
         <dl><div><dt>学段</dt><dd>{{ question.stage === "PRIMARY" ? "小学" : "初中" }}</dd></div>
           <div><dt>年级</dt><dd>{{ gradeLabel(question.grade) }}</dd></div><div><dt>难度</dt><dd>{{ difficultyLabels[question.difficulty] }}</dd></div></dl></header>
       <section class="public-question-content" aria-labelledby="public-question-stem"><h3 id="public-question-stem">题目</h3>
-        <SafeAssessmentContent :source="question.stem" :media="question.media" :legacy-media="question.media"
+        <SafeAssessmentContent :source="question.stem" :media="question.media" :legacy-media="question.media" :media-cache-scope="question.id"
           :mark-fill-blanks="question.type === 'FILL_BLANK'" :resolve-media="resolveMedia" />
         <ol v-if="question.options.length" class="public-question-options"><li v-for="option in question.options" :key="option.key">
-          <strong>{{ option.key }}</strong><SafeAssessmentContent :source="option.content" :media="question.media"
+          <strong>{{ option.key }}</strong><SafeAssessmentContent :source="option.content" :media="question.media" :media-cache-scope="question.id"
             :legacy-media="question.media" :resolve-media="resolveMedia" /></li></ol>
         <div v-for="media in looseImages(question)" :key="media.mediaId" class="question-loose-media">
-          <SafeAssessmentContent :source="`{{media:${media.mediaId}}}`" :media="[media]" :resolve-media="resolveMedia" />
+          <SafeAssessmentContent :source="`{{media:${media.mediaId}}}`" :media="[media]" :media-cache-scope="question.id" :resolve-media="resolveMedia" />
         </div>
         <section v-for="child in question.children" :key="child.versionId" class="public-question-child"><h4>({{ child.sequence }})</h4>
-          <SafeAssessmentContent :source="child.stem" :media="child.media" :legacy-media="child.media"
+          <SafeAssessmentContent :source="child.stem" :media="child.media" :legacy-media="child.media" :media-cache-scope="question.id"
             :mark-fill-blanks="child.type === 'FILL_BLANK'" :resolve-media="resolveMedia" />
           <ol v-if="child.options.length" class="public-question-options"><li v-for="option in child.options" :key="option.key"><strong>{{ option.key }}</strong>
-            <SafeAssessmentContent :source="option.content" :media="child.media" :legacy-media="child.media" :resolve-media="resolveMedia" /></li></ol>
+            <SafeAssessmentContent :source="option.content" :media="child.media" :legacy-media="child.media" :media-cache-scope="question.id" :resolve-media="resolveMedia" /></li></ol>
           <div v-for="media in looseImages(child)" :key="media.mediaId" class="question-loose-media">
-            <SafeAssessmentContent :source="`{{media:${media.mediaId}}}`" :media="[media]" :resolve-media="resolveMedia" /></div>
+            <SafeAssessmentContent :source="`{{media:${media.mediaId}}}`" :media="[media]" :media-cache-scope="question.id" :resolve-media="resolveMedia" /></div>
           <QuestionMediaAction v-for="media in supplemental(child)" :key="media.mediaId" :question-id="question.id"
             :media="media" :label="media.purpose === 'QUESTION_AUDIO' ? '小问音频' : '小问附件'" />
           <small v-if="child.knowledgePoints.length" class="public-question-child__knowledge">知识点：{{ child.knowledgePoints.map(item => item.name).join("、") }}</small>
