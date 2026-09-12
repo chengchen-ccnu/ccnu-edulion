@@ -24,6 +24,8 @@ import LegacyPracticeRedirectPage from "./views/LegacyPracticeRedirectPage.vue";
 import AttemptResultPage from "./views/AttemptResultPage.vue";
 import WrongQuestionsPage from "./views/WrongQuestionsPage.vue";
 import CourseTasksPage from "./views/CourseTasksPage.vue";
+import AiHomePage from "./views/AiHomePage.vue";
+import AiConversationPage from "./views/AiConversationPage.vue";
 
 /** 实际交给 Vue Router 的路由记录，也是公共/受保护边界测试的唯一来源。 */
 export const studentRoutes: RouteRecordRaw[] = [
@@ -53,6 +55,10 @@ export const studentRoutes: RouteRecordRaw[] = [
   { path: "/attempt/:attemptId/result", name: "attempt-result", component: AttemptResultPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/wrong-questions", name: "wrong-questions", component: WrongQuestionsPage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/ai", name: "ai", component: AiHomePage,
+    meta: { requiresAuth: true, requiredPermission: "learning:access" } },
+  { path: "/ai/conversations/:conversationId", name: "ai-conversation", component: AiConversationPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/login", name: "login", component: LoginPage },
   { path: "/register", name: "register", component: RegisterPage },

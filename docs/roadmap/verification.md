@@ -1185,3 +1185,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 工具与环境：Node 20.19.5、pnpm 10.22.0、标准本地环境包装脚本及项目 `langgraph` Python 环境存在；T14.2.4 当日已完成 Gateway、Agent Access、Media/OSS、Redis、Python/百炼的真实链路与精确清理，没有新增环境变量。真实浏览器验收仍须由 T15A 实施任务启动这些依赖后逐项执行，不能只用 Mock 或组件测试替代。
 - 准备结论：T13.1～T13.4、T14.1、T14.2.1～T14.2.4 与 T07 均已合并，T15A 前置条件满足。已从最新 `main@f7d0d8e` 创建 `codex/t15a-student-ai-chat-web`，当前只记录状态与前置审计，不实现 Vue、SSE 适配、媒体上传或其他业务代码。
 - 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-11 T15A 独立 AI 答疑前端
+
+- 页面与边界：学生固定第五槽“AI 答疑”已在原位置启用；新增受 `learning:access` 保护的 `/ai` 和 `/ai/conversations/:conversationId`。独立会话不使用 30 分钟换新，不增加悬浮窗、课程/作业/考试内嵌入口、画像、人工转交、自主组题、提交或评分。
+- 契约与媒体：只消费 OpenAPI 0.23.2 生成路径/DTO和九类事件联合。题图复用同一学生 Media API，执行上传会话、OSS 直传、complete/READY 与 owner 短期授权，消息只携带 `AI_QUESTION_IMAGE` 稳定 mediaId；没有修改 Agent/Media 契约或维护第二套 DTO/SSE。
+- 流与恢复：连续 sequence 和唯一终态由前端状态机校验；停止、离页取消、断线后保存事件重建、PARTIAL/INTERRUPTED 标识、最后一问专用重新生成与偏好 revision/409 已接通。历史按服务端分页完整读取，文本/公式复用共享安全渲染，来源只显示 Java 授权投影。
+- 自动化：全量前端 typecheck 8 workspace 通过；Vitest 45 文件 304 项全过；admin/student/teacher 三端 build 全过，仅有既有大 chunk 警告。Chrome 1440/820/390 三档通过真实 Gateway 深链/刷新、Agent 历史、OSS 题图、键盘、导航和无水平溢出，page error 为 0；隔离契约层另覆盖公式与偏好 409。
+- 真实链路：安全包装器启动 Gateway、Media/OSS、Agent Access、Python/百炼并使用 Redis。真实图片为 `USER_PRIVATE/READY`；1 条用户消息、2 条助手消息和 2 个 run 覆盖正常回答与重新生成，同 key 恢复相同 run；偏好 revision 1 对后续 run 生效；SSE 阶段/文本/唯一终态通过且未输出敏感 payload。
+- 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收随机 Agent/Media/MySQL 事实、Redis key 与 OSS 前缀对象已在 `finally` 精确删除，复核三类残留均为 0；隔离浏览器验收无数据库写入，临时脚本已删除。
+- 风险：没有保留长期演示数据；生产仍需复核实际域名 OSS CORS、长连接代理超时及额度配置。完整命令、人工演示和边界见 [T15A 交付文档](../delivery/T15A-student-ai-chat-web.md)。

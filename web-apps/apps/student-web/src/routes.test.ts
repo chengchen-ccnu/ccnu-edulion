@@ -66,6 +66,14 @@ describe("student application routes", () => {
     expect(route?.meta?.requiredRole).toBeUndefined();
   });
 
+  it.each([["/ai", "ai"], ["/ai/conversations/:conversationId", "ai-conversation"]])(
+    "protects T15A route %s by learning capability", (path, name) => {
+      const route = studentRoutes.find(item => item.path === path);
+      expect(route?.name).toBe(name);
+      expect(route?.meta).toMatchObject({ requiresAuth: true, requiredPermission: "learning:access" });
+      expect(route?.meta?.requiredRole).toBeUndefined();
+    });
+
   it.each([
     ["/learn/:courseId/tasks", "course-tasks"],
     ["/learn/:courseId/tasks/:assessmentId", "course-task-attempt"],
