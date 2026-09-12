@@ -1216,3 +1216,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与清理：未创建数据库、表、迁移、账号、课程、题目或 OSS 对象。真实 AI 会话产生 1 个会话、3 条消息、2 个 run，已按 conversationId 精确删除并复核为 0；8 个既有 SYSTEM mediaId 的本轮 `ORIGINAL/INLINE` 授权审计按 actor/mediaId/时间窗精确删除为 0，过期 nonce 为 0，既有其他会话和 HLS/poster 审计未动。
 - 交付：实现提交 `1955bcc` 已按规则推送；Ready [PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 已创建、保持 Open 且不自行合并。
 - 结论：三项阻断均关闭，T15A 等待 PR #65 评审。浏览器 Origin 并发授权的后端 500 仍记录为后续 Gateway 专项风险，但当前前端调用模式不再触发该故障。
+
+## 2026-09-12 PR #65 合并与 T15B 前置审计
+
+- 合并与清理：[PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@494d35946f41478157e0ada25506214a51b65538`；本地 `main` 已 `--ff-only` 同步，T15A 本地和远端分支均已删除。此前脚本状态经空 diff、空 numstat 和空 raw diff 确认为仅 LF/CRLF 工作树状态，已恢复且未进入提交。
+- 已满足能力：T10C.2 公共题详情、题图领域授权与稳定路由已合并；T15A 已提供可复用的会话 API、SSE 状态机、安全消息渲染、停止/恢复和响应式交互。OpenAPI 及 Java 已支持 `PRACTICE_FLOATING`、发送时携带 `questionId/questionMediaIds`，并由 Agent Access 重新读取 Learning 当前安全题目投影后向 Python 提供可信上下文。`lastMessageAt` 足以实现悬浮入口 30 分钟空闲换新，不需新增 Redis 会话事实。
+- 阻断缺口：OpenAPI 0.23.2 的 `AgentMessageContext` 只回显 `questionId/questionVersionId/mediaIds` 等稳定标识；消息读取不返回题干、选项、组合小问和题图安全投影。公共 `GET /api/v1/learning/system-questions/{questionId}` 只提供当前 ACTIVE SYSTEM 版本，无法保证与历史消息保存的 `questionVersionId` 一致。前端若据此拼装，会把当前版本冒充历史快照，也无法可靠恢复已变更或失效来源。
+- 拆分结论：新增最小 T14.2.5“Agent 题目上下文安全回显契约”。优先向前扩展既有本人消息投影或增加其专用安全子投影，复用 Learning 版本事实和已有媒体授权；非 owner、版本不匹配、已归档或无权媒体必须 fail-closed/安全降级。不得返回答案、解析、Object Key、Bucket、签名 URL、Python 私有状态或画像，不新增第二套会话/题库/媒体客户端。
+- 准备结论：T15B 前置条件尚未完全满足，未创建 `codex/t15b-practice-floating-chat`。已从干净 `main@494d359` 准备 `codex/t14.2.5-agent-question-context-projection`，当前仅记录 T15A 合并状态、T15B 前置审计和补口规划，不实现 OpenAPI、Java、Python 或 Vue 业务代码。
+- 数据：本次只执行 Git/PR 操作和只读代码审计，未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。

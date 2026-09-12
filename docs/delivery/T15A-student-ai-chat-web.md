@@ -1,6 +1,6 @@
 # T15A 独立 AI 答疑前端
 
-日期：2026-09-12。状态：首版 `e7a1ad2` 与验收修订设计 `6348a77` 之后的三项人工产品阻断均已关闭；自动化、真实公共题图与真实 AI 会话已重新验收，Ready [PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 等待评审，不自行合并。
+日期：2026-09-12。状态：首版 `e7a1ad2` 与验收修订设计 `6348a77` 之后的三项人工产品阻断均已关闭；自动化、真实公共题图与真实 AI 会话已重新验收。[PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 已以普通 merge 合并为 `main@494d359`。
 
 ## 目标与功能边界
 
