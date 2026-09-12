@@ -53,4 +53,5 @@
 - 分支：`codex/t15b-practice-floating-chat`
 - 基线：`main@d544840`
 - 规划提交：`acad0db`
-- 实现提交、PR：提交和 Ready PR 创建后回填；PR 不在本任务自动合并。
+- 实现提交：`4e19c79`
+- Ready PR：[#67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67)，目标为 `main`，保持 Open 且不在本任务自动合并。
