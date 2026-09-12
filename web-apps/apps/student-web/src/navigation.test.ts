@@ -10,12 +10,17 @@ describe("student fixed navigation", () => {
         expect(buildStudentNavigation(routeName).map(item => item.label)).toEqual(labels);
       });
 
-  it("enables course center, my learning and the frozen question-bank slot while keeping AI inert", () => {
+  it("enables course center, my learning, question bank and the frozen AI slot", () => {
     const items = buildStudentNavigation("courses");
 
     expect(items.filter(item => item.state === "enabled").map(item => item.id))
-      .toEqual(["course-center", "my-learning", "practice-center"]);
+      .toEqual(["course-center", "my-learning", "practice-center", "ai-tutor"]);
     expect(items.filter(item => item.state !== "enabled").every(item => item.href === undefined)).toBe(true);
+  });
+
+  it.each(["ai", "ai-conversation"])("highlights only AI on %s", routeName => {
+    expect(buildStudentNavigation(routeName).filter(item => item.current).map(item => item.id)).toEqual(["ai-tutor"]);
+    expect(buildStudentNavigation(routeName).find(item => item.id === "ai-tutor")?.href).toBe("/ai");
   });
 
   it.each(["practice", "practice-question", "practice-legacy-entry", "attempt-result", "wrong-questions"])(

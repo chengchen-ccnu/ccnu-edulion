@@ -22,6 +22,7 @@ import type {
   IdentityMutationResult,
   IdentityType,
   MediaAsset,
+  MediaAccessGrant,
   MediaUploadGrant,
   MediaUploadSession,
   RegisterStudentRequest,
@@ -58,11 +59,12 @@ export interface AccountSecurityApi {
   unbindIdentity(identityType: IdentityType, body: UnbindIdentityRequest): Promise<IdentityMutationResult>;
   teacherApplication(): Promise<TeacherApplication | null>;
   submitTeacherApplication(body: SubmitTeacherApplicationRequest): Promise<TeacherApplication>;
-  createQualificationUpload(body: CreateMediaUploadRequest): Promise<MediaUploadSession>;
+  createMediaUpload(body: CreateMediaUploadRequest): Promise<MediaUploadSession>;
   getUpload(uploadId: string, signal?: AbortSignal): Promise<MediaUploadSession>;
   getMedia(mediaId: string, signal?: AbortSignal): Promise<MediaAsset>;
   cancelUpload(uploadId: string): Promise<void>;
   completeUpload(uploadId: string, body: CompleteMediaUploadRequest): Promise<MediaAsset>;
+  mediaAccessGrant(mediaId: string, signal?: AbortSignal): Promise<MediaAccessGrant>;
 }
 
 export function createAccountSecurityApi(
@@ -176,7 +178,7 @@ export function createAccountSecurityApi(
       }));
       return required(result);
     },
-    async createQualificationUpload(body) {
+    async createMediaUpload(body) {
       const result = await authorized(Authorization => client.POST("/api/v1/media/uploads", {
         headers: { Authorization }, body
       }));
@@ -203,6 +205,13 @@ export function createAccountSecurityApi(
     async completeUpload(uploadId, body) {
       const result = await authorized(Authorization => client.POST("/api/v1/media/uploads/{uploadId}/complete", {
         headers: { Authorization }, params: { path: { uploadId } }, body
+      }));
+      return required(result);
+    },
+    async mediaAccessGrant(mediaId, signal) {
+      const result = await authorized(Authorization => client.POST("/api/v1/media/{mediaId}/access-grants", {
+        headers: { Authorization }, params: { path: { mediaId } },
+        body: { variant: "ORIGINAL", disposition: "INLINE" }, signal
       }));
       return required(result);
     }

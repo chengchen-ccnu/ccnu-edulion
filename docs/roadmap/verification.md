@@ -1176,3 +1176,43 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 数据与清理：只在既有 `edu_platform_agent_dev`、`edu_platform_media_dev` 保留 Flyway V5/V6 结构迁移，不创建数据库、账号、课程、题目或长期 Seed。随机 Agent/MySQL、Media/MySQL、Redis key 与 OSS 精确前缀对象均在 `finally` 删除，复核三类验收残留均为 0；所有本地服务已停止。
 - 边界：没有实现 Vue、悬浮答疑、画像查看、自主组题、第二套 SSE/媒体客户端或新基础设施。T15A 必须等待本 PR 合并后从最新 main 开工。完整命令、演示与风险见 [T14.2.4 交付文档](../delivery/T14.2.4-agent-web-contract.md)。
 - 交付：前置规划提交 `ea12214`、实现/本机验收提交 `618006f` 与首次 PR 记录提交 `a01131c` 已推送；[Ready PR #64](https://github.com/chengchen-ccnu/ccnu-edulion/pull/64) 已创建且可合并。`a01131c` 的 push/pull_request 两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功；等待人工评审，不在本任务自动合并。
+
+## 2026-09-11 PR #64 合并与 T15A 前置审计
+
+- 合并事实：[PR #64](https://github.com/chengchen-ccnu/ccnu-edulion/pull/64) 在 Ready、可合并且两轮 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功后，以普通 merge 合并为 `main@f7d0d8ed4db906657fb2c4681d093296d66473d5`；本地 `main` 已 `--ff-only` 同步且工作区干净。
+- 契约前置：OpenAPI 已为 0.23.2，浏览器可从生成客户端取得九类可判别 SSE、会话/消息/保存事件、停止、最后一问重新生成和明确讲解偏好；`AI_QUESTION_IMAGE` 已按 `learning:access` 启用，并保持 owner、用途、READY、类型、大小和短期授权边界。T15A 不需要手写 DTO 或修改 Java/Python 契约。
+- 页面前置：已完整复核 `page-specs.md`。学生端固定第五槽和 `/ai`、`/ai/conversations/:conversationId` 的页面职责已冻结；当前导航仍为 `coming-soon` 且路由/业务页尚不存在，属于 T15A 应交付内容，不是前置阻断。课程播放器、HOMEWORK/EXAM 和普通题目悬浮窗继续排除在 T15A 外。
+- 工具与环境：Node 20.19.5、pnpm 10.22.0、标准本地环境包装脚本及项目 `langgraph` Python 环境存在；T14.2.4 当日已完成 Gateway、Agent Access、Media/OSS、Redis、Python/百炼的真实链路与精确清理，没有新增环境变量。真实浏览器验收仍须由 T15A 实施任务启动这些依赖后逐项执行，不能只用 Mock 或组件测试替代。
+- 准备结论：T13.1～T13.4、T14.1、T14.2.1～T14.2.4 与 T07 均已合并，T15A 前置条件满足。已从最新 `main@f7d0d8e` 创建 `codex/t15a-student-ai-chat-web`，当前只记录状态与前置审计，不实现 Vue、SSE 适配、媒体上传或其他业务代码。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-11 T15A 独立 AI 答疑前端
+
+- 页面与边界：学生固定第五槽“AI 答疑”已在原位置启用；新增受 `learning:access` 保护的 `/ai` 和 `/ai/conversations/:conversationId`。独立会话不使用 30 分钟换新，不增加悬浮窗、课程/作业/考试内嵌入口、画像、人工转交、自主组题、提交或评分。
+- 契约与媒体：只消费 OpenAPI 0.23.2 生成路径/DTO和九类事件联合。题图复用同一学生 Media API，执行上传会话、OSS 直传、complete/READY 与 owner 短期授权，消息只携带 `AI_QUESTION_IMAGE` 稳定 mediaId；没有修改 Agent/Media 契约或维护第二套 DTO/SSE。
+- 流与恢复：连续 sequence 和唯一终态由前端状态机校验；停止、离页取消、断线后保存事件重建、PARTIAL/INTERRUPTED 标识、最后一问专用重新生成与偏好 revision/409 已接通。历史按服务端分页完整读取，文本/公式复用共享安全渲染，来源只显示 Java 授权投影。
+- 自动化：全量前端 typecheck 8 workspace 通过；Vitest 45 文件 304 项全过；admin/student/teacher 三端 build 全过，仅有既有大 chunk 警告。Chrome 1440/820/390 三档通过真实 Gateway 深链/刷新、Agent 历史、OSS 题图、键盘、导航和无水平溢出，page error 为 0；隔离契约层另覆盖公式与偏好 409。
+- 真实链路：安全包装器启动 Gateway、Media/OSS、Agent Access、Python/百炼并使用 Redis。真实图片为 `USER_PRIVATE/READY`；1 条用户消息、2 条助手消息和 2 个 run 覆盖正常回答与重新生成，同 key 恢复相同 run；偏好 revision 1 对后续 run 生效；SSE 阶段/文本/唯一终态通过且未输出敏感 payload。
+- 数据与清理：没有创建数据库、表、迁移、账号、课程、题目或长期 Seed。真实验收随机 Agent/Media/MySQL 事实、Redis key 与 OSS 前缀对象已在 `finally` 精确删除，复核三类残留均为 0；隔离浏览器验收无数据库写入，临时脚本已删除。
+- 风险：没有保留长期演示数据；生产仍需复核实际域名 OSS CORS、长连接代理超时及额度配置。完整命令、人工演示和边界见 [T15A 交付文档](../delivery/T15A-student-ai-chat-web.md)。
+
+## 2026-09-12 T15A 人工产品验收复核
+
+- 提交事实：按用户要求先将已暂存的 T15A 首版实现提交为 `e7a1ad2`。提交前 OpenAPI 生成与前端 typecheck 成功，Vitest 45 文件 304 项通过；用户随后明确要求不再等待其余测试，因此本轮没有把被停止的三端 build 重新宣称为新执行完成。工作区另有 T14.2.4 验收脚本的未暂存行尾状态，不属于 T15A 提交或本次设计修改。
+- 对话布局阻断：`AiHomePage` 以独立卡片列表显示历史，`AiConversationPage` 只提供最大宽度聊天列，二者没有共同的会话侧栏和连续工作区。功能路由可用不等于产品体验完成；合并前须按页面规格改为桌面左侧历史、中央消息和底部输入，移动端使用同一历史抽屉。
+- 重新生成阻断：当前可见条件仅为存在最后用户消息且不在发送，按钮因而长期独立显示在来源区与输入框之间。后端“基于最后一问创建新 run 并保留旧回答”语义继续保留；前端须把动作附着于最后 AI 回答并改为“重新生成回答”，仅在可重新生成的完整/中断回答且会话空闲时显示。
+- 公共题图诊断：`SafeAssessmentContent` 没有图片加载超时；“图片暂不可用”只在 Learning 授权或 OSS 下载抛错/非成功响应时出现，所以现有证据不能归因于单纯耗时超限。当前实现串行拉取完整 Blob、捕获并抹平全部失败，也没有跨组件请求合并、瞬时失败有限重试、有界 Blob 缓存或手动重试，既缺诊断能力也可能造成重复授权/下载和较差首屏体验。
+- 修订门禁：修复任务先保留 Learning 授权、Blob 展示和签名 URL 不落 DOM/存储的安全边界；增加安全错误分类、一次瞬时错误重试、`429 Retry-After`、失败不缓存、相同资源并发请求合并、有界 LRU Blob 缓存及手动重试。需记录授权、下载、字节和解码耗时；只有测量证明原图是瓶颈时才另行评审派生图，当前不得直接扩大 OpenAPI、Java 或 OSS 结构。
+- 结论：T15A 首版功能已提交，但三项人工产品验收阻断未关闭，不能创建 Ready PR 或标记完成。修复后须重跑针对性组件测试及真实浏览器验收，并确认没有扩大到 T15B、课程/正式测评内嵌 AI、自主组题或画像管理。
+- 数据：本次复核只读取仓库代码和既有文档，没有连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，没有调用模型或创建任何测试数据。
+
+## 2026-09-12 T15A 三项产品阻断关闭
+
+- 统一工作区：`/ai` 与 `/ai/conversations/:conversationId` 已统一使用 `AiHomePage`。1440×900 真实浏览器显示 280 px 最近会话侧栏、中央欢迎/消息替换区和底部输入；768×900 显示历史抽屉，打开后焦点进入首个操作，Escape 关闭并返回触发按钮。Edu Lion 顶栏及第五槽标签/顺序未变，没有复制外部 AI 产品品牌。
+- 重新生成：真实会话生成首轮中断回答后显示“重新生成回答”；点击后旧回答保留、运行中按钮隐藏，完成后按钮只出现在新生成的最后 AI 回答操作栏，辅助说明明确新运行、保留旧回答和可能消耗额度。请求调用服务端 regenerations 路径，没有重发同一文本。
+- 题图测量与根因：单图真实样本为 35,069 bytes，领域授权 96.1 ms、OSS 200 下载 68.0 ms、解码 2.1 ms，排除原图大小和解码主瓶颈。7 图样本在浏览器 `Origin` 下并发授权复现 `500/COMMON.INTERNAL_ERROR`；相同请求串行 7/7 为 201，无 Origin 两路并发 7/7 为 201，故障发生在领域授权突发而不是 OSS。授权串行、OSS 最多三路下载后，两轮首次加载均 7/7 成功，第二轮最大授权/下载/解码分别 60.8/33.7/0.8 ms；返回页面 7/7 命中 Blob LRU，授权/下载均为 0 ms，DOM 仅有 `blob:`。
+- 失败与资源边界：网络、502/503/504、授权过期和 429 最多自动重试一次，429 使用 `Retry-After`；403/404/422 不自动重试，失败不入缓存且提供用户主动重试。稳定四元组并发请求合并；缓存上限为 24 项/32 MiB；每组件创建并撤销自己的 Object URL。未把签名 URL 写入 DOM、持久缓存或日志，未新增 OpenAPI、Java、数据库、OSS 或派生图契约。
+- 自动化：`pnpm.cmd --dir web-apps run typecheck` 的 8 个 workspace 全过；`pnpm.cmd --dir web-apps run test` 为 46 文件 314 项全过；`pnpm.cmd --dir web-apps run build` 的 admin/student/teacher 全过，仅保留既有大 chunk 警告。新增测试覆盖统一壳、响应式/焦点、重新生成显示条件、瞬时与非瞬时错误、429、手动重试、请求合并、授权串行/下载小并发、LRU 上限和 URL 撤销。
+- 数据与清理：未创建数据库、表、迁移、账号、课程、题目或 OSS 对象。真实 AI 会话产生 1 个会话、3 条消息、2 个 run，已按 conversationId 精确删除并复核为 0；8 个既有 SYSTEM mediaId 的本轮 `ORIGINAL/INLINE` 授权审计按 actor/mediaId/时间窗精确删除为 0，过期 nonce 为 0，既有其他会话和 HLS/poster 审计未动。
+- 交付：实现提交 `1955bcc` 已按规则推送；Ready [PR #65](https://github.com/chengchen-ccnu/ccnu-edulion/pull/65) 已创建、保持 Open 且不自行合并。
+- 结论：三项阻断均关闭，T15A 等待 PR #65 评审。浏览器 Origin 并发授权的后端 500 仍记录为后续 Gateway 专项风险，但当前前端调用模式不再触发该故障。

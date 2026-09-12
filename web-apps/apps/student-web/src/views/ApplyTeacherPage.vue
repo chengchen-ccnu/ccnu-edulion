@@ -40,7 +40,7 @@ async function uploadQualification(file: File) {
   try {
     uploadStatus.value = "正在计算文件校验值…";
     const digest = await sha256(file, controller.signal);
-    const session = await accountSecurityApi.createQualificationUpload({ clientRequestId: randomRequestId(), purpose: "TEACHER_QUALIFICATION", fileName: file.name, size: file.size, mimeType: file.type || "application/octet-stream", sha256: digest });
+    const session = await accountSecurityApi.createMediaUpload({ clientRequestId: randomRequestId(), purpose: "TEACHER_QUALIFICATION", fileName: file.name, size: file.size, mimeType: file.type || "application/octet-stream", sha256: digest });
     if (session.mediaId) { mediaId.value = session.mediaId; uploadStatus.value = "资质已就绪。"; return; }
     if (!session.uploadGrant || session.mode !== "SINGLE_PUT") throw new Error("QUALIFICATION_UPLOAD_MODE_UNSUPPORTED");
     uploadStatus.value = "正在安全上传资质文件…";

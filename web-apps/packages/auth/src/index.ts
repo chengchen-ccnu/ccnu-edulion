@@ -118,7 +118,8 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     role: "STUDENT",
     permission: "learning:access",
     path: "/my-learning",
-    accepts: path => path === "/my-learning" || path === "/practice" || path === "/wrong-questions"
+    accepts: path => path === "/my-learning" || path === "/practice" || path === "/wrong-questions" || path === "/ai"
+      || /^\/ai\/conversations\/[0-9A-Za-z-]+$/.test(path)
       || /^\/learn\/[0-9A-Za-z-]+\/[0-9A-Za-z-]+$/.test(path)
       || /^\/practice\/[0-9A-Za-z-]+$/.test(path)
       || /^\/attempt\/[0-9A-Za-z-]+\/result$/.test(path)
