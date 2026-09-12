@@ -1,18 +1,19 @@
 <script setup lang="ts">
 /**
- * 悬浮会话 USER 消息的历史题目卡片。输入只能是消息绑定的安全投影；题图授权固定使用 conversationId/messageId，
+ * 悬浮会话 USER 消息在小窗和完整页共用的历史题目卡片。输入只能是消息绑定的安全投影；题图授权固定使用 conversationId/messageId，
  * 输出为默认折叠的题型、题干、选项和有序小问。UNAVAILABLE 明确失败关闭，不查询当前公共题代替历史版本。
  */
 import type { AgentMessage, AgentQuestionContextMedia, AgentQuestionContextQuestion } from "@edu/api-client";
 import { SafeAssessmentContent } from "@edu/ui";
 import type { AssessmentMediaResolver } from "@edu/ui";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 import { studentAgentApi } from "../agent-api";
 
 const props = defineProps<{ conversationId: string; message: AgentMessage }>();
 const projection = computed(() => props.message.questionContextProjection);
 const question = computed(() => projection.value?.status === "AVAILABLE" ? projection.value.question : null);
+const expanded = ref(false);
 const typeLabels: Record<AgentQuestionContextQuestion["type"], string> = {
   SINGLE_CHOICE: "单选题", MULTIPLE_CHOICE: "多选题", TRUE_FALSE: "判断题", FILL_BLANK: "填空题",
   SHORT_ANSWER: "简答题", COMPOSITE: "组合题"
@@ -31,15 +32,16 @@ function looseImages(content: ContextContent): AgentQuestionContextMedia[] {
   const ordered = content.media.filter(item => item.purpose === "QUESTION_IMAGE").sort((left, right) => left.sequence - right.sequence);
   return ordered.filter((item, index) => !direct.has(item.mediaId.toLowerCase()) && !legacyIndexes.has(index));
 }
+function onToggle(event: Event) { expanded.value = (event.currentTarget as HTMLDetailsElement).open; }
 </script>
 
 <template>
-  <details v-if="projection" class="floating-question-context">
+  <details v-if="projection" class="floating-question-context" @toggle="onToggle">
     <summary>附带题目</summary>
-    <p v-if="projection.status === 'UNAVAILABLE' || !question" class="floating-question-context__unavailable">
+    <p v-if="expanded && (projection.status === 'UNAVAILABLE' || !question)" class="floating-question-context__unavailable">
       该消息附带的题目当前无法查看
     </p>
-    <div v-else class="floating-question-context__body">
+    <div v-else-if="expanded && question" class="floating-question-context__body">
       <strong>{{ typeLabels[question.type] }}</strong>
       <SafeAssessmentContent :source="question.stem" :media="question.media" :legacy-media="question.media"
         :media-cache-scope="`${conversationId}:${message.id}:${question.questionVersionId}`" :resolve-media="resolveMedia" />

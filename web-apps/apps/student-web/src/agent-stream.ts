@@ -7,6 +7,7 @@ export interface AgentStreamState {
   stage: string;
   references: AgentAuthorizedReference[];
   lastSequence: number;
+  lastOccurredAt: string;
   terminal: boolean;
   partial: boolean;
   error: string;
@@ -14,7 +15,7 @@ export interface AgentStreamState {
 
 export function emptyAgentStreamState(): AgentStreamState {
   return { runId: "", messageId: "", answer: "", stage: "", references: [], lastSequence: 0,
-    terminal: false, partial: false, error: "" };
+    lastOccurredAt: "", terminal: false, partial: false, error: "" };
 }
 
 /**
@@ -25,7 +26,7 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentClientStre
   if (state.terminal) throw new Error("AGENT_EVENT_AFTER_TERMINAL");
   if (event.sequence !== state.lastSequence + 1) throw new Error("AGENT_EVENT_SEQUENCE_GAP");
   const next = { ...state, lastSequence: event.sequence, runId: event.runId, messageId: event.messageId,
-    references: [...state.references] };
+    lastOccurredAt: event.occurredAt, references: [...state.references] };
   switch (event.eventType) {
     case "RUN_ACCEPTED": return next;
     case "STAGE_CHANGED": return { ...next, stage: event.payload.message };

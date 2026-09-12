@@ -23,6 +23,14 @@ describe("T15B 悬浮会话与草稿规则", () => {
     expect(isReusablePracticeConversation({ ...baseConversation, activeRunId: "00000000-0000-4000-8000-000000000002" })).toBe(true);
   });
 
+  it("有终态事件时从运行结束而非消息创建时间计算完整窗口", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-12T00:50:00Z"));
+    const completedAt = Date.parse("2026-09-12T00:21:00Z");
+    expect(isReusablePracticeConversation(baseConversation, Date.now(), completedAt)).toBe(true);
+    vi.setSystemTime(new Date("2026-09-12T00:51:00Z"));
+    expect(isReusablePracticeConversation(baseConversation, Date.now(), completedAt)).toBe(false);
+  });
+
   it("只选择 PRACTICE_FLOATING，不把独立 AI 会话纳入 30 分钟规则", () => {
     const independent = { ...baseConversation, id: "independent", entryPoint: "INDEPENDENT_CHAT" as const };
     expect(selectReusablePracticeConversation([independent, baseConversation], Date.parse("2026-09-12T00:20:00Z"))?.id)

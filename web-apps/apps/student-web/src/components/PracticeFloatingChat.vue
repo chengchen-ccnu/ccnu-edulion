@@ -14,7 +14,7 @@ import { agentError } from "../agent-errors";
 import { consumeAgentSse, emptyAgentStreamState, reduceAgentEvent } from "../agent-stream";
 import type { AgentStreamState } from "../agent-stream";
 import { capturePracticeDraftContext, isReusablePracticeConversation,
-  selectReusablePracticeConversation } from "../practice-floating-chat";
+  fallbackPracticeActivityAt } from "../practice-floating-chat";
 import type { PracticeDraftContext } from "../practice-floating-chat";
 import AgentQuestionContextCard from "./AgentQuestionContextCard.vue";
 
@@ -25,7 +25,9 @@ const panelOpen = ref(false); const loading = ref(false); const sending = ref(fa
 const conversation = ref<AgentConversation | null>(null); const messages = ref<AgentMessage[]>([]);
 const stream = ref<AgentStreamState | null>(null); const errorMessage = ref(""); const draft = ref("");
 const draftContext = ref<PracticeDraftContext | null>(null); const initialized = ref(false);
+const resolvedActivityAt = ref<number | undefined>();
 let controller: AbortController | null = null;
+const lifetime = new AbortController(); let disposed = false;
 const currentQuestionChanged = computed(() => Boolean(draft.value && draftContext.value && props.question
   && draftContext.value.questionId !== props.question.id));
 const lastUserMessage = computed(() => [...messages.value].reverse().find(item => item.role === "USER"
@@ -38,6 +40,8 @@ const lastAssistant = computed(() => {
 });
 const canRegenerate = computed(() => !sending.value && !conversation.value?.activeRunId
   && Boolean(lastUserMessage.value && lastAssistant.value));
+const displayMessages = computed(() => messages.value.filter(message => !(stream.value && !stream.value.terminal
+  && message.role === "ASSISTANT" && message.runId === stream.value.runId)));
 
 watch(draft, value => {
   if (value && !draftContext.value && props.question) draftContext.value = capturePracticeDraftContext(props.question);
@@ -46,7 +50,7 @@ watch(draft, value => {
 watch(() => [messages.value.length, stream.value?.answer], () => void scrollToBottom());
 onMounted(() => document.addEventListener("keydown", onDocumentKeydown));
 onBeforeUnmount(() => {
-  document.removeEventListener("keydown", onDocumentKeydown); controller?.abort();
+  disposed = true; document.removeEventListener("keydown", onDocumentKeydown); lifetime.abort(); controller?.abort();
   const runId = activeRunId(); if (runId) void studentAgentApi.cancel(runId, "PAGE_CLOSED").catch(() => {});
 });
 
@@ -58,26 +62,47 @@ async function openPanel() {
 async function initialize() {
   initialized.value = true; loading.value = true; errorMessage.value = "";
   try {
-    const page = await studentAgentApi.conversations(1, 100);
-    const recent = selectReusablePracticeConversation(page.items);
-    if (recent) await loadConversation(recent);
-  } catch (error) { errorMessage.value = agentError(error, "最近一次悬浮答疑暂时无法读取。"); }
-  finally { loading.value = false; }
+    const page = await studentAgentApi.conversations(1, 100, lifetime.signal);
+    const recent = page.items.find(item => item.entryPoint === "PRACTICE_FLOATING" && item.status === "ACTIVE");
+    if (recent) await loadConversation(recent, true);
+  } catch (error) { if (!lifetime.signal.aborted) errorMessage.value = agentError(error, "最近一次悬浮答疑暂时无法读取。"); }
+  finally { if (!disposed) loading.value = false; }
 }
-async function loadConversation(item: AgentConversation) {
-  conversation.value = item; messages.value = await loadAllMessages(item.id);
+async function loadConversation(item: AgentConversation, enforceIdleWindow = false) {
+  const history = await loadAllMessages(item.id);
+  let recovered: AgentStreamState | null = null;
   if (item.activeRunId) {
-    stream.value = await recover(item.activeRunId);
-    sending.value = !stream.value.terminal;
+    recovered = await recover(item.activeRunId);
+  }
+  const activityAt = recovered?.lastOccurredAt ? Date.parse(recovered.lastOccurredAt)
+    : await resolveLastActivityAt(item, history);
+  if (enforceIdleWindow && !isReusablePracticeConversation(item, Date.now(), activityAt)) return;
+  if (disposed) return;
+  conversation.value = item; messages.value = history; stream.value = recovered;
+  resolvedActivityAt.value = activityAt; sending.value = Boolean(recovered && !recovered.terminal);
+}
+/** 最近 run 的唯一终态时间优先于消息创建时间，保证长回答结束后仍获得完整 30 分钟窗口。 */
+async function resolveLastActivityAt(item: AgentConversation, history: AgentMessage[]) {
+  const runId = [...history].reverse().find(message => message.runId)?.runId;
+  if (!runId) return fallbackPracticeActivityAt(item);
+  try {
+    const events = await studentAgentApi.events(runId, undefined, lifetime.signal);
+    const terminal = [...events.items].reverse().find(event => event.eventType === "FINAL_RESULT");
+    const terminalAt = terminal ? Date.parse(terminal.occurredAt) : Number.NaN;
+    return Number.isFinite(terminalAt) ? terminalAt : fallbackPracticeActivityAt(item);
+  } catch (error) {
+    if (lifetime.signal.aborted) throw error;
+    return fallbackPracticeActivityAt(item);
   }
 }
 /** 发送瞬间重新检查 30 分钟窗口；过期只换新会话，不删除旧历史，也不会中断仍在运行的回答。 */
 async function conversationForSend() {
-  if (conversation.value && isReusablePracticeConversation(conversation.value)) return conversation.value;
+  if (conversation.value && isReusablePracticeConversation(conversation.value, Date.now(), resolvedActivityAt.value)) return conversation.value;
   creating.value = true;
   try {
-    const created = await studentAgentApi.createConversation(crypto.randomUUID(), "PRACTICE_FLOATING");
-    conversation.value = created; messages.value = []; stream.value = null; return created;
+    const created = await studentAgentApi.createConversation(crypto.randomUUID(), "PRACTICE_FLOATING", lifetime.signal);
+    conversation.value = created; messages.value = []; stream.value = null;
+    resolvedActivityAt.value = fallbackPracticeActivityAt(created); return created;
   } finally { creating.value = false; }
 }
 async function send() {
@@ -105,13 +130,18 @@ async function send() {
     stream.value.runId = response.headers.get("X-Agent-Run-Id") ?? "";
     await consumeAgentSse(response, event => { stream.value = reduceAgentEvent(stream.value!, event); }, active.signal);
     if (!stream.value.terminal) throw new Error("AGENT_STREAM_TRUNCATED");
+    resolvedActivityAt.value = Date.parse(stream.value.lastOccurredAt);
     await refresh();
   } catch (error) {
     if (!accepted) messages.value = messages.value.filter(message => message.id !== optimisticId);
     if (!active.signal.aborted) {
       errorMessage.value = error instanceof GatewayRequestError && error.status === 409
         ? "此会话正在回答，请等待当前回答结束后再发送。" : agentError(error, "连接中断，正在读取已保存内容…");
-      const runId = activeRunId(); if (accepted && runId) stream.value = await recover(runId);
+      const runId = activeRunId();
+      if (accepted && runId) {
+        stream.value = await recover(runId);
+        if (stream.value.terminal) resolvedActivityAt.value = Date.parse(stream.value.lastOccurredAt);
+      }
     }
   } finally { controller = null; sending.value = Boolean(activeRunId()); }
 }
@@ -126,22 +156,31 @@ async function runExisting(open: (signal: AbortSignal) => Promise<Response>) {
   try {
     const response = await open(active.signal); stream.value.runId = response.headers.get("X-Agent-Run-Id") ?? "";
     await consumeAgentSse(response, event => { stream.value = reduceAgentEvent(stream.value!, event); }, active.signal);
-    if (!stream.value.terminal) throw new Error("AGENT_STREAM_TRUNCATED"); await refresh();
+    if (!stream.value.terminal) throw new Error("AGENT_STREAM_TRUNCATED");
+    resolvedActivityAt.value = Date.parse(stream.value.lastOccurredAt); await refresh();
   } catch (error) {
     if (!active.signal.aborted) {
       errorMessage.value = error instanceof GatewayRequestError && error.status === 409
         ? "此会话正在回答，请等待当前回答结束后再操作。" : agentError(error, "连接中断，正在读取已保存内容…");
-      const runId = activeRunId(); if (runId) stream.value = await recover(runId);
+      const runId = activeRunId();
+      if (runId) {
+        stream.value = await recover(runId);
+        if (stream.value.terminal) resolvedActivityAt.value = Date.parse(stream.value.lastOccurredAt);
+      }
     }
   } finally { controller = null; sending.value = Boolean(activeRunId()); }
 }
 async function recover(runId: string) {
   try {
-    const page = await studentAgentApi.events(runId); let state = emptyAgentStreamState();
+    const page = await studentAgentApi.events(runId, undefined, lifetime.signal); let state = emptyAgentStreamState();
+    state.runId = runId;
     for (const event of page.items) state = reduceAgentEvent(state, event);
     if (!state.terminal) errorMessage.value = "此会话正在回答；这里只显示服务端已保存的内容。";
     return state;
-  } catch (error) { errorMessage.value = agentError(error, "已保存内容暂时无法恢复。"); return emptyAgentStreamState(); }
+  } catch (error) {
+    errorMessage.value = agentError(error, "已保存内容暂时无法恢复。");
+    return { ...emptyAgentStreamState(), runId };
+  }
 }
 async function stop(reason: "USER_STOP" | "PAGE_CLOSED" = "USER_STOP") {
   const runId = activeRunId(); controller?.abort();
@@ -149,7 +188,7 @@ async function stop(reason: "USER_STOP" | "PAGE_CLOSED" = "USER_STOP") {
   try {
     await studentAgentApi.cancel(runId, reason); stream.value = await recover(runId); await refresh();
   } catch (error) { errorMessage.value = agentError(error, "停止请求未确认，请稍后重新打开查看最终状态。"); }
-  finally { sending.value = false; }
+  finally { sending.value = Boolean(activeRunId()); }
 }
 async function closePanel() {
   if (activeRunId()) await stop("PAGE_CLOSED");
@@ -165,16 +204,16 @@ function switchDraftToCurrentQuestion() {
 }
 function activeRunId() { return stream.value && !stream.value.terminal ? stream.value.runId : conversation.value?.activeRunId ?? ""; }
 async function loadAllMessages(id: string) {
-  const first = await studentAgentApi.messages(id, 1, 100); const all = [...first.items];
+  const first = await studentAgentApi.messages(id, 1, 100, lifetime.signal); const all = [...first.items];
   for (let page = 2; all.length < first.total; page += 1) {
-    const next = await studentAgentApi.messages(id, page, 100); all.push(...next.items); if (!next.items.length) break;
+    const next = await studentAgentApi.messages(id, page, 100, lifetime.signal); all.push(...next.items); if (!next.items.length) break;
   }
   return all;
 }
 async function refresh() {
   if (!conversation.value) return;
   const id = conversation.value.id;
-  const [history, item] = await Promise.all([loadAllMessages(id), studentAgentApi.conversation(id)]);
+  const [history, item] = await Promise.all([loadAllMessages(id), studentAgentApi.conversation(id, lifetime.signal)]);
   if (conversation.value?.id === id) { messages.value = history; conversation.value = item; stream.value = null; }
 }
 function onDocumentKeydown(event: KeyboardEvent) { if (event.key === "Escape" && panelOpen.value) { event.preventDefault(); void closePanel(); } }
@@ -198,13 +237,13 @@ async function scrollToBottom() {
       <div class="practice-chat__messages" aria-live="polite" :aria-busy="sending">
         <p v-if="loading" class="practice-chat__empty" role="status">正在读取最近答疑…</p>
         <div v-else-if="!messages.length && !stream" class="practice-chat__empty"><strong>从这道题开始问</strong><p>我会附带当前题目，但不会提交答案、评分或修改学习进度。</p></div>
-        <article v-for="message in messages" :key="message.id" class="practice-chat-message" :class="`practice-chat-message--${message.role.toLowerCase()}`">
+        <article v-for="message in displayMessages" :key="message.id" class="practice-chat-message" :class="`practice-chat-message--${message.role.toLowerCase()}`">
           <header><strong>{{ message.role === "USER" ? "你" : "AI 助教" }}</strong><span>{{ new Date(message.createdAt).toLocaleTimeString() }}</span></header>
           <p v-if="message.contentState === 'PURGED'" class="ai-purged">原始内容已按保留策略清理。</p>
           <SafeArticleContent v-else :source="message.content" :images="[]" />
           <AgentQuestionContextCard v-if="message.role === 'USER' && message.questionContextProjection"
             :conversation-id="conversation?.id ?? message.conversationId" :message="message" />
-          <small v-if="message.completeness === 'PARTIAL'" class="ai-partial">回答已中断</small>
+          <small v-if="message.completeness === 'PARTIAL' && message.content.trim() !== '回答已中断'" class="ai-partial">回答已中断</small>
           <footer v-if="message.id === lastAssistant?.id && canRegenerate" class="practice-chat__answer-actions">
             <button class="button button--quiet" type="button" @click="regenerate">重新生成回答</button>
             <small>沿用原消息附带题目，保留旧回答，并可能消耗额度。</small>
@@ -220,7 +259,7 @@ async function scrollToBottom() {
         <p v-if="currentQuestionChanged" class="practice-chat__draft-note">这段提问仍关联上一道题
           <button type="button" @click="switchDraftToCurrentQuestion">切换为当前题目</button></p>
         <label for="practice-chat-question" class="sr-only">输入关于当前题目的问题</label>
-        <textarea id="practice-chat-question" v-model="draft" rows="3" maxlength="10000" :disabled="sending"
+        <textarea id="practice-chat-question" v-model="draft" rows="3" maxlength="10000"
           placeholder="输入关于这道题的疑问；不会发送正在编辑的答案"></textarea>
         <div class="practice-chat__actions"><button v-if="sending" class="button button--danger" type="button" @click="stop('USER_STOP')">停止</button>
           <button v-else class="button button--primary" type="submit" :disabled="creating || !draft.trim()">{{ creating ? "正在创建…" : "发送" }}</button>
