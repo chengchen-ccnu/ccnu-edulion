@@ -146,7 +146,11 @@ try {
     $conversationId = [string]$conversation.id
     $action = Invoke-Recommendation "推荐一元一次方程练习题"
     if ($action.criteria.difficulty -ne "MEDIUM" -or $action.requestedCount -ne 5 -or $action.actualCount -lt 1) {
-        throw "默认难度/数量或真实候选数量不符合契约。"
+        throw "默认难度/数量或真实候选数量不符合契约：difficulty=$($action.criteria.difficulty), requestedCount=$($action.requestedCount), actualCount=$($action.actualCount)。"
+    }
+    $skillAudit = Invoke-MySql $env:AGENT_MYSQL_DATABASE "SELECT CONCAT(skill_name,'@',skill_version,',',status,',',selection_source,',',script_path) FROM ai_skill_execution WHERE run_id='$($runIds[0])';"
+    if ([string]$skillAudit -ne "public-practice-generation@1.1.0,SUCCEEDED,RULE,scripts/validate_proposal.py") {
+        throw "标准 Skill 发现、规则选择或 1.1.0 审计不符合契约。"
     }
     $before = Invoke-MySql $env:LEARNING_MYSQL_DATABASE "SELECT COUNT(*) FROM autonomous_practice WHERE source_action_id='$($action.actionId)';"
     if ([int]([string]$before) -ne 0) { throw "确认前已创建练习。" }
@@ -241,7 +245,8 @@ try {
         throw "依赖响应未知后未按 actionId 恢复 Learning 已创建结果。"
     }
 
-    [pscustomobject]@{ runtimeSkill = "public-practice-generation@1.0.0"; defaultDifficulty = "MEDIUM"
+    [pscustomobject]@{ runtimeSkill = "public-practice-generation@1.1.0"; defaultDifficulty = "MEDIUM"
+        skillDiscoveredSelectedAndAudited = $true
         requestedCount = 5; actualCount = [int]$action.actualCount; pendingProjected = $true
         confirmedOnce = $true; replayedAssessment = $true; autonomousCourseIdNull = $true
         attemptSavedSubmittedAndScored = $true; answerVisibleOnlyAfterSubmission = $true
@@ -282,6 +287,7 @@ DELETE FROM ai_tool_call WHERE run_id IN (SELECT id FROM ai_run WHERE conversati
 DELETE FROM ai_run_cancellation WHERE run_id IN (SELECT id FROM ai_run WHERE conversation_id='$conversationId');
 DELETE FROM ai_run_event WHERE run_id IN (SELECT id FROM ai_run WHERE conversation_id='$conversationId');
 DELETE FROM ai_usage_record WHERE run_id IN (SELECT id FROM ai_run WHERE conversation_id='$conversationId');
+DELETE FROM ai_skill_execution WHERE run_id IN (SELECT id FROM ai_run WHERE conversation_id='$conversationId');
 DELETE FROM ai_run WHERE conversation_id='$conversationId';
 DELETE FROM ai_message WHERE conversation_id='$conversationId';
 DELETE FROM ai_conversation WHERE id='$conversationId';

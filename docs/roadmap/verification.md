@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-09-13 T13.5.2 组题标准 Skill 迁移
+
+- 前置核对：工作区开始时干净，分支为 `codex/t13.5.2-practice-standard-skill`，HEAD 为规划提交 `232a1c4`；完整审计 T13.5.1 Runtime、旧组题类、Python 服务/工具/协议测试、Java 流与 pending 校验及 T14.3 真实验收脚本。
+- 使用系统 skill-creator 初始化 `public-practice-generation` 的 `scripts`、`references` 骨架并按平台 Runtime 精简；删除 `agents/openai.yaml`，没有 runtime manifest、assets 或辅助安装文档。`PYTHONUTF8=1` 下 quick_validate 通过。
+- 新 Skill 为 1.1.0，只匹配 Practice Coach 的 RECOMMEND_PRACTICE；唯一候选 RULE 选择不调用 LLM。脚本以 JSON stdin/stdout 确定性处理默认值、1～20 边界、联合身份稳定去重、近期软避让、顺序与真实不足，Runtime 生成身份信封。
+- 旧 `PracticeGenerationSkill` 文件、类、单例和 `build_proposal` 调用已删除；生产组题只经标准 Runtime。内部协议向前升级为 1.5.0，Java 接受新 1.1.0，并仅为历史/滚动部署 run 保留 1.0.0 兼容；浏览器 OpenAPI 0.23.4 不变。
+- Python compileall、wheel 和完整 unittest 通过；unittest 89 项执行、79 项通过、10 项按真实环境开关或 Windows 符号链接权限跳过，wheel 包含三项 Skill 资源。Agent Access 聚焦测试 53 项执行、50 项通过、3 项跳过。全仓 Java clean verify 的 9 个 Reactor 模块全部成功，Learning 106 项执行、87 项通过、19 项跳过，Agent Access 53 项执行、50 项通过、3 项跳过。
+- 真实长链通过：真实模型识别组题意图，标准 Skill 以 RULE 选择并产生 1.1.0 RUNNING→SUCCEEDED 审计；真实 BGE/BM25/RRF/reranker 和既有 Qdrant 参与检索，MEDIUM 请求 5 道经 Learning 复核后得到 4 道并保持不足语义。确认前零创建；确认、重复/并发幂等、保存/提交/评分、提交后答案可见、owner/课程/成绩册隔离、替换/取消/过期和未知结果恢复均通过。
+- 未创建数据库、表、迁移或永久 Seed，未读取或修改 `local.env`。真实验收只在专用 dev Schema 创建本轮随机运行事实，最终精确清理结果为 Learning 0、Agent 0、Redis 0；临时服务和日志均已停止或删除，既有 Qdrant 索引未删除或重建。
+- 实现提交为 `e86fcaa`；[Ready PR #70](https://github.com/chengchen-ccnu/ccnu-edulion/pull/70) 目标为 `main`，保持 Open/Ready 且未自行合并。T15C 继续等待本 PR 合并。
+
 ## 2026-09-08 独立规划 PR 交接审计
 
 - 已获用户授权提交并合并文档 PR，再准备 T10C.1；本次不实现业务代码。
@@ -1301,3 +1312,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：`D:\Anaconda\envs\langgraph\python.exe -m compileall -q edu_agent_app server.py` 通过；`python -m unittest discover -s tests -v` 执行 85 项，75 项通过，10 项显式真实环境/本机符号链接权限场景跳过；wheel 构建通过并确认包含 `skill_runtime.py` 与 `edu_agent_app.skills` 包。Java 全仓 `clean verify` 的 9 个 Reactor 模块全部成功，Agent Access 52 项执行、49 项通过、3 项显式真实环境测试跳过。
 - 真实 MySQL：安全包装器确认 `AGENT_MYSQL_DATABASE=edu_platform_agent_dev` 后执行 `AgentMemoryMysqlAcceptanceTest`，真实 MySQL 8.0 从 V6 向前应用 V7，2 项均通过并确认迁移链 1～7 与 `ai_skill_execution`。没有创建数据库、账号、课程、题目、媒体、Skill execution、Seed 或永久伪数据；专项随机记忆 owner/source 行在 `finally` 精确清理，只有 Flyway V7 表结构按预期保留。
 - 范围与后续：现有 `PracticeGenerationSkill`、组题分支、Qdrant/Neo4j、Learning 创建、pending action、外部 OpenAPI 和 Vue 均未改变；包内目前没有具体标准 Skill。T13.5.2 负责用 skill-creator 迁移 `public-practice-generation@1.1.0` 并删除旧类式实现。新增配置均为非敏感默认值，本次未修改个人 `local.env`，没有明文需要删除或迁移。实现提交为 `0caaae4`，[Ready PR #69](https://github.com/chengchen-ccnu/ccnu-edulion/pull/69) 目标为 `main` 且不自行合并；交付说明见 [T13.5.1 交付文档](../delivery/T13.5.1-standard-skill-runtime.md)。
+
+## 2026-09-13 PR #69 合并与 T13.5.2 前置审计
+
+- 合并与清理：[PR #69](https://github.com/chengchen-ccnu/ccnu-edulion/pull/69) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@0cc6548dd2a6d5d53555b0951251121bb6090d6c`；本地 `main` 已 `--ff-only` 同步，T13.5.1 本地和远端分支均已删除。
+- Runtime 前置：包内一层发现、严格 `SKILL.md` frontmatter、角色/意图 eligibility、显式/规则/单次 LLM 选择、渐进 reference、受控 Python Runner、不可伪造结果信封、统一预算/取消和 Agent Access V7 `ai_skill_execution` 均已合并。PyYAML、wheel package-data 与本地配置默认值已声明，T13.5.2 无需再建第二套加载器、manifest 或审计表。
+- 迁移对象：旧实现仅集中在 `runtime/practice_skill.py`、`service.py` 的导入/调用、对应 Python 测试，以及内部契约、Java validator/service、集成测试和真实验收脚本中的 `public-practice-generation@1.0.0`。这些位置均已定位；T14.3 的 Qdrant→Learning 二次复核→确认→创建→作答真实验收脚本可向前复用。
+- skill-creator 边界：T13.5.2 使用 skill-creator 初始化标准骨架并完成 `SKILL.md`、`references/practice-rules.md`、`scripts/validate_proposal.py`；初始化器产生但平台无消费者的 `agents/openai.yaml` 必须删除，不新增 `runtime.yaml`、README、在线安装、用户目录或热加载。新 Skill 为 `1.1.0`，Java 先接受新运行版本，历史 `1.0.0` 记录继续可读，但生产 Python 不保留旧类、单例、双注册或回退分支。
+- 准备结论：T13.5.1 与 T14.3 均已合并，标准 Runtime、内部审计、现有组题边界及真实验收入口完整，T13.5.2 前置条件满足。已从干净 `main@0cc6548` 创建 `codex/t13.5.2-practice-standard-skill`；当前只更新合并状态和前置审计，没有迁移 Skill 或修改 Python、Java、契约、数据库和前端业务代码。
+- 数据：本次合并、只读审计、文档更新和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。

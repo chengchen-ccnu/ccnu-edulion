@@ -240,7 +240,7 @@ class SkillExecutionTest(unittest.IsolatedAsyncioTestCase):
     async def test_script_success_envelope_secret_environment_and_cleanup(self):
         os.environ["OPENAI_API_KEY"] = "must-not-leak"
         (self.directory / "scripts" / "ok.py").write_text(
-            "import json,os,sys\nvalue=json.load(sys.stdin)\njson.dump({'skillName':'forged','executionId':'forged','input':value,'secret':os.getenv('OPENAI_API_KEY'),'temp':os.getenv('TEMP')},sys.stdout)\n",
+            "import json,os,sys\nvalue=json.load(sys.stdin)\njson.dump({'resultType':'TEST_RESULT','payload':{'skillName':'forged','executionId':'forged','input':value,'secret':os.getenv('OPENAI_API_KEY'),'temp':os.getenv('TEMP')}},sys.stdout)\n",
             encoding="utf-8",
         )
         audit = FakeAudit()
@@ -249,12 +249,34 @@ class SkillExecutionTest(unittest.IsolatedAsyncioTestCase):
         envelope = await execution.run_skill_script("scripts/ok.py", {"n": 2})
         self.assertEqual("scripted", envelope.skillName)
         self.assertEqual(execution.execution_id, envelope.executionId)
+        self.assertEqual("TEST_RESULT", envelope.resultType)
         self.assertEqual("forged", envelope.payload["skillName"])
         self.assertIsNone(envelope.payload["secret"])
         self.assertFalse(Path(envelope.payload["temp"]).exists())
         self.assertEqual("SUCCEEDED", audit.finished[0][2]["status"])
         with self.assertRaises(SkillRuntimeError):
             await execution.run_skill_script("scripts/ok.py", {"n": 2})
+
+    async def test_script_result_type_and_payload_shape_are_runtime_validated(self):
+        for name, source in {
+            "missing.py": "print('{\"payload\":{}}')\n",
+            "extra.py": "print('{\"resultType\":\"TEST_RESULT\",\"payload\":{},\"skillName\":\"forged\"}')\n",
+            "bad-type.py": "print('{\"resultType\":\"bad\",\"payload\":{}}')\n",
+        }.items():
+            (self.directory / "scripts" / name).write_text(source, encoding="utf-8")
+            execution = self.execution()
+            await execution.start()
+            with self.assertRaises(SkillRuntimeError) as raised:
+                await execution.run_skill_script(f"scripts/{name}", {})
+            self.assertEqual("SKILL_SCRIPT_RESULT_INVALID", raised.exception.code)
+
+        (self.directory / "scripts" / "wrong-result.py").write_text(
+            "print('{\"resultType\":\"OTHER_RESULT\",\"payload\":{}}')\n", encoding="utf-8")
+        execution = self.execution()
+        await execution.start()
+        with self.assertRaises(SkillRuntimeError) as raised:
+            await execution.run_skill_script("scripts/wrong-result.py", {}, "EXPECTED_RESULT")
+        self.assertEqual("SKILL_RESULT_TYPE_MISMATCH", raised.exception.code)
 
     async def test_nonzero_timeout_invalid_json_output_too_large_and_cancel(self):
         scripts = {
@@ -269,19 +291,24 @@ class SkillExecutionTest(unittest.IsolatedAsyncioTestCase):
                     "large.py": "SKILL_SCRIPT_OUTPUT_TOO_LARGE", "slow.py": "SKILL_SCRIPT_TIMEOUT"}
         for name, code in expected.items():
             config = SkillRuntimeConfig(script_max_output_bytes=1024)
-            execution = self.execution(config=config)
+            audit = FakeAudit()
+            execution = self.execution(config=config, audit=audit)
             await execution.start()
             with self.assertRaises(SkillRuntimeError) as raised:
                 await execution.run_skill_script(f"scripts/{name}", {})
             self.assertEqual(code, raised.exception.code)
+            self.assertEqual("TIMED_OUT" if code == "SKILL_SCRIPT_TIMEOUT" else "FAILED",
+                             audit.finished[0][2]["status"])
 
-        execution = self.execution()
+        audit = FakeAudit()
+        execution = self.execution(audit=audit)
         await execution.start()
         task = asyncio.create_task(execution.run_skill_script("scripts/slow.py", {}))
         await asyncio.sleep(0.1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
+        self.assertEqual("CANCELLED", audit.finished[0][2]["status"])
 
     async def test_network_and_child_process_are_blocked(self):
         scripts = {

@@ -166,7 +166,7 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T13.5.1 已于 2026-09-13 建立通用目录 Runtime，内部 Agent 契约升级为 1.4.0，Agent Access Flyway 最高版本为 V7。T14.3 的 `public-practice-generation@1.0.0` 仍是硬编码 `PracticeGenerationSkill` 单例，本任务没有迁移、删除或双注册它；因此包内当前没有具体标准 Skill，T13.5.2 完成组题迁移前 T15C 继续暂停。
+T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime，Agent Access Flyway 最高版本为 V7。T13.5.2 随后把 `public-practice-generation` 迁移为首个标准目录 Skill 1.1.0，内部 Agent 契约向前升级为 1.5.0；硬编码 `PracticeGenerationSkill` 类、单例和专用调用已删除。T15C 可在本任务真实长链验收及合并后恢复。
 
 T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
 
@@ -178,7 +178,7 @@ Skill 选中后才加载完整 `SKILL.md`，模型只能通过 Runtime 的 `read
 
 Runtime 为成功脚本输出生成模型不可伪造的 `skillName`、版本、script、executionId、resultType 和 payload 信封。Skill 选择后、脚本执行前必须经 Agent Access 私有接口落 `ai_skill_execution`；记录失败则 fail closed，不执行脚本且不产生组题动作。审计只存内部 ID、顺序、名称/版本、选择来源、相对 reference/脚本、状态/耗时和安全失败码，不存指令正文、输入输出、题干答案、秘密或绝对路径；Python 崩溃或 run 终态时将遗留 RUNNING 收口为 ABANDONED/RUNTIME_INTERRUPTED，不自动重跑。该私有事实需要向前迁移和内部协议，不通过浏览器 OpenAPI、SSE 或 RabbitMQ 暴露。
 
-T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skills/public-practice-generation/SKILL.md`、`scripts/validate_proposal.py` 和 `references/practice-rules.md`；无消费者的 `agents/openai.yaml` 删除。新版本为 `1.1.0`，部署时 Java 先兼容新版本再切换 Python；历史 `1.0.0` 记录继续可读，但旧 Python 类、单例和专用执行分支全部删除。组题脚本只处理主题/难度/数量默认与边界、组合题计数、候选去重和结构校验；Qdrant 继续只经 `QUESTION_SEARCH` 工具，Java 继续复核和创建，模型文本伪造的 proposal 不得进入 pending action。
+T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skills/public-practice-generation/SKILL.md`、`scripts/validate_proposal.py` 和 `references/practice-rules.md`；无消费者的 `agents/openai.yaml` 已删除。新版本为 `1.1.0`，Java 同时接受 1.1.0 与滚动部署中已开始的 1.0.0 run，但新 Python 只产生 1.1.0。组题脚本只处理主题/难度/数量默认与边界、组合题主问题计数、候选稳定去重和结构校验；Qdrant 只经 `QUESTION_SEARCH` 工具，Java 继续复核和创建，模型文本伪造的 proposal 不得进入 pending action。
 
 迁移后主题仍从明确请求/当前对话取，缺失澄清；默认中等、5 道，1～20 主问题，组合题不拆。只选 ACTIVE SYSTEM 初中公共题，套内去重、尽量避开近期题；数量不足先说明，不静默放宽。Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。T13.5.2 必须以真实 Qdrant→Java 复核→确认→创建→作答→清理长链证明行为不退化，且保持 T15C 所需 OpenAPI 0.23.4 浏览器契约兼容。
 

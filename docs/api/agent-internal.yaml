@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.4.0
+  version: 1.5.0
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -13,7 +13,8 @@ info:
     Python 回调 Agent Access 的候选复核、学习事实读取和私有结果报告；T13.4 再向前增加按
     run 授权的版本化用户帮助查询。T14.3 增加按需加载的公共题库自主组题 Skill 及候选提案；
     Java 必须复核并持久化后才能把安全 pending action 投影给浏览器。T13.5.1 再增加标准目录
-    Skill 的开始/终态私有审计；审计不承载指令、输入输出或绝对路径。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
+    Skill 的开始/终态私有审计；T13.5.2 将组题迁移为标准目录 Skill 1.1.0，并保留滚动部署期间
+    对已开始 1.0.0 run 的读取兼容。审计不承载指令、输入输出或绝对路径。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
 servers:
   - url: http://edu-agent.internal
     description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
@@ -22,13 +23,13 @@ tags:
     description: 单次 Agent run 的创建、流式执行与显式取消。
 x-runtime-skills:
   - name: public-practice-generation
-    version: 1.0.0
+    version: 1.1.0
     roles: [PRACTICE_COACH]
     intents: [RECOMMEND_PRACTICE]
-    requiredSlots: [practiceTopic, difficulty, questionCount]
+    requiredSlots: [practiceTopic]
     defaults: {difficulty: MEDIUM, questionCount: 5}
     ranges: {questionCount: {minimum: 1, maximum: 20}}
-    allowedTools: [QUESTION_SEARCH, STUDENT_PROGRESS]
+    allowedTools: [QUESTION_SEARCH]
     loadPolicy: ON_MATCHED_ROLE_AND_INTENT
     candidatePolicy: ACTIVE_SYSTEM_CURRENT_JUNIOR_MATH_AUTO_SCORABLE_ONLY
     recentAttemptPolicy: BEST_EFFORT_EXCLUDE_WITHOUT_RELAXING_HARD_FILTERS
@@ -39,7 +40,7 @@ x-runtime-skills:
       - FREE_LOOP
       - FORMAL_GRADING_BY_MODEL
     outputSchema: PracticeGenerationProposal
-    budget: {maxQuestionSearchCalls: 1, maxStudentFactCalls: 1, maxCandidateCount: 20, timeoutMs: 10000}
+    budget: {maxQuestionSearchCalls: 1, maxCandidateCount: 20, timeoutMs: 10000}
 
 paths:
   /internal/v1/agent/runs:
@@ -911,7 +912,10 @@ components:
       required: [skillName, skillVersion, topic, difficulty, requestedCount, candidates]
       properties:
         skillName: {type: string, const: public-practice-generation}
-        skillVersion: {type: string, const: 1.0.0}
+        skillVersion:
+          type: string
+          enum: [1.0.0, 1.1.0]
+          description: 1.0.0 仅用于读取或完成滚动部署中已开始的历史 run；新 Python Runtime 只产生 1.1.0。
         topic: {type: string, minLength: 1, maxLength: 200}
         difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
         requestedCount: {type: integer, minimum: 1, maximum: 20}
