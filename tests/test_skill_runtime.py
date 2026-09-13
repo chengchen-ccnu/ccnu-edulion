@@ -108,7 +108,8 @@ class SkillDiscoveryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             directory = write_skill(root, "linked")
-            target = directory / "target.txt"
+            # 目标放在 Skill 目录外，避免非标准顶层文件先于符号链接规则触发。
+            target = root / "target.txt"
             target.write_text("x", encoding="utf-8")
             try:
                 (directory / "references").symlink_to(root, target_is_directory=True)
