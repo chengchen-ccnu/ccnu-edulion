@@ -67,6 +67,15 @@ class AgentStreamEventValidatorTest {
                 "answerCompleteness", "COMPLETE", "interruptionNotice", "回答已中断")));
     }
 
+    /** 滚动部署可读取旧 1.0.0，但当前标准 Skill 的 1.1.0 也必须通过，未知版本继续拒绝。 */
+    @Test
+    void practiceProposalAcceptsPublishedVersionsAndRejectsUnknownVersion() {
+        for (String version : List.of("1.0.0", "1.1.0")) {
+            AgentStreamEventValidator.validate(practiceEvent(version), RUN_ID, TRACE_ID);
+        }
+        assertProtocolViolation(practiceEvent("1.2.0"));
+    }
+
     private LinkedHashMap<String, Map<String, Object>> validPayloads() {
         LinkedHashMap<String, Map<String, Object>> payloads = new LinkedHashMap<>();
         payloads.put("RUN_ACCEPTED", Map.of("conversationId", CONVERSATION_ID.toString(),
@@ -97,6 +106,23 @@ class AgentStreamEventValidatorTest {
     private JsonNode event(String type, Map<String, Object> payload) {
         return mapper.valueToTree(Map.of("eventType", type, "runId", RUN_ID.toString(), "sequence", 1,
                 "traceId", TRACE_ID, "emittedAt", Instant.now().toString(), "payload", payload));
+    }
+
+    private JsonNode practiceEvent(String version) {
+        return event("FINAL_RESULT", Map.of(
+                "terminal", true,
+                "terminalStatus", "COMPLETED",
+                "answerCompleteness", "COMPLETE",
+                "finalAnswer", "已准备候选",
+                "practiceProposal", Map.of(
+                        "skillName", "public-practice-generation",
+                        "skillVersion", version,
+                        "topic", "一元一次方程",
+                        "difficulty", "MEDIUM",
+                        "requestedCount", 5,
+                        "candidates", List.of(Map.of(
+                                "questionId", UUID.randomUUID().toString(),
+                                "questionVersionId", UUID.randomUUID().toString())))));
     }
 
     private static String requiredField(String type) {

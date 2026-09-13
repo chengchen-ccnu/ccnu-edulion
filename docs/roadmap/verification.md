@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-09-13 T13.5.2 组题标准 Skill 迁移
+
+- 前置核对：工作区开始时干净，分支为 `codex/t13.5.2-practice-standard-skill`，HEAD 为规划提交 `232a1c4`；完整审计 T13.5.1 Runtime、旧组题类、Python 服务/工具/协议测试、Java 流与 pending 校验及 T14.3 真实验收脚本。
+- 使用系统 skill-creator 初始化 `public-practice-generation` 的 `scripts`、`references` 骨架并按平台 Runtime 精简；删除 `agents/openai.yaml`，没有 runtime manifest、assets 或辅助安装文档。`PYTHONUTF8=1` 下 quick_validate 通过。
+- 新 Skill 为 1.1.0，只匹配 Practice Coach 的 RECOMMEND_PRACTICE；唯一候选 RULE 选择不调用 LLM。脚本以 JSON stdin/stdout 确定性处理默认值、1～20 边界、联合身份稳定去重、近期软避让、顺序与真实不足，Runtime 生成身份信封。
+- 旧 `PracticeGenerationSkill` 文件、类、单例和 `build_proposal` 调用已删除；生产组题只经标准 Runtime。内部协议向前升级为 1.5.0，Java 接受新 1.1.0，并仅为历史/滚动部署 run 保留 1.0.0 兼容；浏览器 OpenAPI 0.23.4 不变。
+- Python compileall、wheel 和完整 unittest 通过；unittest 89 项执行、79 项通过、10 项按真实环境开关或 Windows 符号链接权限跳过，wheel 包含三项 Skill 资源。Agent Access 聚焦测试 53 项执行、50 项通过、3 项跳过。全仓 Java clean verify 的 9 个 Reactor 模块全部成功，Learning 106 项执行、87 项通过、19 项跳过，Agent Access 53 项执行、50 项通过、3 项跳过。
+- 真实长链通过：真实模型识别组题意图，标准 Skill 以 RULE 选择并产生 1.1.0 RUNNING→SUCCEEDED 审计；真实 BGE/BM25/RRF/reranker 和既有 Qdrant 参与检索，MEDIUM 请求 5 道经 Learning 复核后得到 4 道并保持不足语义。确认前零创建；确认、重复/并发幂等、保存/提交/评分、提交后答案可见、owner/课程/成绩册隔离、替换/取消/过期和未知结果恢复均通过。
+- 未创建数据库、表、迁移或永久 Seed，未读取或修改 `local.env`。真实验收只在专用 dev Schema 创建本轮随机运行事实，最终精确清理结果为 Learning 0、Agent 0、Redis 0；临时服务和日志均已停止或删除，既有 Qdrant 索引未删除或重建。
+
 ## 2026-09-08 独立规划 PR 交接审计
 
 - 已获用户授权提交并合并文档 PR，再准备 T10C.1；本次不实现业务代码。

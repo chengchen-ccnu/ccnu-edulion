@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -225,7 +226,7 @@ public class PendingPracticeService {
 
     private ParsedProposal parse(JsonNode proposal) {
         if (!proposal.isObject() || !"public-practice-generation".equals(proposal.path("skillName").asText())
-                || !"1.0.0".equals(proposal.path("skillVersion").asText())) throw protocol();
+                || !Set.of("1.0.0", "1.1.0").contains(proposal.path("skillVersion").asText())) throw protocol();
         String topic = proposal.path("topic").asText("").trim();
         int count = proposal.path("requestedCount").asInt(0);
         AgentDtos.PracticeDifficulty difficulty;

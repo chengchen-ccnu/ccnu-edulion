@@ -24,6 +24,7 @@ _NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)(.*)\Z", re.DOTALL)
 _RESOURCE_LINK = re.compile(r"\]\(((?:scripts|references|assets)/[^)#?\s]+)(?:#[^)]*)?\)")
+_RESULT_TYPE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 _TEXT_SUFFIXES = frozenset({".md", ".txt", ".json", ".yaml", ".yml", ".csv"})
 _FINAL_AUDIT_STATUSES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"})
 
@@ -363,8 +364,9 @@ class SkillExecution:
         self.reference_bytes += len(raw)
         return text
 
-    async def run_skill_script(self, relative_path: str, json_input: Any) -> SkillResultEnvelope:
-        """执行当前 scripts 下 Python；模型只提供相对路径和可序列化 JSON 输入。"""
+    async def run_skill_script(self, relative_path: str, json_input: Any,
+                               expected_result_type: str | None = None) -> SkillResultEnvelope:
+        """执行当前 scripts 下 Python；调用方可声明所消费的结果类型并在成功审计前校验。"""
 
         self._require_started()
         normalized = _safe_relative(relative_path, required_prefix="scripts", suffixes=frozenset({".py"}))
@@ -377,9 +379,15 @@ class SkillExecution:
         timeout = self.loaded.descriptor.script_timeout_seconds or self.config.script_default_timeout_seconds
         timeout = min(timeout, self.config.script_max_timeout_seconds, max(1, self.limits.remaining_ms() / 1000))
         try:
-            payload = await self.runner.run(self.loaded.descriptor, normalized, canonical_input, timeout)
+            result = await self.runner.run(self.loaded.descriptor, normalized, canonical_input, timeout)
+            if not isinstance(result, dict) or set(result) != {"resultType", "payload"} \
+                    or not isinstance(result.get("resultType"), str) \
+                    or not _RESULT_TYPE.fullmatch(result["resultType"]):
+                raise SkillRuntimeError("SKILL_SCRIPT_RESULT_INVALID", "Skill 脚本结果结构不合法")
+            if expected_result_type is not None and result["resultType"] != expected_result_type:
+                raise SkillRuntimeError("SKILL_RESULT_TYPE_MISMATCH", "Skill 脚本结果类型不符合调用契约")
             envelope = SkillResultEnvelope(self.loaded.descriptor.name, self.loaded.descriptor.version,
-                                           normalized, self.execution_id, "JSON", payload)
+                                           normalized, self.execution_id, result["resultType"], result["payload"])
             await self.finish("SUCCEEDED", script=normalized)
             return envelope
         except asyncio.CancelledError:

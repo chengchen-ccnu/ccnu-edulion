@@ -1011,7 +1011,7 @@ class AgentAccessIntegrationTest {
     }
 
     private JsonNode practiceProposal(String topic) {
-        return mapper.valueToTree(Map.of("skillName", "public-practice-generation", "skillVersion", "1.0.0",
+        return mapper.valueToTree(Map.of("skillName", "public-practice-generation", "skillVersion", "1.1.0",
                 "topic", topic, "difficulty", "MEDIUM", "requestedCount", 5, "candidates", List.of(Map.of(
                         "questionId", UUID.randomUUID(), "questionVersionId", UUID.randomUUID()))));
     }

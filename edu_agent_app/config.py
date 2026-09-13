@@ -103,7 +103,12 @@ def build_runtime(settings: RuntimeSettings | None = None):
     from .runtime.service import DynamicAgentRuntime
     from .runtime.session import ConversationStore
     from .runtime.tools import ToolExecutor
-    from .runtime.skill_runtime import SkillRegistry, SkillRuntimeConfig, SkillScriptRunner
+    from .runtime.skill_runtime import (
+        SkillEligibility,
+        SkillRegistry,
+        SkillRuntimeConfig,
+        SkillScriptRunner,
+    )
 
     settings = settings or load_runtime_settings()
     model = OpenAICompatibleModel(ModelSettings(
@@ -169,4 +174,9 @@ def build_runtime(settings: RuntimeSettings | None = None):
         skill_registry=skill_registry,
         skill_runner=skill_runner,
         skill_audit=callback if callback else None,
+        skill_policies={
+            "public-practice-generation": SkillEligibility(
+                frozenset({"PRACTICE_COACH"}), frozenset({"RECOMMEND_PRACTICE"})
+            )
+        },
     )

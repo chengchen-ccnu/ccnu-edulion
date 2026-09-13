@@ -28,7 +28,7 @@ ALLOWED_TOOLS: dict[SecondaryIntent, frozenset[ToolName]] = {
     SecondaryIntent.CHECK_STUDENT_WORK: frozenset({ToolName.QUESTION_SEARCH, ToolName.KNOWLEDGE_SEARCH, ToolName.AUTHORIZED_IMAGE_UNDERSTANDING}),
     SecondaryIntent.GIVE_HINT: frozenset({ToolName.QUESTION_SEARCH, ToolName.KNOWLEDGE_SEARCH}),
     SecondaryIntent.REVIEW_WRONG_QUESTION: frozenset({ToolName.STUDENT_WRONG_QUESTIONS, ToolName.STUDENT_SUBMISSIONS, ToolName.KNOWLEDGE_SEARCH}),
-    SecondaryIntent.RECOMMEND_PRACTICE: frozenset({ToolName.QUESTION_SEARCH, ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
+    SecondaryIntent.RECOMMEND_PRACTICE: frozenset({ToolName.QUESTION_SEARCH}),
     SecondaryIntent.CREATE_PLAN: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
     SecondaryIntent.ADJUST_PLAN: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),
     SecondaryIntent.LEARNING_ADVICE: frozenset({ToolName.STUDENT_PROGRESS, ToolName.STUDENT_PUBLISHED_GRADES}),

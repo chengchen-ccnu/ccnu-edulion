@@ -6,14 +6,15 @@ import asyncio
 import json
 import logging
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from time import monotonic, perf_counter
 from typing import Any, AsyncIterator, Awaitable, Callable
+from uuid import UUID
 
 from .budget import LimitReached, RunLimits
 from .intent import ClassifiedIntent, IntentClassifier, latest_explicit_practice_topic, wants_full_answer
 from .model import ModelUnavailable
-from .practice_skill import PUBLIC_PRACTICE_GENERATION_SKILL
 from .protocol import (
     AgentRole,
     AgentRunRequest,
@@ -98,7 +99,6 @@ class DynamicAgentRuntime:
         self.sessions = sessions or ConversationStore()
         self.classifier = IntentClassifier(model)
         self.telemetry = telemetry
-        # T13.5.1 只注册通用基础设施；现有类式组题仍由原分支执行，T13.5.2 才迁移。
         self.skill_registry = skill_registry
         self.skill_runner = skill_runner
         self.skill_audit = skill_audit
@@ -337,7 +337,7 @@ class DynamicAgentRuntime:
                     limits.transfer()
                 previous_role = item.role
                 text, status, evidence = await self._handle_expert(
-                    handle, sink, item.role, item.secondaryIntent, item.slots, limits
+                    handle, sink, item.sequence, item.role, item.secondaryIntent, item.slots, limits
                 )
                 answers.append(text)
                 if status is not TerminalStatus.COMPLETED:
@@ -399,6 +399,7 @@ class DynamicAgentRuntime:
         self,
         handle: RunHandle,
         sink: EventSink,
+        sequence: int,
         role: AgentRole,
         intent: SecondaryIntent,
         slots: IntentSlots,
@@ -416,6 +417,9 @@ class DynamicAgentRuntime:
 
         stage = "PLANNING" if role is AgentRole.STUDY_PLANNER else "RETRIEVING"
         sink.emit("STAGE_CHANGED", {"stage": stage, "message": "正在准备可靠的回答"})
+        if role is AgentRole.PRACTICE_COACH and intent is SecondaryIntent.RECOMMEND_PRACTICE:
+            return await self._prepare_practice(handle, role, intent, slots, sequence, limits)
+
         evidence = await self._collect_evidence(handle, role, intent, slots, limits)
         if handle.cancel_event.is_set():
             raise asyncio.CancelledError
@@ -428,17 +432,6 @@ class DynamicAgentRuntime:
                 )
             if evidence[0].directAnswer:
                 return evidence[0].summary, TerminalStatus.COMPLETED, evidence[:1]
-        if role is AgentRole.PRACTICE_COACH and intent is SecondaryIntent.RECOMMEND_PRACTICE:
-            # Skill 仅在精确角色/意图命中后加载；候选不足也不调用模型补题或扩大条件。
-            handle.practice_proposal = PUBLIC_PRACTICE_GENERATION_SKILL.build_proposal(slots, evidence)
-            actual = len(handle.practice_proposal["candidates"])
-            requested = handle.practice_proposal["requestedCount"]
-            return (
-                f"已按“{slots.practiceTopic}”、{slots.difficulty or 'MEDIUM'} 难度检索到 {actual} 道候选题"
-                f"（请求 {requested} 道）。平台还会再次校验题目有效性，确认前不会创建练习。",
-                TerminalStatus.COMPLETED,
-                evidence,
-            )
         sink.emit("STAGE_CHANGED", {"stage": "EXPLAINING", "message": "正在组织回答"})
 
         text = request.userMessage.text
@@ -481,6 +474,94 @@ class DynamicAgentRuntime:
             raise ModelUnavailable("模型没有返回可用文本")
         return answer, status, evidence
 
+    async def _prepare_practice(
+        self,
+        handle: RunHandle,
+        role: AgentRole,
+        intent: SecondaryIntent,
+        slots: IntentSlots,
+        sequence: int,
+        limits: RunLimits,
+    ) -> tuple[str, TerminalStatus, list[SafeToolEvidence]]:
+        """通过唯一标准 Skill 生成身份提案；任一可信链路失败都不产生 pending action。"""
+
+        execution = None
+        evidence: list[SafeToolEvidence] = []
+        try:
+            selection = await self.select_skill(role=role, intent=intent, limits=limits)
+            if selection is None:
+                return "本次练习准备失败，请稍后重试", TerminalStatus.DEGRADED, []
+            execution = await self.begin_skill_execution(
+                selection=selection, request=handle.request, sequence=sequence, limits=limits,
+            )
+            # 详细候选边界按需读取；正文与 reference 都纳入 Runtime 的统一工具预算。
+            execution.read_skill_reference("references/practice-rules.md")
+            evidence = await self._collect_evidence(handle, role, intent, slots, limits)
+            if handle.cancel_event.is_set():
+                raise asyncio.CancelledError
+            safe_candidates = [{
+                "evidenceType": item.evidenceType,
+                "accessDecision": item.accessDecision,
+                "questionId": str(item.questionId) if item.questionId else None,
+                "questionVersionId": str(item.questionVersionId) if item.questionVersionId else None,
+            } for item in evidence if item.evidenceType == "QUESTION"]
+            envelope = await execution.run_skill_script("scripts/validate_proposal.py", {
+                "topic": slots.practiceTopic,
+                "difficulty": slots.difficulty,
+                "requestedCount": slots.questionCount,
+                "candidates": safe_candidates,
+            }, expected_result_type="PRACTICE_PROPOSAL")
+            handle.practice_proposal = self._practice_proposal(envelope)
+            actual = len(handle.practice_proposal["candidates"])
+            requested = handle.practice_proposal["requestedCount"]
+            return (
+                f"已按“{handle.practice_proposal['topic']}”、{handle.practice_proposal['difficulty']} 难度"
+                f"检索到 {actual} 道候选题（请求 {requested} 道）。平台还会再次校验题目有效性，"
+                "确认前不会创建练习。",
+                TerminalStatus.COMPLETED,
+                evidence,
+            )
+        except asyncio.CancelledError:
+            if execution is not None:
+                with suppress(Exception):
+                    await execution.finish("CANCELLED", failure_code="RUNTIME_CANCELLED")
+            raise
+        except Exception:
+            if execution is not None:
+                with suppress(Exception):
+                    await execution.finish("FAILED", failure_code="PRACTICE_SKILL_FAILED")
+            handle.practice_proposal = None
+            return "本次练习准备失败，请稍后重试", TerminalStatus.DEGRADED, evidence
+
+    @staticmethod
+    def _practice_proposal(envelope: Any) -> dict[str, Any]:
+        """只把 Runtime 生成且身份匹配的信封映射为既有 Java 可复核提案。"""
+
+        if envelope.skillName != "public-practice-generation" \
+                or envelope.skillVersion != "1.1.0" \
+                or envelope.resultType != "PRACTICE_PROPOSAL" \
+                or not isinstance(envelope.payload, dict):
+            raise ValueError("组题 Skill 结果身份不合法")
+        payload = envelope.payload
+        if set(payload) != {"topic", "difficulty", "requestedCount", "candidates"}:
+            raise ValueError("组题 Skill payload 字段不合法")
+        topic, difficulty, requested = payload["topic"], payload["difficulty"], payload["requestedCount"]
+        candidates = payload["candidates"]
+        if not isinstance(topic, str) or not 1 <= len(topic) <= 200 \
+                or difficulty not in {"EASY", "MEDIUM", "HARD"} \
+                or isinstance(requested, bool) or not isinstance(requested, int) or not 1 <= requested <= 20 \
+                or not isinstance(candidates, list) or len(candidates) > 20:
+            raise ValueError("组题 Skill payload 值不合法")
+        seen: set[tuple[str, str]] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or set(candidate) != {"questionId", "questionVersionId"}:
+                raise ValueError("组题 Skill 候选字段不合法")
+            key = (str(UUID(candidate["questionId"])), str(UUID(candidate["questionVersionId"])))
+            if key in seen:
+                raise ValueError("组题 Skill 候选重复")
+            seen.add(key)
+        return {"skillName": envelope.skillName, "skillVersion": envelope.skillVersion, **payload}
+
     async def _collect_evidence(
         self, handle: RunHandle, role: AgentRole, intent: SecondaryIntent, slots: IntentSlots, limits: RunLimits
     ) -> list[SafeToolEvidence]:
@@ -521,7 +602,6 @@ class DynamicAgentRuntime:
             invocations.append(ToolInvocation(ToolName.KNOWLEDGE_SEARCH, {"query": query, "limit": 5}))
         fact_tool = {
             SecondaryIntent.REVIEW_WRONG_QUESTION: ToolName.STUDENT_WRONG_QUESTIONS,
-            SecondaryIntent.RECOMMEND_PRACTICE: ToolName.STUDENT_PROGRESS,
             SecondaryIntent.CREATE_PLAN: ToolName.STUDENT_PROGRESS,
             SecondaryIntent.ADJUST_PLAN: ToolName.STUDENT_PROGRESS,
             SecondaryIntent.LEARNING_ADVICE: ToolName.STUDENT_PROGRESS,

@@ -140,7 +140,7 @@ final class AgentStreamEventValidator {
         object(node, Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"),
                 Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"));
         if (!"public-practice-generation".equals(text(node, "skillName", 1, 40))
-                || !"1.0.0".equals(text(node, "skillVersion", 1, 20))) fail();
+                || !Set.of("1.0.0", "1.1.0").contains(text(node, "skillVersion", 1, 20))) fail();
         text(node, "topic", 1, 200); difficulty(node, "difficulty");
         long requested = integer(node, "requestedCount", 1); if (requested > 20) fail();
         Set<UUID> versions = new HashSet<>();
