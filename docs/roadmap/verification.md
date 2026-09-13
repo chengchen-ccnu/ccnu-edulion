@@ -1292,3 +1292,12 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 验收门槛：T13.5.1 覆盖正常发现/选择、两个候选/无匹配、frontmatter 损坏/重名、路径逃逸/符号链接、reference 上限、脚本超时/取消/非法 JSON/过大输出、秘密环境隔离、预算计数、审计 fail-closed 及 RUNNING→ABANDONED。T13.5.2 覆盖默认值、1～20、组合题、去重、数量不足、主题缺失、伪造 proposal 拒绝及真实组题长链；外部 T15C 契约不得退化。
 - 分支准备：当前未推送且无业务实现的 `codex/t15c-practice-generation-web` 已原地改名为 `codex/t13.5.1-standard-skill-runtime`，避免无意义删除再创建；本提交只保存总控规划和前置审计。T13.5.1/T13.5.2 合并后重新从最新 main 准备 T15C，不在同一 PR 混入前端。
 - 数据：本次只读审计、文档更新和分支改名未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用聊天/视觉模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
+## 2026-09-13 T13.5.1 标准 Skill Runtime 实施与验收
+
+- Runtime：新增只扫描 wheel 包内一层 `edu_agent_app/skills/*/SKILL.md` 的启动注册表，使用 `yaml.safe_load` 严格校验 name/目录名、description、SemVer、30 秒内超时和允许字段；重名、损坏、缺失声明资源、路径逃逸及符号链接均启动失败。发现只暴露 name/description，选中后才加载正文；没有用户目录、在线安装、热加载、`runtime.yaml`、`agents/openai.yaml`、hash、baseline 或第二套插件系统。
+- 选择与执行：显式开发测试调用优先，随后按平台角色/一二级意图过滤；唯一候选直接选择，多候选只允许一次结构化 LLM 并计真实调用、Token 和总预算，失败返回普通专家路径。每子请求一个、一轮两个的状态限制已实现。reference 仅允许当前目录 UTF-8 文本且受 3 文件/128 KiB 单文件/256 KiB 总量限制；Python 脚本仅接受相对 `.py` 与 JSON stdin/stdout，在只读副本、独立临时工作目录和清理环境中执行，默认 10 秒、全局最多 30 秒、64 KiB 输出、单进程并发 4，取消/超时/输出越界会终止进程并清理目录。
+- 审计与协议：`docs/api/agent-internal.yaml` 从 1.3.0 升至 1.4.0；Python 与 Java 同步开始/终态 DTO。Agent Access V7 新建 `ai_skill_execution`，开始失败使脚本 fail closed，完成/失败/取消/超时更新同一 execution；run 先终止会把遗留 RUNNING 原子收口为 `ABANDONED/RUNTIME_INTERRUPTED`，不重跑。表中不保存 SKILL/reference 正文、脚本输入输出、提示词、题干答案、Token、环境或绝对路径，也不进入浏览器 OpenAPI、SSE、RabbitMQ 或 `ai_tool_call.safe_summary`。
+- 自动化：`D:\Anaconda\envs\langgraph\python.exe -m compileall -q edu_agent_app server.py` 通过；`python -m unittest discover -s tests -v` 执行 85 项，75 项通过，10 项显式真实环境/本机符号链接权限场景跳过；wheel 构建通过并确认包含 `skill_runtime.py` 与 `edu_agent_app.skills` 包。Java 全仓 `clean verify` 的 9 个 Reactor 模块全部成功，Agent Access 52 项执行、49 项通过、3 项显式真实环境测试跳过。
+- 真实 MySQL：安全包装器确认 `AGENT_MYSQL_DATABASE=edu_platform_agent_dev` 后执行 `AgentMemoryMysqlAcceptanceTest`，真实 MySQL 8.0 从 V6 向前应用 V7，2 项均通过并确认迁移链 1～7 与 `ai_skill_execution`。没有创建数据库、账号、课程、题目、媒体、Skill execution、Seed 或永久伪数据；专项随机记忆 owner/source 行在 `finally` 精确清理，只有 Flyway V7 表结构按预期保留。
+- 范围与后续：现有 `PracticeGenerationSkill`、组题分支、Qdrant/Neo4j、Learning 创建、pending action、外部 OpenAPI 和 Vue 均未改变；包内目前没有具体标准 Skill。T13.5.2 负责用 skill-creator 迁移 `public-practice-generation@1.1.0` 并删除旧类式实现。新增配置均为非敏感默认值，本次未修改个人 `local.env`，没有明文需要删除或迁移。实现提交为 `0caaae4`，交付说明见 [T13.5.1 交付文档](../delivery/T13.5.1-standard-skill-runtime.md)。

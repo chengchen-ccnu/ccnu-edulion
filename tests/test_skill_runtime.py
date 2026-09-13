@@ -128,6 +128,15 @@ class SkillDiscoveryTest(unittest.TestCase):
                 SkillRegistry.discover(root)
             self.assertEqual("SKILL_RESOURCE_MISSING", raised.exception.code)
 
+    def test_non_standard_top_level_resource_fails_startup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = write_skill(root, "unknown-resource")
+            (directory / "plugins").mkdir()
+            with self.assertRaises(SkillRuntimeError) as raised:
+                SkillRegistry.discover(root)
+            self.assertEqual("SKILL_RESOURCE_INVALID", raised.exception.code)
+
 
 class SkillSelectionTest(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_rule_llm_none_and_failed_selection(self):

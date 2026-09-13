@@ -166,9 +166,9 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T14.3 已于 2026-09-13 实现，外部契约为 OpenAPI 0.23.4，内部 Agent 契约为 1.3.0。当前 Python 的 `public-practice-generation@1.0.0` 实际是硬编码 `PracticeGenerationSkill` 单例，运行时没有 `SKILL.md` 发现、注册、渐进加载或通用脚本执行，名称/版本和权限还重复散落在 Python、Java 与描述性 YAML 中。该实现可工作但不满足平台确认的标准 Skill 形态，因此 T15C 暂停，不把现状继续扩展为第二套机制。
+T13.5.1 已于 2026-09-13 建立通用目录 Runtime，内部 Agent 契约升级为 1.4.0，Agent Access Flyway 最高版本为 V7。T14.3 的 `public-practice-generation@1.0.0` 仍是硬编码 `PracticeGenerationSkill` 单例，本任务没有迁移、删除或双注册它；因此包内当前没有具体标准 Skill，T13.5.2 完成组题迁移前 T15C 继续暂停。
 
-T13.5.1 建立项目自身的标准目录 Runtime，固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具不改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
+T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
 
 选择顺序为显式开发测试调用优先，其次规则/一二级意图筛选，再在多个允许候选中用一次计费、计预算的 LLM 结构化选择；唯一候选直接使用，无匹配走普通专家回答，不反复选择或并行试跑。学生界面不展示 `$skill-name`、内部名称或脚本路径。每个子请求最多一个 Skill，一轮最多两个；Skill 指令优先级低于平台安全、用户明确要求和 Runtime 公共规则，不能扩大工具 grant、资源 scope、调用预算或 Java 写确认权限。
 

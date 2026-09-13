@@ -49,6 +49,8 @@ class SkillRuntimeConfig:
     script_global_concurrency: int = 4
 
     def validate(self) -> None:
+        """校验引用、超时、输出和并发的单项及交叉上限；非法配置阻止启动。"""
+
         if not 1 <= self.reference_max_files <= 20:
             raise ValueError("reference 最大文件数必须位于 1..20")
         if not 1 <= self.reference_max_file_bytes <= self.reference_max_total_bytes:
@@ -156,6 +158,10 @@ class SkillRegistry:
 
     @staticmethod
     def _validate_tree(root: Path, directory: Path) -> None:
+        allowed = {"SKILL.md", "scripts", "references", "assets"}
+        unknown = {item.name for item in directory.iterdir()} - allowed
+        if unknown:
+            raise SkillRuntimeError("SKILL_RESOURCE_INVALID", "Skill 目录含非标准顶层资源")
         for item in directory.rglob("*"):
             if item.is_symlink():
                 raise SkillRuntimeError("SKILL_SYMLINK", "Skill 内不能包含符号链接")
@@ -220,12 +226,18 @@ class SkillRegistry:
         return descriptor, matched.group(2).strip() if load_body else ""
 
     def descriptors(self) -> tuple[SkillDescriptor, ...]:
+        """返回只供候选筛选的稳定 name/description 描述，不加载 Markdown 正文。"""
+
         return tuple(self._descriptors[name] for name in sorted(self._descriptors))
 
     def get(self, name: str) -> SkillDescriptor | None:
+        """按精确内部名称读取启动期描述；未知名称不做模糊匹配。"""
+
         return self._descriptors.get(name)
 
     def load(self, name: str) -> LoadedSkill:
+        """选中后加载完整执行说明，并拒绝启动后发生变化的文件。"""
+
         descriptor = self._descriptors.get(name)
         if descriptor is None:
             raise SkillRuntimeError("SKILL_NOT_FOUND", "Skill 不存在")
@@ -245,6 +257,8 @@ class SkillSelector:
 
     async def select(self, *, role: str, intent: str, limits: RunLimits,
                      explicit_name: str | None = None) -> SkillSelection | None:
+        """返回最多一个候选；多候选模型失败时返回空，让专家安全降级。"""
+
         if explicit_name is not None:
             descriptor = self.registry.get(explicit_name)
             return SkillSelection(descriptor, "EXPLICIT") if descriptor else None
@@ -276,6 +290,8 @@ class SkillRoundState:
     by_sub_request: dict[int, str] = field(default_factory=dict)
 
     def claim(self, sequence: int, skill_name: str) -> None:
+        """为子请求绑定唯一 Skill；第三个子请求或换绑都会被拒绝。"""
+
         if sequence in self.by_sub_request and self.by_sub_request[sequence] != skill_name:
             raise SkillRuntimeError("SKILL_SUBREQUEST_LIMIT", "每个子请求最多选择一个 Skill")
         if sequence not in self.by_sub_request and len(self.by_sub_request) >= 2:
@@ -422,6 +438,8 @@ runpy.run_path(sys.argv[0],run_name="__main__")
 
     async def run(self, descriptor: SkillDescriptor, relative_path: str,
                   canonical_input: str, timeout_seconds: float) -> Any:
+        """执行一个已校验脚本并返回 JSON；失败会终止进程且清理本轮目录。"""
+
         source = _resolve_member(descriptor.directory, relative_path)
         if source.is_symlink() or not source.is_file():
             raise SkillRuntimeError("SKILL_SCRIPT_INVALID", "脚本缺失或不是普通文件")
