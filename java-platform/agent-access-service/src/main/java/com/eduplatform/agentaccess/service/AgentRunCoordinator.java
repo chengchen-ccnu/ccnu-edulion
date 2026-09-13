@@ -37,6 +37,7 @@ public class AgentRunCoordinator {
     private final ObjectMapper mapper;
     private final RunGovernance governance;
     private final com.eduplatform.agentaccess.config.AgentGovernanceProperties properties;
+    private final PendingPracticeService pendingPractices;
     private final ConcurrentHashMap<UUID, Execution> executions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4, runnable -> {
         Thread thread = new Thread(runnable, "agent-run-governance");
@@ -46,12 +47,14 @@ public class AgentRunCoordinator {
 
     public AgentRunCoordinator(AgentConversationService conversations, AgentRuntimeClient runtime,
             ObjectMapper mapper, RunGovernance governance,
-            com.eduplatform.agentaccess.config.AgentGovernanceProperties properties) {
+            com.eduplatform.agentaccess.config.AgentGovernanceProperties properties,
+            PendingPracticeService pendingPractices) {
         this.conversations = conversations;
         this.runtime = runtime;
         this.mapper = mapper;
         this.governance = governance;
         this.properties = properties;
+        this.pendingPractices = pendingPractices;
     }
 
     /** 实例关闭时终止续租/跟随线程；未终态 run 由租约到期后的启动恢复收口。 */
@@ -160,7 +163,10 @@ public class AgentRunCoordinator {
                 stop(execution, AgentDtos.RunStatus.FAILED, "AGENT.LEASE_LOST");
                 return;
             }
-            AgentDtos.StreamEvent event = conversations.appendRuntimeEvent(execution.run.id(), internal);
+            AgentStreamEventValidator.validate(internal, execution.run.id(), execution.run.traceId());
+            JsonNode external = pendingPractices.prepareFinalEvent(execution.run,
+                    execution.prepared.userMessage().clientRequestId(), internal);
+            AgentDtos.StreamEvent event = conversations.appendRuntimeEvent(execution.run.id(), external);
             governance.recordProgress(execution.prepared.lease(),
                     "FINAL_RESULT".equals(event.eventType()) ? "TERMINAL" : "RUNNING", event.sequence());
             execution.emitters.removeIf(emitter -> !send(emitter, event));

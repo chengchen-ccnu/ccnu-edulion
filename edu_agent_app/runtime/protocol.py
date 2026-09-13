@@ -260,6 +260,8 @@ class IntentSlots(StrictModel):
     hintLevel: Literal["LIGHT", "MEDIUM", "STRONG"] | None = None
     wrongQuestionId: UUID | None = None
     practiceTopic: str | None = Field(default=None, min_length=1, max_length=200)
+    difficulty: Literal["EASY", "MEDIUM", "HARD"] | None = None
+    questionCount: int | None = Field(default=None, ge=1, le=20)
     planGoal: str | None = Field(default=None, min_length=1, max_length=500)
     planConstraints: str | None = Field(default=None, min_length=1, max_length=1_000)
     platformTopic: str | None = Field(default=None, min_length=1, max_length=200)
@@ -303,6 +305,8 @@ class SafeToolEvidence(StrictModel):
     helpVersion: str | None = Field(default=None, pattern=r"^[0-9]{4}\.[0-9]{2}\.[0-9]+$")
     directAnswer: bool = False
     appRoute: str | None = Field(default=None, pattern=r"^/[a-z0-9-]+(?:/[a-z0-9-]+)*$", max_length=120)
+    questionId: UUID | None = None
+    questionVersionId: UUID | None = None
 
 
 class ToolResult(StrictModel):

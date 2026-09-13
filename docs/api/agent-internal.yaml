@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.2.0
+  version: 1.3.0
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -11,13 +11,34 @@ info:
     Python 私有运行状态（提示词、路由草稿、模型推理、工具原始结果、剩余内部工作集等）不是
     HTTP DTO，也不得出现在流事件、日志或持久消息中。T14.2.1 向前增加可选最近消息窗口以及
     Python 回调 Agent Access 的候选复核、学习事实读取和私有结果报告；T13.4 再向前增加按
-    run 授权的版本化用户帮助查询。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
+    run 授权的版本化用户帮助查询。T14.3 增加按需加载的公共题库自主组题 Skill 及候选提案；
+    Java 必须复核并持久化后才能把安全 pending action 投影给浏览器。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
 servers:
   - url: http://edu-agent.internal
     description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
 tags:
   - name: AgentRun
     description: 单次 Agent run 的创建、流式执行与显式取消。
+x-runtime-skills:
+  - name: public-practice-generation
+    version: 1.0.0
+    roles: [PRACTICE_COACH]
+    intents: [RECOMMEND_PRACTICE]
+    requiredSlots: [practiceTopic, difficulty, questionCount]
+    defaults: {difficulty: MEDIUM, questionCount: 5}
+    ranges: {questionCount: {minimum: 1, maximum: 20}}
+    allowedTools: [QUESTION_SEARCH, STUDENT_PROGRESS]
+    loadPolicy: ON_MATCHED_ROLE_AND_INTENT
+    candidatePolicy: ACTIVE_SYSTEM_CURRENT_JUNIOR_MATH_AUTO_SCORABLE_ONLY
+    recentAttemptPolicy: BEST_EFFORT_EXCLUDE_WITHOUT_RELAXING_HARD_FILTERS
+    prohibited:
+      - DATABASE_WRITE
+      - QUESTION_GENERATION
+      - SCOPE_OR_DIFFICULTY_EXPANSION
+      - FREE_LOOP
+      - FORMAL_GRADING_BY_MODEL
+    outputSchema: PracticeGenerationProposal
+    budget: {maxQuestionSearchCalls: 1, maxStudentFactCalls: 1, maxCandidateCount: 20, timeoutMs: 10000}
 
 paths:
   /internal/v1/agent/runs:
@@ -713,6 +734,13 @@ components:
           type: array
           maxItems: 20
           items: {$ref: '#/components/schemas/AuthorizedReference'}
+        practiceProposal:
+          $ref: '#/components/schemas/PracticeGenerationProposal'
+          description: Python-only proposal. Agent Access must remove it, revalidate every candidate through Learning, persist a new action, and expose only the external PendingPracticeAction projection.
+        actionControl:
+          type: string
+          enum: [CONFIRM_CURRENT, CANCEL_CURRENT]
+          description: Natural-language control only. Java may execute it only when the owner-visible conversation has exactly one unexpired PENDING action; otherwise it replaces the answer with a clarification.
         error: {$ref: '#/components/schemas/SafeError'}
       allOf:
         - if: {properties: {terminalStatus: {const: COMPLETED}}}
@@ -833,6 +861,8 @@ components:
         hintLevel: {type: string, enum: [LIGHT, MEDIUM, STRONG]}
         wrongQuestionId: {type: string, format: uuid}
         practiceTopic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD], default: MEDIUM}
+        questionCount: {type: integer, minimum: 1, maximum: 20, default: 5}
         planGoal: {type: string, minLength: 1, maxLength: 500}
         planConstraints: {type: string, minLength: 1, maxLength: 1000}
         platformTopic: {type: string, minLength: 1, maxLength: 200}
@@ -840,7 +870,31 @@ components:
 
     SlotName:
       type: string
-      enum: [problemText, conceptName, questionId, courseId, lessonId, studentWork, hintLevel, wrongQuestionId, practiceTopic, planGoal, platformTopic, actionId]
+      enum: [problemText, conceptName, questionId, courseId, lessonId, studentWork, hintLevel, wrongQuestionId, practiceTopic, difficulty, questionCount, planGoal, platformTopic, actionId]
+
+    PracticeGenerationProposal:
+      type: object
+      additionalProperties: false
+      required: [skillName, skillVersion, topic, difficulty, requestedCount, candidates]
+      properties:
+        skillName: {type: string, const: public-practice-generation}
+        skillVersion: {type: string, const: 1.0.0}
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        requestedCount: {type: integer, minimum: 1, maximum: 20}
+        candidates:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/PracticeCandidateKey'}
+      description: Contains identity-only Qdrant candidates. It is not a permission decision or a database write command.
+    PracticeCandidateKey:
+      type: object
+      additionalProperties: false
+      required: [questionId, questionVersionId]
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
 
     RoutedSubRequest:
       type: object
@@ -1093,6 +1147,14 @@ components:
         helpVersion: {type: string, pattern: '^[0-9]{4}\.[0-9]{2}\.[0-9]+$'}
         directAnswer: {type: boolean}
         appRoute: {type: string, pattern: '^/[a-z0-9-]+(?:/[a-z0-9-]+)*$', maxLength: 120}
+        questionId:
+          type: string
+          format: uuid
+          description: Present only for QUESTION evidence used by the practice-generation Skill.
+        questionVersionId:
+          type: string
+          format: uuid
+          description: Exact indexed immutable version; Learning must still verify it against MySQL.
 
 x-role-routing:
   MATH_TUTORING:
@@ -1131,8 +1193,8 @@ x-secondary-intent-contracts:
   PLATFORM_USAGE_HELP: {requiredSlots: [platformTopic], allowedTools: [USER_HELP_SEARCH]}
   SMALL_TALK: {requiredSlots: [], allowedTools: []}
   UNSUPPORTED: {requiredSlots: [], allowedTools: []}
-  ACTION_CONFIRMATION: {requiredSlots: [actionId], allowedTools: []}
-  ACTION_CANCELLATION: {requiredSlots: [actionId], allowedTools: []}
+  ACTION_CONFIRMATION: {requiredSlots: [], allowedTools: [], resolution: JAVA_CURRENT_CONVERSATION_ONLY}
+  ACTION_CANCELLATION: {requiredSlots: [], allowedTools: [], resolution: JAVA_CURRENT_CONVERSATION_ONLY}
 
 x-private-state-boundary:
   serializedByJava: false

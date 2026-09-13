@@ -123,6 +123,83 @@ public class HttpAgentDomainClient implements AgentDomainClient {
         }
     }
 
+    /** Learning 以题库 MySQL 当前事实复核 Qdrant 身份候选；返回顺序已应用本人近期题软排除。 */
+    @Override
+    public AgentInternalDtos.ValidatePracticeCandidatesResponse validatePracticeCandidates(UUID owner,
+            AgentInternalDtos.PracticeCriteria criteria, List<AgentInternalDtos.PracticeCandidateKey> candidates,
+            String traceId) {
+        try {
+            var response = learning.post().uri("/internal/v1/agent-access/practice-candidates:validate")
+                    .headers(headers -> internal(headers, traceId))
+                    .body(new AgentInternalDtos.ValidatePracticeCandidatesRequest(owner, criteria, candidates))
+                    .retrieve().body(AgentInternalDtos.ValidatePracticeCandidatesResponse.class);
+            if (response == null || response.candidates() == null) throw unavailable();
+            Set<AgentInternalDtos.PracticeCandidateKey> requested = Set.copyOf(candidates);
+            if (response.candidates().stream().anyMatch(value -> !requested.contains(
+                    new AgentInternalDtos.PracticeCandidateKey(value.questionId(), value.questionVersionId())))) {
+                throw unavailable();
+            }
+            return response;
+        } catch (AgentException failure) {
+            throw failure;
+        } catch (RuntimeException failure) {
+            throw unavailable();
+        }
+    }
+
+    /** 使用 actionId 作为跨服务业务幂等键创建本人自主练习；响应只含稳定 ID 和相对路由。 */
+    @Override
+    public AgentInternalDtos.AutonomousPracticeResult createAutonomousPractice(UUID actionId, UUID owner,
+            AgentInternalDtos.PracticeCriteria criteria, List<AgentInternalDtos.PracticeCandidateKey> candidates,
+            String traceId) {
+        try {
+            var response = learning.post().uri("/internal/v1/agent-access/autonomous-practices")
+                    .headers(headers -> internal(headers, traceId))
+                    .body(new AgentInternalDtos.CreateAutonomousPracticeRequest(actionId, owner, criteria, candidates))
+                    .retrieve().body(AgentInternalDtos.AutonomousPracticeResult.class);
+            return requirePracticeResult(response);
+        } catch (org.springframework.web.client.RestClientResponseException failure) {
+            if (failure.getStatusCode().value() == 422) {
+                throw new AgentException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "AGENT.PRACTICE_CANDIDATES_STALE", "候选题已失效，请重新生成组题方案");
+            }
+            throw unavailable();
+        } catch (AgentException failure) {
+            throw failure;
+        } catch (RuntimeException failure) {
+            throw unavailable();
+        }
+    }
+
+    /** 创建响应未知时按相同 actionId 查询；404 仅表示尚未观察到创建事实。 */
+    @Override
+    public AgentInternalDtos.AutonomousPracticeResult findAutonomousPractice(UUID actionId, UUID owner,
+            String traceId) {
+        try {
+            var response = learning.post().uri("/internal/v1/agent-access/autonomous-practices:find-by-action")
+                    .headers(headers -> internal(headers, traceId))
+                    .body(new AgentInternalDtos.FindAutonomousPracticeRequest(actionId, owner))
+                    .retrieve().body(AgentInternalDtos.AutonomousPracticeResult.class);
+            return requirePracticeResult(response);
+        } catch (org.springframework.web.client.RestClientResponseException failure) {
+            if (failure.getStatusCode().value() == 404) return null;
+            throw unavailable();
+        } catch (AgentException failure) {
+            throw failure;
+        } catch (RuntimeException failure) {
+            throw unavailable();
+        }
+    }
+
+    private static AgentInternalDtos.AutonomousPracticeResult requirePracticeResult(
+            AgentInternalDtos.AutonomousPracticeResult response) {
+        if (response == null || response.autonomousPracticeId() == null || response.assessmentId() == null
+                || response.startRoute() == null || !response.startRoute().startsWith("/practice/")) {
+            throw unavailable();
+        }
+        return response;
+    }
+
     private void internal(org.springframework.http.HttpHeaders headers, String traceId) {
         headers.set("X-Internal-Caller", "agent-access-service");
         headers.set("X-Internal-Service-Token", properties.domainServiceToken());

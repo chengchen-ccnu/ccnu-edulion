@@ -21,7 +21,7 @@ final class AgentStreamEventValidator {
             "PLANNING", "EXPLAINING", "FINALIZING");
     private static final Set<String> SLOTS = Set.of("problemText", "conceptName", "questionId", "courseId",
             "lessonId", "studentWork", "hintLevel", "wrongQuestionId", "practiceTopic", "planGoal",
-            "platformTopic", "actionId");
+            "difficulty", "questionCount", "platformTopic", "actionId");
     private static final Set<String> SOURCES = Set.of("QUESTION", "KNOWLEDGE_POINT", "COURSE_TEXT",
             "STUDENT_FACT", "USER_HELP");
     private static final Set<String> TERMINALS = Set.of("COMPLETED", "DEGRADED", "LIMIT_REACHED",
@@ -112,7 +112,8 @@ final class AgentStreamEventValidator {
 
     private static void finalResult(JsonNode node, String traceId) {
         Set<String> allowed = Set.of("terminal", "terminalStatus", "finalAnswer", "answerCompleteness",
-                "interruptionNotice", "savedCheckpointSequence", "references", "error");
+                "interruptionNotice", "savedCheckpointSequence", "references", "practiceProposal",
+                "actionControl", "pendingPracticeAction", "error");
         object(node, Set.of("terminal", "terminalStatus", "answerCompleteness"), allowed);
         if (!bool(node, "terminal")) fail();
         String status = text(node, "terminalStatus", 1, 32);
@@ -128,7 +129,66 @@ final class AgentStreamEventValidator {
         }
         if (node.has("savedCheckpointSequence") && integer(node, "savedCheckpointSequence", 1) < 1) fail();
         if (node.has("references")) array(node, "references", 0, 20).forEach(AgentStreamEventValidator::reference);
+        if (node.has("practiceProposal")) practiceProposal(node.get("practiceProposal"));
+        if (node.has("actionControl") && !Set.of("CONFIRM_CURRENT", "CANCEL_CURRENT")
+                .contains(text(node, "actionControl", 1, 30))) fail();
+        if (node.has("pendingPracticeAction")) pendingPracticeAction(node.get("pendingPracticeAction"));
         if (node.has("error")) safeError(node.get("error"), traceId);
+    }
+
+    private static void practiceProposal(JsonNode node) {
+        object(node, Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"),
+                Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"));
+        if (!"public-practice-generation".equals(text(node, "skillName", 1, 40))
+                || !"1.0.0".equals(text(node, "skillVersion", 1, 20))) fail();
+        text(node, "topic", 1, 200); difficulty(node, "difficulty");
+        long requested = integer(node, "requestedCount", 1); if (requested > 20) fail();
+        Set<UUID> versions = new HashSet<>();
+        array(node, "candidates", 0, 20).forEach(value -> {
+            object(value, Set.of("questionId", "questionVersionId"), Set.of("questionId", "questionVersionId"));
+            uuid(value, "questionId"); if (!versions.add(uuid(value, "questionVersionId"))) fail();
+        });
+    }
+
+    private static void pendingPracticeAction(JsonNode node) {
+        object(node, Set.of("actionId", "conversationId", "criteria", "requestedCount", "actualCount",
+                        "candidateQuestions", "status", "revision", "expiresAt", "executionResult"),
+                Set.of("actionId", "conversationId", "criteria", "requestedCount", "actualCount",
+                        "candidateQuestions", "status", "revision", "expiresAt", "executionResult"));
+        uuid(node, "actionId"); uuid(node, "conversationId");
+        JsonNode criteria = node.get("criteria");
+        object(criteria, Set.of("topic", "difficulty", "requestedCount"),
+                Set.of("topic", "difficulty", "requestedCount"));
+        text(criteria, "topic", 1, 200); difficulty(criteria, "difficulty");
+        long requested = integer(node, "requestedCount", 1);
+        long actual = integer(node, "actualCount", 0);
+        if (requested > 20 || actual > requested || integer(criteria, "requestedCount", 1) != requested) fail();
+        Set<UUID> versions = new HashSet<>();
+        JsonNode candidates = array(node, "candidateQuestions", 0, 20);
+        if (candidates.size() != actual) fail();
+        candidates.forEach(value -> {
+            object(value, Set.of("questionId", "questionVersionId", "questionType", "difficulty"),
+                    Set.of("questionId", "questionVersionId", "questionType", "difficulty"));
+            uuid(value, "questionId"); if (!versions.add(uuid(value, "questionVersionId"))) fail();
+            if (!Set.of("SINGLE_CHOICE", "MULTIPLE_CHOICE", "TRUE_FALSE", "FILL_BLANK", "COMPOSITE")
+                    .contains(text(value, "questionType", 1, 30))) fail();
+            difficulty(value, "difficulty");
+        });
+        if (!Set.of("PENDING", "CONFIRMED", "CANCELLED", "EXPIRED", "EXECUTING", "SUCCEEDED", "FAILED")
+                .contains(text(node, "status", 1, 20)) || integer(node, "revision", 0) < 0) fail();
+        try { Instant.parse(text(node, "expiresAt", 1, 80)); } catch (RuntimeException invalid) { fail(); }
+        JsonNode execution = node.get("executionResult");
+        if (!execution.isNull()) {
+            object(execution, Set.of("autonomousPracticeId", "assessmentId", "startRoute"),
+                    Set.of("autonomousPracticeId", "assessmentId", "startRoute"));
+            uuid(execution, "autonomousPracticeId"); uuid(execution, "assessmentId");
+            String route = text(execution, "startRoute", 1, 80);
+            if (!route.startsWith("/practice/") || route.contains("?") || route.contains("#")) fail();
+        }
+    }
+
+    private static void difficulty(JsonNode node, String field) {
+        if (!Set.of("EASY", "MEDIUM", "HARD").contains(text(node, field, 1, 10))) fail();
     }
 
     private static void reference(JsonNode node) {

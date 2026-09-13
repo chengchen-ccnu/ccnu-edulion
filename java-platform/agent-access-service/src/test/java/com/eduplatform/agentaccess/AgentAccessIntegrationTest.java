@@ -14,6 +14,7 @@ import com.eduplatform.agentaccess.service.ExplanationPreferenceService;
 import com.eduplatform.agentaccess.service.MemoryFactService;
 import com.eduplatform.agentaccess.service.MemoryContextProvider;
 import com.eduplatform.agentaccess.service.MemoryIndexProjectionService;
+import com.eduplatform.agentaccess.service.PendingPracticeService;
 import com.eduplatform.agentaccess.service.MessageRetentionService;
 import com.eduplatform.agentaccess.service.RunGovernance;
 import com.eduplatform.agentaccess.service.AuthorizedContextResolver;
@@ -24,6 +25,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +62,7 @@ class AgentAccessIntegrationTest {
     @Autowired ExplanationPreferenceService explanationPreferences;
     @Autowired FakeDomain domains;
     @Autowired FakeGovernance governance;
+    @Autowired PendingPracticeService pendingPractices;
     @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
 
     @Test
@@ -77,6 +83,8 @@ class AgentAccessIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_pending_action_audit");
+        jdbc.update("DELETE FROM ai_pending_action");
         jdbc.update("DELETE FROM ai_media_outbox");
         jdbc.update("DELETE FROM ai_message_media_reference");
         jdbc.update("DELETE FROM ai_agent_index_outbox");
@@ -99,6 +107,108 @@ class AgentAccessIntegrationTest {
         runtime.reset();
         domains.reset();
         governance.reset();
+    }
+
+    @Test
+    /** 新条件替换旧待确认动作；确认使用 revision CAS，并始终恢复同一 Learning 业务结果。 */
+    void pendingPracticeSupersedesAndConfirmationIsIdempotent() {
+        var first = practiceRun("一元一次方程");
+        var oldAction = pendingPractices.acceptProposal(first.run(), practiceProposal("一元一次方程"));
+        complete(first, "方案一");
+        var second = conversations.prepareRun(OWNER, first.run().conversationId(),
+                new AgentDtos.SendMessageRequest(UUID.randomUUID(), "推荐函数练习题", null), "trace-practice-new");
+        var action = pendingPractices.acceptProposal(second.run(), practiceProposal("函数"));
+        assertThat(pendingPractices.get(OWNER, oldAction.actionId()).status())
+                .isEqualTo(AgentDtos.PendingPracticeActionStatus.CANCELLED);
+        assertThatThrownBy(() -> pendingPractices.get(OTHER, action.actionId()))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        UUID requestId = UUID.randomUUID();
+        var succeeded = pendingPractices.confirm(OWNER, action.actionId(),
+                new AgentDtos.ConfirmPendingPracticeActionRequest(requestId, action.revision()), "trace-confirm");
+        var replay = pendingPractices.confirm(OWNER, action.actionId(),
+                new AgentDtos.ConfirmPendingPracticeActionRequest(requestId, action.revision()), "trace-confirm-replay");
+        assertThat(succeeded.status()).isEqualTo(AgentDtos.PendingPracticeActionStatus.SUCCEEDED);
+        assertThat(replay.executionResult().assessmentId()).isEqualTo(succeeded.executionResult().assessmentId());
+        assertThat(domains.createPracticeCalls).hasValue(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_pending_action WHERE status='PENDING'", Integer.class))
+                .isZero();
+    }
+
+    @Test
+    /** 过期和取消均终止可确认性；取消 requestId 重放不会产生第二次状态迁移。 */
+    void pendingPracticeExpiryCancellationAndRevisionConflictsAreExplicit() {
+        var expired = pendingPractices.acceptProposal(practiceRun("几何").run(), practiceProposal("几何"));
+        jdbc.update("UPDATE ai_pending_action SET expires_at=? WHERE id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), expired.actionId().toString());
+        assertThatThrownBy(() -> pendingPractices.confirm(OWNER, expired.actionId(),
+                new AgentDtos.ConfirmPendingPracticeActionRequest(UUID.randomUUID(), expired.revision()), "trace-expired"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.PENDING_ACTION_NOT_CONFIRMABLE"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_pending_action_audit WHERE action_id=? AND event_type='EXPIRED'",
+                Integer.class, expired.actionId().toString())).isEqualTo(1);
+
+        var cancellable = pendingPractices.acceptProposal(practiceRun("概率").run(), practiceProposal("概率"));
+        assertThatThrownBy(() -> pendingPractices.cancel(OWNER, cancellable.actionId(),
+                new AgentDtos.CancelPendingPracticeActionRequest(UUID.randomUUID(), 99L), "trace-stale"))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.PENDING_ACTION_REVISION_CONFLICT"));
+        UUID requestId = UUID.randomUUID();
+        var cancelled = pendingPractices.cancel(OWNER, cancellable.actionId(),
+                new AgentDtos.CancelPendingPracticeActionRequest(requestId, cancellable.revision()), "trace-cancel");
+        var replay = pendingPractices.cancel(OWNER, cancellable.actionId(),
+                new AgentDtos.CancelPendingPracticeActionRequest(requestId, cancellable.revision()), "trace-cancel-replay");
+        assertThat(replay.revision()).isEqualTo(cancelled.revision());
+    }
+
+    @Test
+    /** 创建响应超时但 Learning 已落事实时，按 actionId 查询并恢复同一结果，不把动作开放为可重建。 */
+    void pendingPracticeRecoversUnknownCreateResult() {
+        var action = pendingPractices.acceptProposal(practiceRun("整式").run(), practiceProposal("整式"));
+        domains.unknownAfterPracticeCreate = true;
+
+        var recovered = pendingPractices.confirm(OWNER, action.actionId(),
+                new AgentDtos.ConfirmPendingPracticeActionRequest(UUID.randomUUID(), action.revision()),
+                "trace-timeout-recovery");
+
+        assertThat(recovered.status()).isEqualTo(AgentDtos.PendingPracticeActionStatus.SUCCEEDED);
+        assertThat(recovered.executionResult()).isNotNull();
+        assertThat(domains.createPracticeCalls).hasValue(1);
+    }
+
+    @Test
+    /** 两个线程同时确认时 revision CAS 只允许一个线程调用 Learning，最终至多存在一个稳定结果。 */
+    void concurrentPendingPracticeConfirmationCreatesAtMostOnce() throws Exception {
+        var action = pendingPractices.acceptProposal(practiceRun("概率").run(), practiceProposal("概率"));
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var first = executor.submit(() -> concurrentConfirm(action, start));
+            var second = executor.submit(() -> concurrentConfirm(action, start));
+            start.countDown();
+            first.get(5, TimeUnit.SECONDS);
+            second.get(5, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(domains.createPracticeCalls).hasValue(1);
+        assertThat(pendingPractices.get(OWNER, action.actionId()).status())
+                .isEqualTo(AgentDtos.PendingPracticeActionStatus.SUCCEEDED);
+    }
+
+    private void concurrentConfirm(AgentDtos.PendingPracticeAction action, CountDownLatch start) {
+        try {
+            start.await(5, TimeUnit.SECONDS);
+            pendingPractices.confirm(OWNER, action.actionId(),
+                    new AgentDtos.ConfirmPendingPracticeActionRequest(UUID.randomUUID(), action.revision()),
+                    "trace-concurrent-confirm");
+        } catch (AgentException expectedRace) {
+            assertThat(expectedRace.status()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(interrupted);
+        }
     }
 
     @Test
@@ -859,6 +969,19 @@ class AgentAccessIntegrationTest {
                 "请给我一个提示", null), traceId);
     }
 
+    private AgentConversationService.PreparedRun practiceRun(String topic) {
+        var conversation = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, null));
+        return conversations.prepareRun(OWNER, conversation.id(), new AgentDtos.SendMessageRequest(UUID.randomUUID(),
+                "推荐" + topic + "练习题", null), "trace-practice-" + topic.hashCode());
+    }
+
+    private JsonNode practiceProposal(String topic) {
+        return mapper.valueToTree(Map.of("skillName", "public-practice-generation", "skillVersion", "1.0.0",
+                "topic", topic, "difficulty", "MEDIUM", "requestedCount", 5, "candidates", List.of(Map.of(
+                        "questionId", UUID.randomUUID(), "questionVersionId", UUID.randomUUID()))));
+    }
+
     private static java.net.http.HttpRequest helpRequest(java.net.URI uri, String caller, String token,
             String body) {
         return java.net.http.HttpRequest.newBuilder(uri).header("Content-Type", "application/json")
@@ -962,6 +1085,40 @@ class AgentAccessIntegrationTest {
         List<AgentInternalDtos.QuestionVersionKey> lastVersions = List.of();
         List<AgentInternalDtos.QuestionVersionProjection> projections = List.of();
         UUID lastQuestionVersionId;
+        final AtomicInteger createPracticeCalls = new AtomicInteger();
+        boolean unknownAfterPracticeCreate;
+        final Map<UUID, AgentInternalDtos.AutonomousPracticeResult> practices = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public AgentInternalDtos.ValidatePracticeCandidatesResponse validatePracticeCandidates(UUID ownerUserId,
+                AgentInternalDtos.PracticeCriteria criteria,
+                List<AgentInternalDtos.PracticeCandidateKey> candidates, String traceId) {
+            this.lastOwner = ownerUserId;
+            return new AgentInternalDtos.ValidatePracticeCandidatesResponse(candidates.stream().map(candidate ->
+                    new AgentInternalDtos.ValidatedPracticeCandidate(candidate.questionId(),
+                            candidate.questionVersionId(), AgentDtos.PracticeQuestionType.SINGLE_CHOICE,
+                            criteria.difficulty())).toList());
+        }
+
+        @Override
+        public AgentInternalDtos.AutonomousPracticeResult createAutonomousPractice(UUID actionId, UUID ownerUserId,
+                AgentInternalDtos.PracticeCriteria criteria,
+                List<AgentInternalDtos.PracticeCandidateKey> candidates, String traceId) {
+            createPracticeCalls.incrementAndGet();
+            var result = practices.computeIfAbsent(actionId, ignored -> {
+                UUID assessmentId = UUID.randomUUID();
+                return new AgentInternalDtos.AutonomousPracticeResult(UUID.randomUUID(), assessmentId,
+                        "/practice/" + assessmentId, false);
+            });
+            if (unknownAfterPracticeCreate) throw unavailable();
+            return result;
+        }
+
+        @Override
+        public AgentInternalDtos.AutonomousPracticeResult findAutonomousPractice(UUID actionId, UUID ownerUserId,
+                String traceId) {
+            return practices.get(actionId);
+        }
 
         @Override
         public Set<UUID> verifyCourseCandidates(UUID owner, List<AgentInternalDtos.CourseCandidate> candidates,
@@ -1005,7 +1162,8 @@ class AgentAccessIntegrationTest {
         }
 
         void reset() { lastOwner = null; allowed = Set.of(); failure = false; projectionCalls = 0;
-            lastVersions = List.of(); projections = List.of(); lastQuestionVersionId = null; }
+            lastVersions = List.of(); projections = List.of(); lastQuestionVersionId = null;
+            createPracticeCalls.set(0); unknownAfterPracticeCreate = false; practices.clear(); }
     }
 
     static final class FakeGovernance implements RunGovernance {

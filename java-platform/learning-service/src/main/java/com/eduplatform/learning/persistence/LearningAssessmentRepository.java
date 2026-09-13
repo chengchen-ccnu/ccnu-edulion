@@ -233,7 +233,7 @@ public class LearningAssessmentRepository {
     }
 
     public void insertAssessment(AssessmentRow value) {
-        jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,assessment_type,status,answer_publication_policy,answer_release_policy,grade_publication_policy,close_status,settlement_status,closed_at,close_affected_attempt_count,settlement_attempts,settlement_next_attempt_at,settlement_last_error,grade_publication_status,answer_publication_status,grade_published_at,answer_published_at,opens_at,closes_at,time_limit_seconds,late_policy,late_until,max_attempts,revision,published_at,archived_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO assessment(id,owner_teacher_id,course_id,lesson_id,title,description,assessment_type,status,answer_publication_policy,answer_release_policy,grade_publication_policy,close_status,settlement_status,closed_at,close_affected_attempt_count,settlement_attempts,settlement_next_attempt_at,settlement_last_error,grade_publication_status,answer_publication_status,grade_published_at,answer_published_at,opens_at,closes_at,time_limit_seconds,late_policy,late_until,max_attempts,revision,published_at,archived_at,created_at,updated_at,ownership_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 value.id(), value.ownerTeacherId(), value.courseId(), value.lessonId(), value.title(),
                 value.description(), value.type().name(), value.status().name(), legacyPolicy(value.answerPolicy()),
                 canonicalAnswerPolicy(value.answerPolicy()).name(), value.gradePolicy().name(), value.closeStatus().name(),
@@ -243,7 +243,8 @@ public class LearningAssessmentRepository {
                 ts(value.gradePublishedAt()), ts(value.answerPublishedAt()),
                 ts(value.opensAt()), ts(value.closesAt()), value.timeLimitSeconds(), value.latePolicy().name(),
                 ts(value.lateUntil()), value.maxAttempts(), value.revision(),
-                ts(value.publishedAt()), ts(value.archivedAt()), ts(value.createdAt()), ts(value.updatedAt()));
+                ts(value.publishedAt()), ts(value.archivedAt()), ts(value.createdAt()), ts(value.updatedAt()),
+                value.ownerTeacherId() == null ? "AUTONOMOUS" : "COURSE");
     }
     public Optional<AssessmentRow> assessment(String id) {
         return jdbc.query("SELECT * FROM assessment WHERE id=?", this::mapAssessment, id).stream().findFirst();
@@ -422,6 +423,33 @@ public class LearningAssessmentRepository {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM assessment_assignment WHERE assessment_id=? AND assignment_type='COURSE' AND target_id=?",
                 Integer.class, assessmentId, courseId);
         return count != null && count > 0;
+    }
+    /** 保存自主练习 owner 与 action 幂等事实；唯一约束裁决跨实例重复创建。 */
+    public void insertAutonomousPractice(AutonomousPracticeRow row) {
+        jdbc.update("INSERT INTO autonomous_practice(id,source_action_id,learner_user_id,assessment_id,topic,difficulty,requested_count,actual_count,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                row.id(), row.sourceActionId(), row.learnerUserId(), row.assessmentId(), row.topic(),
+                row.difficulty(), row.requestedCount(), row.actualCount(), ts(row.createdAt()));
+    }
+    public Optional<AutonomousPracticeRow> autonomousPracticeByAction(String actionId, String learnerId) {
+        return jdbc.query("SELECT * FROM autonomous_practice WHERE source_action_id=? AND learner_user_id=?",
+                this::autonomousPractice, actionId, learnerId).stream().findFirst();
+    }
+    public Optional<AutonomousPracticeRow> ownedAutonomousPractice(String id, String learnerId) {
+        return jdbc.query("SELECT * FROM autonomous_practice WHERE id=? AND learner_user_id=?",
+                this::autonomousPractice, id, learnerId).stream().findFirst();
+    }
+    public boolean isAutonomousAssessmentOwner(String assessmentId, String learnerId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM autonomous_practice WHERE assessment_id=? AND learner_user_id=?",
+                Integer.class, assessmentId, learnerId);
+        return count != null && count > 0;
+    }
+    /** 返回本人最近正式提交涉及的题目版本，用于组题软去重；查询有界且不读取答案正文。 */
+    public List<String> recentQuestionVersionIds(String learnerId, int limit) {
+        return jdbc.query("SELECT aq.question_version_id FROM assessment_attempt t "
+                        + "JOIN assessment_question aq ON aq.assessment_id=t.assessment_id "
+                        + "WHERE t.learner_id=? AND t.status<>'DRAFT' "
+                        + "ORDER BY t.submitted_at DESC,t.id DESC,aq.sequence_no LIMIT ?",
+                (rs, ignored) -> rs.getString(1), learnerId, limit);
     }
     public List<AssessmentRow> listTeacherAssessments(String teacherId, String courseId, AssessmentStatus status,
             int page, int size) {
@@ -1018,6 +1046,7 @@ public class LearningAssessmentRepository {
     private IdempotencyRow idempotency(ResultSet rs,int row)throws SQLException{return new IdempotencyRow(rs.getString("owner_id"),rs.getString("client_request_id"),rs.getString("request_fingerprint"),rs.getString("resource_type"),rs.getString("resource_id"),instant(rs,"created_at"));}
     private AssessmentRow mapAssessment(ResultSet rs,int row)throws SQLException{return new AssessmentRow(rs.getString("id"),rs.getString("owner_teacher_id"),rs.getString("course_id"),rs.getString("lesson_id"),rs.getString("title"),rs.getString("description"),AssessmentType.valueOf(rs.getString("assessment_type")),AssessmentStatus.valueOf(rs.getString("status")),GradePublicationPolicy.valueOf(rs.getString("grade_publication_policy")),AnswerPublicationPolicy.valueOf(rs.getString("answer_release_policy")),AssessmentCloseStatus.valueOf(rs.getString("close_status")),AssessmentSettlementStatus.valueOf(rs.getString("settlement_status")),instantNullable(rs,"closed_at"),rs.getInt("close_affected_attempt_count"),rs.getInt("settlement_attempts"),instantNullable(rs,"settlement_next_attempt_at"),rs.getString("settlement_last_error"),ResultPublicationStatus.valueOf(rs.getString("grade_publication_status")),ResultPublicationStatus.valueOf(rs.getString("answer_publication_status")),instantNullable(rs,"grade_published_at"),instantNullable(rs,"answer_published_at"),instantNullable(rs,"opens_at"),instantNullable(rs,"closes_at"),(Integer)rs.getObject("time_limit_seconds"),com.eduplatform.learning.web.LearningDtos.HomeworkLatePolicy.valueOf(rs.getString("late_policy")),instantNullable(rs,"late_until"),rs.getInt("max_attempts"),rs.getLong("revision"),instantNullable(rs,"published_at"),instantNullable(rs,"archived_at"),instant(rs,"created_at"),instant(rs,"updated_at"));}
     private AssessmentQuestionRow assessmentQuestion(ResultSet rs,int row)throws SQLException{return new AssessmentQuestionRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("question_id"),rs.getString("question_version_id"),rs.getInt("sequence_no"),rs.getBigDecimal("points"),read(rs.getString("snapshot_json"),QuestionDtos.VersionResponse.class),instant(rs,"created_at"));}
+    private AutonomousPracticeRow autonomousPractice(ResultSet rs,int row)throws SQLException{return new AutonomousPracticeRow(rs.getString("id"),rs.getString("source_action_id"),rs.getString("learner_user_id"),rs.getString("assessment_id"),rs.getString("topic"),rs.getString("difficulty"),rs.getInt("requested_count"),rs.getInt("actual_count"),instant(rs,"created_at"));}
     private AttemptRow mapAttempt(ResultSet rs,int row)throws SQLException{return new AttemptRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("learner_id"),AttemptStatus.valueOf(rs.getString("status")),rs.getLong("revision"),rs.getString("draft_request_id"),rs.getString("draft_fingerprint"),rs.getString("submit_request_id"),rs.getString("submission_fingerprint"),rs.getBigDecimal("score"),rs.getBigDecimal("total_points"),instant(rs,"started_at"),instantNullable(rs,"deadline_at"),instantNullable(rs,"submitted_at"),instantNullable(rs,"graded_at"),instantNullable(rs,"grade_updated_at"),rs.getInt("attempt_sequence"),rs.getBoolean("late_submission"),instant(rs,"created_at"),instant(rs,"updated_at"));}
     private ParticipantRow participant(ResultSet rs,int row)throws SQLException{return new ParticipantRow(rs.getString("id"),rs.getString("assessment_id"),rs.getString("learner_id"),rs.getString("enrollment_status"),com.eduplatform.learning.web.LearningDtos.AssessmentSubmissionStatus.valueOf(rs.getString("submission_status")),com.eduplatform.learning.web.LearningDtos.AssessmentGradingStatus.valueOf(rs.getString("grading_status")),rs.getInt("attempts_used"),rs.getString("final_attempt_id"),instantNullable(rs,"last_submitted_at"),rs.getBoolean("late_submission"),rs.getLong("revision"),instant(rs,"created_at"),instant(rs,"updated_at"));}
     private CourseStudentNumberRow courseStudentNumber(ResultSet rs,int row)throws SQLException{return new CourseStudentNumberRow(rs.getString("id"),rs.getString("course_id"),rs.getString("learner_id"),rs.getInt("student_number"),instant(rs,"created_at"));}
@@ -1091,6 +1120,7 @@ public class LearningAssessmentRepository {
         }
     }
     public record AssessmentQuestionRow(String id,String assessmentId,String questionId,String questionVersionId,int sequence,BigDecimal points,QuestionDtos.VersionResponse snapshot,Instant createdAt){}
+    public record AutonomousPracticeRow(String id,String sourceActionId,String learnerUserId,String assessmentId,String topic,String difficulty,int requestedCount,int actualCount,Instant createdAt){}
     public record AttemptRow(String id,String assessmentId,String learnerId,AttemptStatus status,long revision,
             String draftRequestId,String draftFingerprint,String submitRequestId,String submissionFingerprint,
             BigDecimal score,BigDecimal totalPoints,Instant startedAt,Instant deadlineAt,Instant submittedAt,

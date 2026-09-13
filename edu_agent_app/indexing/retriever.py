@@ -69,7 +69,10 @@ class HybridSearchService:
         )
         threshold = self._threshold(request)
         accepted = [item for item in reranked if float(item[1]) >= threshold]
-        limit = min(request.limit, self.settings.final_max_results)
+        # 自主组题需要一次取得最多 20 个稳定候选 ID；其余问答意图仍沿用 T13.2 的 8 条上限，
+        # 避免把组题专用容量扩散到普通回答上下文。
+        intent_max_results = 20 if request.intent == "RECOMMEND_PRACTICE" else self.settings.final_max_results
+        limit = min(request.limit, intent_max_results)
         hits: list[RetrievalHit] = []
         for ((candidate, rrf_score, dense_rank, bm25_rank), rerank_score) in accepted[:limit]:
             payload = dict(candidate.payload)

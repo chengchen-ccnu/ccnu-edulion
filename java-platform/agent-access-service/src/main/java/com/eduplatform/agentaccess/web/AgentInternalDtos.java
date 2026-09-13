@@ -76,4 +76,21 @@ public final class AgentInternalDtos {
             @NotBlank @Size(max = 80) String terminationReason,
             @NotNull @Size(max = 8) List<@NotBlank @Size(max = 500) String> memoryCandidates) {}
     public record RunResultReportResponse(UUID runId, UUID reportId, boolean replayed) {}
+
+    public record PracticeCandidateKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
+    public record PracticeCriteria(@NotBlank @Size(max = 200) String topic,
+            @NotNull AgentDtos.PracticeDifficulty difficulty,
+            @Positive @Max(20) int requestedCount) {}
+    public record ValidatePracticeCandidatesRequest(@NotNull UUID ownerUserId,
+            @NotNull @Valid PracticeCriteria criteria,
+            @NotNull @Size(max = 20) List<@Valid PracticeCandidateKey> candidates) {}
+    public record ValidatedPracticeCandidate(UUID questionId, UUID questionVersionId,
+            AgentDtos.PracticeQuestionType questionType, AgentDtos.PracticeDifficulty difficulty) {}
+    public record ValidatePracticeCandidatesResponse(List<ValidatedPracticeCandidate> candidates) {}
+    public record CreateAutonomousPracticeRequest(@NotNull UUID actionId, @NotNull UUID ownerUserId,
+            @NotNull @Valid PracticeCriteria criteria,
+            @NotNull @Size(min = 1, max = 20) List<@Valid PracticeCandidateKey> candidates) {}
+    public record AutonomousPracticeResult(UUID autonomousPracticeId, UUID assessmentId,
+            String startRoute, boolean replayed) {}
+    public record FindAutonomousPracticeRequest(@NotNull UUID actionId, @NotNull UUID ownerUserId) {}
 }

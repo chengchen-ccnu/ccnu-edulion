@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.23.3
-  description: T14.2.5 Agent question-context projection contract. Owner-visible PRACTICE_FLOATING message pages resolve the exact persisted questionVersionId through a bounded Learning batch API and return only learner-safe immutable content. Historical question media uses a message-bound authorization endpoint; no answer, analysis, storage coordinate or signed URL is persisted in the projection. Existing typed streaming, regeneration, quota, Redis governance and cancellation semantics remain unchanged.
+  version: 0.23.4
+  description: T14.3 public-question autonomous-practice proposal, pending confirmation, idempotent Learning creation, and owner-only entry contract. Python emits identity-only candidates; Java revalidates against Learning's MySQL facts before persistence, and confirmation returns a stable existing practice route. Existing typed streaming, history projection, quota, Redis governance, cancellation, and course assessment semantics remain compatible.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -3250,6 +3250,88 @@ paths:
         '404': {$ref: '#/components/responses/AgentNotFound'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/conversations/{conversationId}/pending-practice-action:
+    get:
+      tags: [Agent]
+      operationId: getPendingPracticeActionForConversation
+      summary: Read the one current pending practice action in an owner-visible conversation
+      description: Requires learning:access. An expired current action is atomically marked EXPIRED and then treated as no current action. No action and a foreign conversation are returned as the same safe 404. requestId is a stable identifier for one logical read retry; reads never create or mutate an action except the deterministic expiry transition.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+        - {$ref: '#/components/parameters/ReadRequestId'}
+      responses:
+        '200': {description: The unique current action., content: {application/json: {schema: {$ref: '#/components/schemas/PendingPracticeAction'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/pending-practice-actions/{actionId}:
+    get:
+      tags: [Agent]
+      operationId: getPendingPracticeAction
+      summary: Read an owner-visible practice action and its stable execution result
+      parameters:
+        - {$ref: '#/components/parameters/PendingPracticeActionId'}
+        - {$ref: '#/components/parameters/ReadRequestId'}
+      responses:
+        '200': {description: Current action state., content: {application/json: {schema: {$ref: '#/components/schemas/PendingPracticeAction'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/ai/pending-practice-actions/{actionId}:confirm:
+    post:
+      tags: [Agent]
+      operationId: confirmPendingPracticeAction
+      summary: Confirm one current pending action and idempotently create the owner's autonomous practice
+      description: Requires learning:access. The server uses only the already persisted candidates. expectedRevision is a CAS guard. A repeated requestId or a repeated confirmation returns the same execution result and never creates another practice. An expired action is not refreshed or regenerated.
+      parameters:
+        - {$ref: '#/components/parameters/PendingPracticeActionId'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ConfirmPendingPracticeActionRequest'}}}
+      responses:
+        '200': {description: Stable confirmed, executing, succeeded, or recovered action., content: {application/json: {schema: {$ref: '#/components/schemas/PendingPracticeAction'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/AgentUnavailable'}
+  /api/v1/ai/pending-practice-actions/{actionId}:cancel:
+    post:
+      tags: [Agent]
+      operationId: cancelPendingPracticeAction
+      summary: Cancel one current pending action without deleting any conversation or created practice
+      parameters:
+        - {$ref: '#/components/parameters/PendingPracticeActionId'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CancelPendingPracticeActionRequest'}}}
+      responses:
+        '200': {description: Stable cancelled action or idempotent replay., content: {application/json: {schema: {$ref: '#/components/schemas/PendingPracticeAction'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/learning/autonomous-practices/{autonomousPracticeId}/entry:
+    get:
+      tags: [Learning]
+      operationId: getAutonomousPracticeEntry
+      summary: Read the current owner's autonomous-practice entry
+      description: Requires learning:access. The practice is course-free and owner-only; a foreign id is a safe 404. The returned relative route is stable and contains no host or token.
+      parameters:
+        - {$ref: '#/components/parameters/AutonomousPracticeId'}
+        - {$ref: '#/components/parameters/ReadRequestId'}
+      responses:
+        '200': {description: Owner-visible practice entry., content: {application/json: {schema: {$ref: '#/components/schemas/AutonomousPracticeEntry'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
 components:
   securitySchemes:
     bearerAuth:
@@ -3309,6 +3391,22 @@ components:
       in: path
       required: true
       description: Owner-scoped Agent run ID; foreign IDs are reported as not found.
+      schema: {type: string, format: uuid}
+    PendingPracticeActionId:
+      name: actionId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    AutonomousPracticeId:
+      name: autonomousPracticeId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    ReadRequestId:
+      name: requestId
+      in: query
+      required: true
+      description: Stable UUID for retrying one logical read. Reads are naturally idempotent and this identifier is used for correlation rather than selecting domain data.
       schema: {type: string, format: uuid}
     CourseId:
       name: courseId
@@ -3788,6 +3886,90 @@ components:
     AgentMessageCompleteness:
       type: string
       enum: [COMPLETE, PARTIAL]
+    PracticeDifficulty:
+      type: string
+      enum: [EASY, MEDIUM, HARD]
+    PracticeQuestionType:
+      type: string
+      enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, COMPOSITE]
+      description: SHORT_ANSWER is intentionally absent because the first autonomous-practice flow accepts only questions reliably scored by existing deterministic rules. COMPOSITE is valid only when every child is independently auto-scorable.
+    PracticeGenerationCriteria:
+      type: object
+      additionalProperties: false
+      required: [topic, difficulty, requestedCount]
+      properties:
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {$ref: '#/components/schemas/PracticeDifficulty'}
+        requestedCount: {type: integer, minimum: 1, maximum: 20, default: 5}
+    PracticeCandidateQuestion:
+      type: object
+      additionalProperties: false
+      required: [questionId, questionVersionId, questionType, difficulty]
+      properties:
+        questionId: {type: string, format: uuid}
+        questionVersionId: {type: string, format: uuid}
+        questionType: {$ref: '#/components/schemas/PracticeQuestionType'}
+        difficulty: {$ref: '#/components/schemas/PracticeDifficulty'}
+      description: Safe identity-only projection after Learning revalidates exact immutable versions. It contains no stem, answer, analysis, scoring rule, storage location, or temporary URL.
+    PendingPracticeActionStatus:
+      type: string
+      enum: [PENDING, CONFIRMED, CANCELLED, EXPIRED, EXECUTING, SUCCEEDED, FAILED]
+    AutonomousPracticeExecutionResult:
+      type: object
+      additionalProperties: false
+      required: [autonomousPracticeId, assessmentId, startRoute]
+      properties:
+        autonomousPracticeId: {type: string, format: uuid}
+        assessmentId: {type: string, format: uuid}
+        startRoute: {type: string, pattern: '^/practice/[0-9a-fA-F-]{36}$', maxLength: 80}
+      description: Stable result of the confirmed action. Replays return the same identifiers and relative route.
+    PendingPracticeAction:
+      type: object
+      additionalProperties: false
+      required: [actionId, conversationId, criteria, requestedCount, actualCount, candidateQuestions, status, revision, expiresAt]
+      properties:
+        actionId: {type: string, format: uuid}
+        conversationId: {type: string, format: uuid}
+        criteria: {$ref: '#/components/schemas/PracticeGenerationCriteria'}
+        requestedCount: {type: integer, minimum: 1, maximum: 20}
+        actualCount: {type: integer, minimum: 0, maximum: 20}
+        candidateQuestions:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/PracticeCandidateQuestion'}
+        status: {$ref: '#/components/schemas/PendingPracticeActionStatus'}
+        revision: {type: integer, minimum: 0}
+        expiresAt: {type: string, format: date-time}
+        executionResult:
+          oneOf:
+            - {$ref: '#/components/schemas/AutonomousPracticeExecutionResult'}
+            - {type: 'null'}
+      description: Browser-safe projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent.
+    ConfirmPendingPracticeActionRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, expectedRevision]
+      properties:
+        requestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, minimum: 0}
+    CancelPendingPracticeActionRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, expectedRevision]
+      properties:
+        requestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, minimum: 0}
+    AutonomousPracticeEntry:
+      type: object
+      additionalProperties: false
+      required: [autonomousPracticeId, assessmentId, title, questionCount, startRoute]
+      properties:
+        autonomousPracticeId: {type: string, format: uuid}
+        assessmentId: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 160}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        startRoute: {type: string, pattern: '^/practice/[0-9a-fA-F-]{36}$', maxLength: 80}
     CreateAgentConversationRequest:
       type: object
       additionalProperties: false
@@ -4153,6 +4335,9 @@ components:
         interruptionNotice: {type: string, const: 回答已中断}
         savedCheckpointSequence: {type: integer, minimum: 1}
         references: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AgentAuthorizedReference'}}
+        pendingPracticeAction:
+          $ref: '#/components/schemas/PendingPracticeAction'
+          description: Present only after Java revalidates and persists a Practice Coach proposal. Python candidate data is never forwarded directly.
         error: {$ref: '#/components/schemas/AgentSafeError'}
       description: COMPLETED requires COMPLETE plus finalAnswer; DEGRADED/LIMIT_REACHED require SIMPLIFIED plus finalAnswer; CANCELLED/FAILED require INTERRUPTED plus the fixed interruptionNotice.
       allOf:
@@ -6554,7 +6739,10 @@ components:
       required: [id, courseId, lessonId, title, type, status, closeStatus, settlementStatus, gradePublicationPolicy, answerPublicationPolicy, gradePublicationStatus, answerPublicationStatus, closedAt, affectedInProgressAttemptCount, activeAttemptCount, pendingSettlementCount, pendingManualGradingAttemptCount, pendingManualGradingAnswerCount, gradePublishedAt, answerPublishedAt, gradePublicationEligible, answerPublicationEligible, resultsReady, opensAt, closesAt, latePolicy, lateUntil, maxAttempts, timeLimitSeconds, questionCount, totalPoints, revision, publishedAt, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
-        courseId: {type: string, format: uuid}
+        courseId:
+          type: [string, 'null']
+          format: uuid
+          description: Null only for an owner-bound autonomous PRACTICE; course task and teacher APIs never return autonomous assessments.
         lessonId: {type: [string, 'null'], format: uuid}
         title: {type: string}
         type: {$ref: '#/components/schemas/AssessmentType'}
@@ -6810,7 +6998,10 @@ components:
       required: [id, courseId, lessonId, title, description, type, gradePublicationPolicy, answerPublicationPolicy, opensAt, closesAt, timeLimitSeconds, questions]
       properties:
         id: {type: string, format: uuid}
-        courseId: {type: string, format: uuid}
+        courseId:
+          type: [string, 'null']
+          format: uuid
+          description: Null only for an owner-bound autonomous PRACTICE result.
         lessonId: {type: [string, 'null'], format: uuid}
         title: {type: string}
         description: {type: string}

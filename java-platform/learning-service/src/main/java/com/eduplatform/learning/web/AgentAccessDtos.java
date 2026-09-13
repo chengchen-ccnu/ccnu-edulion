@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,6 +35,22 @@ public final class AgentAccessDtos {
             QuestionModels.Grade grade, QuestionModels.Subject subject, String stem, List<QuestionDtos.OptionInput> options,
             List<QuestionDtos.MediaResponse> media) {}
     public record QuestionVersionProjectionResponse(List<QuestionVersionProjection> items) {}
+
+    public record PracticeCriteria(@NotBlank @Size(max = 200) String topic,
+            @NotNull QuestionModels.Difficulty difficulty, @Min(1) @Max(20) int requestedCount) {}
+    public record PracticeCandidateKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
+    public record ValidatePracticeCandidatesRequest(@NotNull UUID ownerUserId,
+            @NotNull @Valid PracticeCriteria criteria,
+            @NotNull @Size(max = 20) List<@Valid PracticeCandidateKey> candidates) {}
+    public record ValidatedPracticeCandidate(UUID questionId, UUID questionVersionId,
+            QuestionModels.Type questionType, QuestionModels.Difficulty difficulty) {}
+    public record ValidatePracticeCandidatesResponse(List<ValidatedPracticeCandidate> candidates) {}
+    public record CreateAutonomousPracticeRequest(@NotNull UUID actionId, @NotNull UUID ownerUserId,
+            @NotNull @Valid PracticeCriteria criteria,
+            @NotNull @Size(min = 1, max = 20) List<@Valid PracticeCandidateKey> candidates) {}
+    public record AutonomousPracticeResult(UUID autonomousPracticeId, UUID assessmentId,
+            String startRoute, boolean replayed) {}
+    public record FindAutonomousPracticeRequest(@NotNull UUID actionId, @NotNull UUID ownerUserId) {}
 
     /** 历史题图授权的题目身份只由 Agent Access 从本人已保存消息中派生。 */
     public record QuestionVersionMediaAccessRequest(@NotNull UUID ownerUserId, @NotNull UUID questionId,

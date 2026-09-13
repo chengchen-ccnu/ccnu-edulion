@@ -1263,3 +1263,13 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 待实现边界：Agent Access 增加 `ai_pending_action` 事实、默认 10 分钟有效期、revision/幂等确认取消和未知结果查询；Java 必须再次校验候选仍为 ACTIVE SYSTEM、初中数学、数量与版本，确认后才调用 Learning 事务化创建。Python 只提出主题/难度/数量与候选，不写 MySQL；模型临时例题不进入正式练习。重复确认返回同一结果，条件变化使旧动作失效，数量不足在确认前明确实际数量。
 - 准备结论：T14.3 前置条件满足，范围虽跨 Python、Agent Access 和 Learning，但围绕单一“候选→确认→自主练习”事务闭环，可独立验收且无需先增设另一规划任务。已从干净 `main@4786bac` 创建 `codex/t14.3-practice-generation-skill`；当前仅更新 T15B 合并状态和 T14.3 前置审计，没有实现 OpenAPI、内部协议、迁移、Java、Python 或 Vue。
 - 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
+## 2026-09-13 T14.3 公共题库自主组题 Skill 与确认契约
+
+- 契约与边界：OpenAPI 0.23.4、内部 Agent 契约 1.3.0 和运行时 Skill `public-practice-generation@1.0.0` 已落地。Python 只提出当前显式主题、默认/指定难度、1～20 主问题和候选身份；Agent Access 在建议落库及确认前两次调用 Learning 复核；Learning 只接受仍为 ACTIVE SYSTEM、初中数学、当前根版本、精确难度和可自动评分类型的题。组合题按完整根题计数，套内去重、近期题软后移，数量不足保持真实实际数量，不生成题库题或替学生作答。
+- 确认与恢复：`ai_pending_action` 默认 10 分钟、同会话唯一 pending slot、revision/CAS 和脱敏审计已实现。修改条件 supersede 旧动作；显式确认、唯一动作下的自然确认、取消、过期、重复请求、并发确认和 Learning 已提交但 HTTP 响应丢失后的查询恢复均返回稳定状态。浏览器只看到安全动作投影；题干、答案、解析、提示词、Token、签名 URL和内部错误均不进入动作响应。
+- Learning 闭环：V16 为旧课程测评保持严格 COURSE 归属，同时新增无课程/教师/倒计时的 `AUTONOMOUS` PRACTICE 和唯一 source action 映射。本人入口复用既有 attempt 保存/提交，提交时自动评分并显示答案；非 owner 不可见，且自主练习不进入课程任务、教师课程归属、成绩册或课程错题统计。
+- 自动化：Java 全仓 `clean verify` 9 个 Reactor 模块全部成功；Learning 106 项、0 失败（19 跳过），Agent Access 51 项、0 失败（3 跳过）。Python compileall、wheel 和全量 unittest 71 项通过（9 项真实开关跳过）。前端 OpenAPI 生成、全 workspace typecheck、49 文件 330 项测试、三端生产 build 全部通过，仅有既有大 chunk 警告。
+- 真实验收：通过安全环境包装器连接既有 Agent/Learning dev Schema、Redis、Qdrant 和真实 BGE/BM25/RRF/reranker，648 题索引参与查询。默认中等 5 道时严格候选实际为 4，短缺如实保留；确认前练习数不变，删除 Redis 事实后确认成功，重复与两路并发确认只创建同一 assessment，模拟 Learning 已提交但响应丢失后再次确认恢复同一结果。开始、保存、提交、自动评分、答案仅提交后可见、supersede、取消、过期、owner/课程/成绩册隔离及安全输出全部通过。
+- 数据与清理：只复用明确的 `edu_platform_agent_dev`、`edu_platform_learning_dev` 和既有 648 点 Qdrant 集合；未创建数据库、账号、课程、题目、媒体、Seed 或永久伪数据。随机会话、run、动作、自主练习、attempt 和 Redis 事实已按本轮稳定 ID 精确清理，最终 `learningRemaining=0`、`agentRemaining=0`、`redisRemaining=0`；验收服务均停止，既有 Qdrant 索引不删除。
+- 配置与后续：没有新增环境变量或修改 `local.env`，无本地明文配置需要删除/迁移。实现、启动、演示和风险见 [T14.3 交付文档](../delivery/T14.3-practice-generation-skill.md)。T15C 现在可消费生成客户端实现建议/修改/过期/未知结果和开始练习卡片，不另建答题器；本任务 Ready PR 创建后回填且不自行合并。

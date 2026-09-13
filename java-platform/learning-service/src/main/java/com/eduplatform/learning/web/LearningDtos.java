@@ -52,6 +52,10 @@ public final class LearningDtos {
     /** 返回值说明当前进度来自缓冲层、MySQL，还是 Redis 不可用时的 MySQL 降级读。 */
     public enum ProgressPersistenceStatus { BUFFERED, PERSISTED, PERSISTED_ONLY }
 
+    /** 本人自主练习的稳定入口；不暴露课程、教师、答案或内部 action 业务键。 */
+    public record AutonomousPracticeEntry(UUID autonomousPracticeId, UUID assessmentId, String title,
+            int questionCount, String startRoute) {}
+
     public record CreateEnrollmentRequest(@NotNull UUID courseId) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Enrollment(String id, String learnerId, String courseId, String courseVersionId,

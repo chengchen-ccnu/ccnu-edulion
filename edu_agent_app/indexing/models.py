@@ -253,8 +253,9 @@ class RetrievalRequest:
             raise ValueError("不支持的检索集合")
         if not self.query.strip() or len(self.query) > 2000:
             raise ValueError("query 必须为 1..2000 个字符")
-        if not 1 <= self.limit <= 8:
-            raise ValueError("limit 必须位于 1..8")
+        max_limit = 20 if self.intent == "RECOMMEND_PRACTICE" else 8
+        if not 1 <= self.limit <= max_limit:
+            raise ValueError(f"limit 必须位于 1..{max_limit}")
         if self.collection == "course_content":
             if not self.course_id or not self.course_version_id:
                 raise PermissionError("课程检索缺少 Java 当前授权范围")

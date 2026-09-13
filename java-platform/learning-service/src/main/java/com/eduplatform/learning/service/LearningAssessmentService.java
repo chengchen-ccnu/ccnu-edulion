@@ -1461,6 +1461,13 @@ public class LearningAssessmentService {
             repository.publishAnswers(assessmentId, assessment.revision(), now);
             assessment = repository.lockAssessment(assessmentId);
         }
+        if (assessment.type() == LearningDtos.AssessmentType.PRACTICE
+                && assessment.ownerTeacherId() == null
+                && assessment.gradePublicationStatus() == ResultPublicationStatus.UNPUBLISHED
+                && repository.assessmentProjectionCounts(assessmentId).pendingManualAnswers() == 0) {
+            repository.publishGrades(assessmentId, assessment.revision(), now);
+            assessment = repository.lockAssessment(assessmentId);
+        }
         AssessmentProjectionCounts counts = repository.assessmentProjectionCounts(assessmentId);
         boolean readyForWholeAssessmentPublication = assessment.closeStatus() == AssessmentCloseStatus.CLOSED
                 && assessment.settlementStatus() == AssessmentSettlementStatus.COMPLETED
@@ -1732,9 +1739,13 @@ public class LearningAssessmentService {
 
     private AssessmentRow publishedForLearner(String learnerId, String assessmentId) {
         AssessmentRow row = repository.assessment(assessmentId).orElseThrow(this::notFound);
-        if (row.status() != AssessmentStatus.PUBLISHED
-                || !repository.isAssignedToCourse(assessmentId, row.courseId())
-                || repository.enrollment(learnerId, row.courseId()).filter(value -> value.status() == EnrollmentStatus.ACTIVE).isEmpty()) {
+        boolean autonomousOwner = row.ownerTeacherId() == null
+                && repository.isAutonomousAssessmentOwner(assessmentId, learnerId);
+        boolean courseOwner = row.courseId() != null
+                && repository.isAssignedToCourse(assessmentId, row.courseId())
+                && repository.enrollment(learnerId, row.courseId())
+                        .filter(value -> value.status() == EnrollmentStatus.ACTIVE).isPresent();
+        if (row.status() != AssessmentStatus.PUBLISHED || (!autonomousOwner && !courseOwner)) {
             throw notFound();
         }
         return row;
@@ -1779,8 +1790,35 @@ public class LearningAssessmentService {
             case SINGLE_CHOICE, TRUE_FALSE -> exact(normalizeOrdered(snapshot.answers()), normalizeOrdered(submitted), points);
             case MULTIPLE_CHOICE -> exact(normalizeSet(snapshot.answers()), normalizeSet(submitted), points);
             case FILL_BLANK -> exact(normalizeFill(snapshot.answers()), normalizeFill(submitted), points);
-            case SHORT_ANSWER, COMPOSITE -> null;
+            case COMPOSITE -> compositeGrade(snapshot, submitted, points);
+            case SHORT_ANSWER -> null;
         };
+    }
+
+    /** 组合题作为一道主问题整体计分；每个小问都必须由既有客观规则判定，全对才得该题分。 */
+    private static AutoGrade compositeGrade(QuestionDtos.VersionResponse snapshot, List<String> submitted,
+            BigDecimal points) {
+        if (snapshot.children().isEmpty() || submitted.size() != snapshot.children().size()) return null;
+        for (int index = 0; index < snapshot.children().size(); index++) {
+            QuestionDtos.ChildResponse child = snapshot.children().get(index);
+            String raw = submitted.get(index);
+            Object expected;
+            Object actual;
+            switch (child.type()) {
+                case SINGLE_CHOICE, TRUE_FALSE -> {
+                    expected = normalizeOrdered(child.answers()); actual = normalizeOrdered(List.of(raw));
+                }
+                case MULTIPLE_CHOICE -> {
+                    expected = normalizeSet(child.answers()); actual = normalizeSet(List.of(raw.split(",")));
+                }
+                case FILL_BLANK -> {
+                    expected = normalizeFill(child.answers()); actual = normalizeFill(List.of(raw.split("\\R")));
+                }
+                default -> { return null; }
+            }
+            if (!expected.equals(actual)) return new AutoGrade(BigDecimal.ZERO, false);
+        }
+        return new AutoGrade(points, true);
     }
 
     private static AutoGrade exact(Object expected, Object actual, BigDecimal points) {
@@ -1805,6 +1843,8 @@ public class LearningAssessmentService {
 
     private void recordWrong(AttemptRow attempt, AssessmentQuestionRow item, Instant now) {
         AssessmentRow assessment = repository.assessment(attempt.assessmentId()).orElseThrow();
+        // 既有错题表按课程归属建模；自主练习首期不伪造 courseId，也不把错误写入课程错题事实。
+        if (assessment.courseId() == null) return;
         if (repository.markWrongOccurrence(attempt.id(), item.id(), now)) {
             repository.accumulateWrongQuestion(UUID.randomUUID().toString(), attempt.learnerId(),
                     assessment.courseId(), assessment.id(), item.questionVersionId(), attempt.id(), now);
