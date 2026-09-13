@@ -32,7 +32,7 @@
 | T13.4 | 用户帮助版本/发布与授权路由，规则和复杂问答，内部文档不泄露，未知问题不猜 |
 | T15A | 顶栏/独立会话历史/图片/公式/来源/偏好，401～429/offline、部分消息、停止、重生成；超过30分钟仍能继续历史，不展示画像或人工转交 |
 | T15B | 跨独立题持续生成不丢内容；每条折叠题目快照/草稿原关联；30分钟只影响悬浮自动沿用；多标签冲突、关闭取消/转完整页；手机/桌面/键盘/资源清理 |
-| T14.3/T15C | 1～20主问题/默认5/数量不足/组合完整/去重；学生明确确认/过期/参数改动；超时未知结果查询/重复确认同次创建；无自动提交或评分、无正式AI生成题 |
+| T13.5.1/T13.5.2/T14.3/T15C | 标准目录发现/选择/渐进加载/受控脚本/私有审计；1～20主问题/默认5/数量不足/组合完整/去重；学生明确确认/过期/参数改动；超时未知结果查询/重复确认同次创建；无类式 Skill、自动提交或评分、无正式AI生成题 |
 
 每项记录实际命令、结果、未执行部分与注释覆盖。性能至少分解首事件/首字、检索/重排/转发延迟、调用数、队列积压、内存与成本，不凭协议名称宣称快慢。纯模型测试集使用有界代表样本，不将数万 JSON 原文送入对话。真实数据仅操作明确开发范围；保留演示数据需幂等 Initialize/Cleanup/Rebuild，临时验收数据精确清理。
 
@@ -1273,3 +1273,22 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实验收：通过安全环境包装器连接既有 Agent/Learning dev Schema、Redis、Qdrant 和真实 BGE/BM25/RRF/reranker，648 题索引参与查询。默认中等 5 道时严格候选实际为 4，短缺如实保留；确认前练习数不变，删除 Redis 事实后确认成功，重复与两路并发确认只创建同一 assessment，模拟 Learning 已提交但响应丢失后再次确认恢复同一结果。开始、保存、提交、自动评分、答案仅提交后可见、supersede、取消、过期、owner/课程/成绩册隔离及安全输出全部通过。
 - 数据与清理：只复用明确的 `edu_platform_agent_dev`、`edu_platform_learning_dev` 和既有 648 点 Qdrant 集合；未创建数据库、账号、课程、题目、媒体、Seed 或永久伪数据。随机会话、run、动作、自主练习、attempt 和 Redis 事实已按本轮稳定 ID 精确清理，最终 `learningRemaining=0`、`agentRemaining=0`、`redisRemaining=0`；验收服务均停止，既有 Qdrant 索引不删除。
 - 配置与后续：没有新增环境变量或修改 `local.env`，无本地明文配置需要删除/迁移。实现、启动、演示和风险见 [T14.3 交付文档](../delivery/T14.3-practice-generation-skill.md)，关键实现提交为 `547e624`。[Ready PR #68](https://github.com/chengchen-ccnu/ccnu-edulion/pull/68) 目标为 `main` 且不自行合并。T15C 现在可消费生成客户端实现建议/修改/过期/未知结果和开始练习卡片，不另建答题器。
+
+## 2026-09-13 PR #68 合并与 T15C 前置审计
+
+- 合并与清理：[PR #68](https://github.com/chengchen-ccnu/ccnu-edulion/pull/68) 在 Ready、可合并且 8 项 CI 全部成功后，以普通 merge 合并为 `main@c82a748247b3bb66c571902756a081bf529d7cce`；本地 `main` 已 `--ff-only` 同步，T14.3 本地和远端分支均已删除。
+- 动作前置：OpenAPI 0.23.4 与生成客户端已提供会话当前动作、按 action 查询、revision 确认/取消、`PENDING/EXPIRED/EXECUTING/SUCCEEDED/FAILED` 状态和稳定执行结果。SSE `FINAL_RESULT.pendingPracticeAction` 只返回 Java 复核并保存后的安全投影，足以覆盖真实数量、参数修改后旧动作失效、超时未知结果查询和重复请求恢复。
+- 页面前置：T15A/T15B 已提供独立 AI 页、普通公共题悬浮窗、会话/SSE/中断生命周期和统一消息渲染；T10C.2/T12B 已提供公共题入口与既有作答器。T15C 只增加建议/结果卡片及相应请求状态，不修改全局导航，不进入课程播放器、HOMEWORK/EXAM，也不复制答题器。
+- 路由审计：T14.3 返回稳定 `/practice/{assessmentId}`，但当前该路由仍由 `LegacyPracticeRedirectPage` 仅调用课程 assessment entry。此差异属于 T15C 的必要前端接线：按服务端事实兼容本人自主练习直接进入既有 `PracticeAttemptPage` 与课程旧链接迁移；不得猜 courseId、信任查询参数或改变后端归属模型。
+- 准备结论：T14.3、T15A 和 T10C.2 均已合并，OpenAPI 0.23.4、生成客户端、作答器和页面规格完整，T15C 前置条件满足。已从干净 `main@c82a748` 创建 `codex/t15c-practice-generation-web`；当前只更新合并状态和前置审计，没有实现 Vue、修改 OpenAPI/Java/Python 或扩大功能范围。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
+## 2026-09-13 标准 Skill Runtime 重规划与 T13.5.1 前置审计
+
+- 纠偏事实：T14.3 的 `PracticeGenerationSkill` 是由 `service.py` 直接导入的硬编码 Python 单例，不存在目录发现、注册表、`SKILL.md` 渐进加载或通用脚本 Runner；`agent-internal.yaml` 中的 Skill 描述也未被运行时加载。名称、版本和允许工具散落于 Python、Java 与契约，继续在 T15C 基础上扩展会固化两套 Skill 语义。因此此前“直接实施 T15C”的准备结论被本次审计覆盖，T15C 暂停。
+- T13.5.1 前置：T13.3 已提供规则/LLM 意图、角色路由和有界编排，T14.2.1～T14.2.3 已提供 Java↔Python 私有协议、运行/取消/额度和结果报告，足以增加通用 Skill 选择、reference 与脚本工具。当前正式运行依赖未声明 PyYAML，任务须显式加入并使用 `safe_load`；本地验收继续使用既有 langgraph Conda 解释器，CI 仍从仓库依赖构建。
+- 审计必要性：现有 `ai_run.result_report_json` 只能在 Python 成功上报终态后保存 Skill 摘要；脚本启动后进程崩溃会完全丢失执行事实，Git、版本号、主键、事务、唯一约束、类型和普通测试均无法事后说明运行了哪个脚本。故允许从当前 Agent Access V6 向前新增 `ai_skill_execution` 及私有开始/结束接口；不复用未实际写入且字段不足的 `ai_tool_call.safe_summary`，不增加 hash、baseline、gate、RabbitMQ 或浏览器事件。
+- 冻结范围：T13.5.1 只实现包内可信目录发现、显式/规则/单次 LLM 选择、渐进 reference、受控 Python 脚本、不可伪造结果信封、统一预算/取消、配置和内部审计；不迁移组题内容、不修改 OpenAPI/Vue/Learning/Course/Media/Qdrant/Neo4j。T13.5.2 才用 skill-creator 迁移 `public-practice-generation@1.1.0` 并彻底删除类式实现；其他能力保持原样，不默认 Skill 化。
+- 验收门槛：T13.5.1 覆盖正常发现/选择、两个候选/无匹配、frontmatter 损坏/重名、路径逃逸/符号链接、reference 上限、脚本超时/取消/非法 JSON/过大输出、秘密环境隔离、预算计数、审计 fail-closed 及 RUNNING→ABANDONED。T13.5.2 覆盖默认值、1～20、组合题、去重、数量不足、主题缺失、伪造 proposal 拒绝及真实组题长链；外部 T15C 契约不得退化。
+- 分支准备：当前未推送且无业务实现的 `codex/t15c-practice-generation-web` 已原地改名为 `codex/t13.5.1-standard-skill-runtime`，避免无意义删除再创建；本提交只保存总控规划和前置审计。T13.5.1/T13.5.2 合并后重新从最新 main 准备 T15C，不在同一 PR 混入前端。
+- 数据：本次只读审计、文档更新和分支改名未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用聊天/视觉模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
