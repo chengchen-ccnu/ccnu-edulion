@@ -534,9 +534,14 @@ async def _communicate_bounded(process: asyncio.subprocess.Process, stdin: bytes
     """持续排空 stderr，并在 stdout 首次越界时立即失败，避免把无限输出读入内存。"""
 
     assert process.stdin is not None and process.stdout is not None and process.stderr is not None
-    process.stdin.write(stdin)
-    await process.stdin.drain()
-    process.stdin.close()
+    try:
+        process.stdin.write(stdin)
+        await process.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        # 脚本可能在读取输入前即被安全边界拒绝；仍排空输出并按真实退出码归类。
+        pass
+    finally:
+        process.stdin.close()
 
     async def read_stdout() -> bytes:
         chunks: list[bytes] = []
