@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-14 PR #70 合并与 T15C 前置审计
+
+- 合并与清理：[PR #70](https://github.com/chengchen-ccnu/ccnu-edulion/pull/70) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@f01035c2c8fca4fbc9f6119bbf8cc6a89f9aea79`；本地 `main` 已 `--ff-only` 同步，T13.5.2 本地和远端分支均已删除。
+- Skill 前置：`public-practice-generation@1.1.0` 已只经标准目录 Runtime 发现、规则选择、渐进 reference、受控脚本和私有执行审计运行；旧类、单例和专用调用已删除。真实模型、Qdrant、Learning 两次复核、确认、作答及清理长链已通过，OpenAPI 0.23.4 与生成客户端无回归。
+- 页面与动作前置：T15A/T15B 已提供独立 AI 页、普通公共题悬浮窗、统一消息/SSE/中断生命周期；T14.3 已提供当前动作、按 action 查询、revision 确认/取消、过期/执行中/成功/失败状态及稳定结果；T10C.2/T12B 已提供公共题入口和既有作答器。
+- 路由边界：T15C 只在既有两个 AI 承载区增加建议/结果卡片，并让 `/practice/:assessmentId` 根据服务端归属事实进入本人自主练习或迁移课程旧链接。不得信任 URL 猜归属、强制跳转、复制答题器、修改全局导航，或进入课程播放器、HOMEWORK/EXAM。
+- 准备结论：T13.5.2、T14.3、T15A、T15B、T10C.2 和 T12B 均已合并，所需契约、生成客户端、页面承载区和作答器完整，T15C 前置条件满足。已从干净 `main@f01035c` 创建 `codex/t15c-practice-generation-web`；当前只更新状态和前置审计，没有实现 Vue 或修改 OpenAPI、Java、Python。
+- 数据：本次合并、只读审计、文档更新和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
 ## 2026-09-13 T13.5.2 组题标准 Skill 迁移
 
 - 前置核对：工作区开始时干净，分支为 `codex/t13.5.2-practice-standard-skill`，HEAD 为规划提交 `232a1c4`；完整审计 T13.5.1 Runtime、旧组题类、Python 服务/工具/协议测试、Java 流与 pending 校验及 T14.3 真实验收脚本。
