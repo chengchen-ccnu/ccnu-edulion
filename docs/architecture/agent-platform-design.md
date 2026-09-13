@@ -166,7 +166,7 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T13.5.1 已于 2026-09-13 建立通用目录 Runtime，内部 Agent 契约升级为 1.4.0，Agent Access Flyway 最高版本为 V7。T14.3 的 `public-practice-generation@1.0.0` 仍是硬编码 `PracticeGenerationSkill` 单例，本任务没有迁移、删除或双注册它；因此包内当前没有具体标准 Skill，T13.5.2 完成组题迁移前 T15C 继续暂停。
+T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime，内部 Agent 契约升级为 1.4.0，Agent Access Flyway 最高版本为 V7。T14.3 的 `public-practice-generation@1.0.0` 仍是硬编码 `PracticeGenerationSkill` 单例；因此包内当前没有具体标准 Skill，T13.5.2 完成组题迁移前 T15C 继续暂停。
 
 T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
 
