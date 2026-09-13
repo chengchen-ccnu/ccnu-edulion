@@ -19,6 +19,24 @@ import org.junit.jupiter.api.Test;
 class HttpAuthorizedContextResolverTest {
 
     @Test
+    void currentQuestionMediaGrantDefaultsToQuestionImageWhenLearningOmitsPurpose() throws Exception {
+        Class<?> grantType = Class.forName(
+                "com.eduplatform.agentaccess.service.HttpAuthorizedContextResolver$MediaGrant");
+        var constructor = grantType.getDeclaredConstructor(String.class, String.class, long.class, String.class,
+                String.class, Map.class, Instant.class, String.class);
+        constructor.setAccessible(true);
+        Object grant = constructor.newInstance(UUID.randomUUID().toString(), "image/png", 128L, "GET",
+                "https://fixture.invalid/image", null, Instant.now().plusSeconds(60), null);
+        var purpose = grantType.getDeclaredMethod("purpose");
+        var headers = grantType.getDeclaredMethod("headers");
+        purpose.setAccessible(true);
+        headers.setAccessible(true);
+
+        assertThat(purpose.invoke(grant)).isEqualTo("QUESTION_IMAGE");
+        assertThat(headers.invoke(grant)).isEqualTo(Map.of());
+    }
+
+    @Test
     void savedContextUsesExactHistoricalProjectionAndMessageMediaGrant() {
         UUID owner = UUID.randomUUID();
         UUID questionId = UUID.randomUUID();

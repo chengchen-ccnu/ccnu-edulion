@@ -12,6 +12,7 @@ import { onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import QuestionMediaAction from "../components/QuestionMediaAction.vue";
+import PracticeFloatingChat from "../components/PracticeFloatingChat.vue";
 import { studentQuestionApi } from "../question-api";
 
 const route = useRoute();
@@ -121,5 +122,6 @@ function messageFor(error: unknown) {
       <dl class="public-question-knowledge"><div><dt>知识点</dt><dd>{{ question.knowledgePoints.map(item => item.name).join("、") || "未标注" }}</dd></div></dl>
       <aside class="question-bank-scope">当前可浏览题目，在线作答尚未开放。</aside>
     </article>
+    <PracticeFloatingChat :question="question" />
   </main>
 </template>

@@ -1234,3 +1234,23 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 自动化：Java 全仓 `clean verify` 的 8 个业务/基础模块 Reactor 全部成功；Learning 103 项通过、19 项条件跳过，Agent Access 46 项通过、3 项条件跳过。新增覆盖历史/当前版本差异、选择题、组合题、题图、批量去重、非 owner、错配、归档、依赖不可用、敏感字段排除、消息绑定授权和重新生成历史恢复。前端 `generate:api`、8 workspace typecheck、46 文件/314 项测试和三端 build 全部通过，仅保留既有大 chunk 警告；`git diff --check` 通过。
 - 数据：仅使用测试进程内 H2 与 Mockito 媒体替身，测试结束随进程销毁；未连接或修改任何现有 MySQL、Redis、RabbitMQ、Qdrant、Neo4j 或 OSS，未创建迁移、长期 Seed、伪数据、真实消息或媒体对象，无需清理业务数据。
 - 交付：分支 `codex/t14.2.5-agent-question-context-projection` 基于 `main@494d359`，规划提交 `d47e2c0` 已先行推送，关键实现提交为 `1aba37f`。[Ready PR #66](https://github.com/chengchen-ccnu/ccnu-edulion/pull/66) 目标为 `main`，保持 Open 且未自行合并。
+
+## 2026-09-12 PR #66 合并与 T15B 前置审计
+
+- 合并与清理：[PR #66](https://github.com/chengchen-ccnu/ccnu-edulion/pull/66) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@d544840b31597339f3a336c8f1aef2e6051f7002`；本地 `main` 已 `--ff-only` 同步，T14.2.5 本地和远端分支均已删除。
+- 契约前置：OpenAPI 0.23.3 已提供 `PRACTICE_FLOATING`、历史消息的 AVAILABLE/UNAVAILABLE 精确题目版本投影，以及绑定 conversation/message/version/media 的题图短期授权。Agent Access 继续校验 owner，Learning 继续拥有题目事实；历史版本不回退当前版本，生成客户端无需手写 DTO。
+- 页面前置：T10C.2 已交付 `/practice/questions/:questionId` 与公共题图安全渲染，T15A 已交付会话 API、SSE、停止/恢复、消息渲染和响应式基础。T15B 可在既有题目页增加桌面右下角/手机近全屏悬浮承载，复用这些能力，不修改全局导航、课程播放器、HOMEWORK/EXAM、结果页或错题本。
+- 状态前置：`AgentConversation.entryPoint/lastMessageAt/activeRunId` 与消息上下文足以实现只对悬浮会话生效的 30 分钟空闲换新、同会话单运行、多标签冲突和切题不换会话。关闭/转完整页继续使用既有取消与部分回答保存语义，不需要新增 Redis、数据库迁移或后端会话状态机。
+- 准备结论：T15B 前置条件满足。已从干净 `main@d544840` 创建 `codex/t15b-practice-floating-chat`；当前只更新 T14.2.5 合并状态和 T15B 前置审计，没有实现 Vue、修改 OpenAPI/Java/Python 或扩大自主组题/评分范围。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
+## 2026-09-12 T15B 普通自主练习悬浮答疑
+
+- 页面与边界：只在学生端 `/practice/questions/:questionId` 增加桌面右下角/手机近全屏答疑；课程播放器、HOMEWORK、EXAM、结果页和错题本没有入口。打开只读最近会话，首次发送才创建 `PRACTICE_FLOATING`；不提交答案、判分或修改进度。
+- 会话与草稿：只复用 ACTIVE 悬浮会话；无活动 run 时优先按最近 `FINAL_RESULT.occurredAt`、没有 run 时按最近有效聊天时间判断 30 分钟，活动 run 永不因空闲窗口换新。切题不重置会话/消息/流，未发送草稿继续绑定原题并提供显式切换；409、停止、断线恢复、部分回答、重新生成和转完整页沿用 T15A 协议。
+- 历史与媒体：USER 消息默认折叠 OpenAPI 0.23.3 精确版本投影，展开后才加载内容与媒体；AVAILABLE 渲染题型、题干、选项、有序小问和正文题图，UNAVAILABLE 明确失败关闭且不查当前题。历史图只使用 conversation/message/version/media 绑定授权和共享安全 Blob loader/cache，签名 URL 不落 DOM/存储；完整 AI 页面也复用同一卡片，不把公共题图当作私有上传。
+- 联调缺陷修复：真实带图发送暴露 Agent Access 既有 `MediaGrant` 缺省用途导致的 NPE，现归一为 `QUESTION_IMAGE`；取消后再次发送又暴露 Python 活动槽位延迟释放，现于接受取消时原子释放且旧流不能误删新 run。两项均有回归测试，OpenAPI、事件、数据库和服务边界未改变。
+- 自动化：前端 generate/typecheck 的 8 个 workspace 通过，Vitest 49 文件 330 项通过，三端 build 通过（仅既有大 chunk 警告）；Python 66 项通过、9 项真实开关跳过；Java 全仓 `clean verify` 的既有本分支结果为 9 个 Reactor 模块成功，270 项执行、235 项通过、35 项真实开关跳过。前端定向 4 文件 23 项及 Python 取消回归覆盖懒创建、精确终态 30 分钟、活动运行、取消后立即复用槽位、草稿关联、精确投影/授权、折叠懒加载、UNAVAILABLE、完整页恢复、生命周期中止、焦点和边界。
+- 真实验收：固定学生经真实 Gateway 依次打开含两张与七张 OSS 图片的两个 ACTIVE SYSTEM 题；仅打开面板时会话数仍为 0。首轮生成关闭后保存 CANCELLED 中断消息；跨题继续同一 conversation，修复 Python 取消槽位后下一轮成功 COMPLETED；完整页恢复相同历史并展开七张消息绑定题图。390×844 近全屏、Escape 焦点恢复、无横向滚动通过；图片均为 `blob:`，Web Storage 为空，console error 为 0。
+- 数据与清理：未新建数据库、表、迁移、Seed、账号、题目或媒体。真实验收创建 1 会话、6 消息、3 run（CANCELLED/FAILED/COMPLETED 各 1）、1 usage、11 run event、1 cancellation、36 题图授权和 6 个精确 Redis key；全部按 conversation/run/grant/key 逆依赖删除，日额度扣回本轮 24000 后保留既有 32000。Agent/Media/Redis 本轮残留均为 0，没有新增 IAM 刷新/登录记录或 OSS 写入。所有 5173、8000、8080、8081、8083、8084、8086 服务在验收后停止。
+- 配置与交付：没有新增环境变量或修改 `local.env`，没有需要删除/迁移的本地明文配置。实现、启动、演示、清理与风险见 [T15B 交付文档](../delivery/T15B-practice-floating-chat.md)；实现提交 `4e19c79` 与验收补强提交 `49c8d8e` 已就绪，Ready [PR #67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67) 目标为 `main`，保持 Open 且不自动合并。

@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AiHomePage from "./views/AiHomePage.vue";
 
 const api = vi.hoisted(() => ({ conversations: vi.fn(), preference: vi.fn(), createConversation: vi.fn(), updatePreference: vi.fn(),
-  conversation: vi.fn(), messages: vi.fn(), events: vi.fn(), cancel: vi.fn(), send: vi.fn(), regenerate: vi.fn() }));
+  conversation: vi.fn(), messages: vi.fn(), events: vi.fn(), cancel: vi.fn(), send: vi.fn(), regenerate: vi.fn(),
+  messageQuestionMediaGrant: vi.fn() }));
 vi.mock("./agent-api", () => ({ studentAgentApi: api }));
 let app: App | undefined; let host: HTMLDivElement;
 beforeEach(() => { vi.resetAllMocks(); Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) }); host = document.createElement("div"); document.body.append(host); api.conversations.mockResolvedValue({ items: [], page: 1, size: 30, total: 0 }); api.preference.mockResolvedValue({ value: "GUIDED_STEP_BY_STEP", revision: 0, explicitlySet: false }); });
@@ -53,5 +54,17 @@ describe("T15A entry component", () => {
     api.events.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 });
     await mountWorkspace("/ai/conversations/conversation-1"); await vi.waitFor(() => expect(host.textContent).toContain("部分"));
     expect(host.textContent).not.toContain("重新生成回答");
+  });
+  it("在完整页面用消息绑定题目卡恢复悬浮会话，不把公共题图误当本人上传图片", async () => {
+    const conversation = { id: "conversation-floating", entryPoint: "PRACTICE_FLOATING", title: "新的 AI 对话", status: "ACTIVE", revision: 1,
+      activeRunId: null, createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:02Z", lastMessageAt: "2026-09-12T00:00:00Z" };
+    api.conversations.mockResolvedValue({ items: [conversation], page: 1, size: 30, total: 1 }); api.conversation.mockResolvedValue(conversation);
+    api.messages.mockResolvedValue({ items: [{ id: "user-floating", conversationId: conversation.id, role: "USER", content: "怎么想？",
+      completeness: "COMPLETE", context: { questionId: "question-1", questionVersionId: "version-1", mediaIds: ["media-1"] },
+      questionContextProjection: { status: "AVAILABLE", question: { questionId: "question-1", questionVersionId: "version-1",
+        type: "FILL_BLANK", stem: "历史题干", options: [], media: [], children: [] } }, sequenceNo: 1, createdAt: "2026-09-12T00:00:00Z" }],
+      page: 1, size: 100, total: 1 }); api.events.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 });
+    await mountWorkspace(`/ai/conversations/${conversation.id}`); await vi.waitFor(() => expect(host.textContent).toContain("附带题目"));
+    expect(host.textContent).not.toContain("题图暂时无法读取");
   });
 });

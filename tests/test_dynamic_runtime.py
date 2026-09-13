@@ -799,10 +799,21 @@ class DynamicRuntimeTests(unittest.TestCase):
                 await asyncio.sleep(0.01)
             outcome, _ = await runtime.cancel(str(request.runId), str(uuid4()))
             self.assertEqual(outcome, "CANCELLATION_ACCEPTED")
+
+            # 取消一经接受就应允许同会话开始下一轮；旧流稍后收尾时不能误删新运行槽位。
+            replacement_request = run_request(conversation_id=request.conversationId)
+            replacement_handle, replacement_replayed = await runtime.open_run(replacement_request)
             await task
             self.assertEqual(events[-1]["payload"]["terminalStatus"], "CANCELLED")
             self.assertEqual(events[-1]["payload"]["answerCompleteness"], "INTERRUPTED")
             self.assertEqual(events[-1]["payload"]["interruptionNotice"], "回答已中断")
+            with self.assertRaises(RunConflict):
+                await runtime.open_run(run_request(conversation_id=request.conversationId))
+            await runtime.cancel(str(replacement_request.runId), str(uuid4()))
+            replacement_events = [
+                event async for event in runtime.stream(replacement_handle, replacement_replayed)
+            ]
+            self.assertEqual(replacement_events[-1]["payload"]["terminalStatus"], "CANCELLED")
 
         asyncio.run(scenario())
 

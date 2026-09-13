@@ -204,19 +204,28 @@ class DynamicAgentRuntime:
             await self._release(handle)
 
     async def cancel(self, run_id: str, cancel_request_id: str) -> tuple[str, TerminalStatus | None]:
-        """按 cancelRequestId 幂等设置取消；终态 run 不会产生第二个终态。"""
+        """按 cancelRequestId 幂等取消运行，并在接受取消后释放会话并发槽位。
 
-        handle = self._runs.get(run_id)
-        if handle is None:
-            raise KeyError(run_id)
-        if handle.terminal:
-            status = TerminalStatus(handle.events[-1]["payload"]["terminalStatus"])
-            return "ALREADY_TERMINAL", status
-        if cancel_request_id in handle.cancel_ids:
-            return "ALREADY_CANCELLED", TerminalStatus.CANCELLED
-        handle.cancel_ids.add(cancel_request_id)
-        handle.cancel_event.set()
-        return "CANCELLATION_ACCEPTED", None
+        输入是 Java 侧已授权的 runId 与幂等取消号；结果说明取消是否首次接受或运行是否已终止。
+        先设置取消信号再释放槽位，旧流随后只负责收尾和生成唯一终态；其清理逻辑会核对 handle，
+        因而不会误删同一会话中新运行占用的槽位。
+        """
+
+        async with self._registry_lock:
+            handle = self._runs.get(run_id)
+            if handle is None:
+                raise KeyError(run_id)
+            if handle.terminal:
+                status = TerminalStatus(handle.events[-1]["payload"]["terminalStatus"])
+                return "ALREADY_TERMINAL", status
+            if cancel_request_id in handle.cancel_ids:
+                return "ALREADY_CANCELLED", TerminalStatus.CANCELLED
+            handle.cancel_ids.add(cancel_request_id)
+            handle.cancel_event.set()
+            conversation_id = str(handle.request.conversationId)
+            if self._active_by_conversation.get(conversation_id) is handle:
+                self._active_by_conversation.pop(conversation_id, None)
+            return "CANCELLATION_ACCEPTED", None
 
     async def _produce(self, handle: RunHandle, sink: EventSink) -> None:
         request = handle.request
