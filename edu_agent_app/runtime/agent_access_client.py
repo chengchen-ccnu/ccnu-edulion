@@ -90,3 +90,24 @@ class AgentAccessClient:
                 if response.status_code != 409 or attempt == 4:
                     response.raise_for_status()
                 await asyncio.sleep(0.1 * (attempt + 1))
+
+    async def start_skill_execution(self, run_id: str, payload: Mapping[str, Any], trace_id: str) -> None:
+        """在 Skill 获选后创建私有 RUNNING 审计；失败向上抛出并阻止脚本执行。"""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+            response = await client.post(
+                f"{self.base_url}/internal/v1/agent/runs/{run_id}/skill-executions",
+                headers=self._headers(trace_id), json=dict(payload),
+            )
+            response.raise_for_status()
+
+    async def finish_skill_execution(self, run_id: str, execution_id: str,
+                                     payload: Mapping[str, Any], trace_id: str) -> None:
+        """更新同一 execution 的完成、失败、取消或超时事实，不发送脚本输入输出。"""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+            response = await client.put(
+                f"{self.base_url}/internal/v1/agent/runs/{run_id}/skill-executions/{execution_id}",
+                headers=self._headers(trace_id), json=dict(payload),
+            )
+            response.raise_for_status()

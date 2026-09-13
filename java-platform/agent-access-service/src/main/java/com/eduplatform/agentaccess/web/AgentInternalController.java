@@ -3,6 +3,7 @@ package com.eduplatform.agentaccess.web;
 import com.eduplatform.agentaccess.config.AgentProperties;
 import com.eduplatform.agentaccess.service.AgentException;
 import com.eduplatform.agentaccess.service.AgentInternalService;
+import com.eduplatform.agentaccess.service.SkillExecutionService;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,10 +25,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentInternalController {
     private final AgentInternalService service;
     private final AgentProperties properties;
+    private final SkillExecutionService skillExecutions;
 
-    public AgentInternalController(AgentInternalService service, AgentProperties properties) {
+    public AgentInternalController(AgentInternalService service, AgentProperties properties,
+            SkillExecutionService skillExecutions) {
         this.service = service;
         this.properties = properties;
+        this.skillExecutions = skillExecutions;
     }
 
     @PostMapping("/internal/v1/agent/runs/{runId}/course-candidates:verify")
@@ -67,6 +71,27 @@ public class AgentInternalController {
             @Valid @RequestBody AgentInternalDtos.RunResultReportRequest request) {
         authorize(caller, token);
         return service.report(runId, request);
+    }
+
+    /** Skill 选中后先落 RUNNING 审计；记录失败时 Runtime 不得执行脚本。 */
+    @PostMapping("/internal/v1/agent/runs/{runId}/skill-executions")
+    public AgentInternalDtos.SkillExecutionResponse startSkill(@PathVariable UUID runId,
+            @RequestHeader("X-Internal-Caller") String caller,
+            @RequestHeader("X-Internal-Service-Token") String token,
+            @Valid @RequestBody AgentInternalDtos.StartSkillExecutionRequest request) {
+        authorize(caller, token);
+        return skillExecutions.start(runId, request);
+    }
+
+    /** 更新同一 Skill execution；请求只携带相对路径和安全失败码。 */
+    @PutMapping("/internal/v1/agent/runs/{runId}/skill-executions/{executionId}")
+    public AgentInternalDtos.SkillExecutionResponse finishSkill(@PathVariable UUID runId,
+            @PathVariable UUID executionId,
+            @RequestHeader("X-Internal-Caller") String caller,
+            @RequestHeader("X-Internal-Service-Token") String token,
+            @Valid @RequestBody AgentInternalDtos.FinishSkillExecutionRequest request) {
+        authorize(caller, token);
+        return skillExecutions.finish(runId, executionId, request);
     }
 
     private void authorize(String caller, String token) {

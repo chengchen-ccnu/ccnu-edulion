@@ -77,6 +77,20 @@ public final class AgentInternalDtos {
             @NotNull @Size(max = 8) List<@NotBlank @Size(max = 500) String> memoryCandidates) {}
     public record RunResultReportResponse(UUID runId, UUID reportId, boolean replayed) {}
 
+    public record StartSkillExecutionRequest(@NotNull UUID executionId,
+            @Positive @Max(2) int sequence,
+            @NotBlank @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$") @Size(max = 80) String skillName,
+            @NotBlank @Pattern(regexp = "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$")
+                    @Size(max = 32) String skillVersion,
+            @NotBlank @Pattern(regexp = "^(EXPLICIT|RULE|LLM)$") String selectionSource) {}
+    public record FinishSkillExecutionRequest(
+            @NotBlank @Pattern(regexp = "^(SUCCEEDED|FAILED|CANCELLED|TIMED_OUT)$") String status,
+            @NotNull @Size(max = 3) List<@NotBlank @Size(max = 240)
+                    @Pattern(regexp = "^references/(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._/-]+$") String> referencePaths,
+            @Size(max = 240) @Pattern(regexp = "^scripts/(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._/-]+\\.py$") String script,
+            @Size(max = 80) @Pattern(regexp = "^[A-Z][A-Z0-9_]{2,79}$") String failureCode) {}
+    public record SkillExecutionResponse(UUID executionId, String status, boolean replayed) {}
+
     public record PracticeCandidateKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
     public record PracticeCriteria(@NotBlank @Size(max = 200) String topic,
             @NotNull AgentDtos.PracticeDifficulty difficulty,

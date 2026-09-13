@@ -301,6 +301,15 @@ public class AgentRepository {
             jdbc.update("UPDATE ai_message SET content=?,completeness=? WHERE id=(SELECT assistant_message_id FROM ai_run WHERE id=?)",
                     assistantContent, completeness.name(), runId.toString());
         }
+        if (terminalSequence != null) {
+            // run 已终态而 Python 尚未完成回调时，保留真实中断事实且绝不自动重跑脚本。
+            jdbc.update("""
+                    UPDATE ai_skill_execution SET status='ABANDONED',completed_at=?,
+                        duration_ms=GREATEST(0,TIMESTAMPDIFF(MICROSECOND,started_at,?)/1000),
+                        failure_code='RUNTIME_INTERRUPTED'
+                    WHERE run_id=? AND status='RUNNING'
+                    """, timestamp(occurredAt), timestamp(occurredAt), runId.toString());
+        }
         return true;
     }
 

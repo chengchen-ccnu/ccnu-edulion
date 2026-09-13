@@ -35,7 +35,7 @@ Python 在线服务仍位于 `edu_agent_app`，一次进程部署多个角色；
 |---|---|---|
 | Coordinator | 规则/LLM 意图、槽位、预算、有限转交 | 路由、澄清、确认/取消动作；不代替领域鉴权 |
 | Math Tutor | 数学问题、概念、学生过程和分步提示 | SOLVE_PROBLEM、EXPLAIN_CONCEPT、COURSE_QUESTION、CHECK_STUDENT_WORK、GIVE_HINT；题库/知识/课程/前置图检索 |
-| Practice Coach | 错题复习、相似题建议 | REVIEW_WRONG_QUESTION、RECOMMEND_PRACTICE；后续加载自主组题 Skill |
+| Practice Coach | 错题复习、相似题建议 | REVIEW_WRONG_QUESTION、RECOMMEND_PRACTICE；T13.5.2 后按需加载标准目录自主组题 Skill |
 | Study Planner | 基于事实的学习建议 | CREATE_PLAN、ADJUST_PLAN、LEARNING_ADVICE；只输出文本 |
 | Platform Help | 面向用户的平台帮助 | 版本化帮助知识库；T13.4 交付前明确不可用，不猜路由或暴露内部文档 |
 
@@ -109,6 +109,7 @@ T14.1/T14.2 在 agent-access 自身 Schema 向前建立所需表，不预建其�
 |---|---|
 | ai_conversation / ai_message | 会话 owner、入口、标题、消息内容和逐消息上下文 |
 | ai_run / ai_tool_call | 执行终态、预算、模型、耗时；工具 ID、脱敏参数/结果摘要 |
+| ai_skill_execution | T13.5.1 向前新增的 Skill 名称/版本、选择来源、相对 reference/脚本、状态、耗时与安全失败码；脚本前先落审计，崩溃残留收口为 ABANDONED |
 | ai_pending_action / ai_pending_action_audit | T14.3 已落地的练习建议、确认/取消/过期、Java 执行结果及脱敏状态审计；MySQL 是唯一事实源 |
 | ai_conversation_summary | 覆盖消息范围、摘要版本 |
 | ai_memory / ai_memory_evidence | 类型、来源、有效性、保留期、证据 |
@@ -163,15 +164,27 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ## 10. 后移能力
 
-### 自主练习 Skill：T14.3 → T15C
+### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T14.3 已于 2026-09-13 实现，外部契约为 OpenAPI 0.23.4，内部 Agent 契约为 1.3.0。Python 平台运行时按 `public-practice-generation@1.0.0` 提出候选；Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。T15C 只需消费公开的安全动作投影、确认/取消/查询和自主练习入口，不得读取 Python 私有状态或另建答题器。
+T13.5.1 已于 2026-09-13 建立通用目录 Runtime，内部 Agent 契约升级为 1.4.0，Agent Access Flyway 最高版本为 V7。T14.3 的 `public-practice-generation@1.0.0` 仍是硬编码 `PracticeGenerationSkill` 单例，本任务没有迁移、删除或双注册它；因此包内当前没有具体标准 Skill，T13.5.2 完成组题迁移前 T15C 继续暂停。
 
-平台运行时 Skill 是项目维护的可复用说明、槽位与工具允许列表，由 Practice Coach 按需加载；Codex skill-creator 仅是开发工具，不能代替平台运行时，也不在聊天中安装任意脚本。主题从明确请求/当前对话取，缺失澄清；默认中等、5 道，1～20 主问题，组合题不拆。选 ACTIVE SYSTEM 公共题，保持初中范围，套内去重、尽量避开近期题；数量不足先说明，不静默放宽。
+T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
+
+选择顺序为显式开发测试调用优先，其次规则/一二级意图筛选，再在多个允许候选中用一次计费、计预算的 LLM 结构化选择；唯一候选直接使用，无匹配走普通专家回答，不反复选择或并行试跑。学生界面不展示 `$skill-name`、内部名称或脚本路径。每个子请求最多一个 Skill，一轮最多两个；Skill 指令优先级低于平台安全、用户明确要求和 Runtime 公共规则，不能扩大工具 grant、资源 scope、调用预算或 Java 写确认权限。
+
+Skill 选中后才加载完整 `SKILL.md`，模型只能通过 Runtime 的 `read_skill_reference` 读取当前目录 UTF-8 文本，通过 `run_skill_script` 执行当前 `scripts/` 内的 `.py`；绝对路径、`..`、符号链接、二进制和其他 Skill 均拒绝。默认每轮最多 3 个 reference、单文件 128 KiB、总量 256 KiB；脚本默认 10 秒、Skill 可在全局 30 秒上限内申请，输出最大 64 KiB，全局并发默认 4。上述均为可配置默认值并计入现有上下文、工具、模型和总时限预算，取消/断线/耗尽立即终止，不遗留后台进程。
+
+脚本属于受信生产代码，但仍以只读 Skill 目录、独立临时工作目录、清理后的非秘密环境和 JSON stdin/stdout 运行；首期只支持 Runtime 已安装依赖中的 Python，不自行安装包、不访问网络/数据库、不启动子进程。Runtime 使用 `yaml.safe_load`，因此 PyYAML 进入正式依赖；本地仍可用既有 `D:\Anaconda\envs\langgraph\python.exe`，部署与 CI 只依赖仓库声明，不依赖该绝对路径。
+
+Runtime 为成功脚本输出生成模型不可伪造的 `skillName`、版本、script、executionId、resultType 和 payload 信封。Skill 选择后、脚本执行前必须经 Agent Access 私有接口落 `ai_skill_execution`；记录失败则 fail closed，不执行脚本且不产生组题动作。审计只存内部 ID、顺序、名称/版本、选择来源、相对 reference/脚本、状态/耗时和安全失败码，不存指令正文、输入输出、题干答案、秘密或绝对路径；Python 崩溃或 run 终态时将遗留 RUNNING 收口为 ABANDONED/RUNTIME_INTERRUPTED，不自动重跑。该私有事实需要向前迁移和内部协议，不通过浏览器 OpenAPI、SSE 或 RabbitMQ 暴露。
+
+T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skills/public-practice-generation/SKILL.md`、`scripts/validate_proposal.py` 和 `references/practice-rules.md`；无消费者的 `agents/openai.yaml` 删除。新版本为 `1.1.0`，部署时 Java 先兼容新版本再切换 Python；历史 `1.0.0` 记录继续可读，但旧 Python 类、单例和专用执行分支全部删除。组题脚本只处理主题/难度/数量默认与边界、组合题计数、候选去重和结构校验；Qdrant 继续只经 `QUESTION_SEARCH` 工具，Java 继续复核和创建，模型文本伪造的 proposal 不得进入 pending action。
+
+迁移后主题仍从明确请求/当前对话取，缺失澄清；默认中等、5 道，1～20 主问题，组合题不拆。只选 ACTIVE SYSTEM 初中公共题，套内去重、尽量避开近期题；数量不足先说明，不静默放宽。Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。T13.5.2 必须以真实 Qdrant→Java 复核→确认→创建→作答→清理长链证明行为不退化，且保持 T15C 所需 OpenAPI 0.23.4 浏览器契约兼容。
 
 Java 保存经过校验的 pendingAction，默认 10 分钟过期，绑定用户、参数、revision、候选版本/条件和确认身份。学生明确确认后由 Learning 创建普通自主练习，无倒计时，复用作答/评分。条件或数量实质变化重新确认；修改条件使旧建议失效。文字“好的”仅在唯一、明确待确认动作时适用。重复确认/超时重试必须返回同次结果，未知结果先查询；数据库事务和唯一约束负责最终幂等。
 
-成功显示主题/实际题数/开始练习卡片，不强制跳转；失败保留条件。模型小例题只用于聊天，不自动成为正式题目、试卷或评分答案。Skill 创建练习不授权 Agent 替学生提交或打分。
+T13.5.1/T13.5.2 合并后重新准备 T15C。成功卡片显示主题/实际题数/开始练习，不强制跳转；失败保留条件。模型小例题只用于聊天，不自动成为正式题目、试卷或评分答案。Skill 创建练习不授权 Agent 替学生提交或打分。
 
 ### 平台帮助：T13.4
 
@@ -190,6 +203,7 @@ Java 保存经过校验的 pendingAction，默认 10 分钟过期，绑定用户
 | Q76、Q90 | §2、8：保留主动授权课程文字检索，不恢复课程内嵌聊天 |
 | Q77～Q87、Q91 | §2：练习悬浮、连续跨题会话、折叠题目、草稿、仅悬浮 30 分钟 |
 | Q88～Q89 纠偏 | §1～2：公共题库入口独立任务，Agent 只答疑、不自动评分或操作练习 |
+| 标准 Skill 后续访谈 Q1～Q53 | §3、7、10：Codex 风格目录、渐进加载、受控 Python 脚本、选择/预算/取消、执行审计、组题迁移及 T15C 后移 |
 
 技术参考（选型依据，不替代本项目真实验收）：[Qdrant 混合查询](https://qdrant.tech/documentation/search/hybrid-queries/)、[Qdrant 多租户](https://qdrant.tech/documentation/manage-data/multitenancy/)、[BM25 与中文分词](https://qdrant.tech/documentation/search/text-search/full-text-search/)、[BGE 模型说明](https://huggingface.co/BAAI/bge-base-zh)、[语义重排模型](https://huggingface.co/BAAI/bge-reranker-base)、[Spring 流式 WebClient](https://docs.spring.io/spring-framework/reference/web/webflux-webclient.html)。
 

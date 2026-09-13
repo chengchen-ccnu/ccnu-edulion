@@ -660,6 +660,8 @@ T14.2.2 在 Agent Access `local` profile 中复用专用 `edu_platform_agent_dev
 
 项目流程结束时，`OPENAI_API_KEY`、Neo4j 密码及所有服务令牌都必须继续存放在 DPAPI 文件或部署 Secret 中；若曾被人工临时写入 `local.env`，应删除 `AGENT_RUNTIME_CALLBACK_TOKEN`、`AGENT_ACCESS_DOMAIN_TOKEN` 等明文并重新运行初始化脚本迁入对应加密凭据。Base URL、模型名、模型路径、启用开关、超时和窗口上限属于非敏感配置，可保留在 `local.env`。
 
+T13.5.1 增加标准 Skill Runtime 的非敏感统一上限：`AGENT_SKILL_REFERENCE_MAX_FILES=3`、`AGENT_SKILL_REFERENCE_MAX_FILE_BYTES=131072`、`AGENT_SKILL_REFERENCE_MAX_TOTAL_BYTES=262144`、`AGENT_SKILL_SCRIPT_DEFAULT_TIMEOUT_SECONDS=10`、`AGENT_SKILL_SCRIPT_MAX_TIMEOUT_SECONDS=30`、`AGENT_SKILL_SCRIPT_MAX_OUTPUT_BYTES=65536`、`AGENT_SKILL_SCRIPT_GLOBAL_CONCURRENCY=4`。默认值已写入 `.env.example`，可由部署配置覆盖但仍受代码硬上限和交叉校验约束；这些变量不含秘密，不要求写入个人 `local.env`。Runtime 只扫描随 Python wheel 发布的 `edu_agent_app/skills/*/SKILL.md`，不读取用户目录，也不依赖本机 Conda 绝对路径。Agent Access V7 在既有 `edu_platform_agent_dev` 新增 `ai_skill_execution`；真实迁移仍必须经安全包装器，不能手工拼接数据库凭据。
+
 ## T14.2.3 Agent Redis 治理、保留期与媒体 Outbox
 
 Agent Access 在 `local` profile 强制启用 Redis 运行治理，使用独立 `AGENT_REDIS_DATABASE=6` 和默认前缀 `edu:agent:runtime:v1`。Redis 只保存租约、取消标记、最近 run 安全元数据、活动 run 集合和短期额度计数；不得改用 DB 0～5，不得写消息/回答/提示词/工具结果/临时 URL 或秘密。租约默认 15 秒、5 秒续租，取消标记 2 分钟，最近 run 元数据 24 小时，孤儿 run 每 15 秒低频复核；单用户默认并发 2、每分钟 10 个新 run、当日 200000 Token、每 run 预留 8000 Token。这些只是可调开发默认，生产值需另行容量/成本确认。

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.3.0
+  version: 1.4.0
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -12,7 +12,8 @@ info:
     HTTP DTO，也不得出现在流事件、日志或持久消息中。T14.2.1 向前增加可选最近消息窗口以及
     Python 回调 Agent Access 的候选复核、学习事实读取和私有结果报告；T13.4 再向前增加按
     run 授权的版本化用户帮助查询。T14.3 增加按需加载的公共题库自主组题 Skill 及候选提案；
-    Java 必须复核并持久化后才能把安全 pending action 投影给浏览器。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
+    Java 必须复核并持久化后才能把安全 pending action 投影给浏览器。T13.5.1 再增加标准目录
+    Skill 的开始/终态私有审计；审计不承载指令、输入输出或绝对路径。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
 servers:
   - url: http://edu-agent.internal
     description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
@@ -217,6 +218,38 @@ paths:
       responses:
         '200': {description: 首次保存或严格幂等重放。, content: {application/json: {schema: {$ref: '#/components/schemas/RunResultReportResponse'}}}}
         '409': {description: run 未终态或已存在不同报告。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+
+  /internal/v1/agent/runs/{runId}/skill-executions:
+    post:
+      tags: [AgentRun]
+      operationId: startSkillExecution
+      summary: Skill 选中后创建私有 RUNNING 审计
+      description: 请求只含 Runtime 生成的 executionId、子请求顺序、名称/版本和选择来源。记录失败时 Runtime 必须 fail closed，不执行脚本或产生组题动作。
+      parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/InternalCaller'}, {$ref: '#/components/parameters/InternalToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/StartSkillExecutionRequest'}}}}
+      responses:
+        '200': {description: 首次创建或严格幂等重放。, content: {application/json: {schema: {$ref: '#/components/schemas/SkillExecutionResponse'}}}}
+        '409': {description: run 已终态或 execution/run/sequence 身份冲突。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+
+  /internal/v1/agent/runs/{runId}/skill-executions/{executionId}:
+    put:
+      tags: [AgentRun]
+      operationId: finishSkillExecution
+      summary: 更新同一 Skill execution 的私有终态
+      description: 只接受完成状态、有界相对 reference/脚本路径和安全失败码；禁止正文、脚本输入输出、提示词、答案、Token、环境变量或绝对路径。
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: executionId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/InternalCaller'
+        - $ref: '#/components/parameters/InternalToken'
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FinishSkillExecutionRequest'}}}}
+      responses:
+        '200': {description: 首次更新或严格幂等重放。, content: {application/json: {schema: {$ref: '#/components/schemas/SkillExecutionResponse'}}}}
+        '404': {description: execution 不存在或不属于该 run。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
+        '409': {description: execution 已由其他终态收口。, content: {application/json: {schema: {$ref: '#/components/schemas/SafeError'}}}}
 
 components:
   parameters:
@@ -1098,6 +1131,43 @@ components:
       properties:
         runId: {type: string, format: uuid}
         reportId: {type: string, format: uuid}
+        replayed: {type: boolean}
+
+    StartSkillExecutionRequest:
+      type: object
+      additionalProperties: false
+      required: [executionId, sequence, skillName, skillVersion, selectionSource]
+      properties:
+        executionId: {type: string, format: uuid}
+        sequence: {type: integer, minimum: 1, maximum: 2}
+        skillName: {type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 80}
+        skillVersion: {type: string, pattern: '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$', maxLength: 32}
+        selectionSource: {type: string, enum: [EXPLICIT, RULE, LLM]}
+      description: Skill 指令和权限不在该请求中；Runtime 只报告已由平台规则允许的选择事实。
+    FinishSkillExecutionRequest:
+      type: object
+      additionalProperties: false
+      required: [status, referencePaths]
+      properties:
+        status: {type: string, enum: [SUCCEEDED, FAILED, CANCELLED, TIMED_OUT]}
+        referencePaths:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items: {type: string, pattern: '^references/(?!.*(?:^|/)\.\.(?:/|$))(?!.*//)[A-Za-z0-9._/-]+$', maxLength: 240}
+        script: {type: string, pattern: '^scripts/(?!.*(?:^|/)\.\.(?:/|$))(?!.*//)[A-Za-z0-9._/-]+\.py$', maxLength: 240}
+        failureCode: {type: string, pattern: '^[A-Z][A-Z0-9_]{2,79}$', maxLength: 80}
+      allOf:
+        - if: {properties: {status: {const: SUCCEEDED}}}
+          then: {properties: {failureCode: false}}
+          else: {required: [failureCode]}
+    SkillExecutionResponse:
+      type: object
+      additionalProperties: false
+      required: [executionId, status, replayed]
+      properties:
+        executionId: {type: string, format: uuid}
+        status: {type: string, enum: [RUNNING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, ABANDONED]}
         replayed: {type: boolean}
 
     ImageArguments:

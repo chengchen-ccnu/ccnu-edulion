@@ -43,6 +43,13 @@ class RuntimeSettings:
     agent_access_base_url: str
     agent_runtime_callback_token: str | None
     agent_access_timeout_seconds: float
+    skill_reference_max_files: int
+    skill_reference_max_file_bytes: int
+    skill_reference_max_total_bytes: int
+    skill_script_default_timeout_seconds: int
+    skill_script_max_timeout_seconds: int
+    skill_script_max_output_bytes: int
+    skill_script_global_concurrency: int
 
 
 def load_runtime_settings() -> RuntimeSettings:
@@ -67,6 +74,25 @@ def load_runtime_settings() -> RuntimeSettings:
         agent_access_base_url=os.getenv("AGENT_ACCESS_BASE_URL", "http://127.0.0.1:8086").rstrip("/"),
         agent_runtime_callback_token=os.getenv("AGENT_RUNTIME_CALLBACK_TOKEN") or None,
         agent_access_timeout_seconds=_float("AGENT_ACCESS_REQUEST_TIMEOUT_SECONDS", 5.0, 0.1, 30.0),
+        skill_reference_max_files=_integer("AGENT_SKILL_REFERENCE_MAX_FILES", 3, 1, 20),
+        skill_reference_max_file_bytes=_integer(
+            "AGENT_SKILL_REFERENCE_MAX_FILE_BYTES", 128 * 1024, 1, 1024 * 1024
+        ),
+        skill_reference_max_total_bytes=_integer(
+            "AGENT_SKILL_REFERENCE_MAX_TOTAL_BYTES", 256 * 1024, 1, 4 * 1024 * 1024
+        ),
+        skill_script_default_timeout_seconds=_integer(
+            "AGENT_SKILL_SCRIPT_DEFAULT_TIMEOUT_SECONDS", 10, 1, 30
+        ),
+        skill_script_max_timeout_seconds=_integer(
+            "AGENT_SKILL_SCRIPT_MAX_TIMEOUT_SECONDS", 30, 1, 30
+        ),
+        skill_script_max_output_bytes=_integer(
+            "AGENT_SKILL_SCRIPT_MAX_OUTPUT_BYTES", 64 * 1024, 1024, 1024 * 1024
+        ),
+        skill_script_global_concurrency=_integer(
+            "AGENT_SKILL_SCRIPT_GLOBAL_CONCURRENCY", 4, 1, 32
+        ),
     )
 
 
@@ -77,6 +103,7 @@ def build_runtime(settings: RuntimeSettings | None = None):
     from .runtime.service import DynamicAgentRuntime
     from .runtime.session import ConversationStore
     from .runtime.tools import ToolExecutor
+    from .runtime.skill_runtime import SkillRegistry, SkillRuntimeConfig, SkillScriptRunner
 
     settings = settings or load_runtime_settings()
     model = OpenAICompatibleModel(ModelSettings(
@@ -116,6 +143,18 @@ def build_runtime(settings: RuntimeSettings | None = None):
         callback = AgentAccessClient(settings.agent_access_base_url,
                                      settings.agent_runtime_callback_token,
                                      settings.agent_access_timeout_seconds)
+    skill_config = SkillRuntimeConfig(
+        reference_max_files=settings.skill_reference_max_files,
+        reference_max_file_bytes=settings.skill_reference_max_file_bytes,
+        reference_max_total_bytes=settings.skill_reference_max_total_bytes,
+        script_default_timeout_seconds=settings.skill_script_default_timeout_seconds,
+        script_max_timeout_seconds=settings.skill_script_max_timeout_seconds,
+        script_max_output_bytes=settings.skill_script_max_output_bytes,
+        script_global_concurrency=settings.skill_script_global_concurrency,
+    )
+    skill_config.validate()
+    skill_registry = SkillRegistry.discover()
+    skill_runner = SkillScriptRunner(skill_config)
     tools = ToolExecutor(
         search_service=search, graph=graph, model=model,
         course_verifier=callback.verify_course if callback else None,
@@ -127,4 +166,7 @@ def build_runtime(settings: RuntimeSettings | None = None):
         tools=tools,
         sessions=ConversationStore(settings.conversation_compression_threshold_chars),
         telemetry=callback.report if callback else None,
+        skill_registry=skill_registry,
+        skill_runner=skill_runner,
+        skill_audit=callback if callback else None,
     )
