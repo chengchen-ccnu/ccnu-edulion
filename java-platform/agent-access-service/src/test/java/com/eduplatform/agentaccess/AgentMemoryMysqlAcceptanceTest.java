@@ -17,7 +17,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
- * 显式开关下在 Agent Access 专用开发 Schema 验证 V3 和幂等强证据。
+ * 显式开关下在 Agent Access 专用开发 Schema 验证完整迁移链和幂等强证据。
  *
  * <p>用例只创建本轮随机 owner/source 的最小记忆事实，finally 按精确 owner 逆序清理；
  * 不连接 RabbitMQ、Learning/Course 数据库或 Python 状态。</p>
@@ -46,15 +46,15 @@ class AgentMemoryMysqlAcceptanceTest {
         }
     }
 
-    /** V1/V2/V3 必须按顺序在真实 MySQL 成功，V3 表和 ai_run 归一化列必须完整。 */
+    /** V1 至 V7 必须按顺序在真实 MySQL 成功，Skill 私有审计表不得缺失。 */
     @Test
-    void v3MigrationIsCompleteAndRestartSafe() {
+    void migrationsThroughV7AreCompleteAndRestartSafe() {
         assertThat(jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
-                String.class)).containsExactly("1", "2", "3");
+                String.class)).containsExactly("1", "2", "3", "4", "5", "6", "7");
         assertThat(jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class))
-                .containsAll(V3_TABLES);
+                .containsAll(V3_TABLES).contains("ai_skill_execution");
         assertThat(jdbc.queryForList("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_schema=DATABASE() AND table_name='ai_run'

@@ -18,3 +18,6 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
 include = ["edu_agent_app*"]
+
+[tool.setuptools.package-data]
+edu_agent_app = ["skills/*/SKILL.md", "skills/*/scripts/*", "skills/*/references/*", "skills/*/assets/*"]

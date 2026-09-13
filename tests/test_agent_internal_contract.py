@@ -118,6 +118,32 @@ class AgentInternalContractTests(unittest.TestCase):
         }
         self.assertSchemaValid("RunResultReportRequest", report)
 
+    def test_skill_execution_audit_contract_is_private_and_bounded(self):
+        """Skill 审计只接受 Runtime 身份、相对路径和安全终态，不承载正文或输入输出。"""
+        start = {
+            "executionId": "00000000-0000-4000-8000-000000000204",
+            "sequence": 1,
+            "skillName": "test-skill",
+            "skillVersion": "1.2.3",
+            "selectionSource": "LLM",
+        }
+        finish = {
+            "status": "FAILED",
+            "referencePaths": ["references/rules.md"],
+            "script": "scripts/check.py",
+            "failureCode": "SKILL_SCRIPT_NON_ZERO",
+        }
+        self.assertSchemaValid("StartSkillExecutionRequest", start)
+        self.assertSchemaValid("FinishSkillExecutionRequest", finish)
+        invalid = deepcopy(finish)
+        invalid["script"] = "../other.py"
+        self.assertTrue(schema_errors(openapi_schema(self.http_contract, "FinishSkillExecutionRequest"), invalid))
+        for forbidden in ("prompt", "input", "output", "answer", "environment"):
+            self.assertNotIn(forbidden, self.http_contract["components"]["schemas"]["FinishSkillExecutionRequest"]["properties"])
+        paths = self.http_contract["paths"]
+        self.assertIn("/internal/v1/agent/runs/{runId}/skill-executions", paths)
+        self.assertIn("/internal/v1/agent/runs/{runId}/skill-executions/{executionId}", paths)
+
     def test_retry_keeps_all_logical_and_execution_ids(self):
         """相同逻辑请求重试必须沿用会话、客户端、消息和 run 身份。"""
         original = self.http_examples["validRequests"]["textQuestion"]

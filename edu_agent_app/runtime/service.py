@@ -87,6 +87,10 @@ class DynamicAgentRuntime:
         tools: ToolExecutor,
         sessions: ConversationStore | None = None,
         telemetry: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+        skill_registry: Any | None = None,
+        skill_runner: Any | None = None,
+        skill_audit: Any | None = None,
+        skill_policies: dict[str, Any] | None = None,
     ):
         self.model = model
         self.tools = tools
@@ -94,9 +98,42 @@ class DynamicAgentRuntime:
         self.sessions = sessions or ConversationStore()
         self.classifier = IntentClassifier(model)
         self.telemetry = telemetry
+        # T13.5.1 只注册通用基础设施；现有类式组题仍由原分支执行，T13.5.2 才迁移。
+        self.skill_registry = skill_registry
+        self.skill_runner = skill_runner
+        self.skill_audit = skill_audit
+        self.skill_policies = dict(skill_policies or {})
         self._active_by_conversation: dict[str, RunHandle] = {}
         self._runs: dict[str, RunHandle] = {}
         self._registry_lock = asyncio.Lock()
+
+    async def select_skill(self, *, role: AgentRole, intent: SecondaryIntent, limits: RunLimits,
+                           explicit_name: str | None = None):
+        """按显式、规则、唯一候选或单次 LLM 顺序选择 Skill；失败返回空并继续普通专家回答。"""
+
+        if self.skill_registry is None:
+            return None
+        from .skill_runtime import SkillSelector
+        return await SkillSelector(self.skill_registry, self.skill_policies, self.model).select(
+            role=role.value, intent=intent.value, limits=limits, explicit_name=explicit_name,
+        )
+
+    async def begin_skill_execution(self, *, selection: Any, request: AgentRunRequest,
+                                    sequence: int, limits: RunLimits):
+        """加载已选 Skill 并先落私有审计；缺少审计或记录失败时绝不返回可执行上下文。"""
+
+        if self.skill_registry is None or self.skill_runner is None or self.skill_audit is None:
+            from .skill_runtime import SkillRuntimeError
+            raise SkillRuntimeError("SKILL_AUDIT_UNAVAILABLE", "Skill 私有审计不可用")
+        from .skill_runtime import SkillExecution
+        execution = SkillExecution(
+            loaded=self.skill_registry.load(selection.descriptor.name),
+            selection_source=selection.source, run_id=str(request.runId), sequence=sequence,
+            trace_id=request.traceId, limits=limits, config=self.skill_runner.config,
+            runner=self.skill_runner, audit=self.skill_audit,
+        )
+        await execution.start()
+        return execution
 
     async def open_run(self, request: AgentRunRequest) -> tuple[RunHandle, bool]:
         """原子登记 run；重试只回放公开事件，不会启动第二次模型或工具调用。"""

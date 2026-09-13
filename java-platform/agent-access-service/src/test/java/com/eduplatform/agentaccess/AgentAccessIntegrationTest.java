@@ -17,6 +17,7 @@ import com.eduplatform.agentaccess.service.MemoryIndexProjectionService;
 import com.eduplatform.agentaccess.service.PendingPracticeService;
 import com.eduplatform.agentaccess.service.MessageRetentionService;
 import com.eduplatform.agentaccess.service.RunGovernance;
+import com.eduplatform.agentaccess.service.SkillExecutionService;
 import com.eduplatform.agentaccess.service.AuthorizedContextResolver;
 import com.eduplatform.agentaccess.web.AgentDtos;
 import com.eduplatform.agentaccess.web.AgentInternalDtos;
@@ -63,6 +64,7 @@ class AgentAccessIntegrationTest {
     @Autowired FakeDomain domains;
     @Autowired FakeGovernance governance;
     @Autowired PendingPracticeService pendingPractices;
+    @Autowired SkillExecutionService skillExecutions;
     @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
 
     @Test
@@ -83,6 +85,7 @@ class AgentAccessIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_skill_execution");
         jdbc.update("DELETE FROM ai_pending_action_audit");
         jdbc.update("DELETE FROM ai_pending_action");
         jdbc.update("DELETE FROM ai_media_outbox");
@@ -793,6 +796,37 @@ class AgentAccessIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_index_outbox", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT result_normalization_status FROM ai_run WHERE id=?", String.class,
                 prepared.run().id().toString())).isEqualTo("NORMALIZED");
+    }
+
+    @Test
+    /** Skill 开始与完成只保存安全元数据；run 先终止时遗留 RUNNING 必须收口且不产生重跑。 */
+    void skillExecutionAuditIsIdempotentAndAbandonedWithRun() {
+        var prepared = newRun("trace-skill-audit");
+        UUID executionId = UUID.randomUUID();
+        var start = new AgentInternalDtos.StartSkillExecutionRequest(executionId, 1, "test-skill", "1.2.3", "RULE");
+        assertThat(skillExecutions.start(prepared.run().id(), start).replayed()).isFalse();
+        assertThat(skillExecutions.start(prepared.run().id(), start).replayed()).isTrue();
+        var finish = new AgentInternalDtos.FinishSkillExecutionRequest("SUCCEEDED",
+                List.of("references/rules.md"), "scripts/check.py", null);
+        assertThat(skillExecutions.finish(prepared.run().id(), executionId, finish).replayed()).isFalse();
+        assertThat(skillExecutions.finish(prepared.run().id(), executionId, finish).replayed()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM ai_skill_execution WHERE execution_id=?", String.class,
+                executionId.toString())).isEqualTo("SUCCEEDED");
+        complete(prepared, "完成");
+
+        var interrupted = newRun("trace-skill-interrupted");
+        UUID abandonedId = UUID.randomUUID();
+        skillExecutions.start(interrupted.run().id(), new AgentInternalDtos.StartSkillExecutionRequest(
+                abandonedId, 1, "test-skill", "1.2.3", "LLM"));
+        runtime.reset();
+        complete(interrupted, "运行先终止");
+        assertThat(jdbc.queryForMap("SELECT status,failure_code,script_path,reference_paths_json "
+                        + "FROM ai_skill_execution WHERE execution_id=?", abandonedId.toString()))
+                .containsEntry("STATUS", "ABANDONED")
+                .containsEntry("FAILURE_CODE", "RUNTIME_INTERRUPTED")
+                .containsEntry("REFERENCE_PATHS_JSON", "[]");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_skill_execution WHERE execution_id=?",
+                Integer.class, abandonedId.toString())).isEqualTo(1);
     }
 
     private AgentInternalDtos.RunResultReportRequest report(UUID id, String reason) {

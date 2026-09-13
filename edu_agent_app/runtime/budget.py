@@ -62,11 +62,14 @@ class RunLimits:
             raise LimitReached("LLM_CALLS")
         self.usage.llm_calls += 1
 
-    def tool(self, name: ToolName, arguments: dict[str, Any]) -> None:
+    def tool(self, name: ToolName | str, arguments: dict[str, Any]) -> None:
+        """登记一次普通工具或 Skill 工具尝试；失败和重复调用同样占用预算。"""
+
         self.check_time()
         if self.usage.tool_attempts >= self.policy.maxToolAttempts:
             raise LimitReached("TOOL_ATTEMPTS")
-        key = f"{name.value}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
+        tool_name = name.value if isinstance(name, ToolName) else str(name)
+        key = f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
         if self.same_tool_arguments[key] >= self.policy.maxSameToolArgumentsAttempts:
             raise LimitReached("SAME_TOOL_ARGUMENTS")
         self.same_tool_arguments[key] += 1
