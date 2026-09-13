@@ -13,10 +13,13 @@ import com.eduplatform.learning.importing.QuestionImportProcessor;
 import com.eduplatform.learning.importing.QuestionImportParser;
 import com.eduplatform.learning.media.MediaClient;
 import com.eduplatform.learning.persistence.QuestionRepository;
+import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.service.QuestionImportService;
 import com.eduplatform.learning.service.LegacyQuestionImportService;
 import com.eduplatform.learning.service.QuestionService;
+import com.eduplatform.learning.service.AutonomousPracticeService;
+import com.eduplatform.learning.service.LearningAssessmentService;
 import com.eduplatform.learning.web.QuestionDtos;
 import com.eduplatform.learning.web.LearningDtos;
 import com.eduplatform.learning.web.AgentAccessDtos;
@@ -67,6 +70,9 @@ class QuestionBankIntegrationTest {
     @Autowired QuestionImportParser parser;
     @Autowired LegacyQuestionJsonParser legacyParser;
     @Autowired QuestionRepository repository;
+    @Autowired LearningAssessmentRepository assessmentRepository;
+    @Autowired AutonomousPracticeService autonomousPractices;
+    @Autowired LearningAssessmentService assessments;
     @Autowired ObjectMapper objectMapper;
     @Value("${local.server.port}") int port;
     private final HttpClient http = HttpClient.newHttpClient();
@@ -154,6 +160,131 @@ class QuestionBankIntegrationTest {
         assertThat(questions.getSystem(system.id()).stem()).contains("1+1");
         assertThatThrownBy(() -> questions.getSystem(own.id())).isInstanceOfSatisfying(QuestionException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    /** 公共题经 Learning 二次校验后创建无课程本人练习，并复用既有草稿、提交、评分和结果安全边界。 */
+    void autonomousPracticeValidatesCreatesAndCompletesExistingAssessmentFlow() throws Exception {
+        UUID learner = UUID.fromString("00000000-0000-4000-8000-000000009104");
+        var system = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                singleMedium("A"), "trace-autonomous-question").response();
+        var key = new AgentAccessDtos.PracticeCandidateKey(UUID.fromString(system.id()),
+                UUID.fromString(system.currentVersion().id()));
+        var criteria = new AgentAccessDtos.PracticeCriteria("一元一次方程", QuestionModels.Difficulty.MEDIUM, 5);
+        var valid = autonomousPractices.validate(new AgentAccessDtos.ValidatePracticeCandidatesRequest(
+                learner, criteria, List.of(key, key)));
+        assertThat(valid.candidates()).singleElement();
+
+        UUID actionId = UUID.randomUUID();
+        var created = autonomousPractices.create(new AgentAccessDtos.CreateAutonomousPracticeRequest(
+                actionId, learner, criteria, List.of(key)));
+        var replay = autonomousPractices.create(new AgentAccessDtos.CreateAutonomousPracticeRequest(
+                actionId, learner, criteria, List.of(key)));
+        assertThat(replay.assessmentId()).isEqualTo(created.assessmentId());
+        assertThat(jdbc.queryForObject("SELECT course_id FROM assessment WHERE id=?", String.class,
+                created.assessmentId().toString())).isNull();
+        assertThat(jdbc.queryForObject("SELECT ownership_type FROM assessment WHERE id=?", String.class,
+                created.assessmentId().toString())).isEqualTo("AUTONOMOUS");
+        assertThatThrownBy(() -> autonomousPractices.entry(created.autonomousPracticeId(), UUID.randomUUID()))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        var paper = assessments.learnerAssessment(learner.toString(), created.assessmentId().toString());
+        assertThat(objectMapper.writeValueAsString(paper)).doesNotContain("完整解析", "\"answers\"");
+        var attempt = assessments.startAttempt(learner.toString(), created.assessmentId().toString(),
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        UUID itemId = UUID.fromString(paper.questions().get(0).id());
+        var saved = assessments.saveDraft(learner.toString(), attempt.id(), new LearningDtos.SaveDraftRequest(
+                UUID.randomUUID(), attempt.revision(), List.of(new LearningDtos.AnswerInput(itemId, List.of("A")))));
+        var result = assessments.submit(learner.toString(), attempt.id(), new LearningDtos.SubmitAttemptRequest(
+                UUID.randomUUID(), saved.revision(), List.of(new LearningDtos.AnswerInput(itemId, List.of("A")))));
+        assertThat(result.gradeVisible()).isTrue();
+        assertThat(result.answerVisible()).isTrue();
+        assertThat(result.answers().get(0).correctAnswer()).containsExactly("A");
+        assertThat(result.assessment().courseId()).isNull();
+        assertThat(assessmentRepository.listLearnerAssessments(learner.toString(), null, 1, 20))
+                .noneMatch(item -> item.id().equals(created.assessmentId().toString()));
+        assertThat(assessmentRepository.listTeacherAssessments(ADMIN, null, null, 1, 20))
+                .noneMatch(item -> item.id().equals(created.assessmentId().toString()));
+        assertThat(assessmentRepository.teacherGradebookAssessments(UUID.randomUUID().toString(), ADMIN))
+                .noneMatch(item -> item.id().equals(created.assessmentId().toString()));
+
+        jdbc.update("DELETE FROM assessment_participant WHERE assessment_id=?", created.assessmentId().toString());
+        jdbc.update("DELETE FROM assessment_answer WHERE attempt_id=?", attempt.id());
+        jdbc.update("DELETE FROM assessment_attempt WHERE id=?", attempt.id());
+        jdbc.update("DELETE FROM autonomous_practice WHERE assessment_id=?", created.assessmentId().toString());
+        jdbc.update("DELETE FROM assessment_question WHERE assessment_id=?", created.assessmentId().toString());
+        jdbc.update("DELETE FROM assessment WHERE id=?", created.assessmentId().toString());
+    }
+
+    @Test
+    /** Java 不信任索引候选：非 SYSTEM、非初中、主观题、脏版本和重复版本均被剔除。 */
+    void autonomousPracticeRejectsUnsafeOrStaleCandidatesWithoutRelaxingCriteria() {
+        UUID learner = UUID.fromString("00000000-0000-4000-8000-000000009105");
+        var valid = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                singleMedium("A"), "trace-valid").response();
+        var teacher = questions.create(TEACHER, UUID.randomUUID().toString(), singleMedium("A"),
+                "trace-teacher").response();
+        var subjective = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                version(QuestionModels.Type.SHORT_ANSWER, List.of(), List.of("过程")), "trace-subjective").response();
+        var autoChild = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                singleMedium("A"), "trace-auto-child").response();
+        var autoComposite = questions.createImportedComposite(ADMIN, QuestionModels.Scope.SYSTEM,
+                UUID.randomUUID().toString(), version(QuestionModels.Type.COMPOSITE, List.of(), List.of("综合作答")),
+                List.of(autoChild.id()), "trace-auto-composite").response();
+        var manualChild = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                version(QuestionModels.Type.SHORT_ANSWER, List.of(), List.of("过程")), "trace-manual-child").response();
+        var manualComposite = questions.createImportedComposite(ADMIN, QuestionModels.Scope.SYSTEM,
+                UUID.randomUUID().toString(), version(QuestionModels.Type.COMPOSITE, List.of(), List.of("综合作答")),
+                List.of(manualChild.id()), "trace-manual-composite").response();
+        var primaryInput = new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE,
+                QuestionModels.Difficulty.MEDIUM, QuestionModels.Stage.PRIMARY, QuestionModels.Grade.ONE,
+                QuestionModels.Subject.MATHEMATICS, "整数", List.of(new QuestionDtos.OptionInput("A", "1"),
+                        new QuestionDtos.OptionInput("B", "2")),
+                List.of("A"), "解析", List.of(UUID.fromString(PRIMARY_KP)), List.of());
+        var primary = questions.create(TEACHER, UUID.randomUUID().toString(), primaryInput, "trace-primary").response();
+        // 模拟绕过正常索引生产路径的脏 SYSTEM 投影，确认 Learning 仍以真实学段剔除。
+        jdbc.update("UPDATE question_aggregate SET scope='SYSTEM' WHERE id=?", primary.id());
+        List<AgentAccessDtos.PracticeCandidateKey> candidates = List.of(
+                key(valid), key(valid), key(autoComposite), key(teacher), key(subjective), key(manualComposite), key(primary),
+                new AgentAccessDtos.PracticeCandidateKey(UUID.fromString(valid.id()), UUID.randomUUID()));
+        String longTopic = "代".repeat(200);
+        var criteria = new AgentAccessDtos.PracticeCriteria(longTopic, QuestionModels.Difficulty.MEDIUM, 20);
+        var filtered = autonomousPractices.validate(new AgentAccessDtos.ValidatePracticeCandidatesRequest(
+                learner, criteria, candidates));
+        assertThat(filtered.candidates()).hasSize(2)
+                .extracting(AgentAccessDtos.ValidatedPracticeCandidate::questionId)
+                .containsExactly(UUID.fromString(valid.id()), UUID.fromString(autoComposite.id()));
+        var created = autonomousPractices.create(new AgentAccessDtos.CreateAutonomousPracticeRequest(
+                UUID.randomUUID(), learner, criteria, candidates));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_question WHERE assessment_id=?",
+                Integer.class, created.assessmentId().toString())).isEqualTo(2);
+        assertThat(autonomousPractices.entry(created.autonomousPracticeId(), learner).title()).hasSize(160);
+    }
+
+    @Test
+    /** 近期正式提交只作为软排序：新题优先，近期题仍可在数量不足时保留且硬条件不变。 */
+    void autonomousPracticePrefersQuestionsNotRecentlySubmitted() {
+        UUID learner = UUID.fromString("00000000-0000-4000-8000-000000009106");
+        var recent = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                singleMedium("A"), "trace-recent-question").response();
+        var fresh = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(),
+                singleMedium("B"), "trace-fresh-question").response();
+        var criteria = new AgentAccessDtos.PracticeCriteria("方程", QuestionModels.Difficulty.MEDIUM, 1);
+        var prior = autonomousPractices.create(new AgentAccessDtos.CreateAutonomousPracticeRequest(
+                UUID.randomUUID(), learner, criteria, List.of(key(recent))));
+        var paper = assessments.learnerAssessment(learner.toString(), prior.assessmentId().toString());
+        var attempt = assessments.startAttempt(learner.toString(), prior.assessmentId().toString(),
+                new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        var answer = List.of(new LearningDtos.AnswerInput(UUID.fromString(paper.questions().get(0).id()), List.of("A")));
+        assessments.submit(learner.toString(), attempt.id(),
+                new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), attempt.revision(), answer));
+
+        var reordered = autonomousPractices.validate(new AgentAccessDtos.ValidatePracticeCandidatesRequest(
+                learner, new AgentAccessDtos.PracticeCriteria("方程", QuestionModels.Difficulty.MEDIUM, 2),
+                List.of(key(recent), key(fresh))));
+
+        assertThat(reordered.candidates()).extracting(AgentAccessDtos.ValidatedPracticeCandidate::questionId)
+                .containsExactly(UUID.fromString(fresh.id()), UUID.fromString(recent.id()));
     }
 
     @Test
@@ -771,6 +902,19 @@ class QuestionBankIntegrationTest {
                 QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
                 "计算 $1+1$", List.of(new QuestionDtos.OptionInput("A", "2"), new QuestionDtos.OptionInput("B", "3")),
                 List.of(answer), "完整解析", List.of(UUID.fromString(KP)), mediaRows);
+    }
+
+    private QuestionDtos.VersionInput singleMedium(String answer) {
+        return new QuestionDtos.VersionInput(QuestionModels.Type.SINGLE_CHOICE, QuestionModels.Difficulty.MEDIUM,
+                QuestionModels.Stage.JUNIOR, QuestionModels.Grade.SEVEN, QuestionModels.Subject.MATHEMATICS,
+                "计算 $x+1=2$", List.of(new QuestionDtos.OptionInput("A", "1"),
+                        new QuestionDtos.OptionInput("B", "2")), List.of(answer), "完整解析",
+                List.of(UUID.fromString(KP)), List.of());
+    }
+
+    private static AgentAccessDtos.PracticeCandidateKey key(QuestionDtos.QuestionResponse question) {
+        return new AgentAccessDtos.PracticeCandidateKey(UUID.fromString(question.id()),
+                UUID.fromString(question.currentVersion().id()));
     }
 
     private QuestionDtos.VersionInput version(QuestionModels.Type type, List<QuestionDtos.OptionInput> options, List<String> answers) {

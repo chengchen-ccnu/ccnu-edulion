@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from pydantic import ValidationError
 
@@ -15,6 +15,7 @@ from .protocol import (
     IntentSlots,
     PrimaryIntent,
     RoutedSubRequest,
+    RecentMessage,
     SecondaryIntent,
     TrustedContext,
 )
@@ -56,8 +57,8 @@ REQUIRED_SLOTS: dict[SecondaryIntent, tuple[tuple[str, ...], ...]] = {
     SecondaryIntent.CREATE_PLAN: (("planGoal",),),
     SecondaryIntent.ADJUST_PLAN: (("planGoal",),),
     SecondaryIntent.PLATFORM_USAGE_HELP: (("platformTopic",),),
-    SecondaryIntent.ACTION_CONFIRMATION: (("actionId",),),
-    SecondaryIntent.ACTION_CANCELLATION: (("actionId",),),
+    SecondaryIntent.ACTION_CONFIRMATION: (),
+    SecondaryIntent.ACTION_CANCELLATION: (),
 }
 
 _MATH_MARKERS = re.compile(r"[=+×÷√]|\b[xyzabc]\b|方程|函数|几何|三角|概率|分数|负数|因式|证明|数学|计算|面积|周长", re.I)
@@ -116,7 +117,19 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
         if _MATH_MARKERS.search(text) and re.search(r"(?:所以|得到|因为|过程|步骤|我这样)", text):
             values["studentWork"] = text[:20_000]
     elif intent is SecondaryIntent.RECOMMEND_PRACTICE:
-        topic = re.sub(r".*?(推荐|练习|复习)", "", text).strip(" 题目关于的，。")
+        count_match = re.search(r"(\d{1,2})\s*道", text)
+        if count_match:
+            values["questionCount"] = int(count_match.group(1))
+        if re.search(r"(?:简单|容易|基础)", text):
+            values["difficulty"] = "EASY"
+        elif re.search(r"(?:困难|难题|高难)", text):
+            values["difficulty"] = "HARD"
+        else:
+            values["difficulty"] = "MEDIUM"
+        topic = re.sub(r"^(?:请|帮我|给我)?(?:推荐|来|出|生成)?", "", text).strip()
+        topic = re.sub(r"\d{1,2}\s*道|(?:简单|容易|基础|中等|普通|困难|难题|高难)(?:难度)?|关于", "", topic)
+        topic = re.sub(r"(?:的)?(?:练习题|题目|习题|练习|复习)$", "", topic)
+        topic = topic.strip(" 的，。")
         if topic:
             values["practiceTopic"] = topic[:200]
     elif intent in {SecondaryIntent.CREATE_PLAN, SecondaryIntent.ADJUST_PLAN}:
@@ -164,7 +177,7 @@ def _rule_intent(text: str, context: TrustedContext) -> SecondaryIntent | None:
         return SecondaryIntent.PLATFORM_USAGE_HELP
     if re.search(r"课程|课上|这节课|老师讲", normalized):
         return SecondaryIntent.COURSE_QUESTION
-    if re.search(r"解释|概念|什么是|为什么", normalized) and not re.search(r"求|解|计算", normalized):
+    if re.search(r"解释|概念|什么是|为什么", normalized) and not re.search(r"求解|解题|计算", normalized):
         return SecondaryIntent.EXPLAIN_CONCEPT
     if _MATH_MARKERS.search(normalized):
         return SecondaryIntent.SOLVE_PROBLEM
@@ -215,6 +228,30 @@ def _make_decision(intent: SecondaryIntent, text: str, context: TrustedContext) 
         missingSlots=missing,
         subRequests=[],
     )
+
+
+def latest_explicit_practice_topic(
+    messages: Iterable[RecentMessage], context: TrustedContext
+) -> str | None:
+    """从 Java 授权的最近用户消息中恢复明确数学主题；无法由规则抽取时返回空而不猜测。"""
+
+    for message in reversed(list(messages)):
+        if message.role != "USER":
+            continue
+        intent = _rule_intent(message.content, context)
+        if intent not in {
+            SecondaryIntent.RECOMMEND_PRACTICE,
+            SecondaryIntent.EXPLAIN_CONCEPT,
+            SecondaryIntent.SOLVE_PROBLEM,
+            SecondaryIntent.GIVE_HINT,
+        }:
+            continue
+        # 这些槽位只依赖消息原文；这里不读取或伪造任何 Java 资源 ID。
+        slots = _slot_values(message.content, intent, context)
+        topic = slots.practiceTopic or slots.conceptName or slots.problemText
+        if topic:
+            return topic[:200]
+    return None
 
 
 class IntentClassifier:

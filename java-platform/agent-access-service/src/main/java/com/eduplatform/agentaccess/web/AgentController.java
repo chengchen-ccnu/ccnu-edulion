@@ -4,6 +4,7 @@ import com.eduplatform.agentaccess.config.TraceFilter;
 import com.eduplatform.agentaccess.service.AgentConversationService;
 import com.eduplatform.agentaccess.service.AgentRunCoordinator;
 import com.eduplatform.agentaccess.service.ExplanationPreferenceService;
+import com.eduplatform.agentaccess.service.PendingPracticeService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -34,12 +35,14 @@ public class AgentController {
     private final AgentConversationService conversations;
     private final AgentRunCoordinator runs;
     private final ExplanationPreferenceService preferences;
+    private final PendingPracticeService pendingPractices;
 
     public AgentController(AgentConversationService conversations, AgentRunCoordinator runs,
-            ExplanationPreferenceService preferences) {
+            ExplanationPreferenceService preferences, PendingPracticeService pendingPractices) {
         this.conversations = conversations;
         this.runs = runs;
         this.preferences = preferences;
+        this.pendingPractices = pendingPractices;
     }
 
     @PostMapping("/conversations")
@@ -142,5 +145,40 @@ public class AgentController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @Valid @RequestBody AgentDtos.UpdateExplanationPreferenceRequest input) {
         return preferences.update(AgentIdentity.requireLearner(userId, permissions), input);
+    }
+
+    /** 返回会话中唯一仍有效的待确认组题动作；过期与非 owner 均按安全语义处理。 */
+    @GetMapping("/conversations/{conversationId}/pending-practice-action")
+    public AgentDtos.PendingPracticeAction currentPracticeAction(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID conversationId, @RequestParam UUID requestId) {
+        return pendingPractices.current(AgentIdentity.requireLearner(userId, permissions), conversationId);
+    }
+
+    @GetMapping("/pending-practice-actions/{actionId}")
+    public AgentDtos.PendingPracticeAction practiceAction(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID actionId, @RequestParam UUID requestId) {
+        return pendingPractices.get(AgentIdentity.requireLearner(userId, permissions), actionId);
+    }
+
+    /** 浏览器只提交动作 ID、请求 ID 和期望 revision；候选与 owner 一律取服务端持久事实。 */
+    @PostMapping("/pending-practice-actions/{actionId}:confirm")
+    public AgentDtos.PendingPracticeAction confirmPracticeAction(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID actionId,
+            @Valid @RequestBody AgentDtos.ConfirmPendingPracticeActionRequest input, HttpServletRequest servlet) {
+        return pendingPractices.confirm(AgentIdentity.requireLearner(userId, permissions), actionId, input,
+                (String) servlet.getAttribute(TraceFilter.ATTRIBUTE));
+    }
+
+    /** 取消只推进动作状态，不删除会话、题目或已经创建的练习。 */
+    @PostMapping("/pending-practice-actions/{actionId}:cancel")
+    public AgentDtos.PendingPracticeAction cancelPracticeAction(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID actionId,
+            @Valid @RequestBody AgentDtos.CancelPendingPracticeActionRequest input, HttpServletRequest servlet) {
+        return pendingPractices.cancel(AgentIdentity.requireLearner(userId, permissions), actionId, input,
+                (String) servlet.getAttribute(TraceFilter.ATTRIBUTE));
     }
 }

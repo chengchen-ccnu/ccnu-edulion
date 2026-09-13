@@ -1,5 +1,7 @@
 # T15B 普通自主练习悬浮答疑交付
 
+日期：2026-09-13。状态：实现、自动化与真实浏览器验收完成；[PR #67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67) 已以普通 merge 合并为 `main@4786bac`。
+
 ## 任务目标与边界
 
 在学生端受保护的 `/practice/questions/:questionId` 公共题详情页增加 AI 悬浮答疑：桌面固定右下角按钮与面板，手机使用近全屏承载。会话跨题连续、空闲 30 分钟后下次发送换新，活动运行不因超时中断；未发送草稿保留原题关联并允许显式切换当前题。
@@ -56,4 +58,4 @@
 - 规划提交：`acad0db`
 - 实现提交：`4e19c79`
 - 验收补强提交：`49c8d8e`
-- Ready PR：[#67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67)，目标为 `main`，保持 Open 且不在本任务自动合并。
+- PR：[#67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67)，已以普通 merge 合并为 `main@4786bac`。

@@ -15,4 +15,12 @@ public interface AgentDomainClient {
             List<AgentInternalDtos.QuestionVersionKey> versions, String traceId);
     AgentInternalDtos.MediaAccessGrant authorizeQuestionVersionMedia(UUID ownerUserId, UUID questionId,
             UUID questionVersionId, UUID mediaId, String variant, String disposition, String traceId);
+    default AgentInternalDtos.ValidatePracticeCandidatesResponse validatePracticeCandidates(UUID ownerUserId,
+            AgentInternalDtos.PracticeCriteria criteria, List<AgentInternalDtos.PracticeCandidateKey> candidates,
+            String traceId) { throw new UnsupportedOperationException("自主组题领域端口未配置"); }
+    default AgentInternalDtos.AutonomousPracticeResult createAutonomousPractice(UUID actionId, UUID ownerUserId,
+            AgentInternalDtos.PracticeCriteria criteria, List<AgentInternalDtos.PracticeCandidateKey> candidates,
+            String traceId) { throw new UnsupportedOperationException("自主练习创建端口未配置"); }
+    default AgentInternalDtos.AutonomousPracticeResult findAutonomousPractice(UUID actionId, UUID ownerUserId,
+            String traceId) { throw new UnsupportedOperationException("自主练习查询端口未配置"); }
 }

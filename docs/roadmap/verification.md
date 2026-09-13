@@ -1254,3 +1254,22 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 - 真实验收：固定学生经真实 Gateway 依次打开含两张与七张 OSS 图片的两个 ACTIVE SYSTEM 题；仅打开面板时会话数仍为 0。首轮生成关闭后保存 CANCELLED 中断消息；跨题继续同一 conversation，修复 Python 取消槽位后下一轮成功 COMPLETED；完整页恢复相同历史并展开七张消息绑定题图。390×844 近全屏、Escape 焦点恢复、无横向滚动通过；图片均为 `blob:`，Web Storage 为空，console error 为 0。
 - 数据与清理：未新建数据库、表、迁移、Seed、账号、题目或媒体。真实验收创建 1 会话、6 消息、3 run（CANCELLED/FAILED/COMPLETED 各 1）、1 usage、11 run event、1 cancellation、36 题图授权和 6 个精确 Redis key；全部按 conversation/run/grant/key 逆依赖删除，日额度扣回本轮 24000 后保留既有 32000。Agent/Media/Redis 本轮残留均为 0，没有新增 IAM 刷新/登录记录或 OSS 写入。所有 5173、8000、8080、8081、8083、8084、8086 服务在验收后停止。
 - 配置与交付：没有新增环境变量或修改 `local.env`，没有需要删除/迁移的本地明文配置。实现、启动、演示、清理与风险见 [T15B 交付文档](../delivery/T15B-practice-floating-chat.md)；实现提交 `4e19c79` 与验收补强提交 `49c8d8e` 已就绪，Ready [PR #67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67) 目标为 `main`，保持 Open 且不自动合并。
+
+## 2026-09-13 PR #67 合并与 T14.3 前置审计
+
+- 合并与清理：[PR #67](https://github.com/chengchen-ccnu/ccnu-edulion/pull/67) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@4786bac05221c4739872befaa7072735f46157a9`；本地 `main` 已 `--ff-only` 同步，T15B 本地和远端分支均已删除。
+- Agent 前置：T13.2 已提供 ACTIVE SYSTEM 初中数学题的 Qdrant 混合检索、阈值、重排和稳定版本 ID；T13.3 已提供 Practice Coach、`RECOMMEND_PRACTICE`、`practiceTopic` 槽位、`QUESTION_SEARCH` 白名单及有限运行预算。T14.1/T14.2 已提供 owner 会话、run、幂等、额度、审计和 Python→Java 私有结果上报，足以向前增加平台维护的组题 Skill 与候选动作报告。
+- Learning 前置：T09/T10 已提供 ACTIVE SYSTEM 公共题和不可变题目版本，T11 已提供 PRACTICE 作答、保存、提交与客观评分基础。当前 `assessment_assignment` 仅允许 `COURSE`，外部写接口也只允许教师为课程创建测评；这不是外部依赖缺失，而是 T14.3 必须显式向前增加的本人自主练习归属、创建和读取边界。禁止借用教师身份、虚构 courseId 或把公共题浏览当成已创建练习。
+- 待实现边界：Agent Access 增加 `ai_pending_action` 事实、默认 10 分钟有效期、revision/幂等确认取消和未知结果查询；Java 必须再次校验候选仍为 ACTIVE SYSTEM、初中数学、数量与版本，确认后才调用 Learning 事务化创建。Python 只提出主题/难度/数量与候选，不写 MySQL；模型临时例题不进入正式练习。重复确认返回同一结果，条件变化使旧动作失效，数量不足在确认前明确实际数量。
+- 准备结论：T14.3 前置条件满足，范围虽跨 Python、Agent Access 和 Learning，但围绕单一“候选→确认→自主练习”事务闭环，可独立验收且无需先增设另一规划任务。已从干净 `main@4786bac` 创建 `codex/t14.3-practice-generation-skill`；当前仅更新 T15B 合并状态和 T14.3 前置审计，没有实现 OpenAPI、内部协议、迁移、Java、Python 或 Vue。
+- 数据：本次合并、只读审计和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
+## 2026-09-13 T14.3 公共题库自主组题 Skill 与确认契约
+
+- 契约与边界：OpenAPI 0.23.4、内部 Agent 契约 1.3.0 和运行时 Skill `public-practice-generation@1.0.0` 已落地。Python 只提出当前显式主题、默认/指定难度、1～20 主问题和候选身份；Agent Access 在建议落库及确认前两次调用 Learning 复核；Learning 只接受仍为 ACTIVE SYSTEM、初中数学、当前根版本、精确难度和可自动评分类型的题。组合题按完整根题计数，套内去重、近期题软后移，数量不足保持真实实际数量，不生成题库题或替学生作答。
+- 确认与恢复：`ai_pending_action` 默认 10 分钟、同会话唯一 pending slot、revision/CAS 和脱敏审计已实现。修改条件 supersede 旧动作；显式确认、唯一动作下的自然确认、取消、过期、重复请求、并发确认和 Learning 已提交但 HTTP 响应丢失后的查询恢复均返回稳定状态。浏览器只看到安全动作投影；题干、答案、解析、提示词、Token、签名 URL和内部错误均不进入动作响应。
+- Learning 闭环：V16 为旧课程测评保持严格 COURSE 归属，同时新增无课程/教师/倒计时的 `AUTONOMOUS` PRACTICE 和唯一 source action 映射。本人入口复用既有 attempt 保存/提交，提交时自动评分并显示答案；非 owner 不可见，且自主练习不进入课程任务、教师课程归属、成绩册或课程错题统计。
+- 自动化：Java 全仓 `clean verify` 9 个 Reactor 模块全部成功；Learning 106 项、0 失败（19 跳过），Agent Access 51 项、0 失败（3 跳过）。Python compileall、wheel 和全量 unittest 71 项通过（9 项真实开关跳过）。前端 OpenAPI 生成、全 workspace typecheck、49 文件 330 项测试、三端生产 build 全部通过，仅有既有大 chunk 警告。
+- 真实验收：通过安全环境包装器连接既有 Agent/Learning dev Schema、Redis、Qdrant 和真实 BGE/BM25/RRF/reranker，648 题索引参与查询。默认中等 5 道时严格候选实际为 4，短缺如实保留；确认前练习数不变，删除 Redis 事实后确认成功，重复与两路并发确认只创建同一 assessment，模拟 Learning 已提交但响应丢失后再次确认恢复同一结果。开始、保存、提交、自动评分、答案仅提交后可见、supersede、取消、过期、owner/课程/成绩册隔离及安全输出全部通过。
+- 数据与清理：只复用明确的 `edu_platform_agent_dev`、`edu_platform_learning_dev` 和既有 648 点 Qdrant 集合；未创建数据库、账号、课程、题目、媒体、Seed 或永久伪数据。随机会话、run、动作、自主练习、attempt 和 Redis 事实已按本轮稳定 ID 精确清理，最终 `learningRemaining=0`、`agentRemaining=0`、`redisRemaining=0`；验收服务均停止，既有 Qdrant 索引不删除。
+- 配置与后续：没有新增环境变量或修改 `local.env`，无本地明文配置需要删除/迁移。实现、启动、演示和风险见 [T14.3 交付文档](../delivery/T14.3-practice-generation-skill.md)，关键实现提交为 `547e624`。[Ready PR #68](https://github.com/chengchen-ccnu/ccnu-edulion/pull/68) 目标为 `main` 且不自行合并。T15C 现在可消费生成客户端实现建议/修改/过期/未知结果和开始练习卡片，不另建答题器。

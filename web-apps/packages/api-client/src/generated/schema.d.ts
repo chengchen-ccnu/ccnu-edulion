@@ -2393,6 +2393,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/conversations/{conversationId}/pending-practice-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the one current pending practice action in an owner-visible conversation
+         * @description Requires learning:access. An expired current action is atomically marked EXPIRED and then treated as no current action. No action and a foreign conversation are returned as the same safe 404. requestId is a stable identifier for one logical read retry; reads never create or mutate an action except the deterministic expiry transition.
+         */
+        get: operations["getPendingPracticeActionForConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/pending-practice-actions/{actionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an owner-visible practice action and its stable execution result */
+        get: operations["getPendingPracticeAction"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/pending-practice-actions/{actionId}:confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm one current pending action and idempotently create the owner's autonomous practice
+         * @description Requires learning:access. The server uses only the already persisted candidates. expectedRevision is a CAS guard. A repeated requestId or a repeated confirmation returns the same execution result and never creates another practice. An expired action is not refreshed or regenerated.
+         */
+        post: operations["confirmPendingPracticeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/pending-practice-actions/{actionId}:cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel one current pending action without deleting any conversation or created practice */
+        post: operations["cancelPendingPracticeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning/autonomous-practices/{autonomousPracticeId}/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the current owner's autonomous-practice entry
+         * @description Requires learning:access. The practice is course-free and owner-only; a foreign id is a safe 404. The returned relative route is stable and contains no host or token.
+         */
+        get: operations["getAutonomousPracticeEntry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2407,6 +2501,73 @@ export interface components {
         AgentMessageRole: "USER" | "ASSISTANT";
         /** @enum {string} */
         AgentMessageCompleteness: "COMPLETE" | "PARTIAL";
+        /** @enum {string} */
+        PracticeDifficulty: "EASY" | "MEDIUM" | "HARD";
+        /**
+         * @description SHORT_ANSWER is intentionally absent because the first autonomous-practice flow accepts only questions reliably scored by existing deterministic rules. COMPOSITE is valid only when every child is independently auto-scorable.
+         * @enum {string}
+         */
+        PracticeQuestionType: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "COMPOSITE";
+        PracticeGenerationCriteria: {
+            topic: string;
+            difficulty: components["schemas"]["PracticeDifficulty"];
+            /** @default 5 */
+            requestedCount: number;
+        };
+        /** @description Safe identity-only projection after Learning revalidates exact immutable versions. It contains no stem, answer, analysis, scoring rule, storage location, or temporary URL. */
+        PracticeCandidateQuestion: {
+            /** Format: uuid */
+            questionId: string;
+            /** Format: uuid */
+            questionVersionId: string;
+            questionType: components["schemas"]["PracticeQuestionType"];
+            difficulty: components["schemas"]["PracticeDifficulty"];
+        };
+        /** @enum {string} */
+        PendingPracticeActionStatus: "PENDING" | "CONFIRMED" | "CANCELLED" | "EXPIRED" | "EXECUTING" | "SUCCEEDED" | "FAILED";
+        /** @description Stable result of the confirmed action. Replays return the same identifiers and relative route. */
+        AutonomousPracticeExecutionResult: {
+            /** Format: uuid */
+            autonomousPracticeId: string;
+            /** Format: uuid */
+            assessmentId: string;
+            startRoute: string;
+        };
+        /** @description Browser-safe projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent. */
+        PendingPracticeAction: {
+            /** Format: uuid */
+            actionId: string;
+            /** Format: uuid */
+            conversationId: string;
+            criteria: components["schemas"]["PracticeGenerationCriteria"];
+            requestedCount: number;
+            actualCount: number;
+            candidateQuestions: components["schemas"]["PracticeCandidateQuestion"][];
+            status: components["schemas"]["PendingPracticeActionStatus"];
+            revision: number;
+            /** Format: date-time */
+            expiresAt: string;
+            executionResult?: components["schemas"]["AutonomousPracticeExecutionResult"] | null;
+        };
+        ConfirmPendingPracticeActionRequest: {
+            /** Format: uuid */
+            requestId: string;
+            expectedRevision: number;
+        };
+        CancelPendingPracticeActionRequest: {
+            /** Format: uuid */
+            requestId: string;
+            expectedRevision: number;
+        };
+        AutonomousPracticeEntry: {
+            /** Format: uuid */
+            autonomousPracticeId: string;
+            /** Format: uuid */
+            assessmentId: string;
+            title: string;
+            questionCount: number;
+            startRoute: string;
+        };
         CreateAgentConversationRequest: {
             /**
              * Format: uuid
@@ -2723,6 +2884,8 @@ export interface components {
             interruptionNotice?: "回答已中断";
             savedCheckpointSequence?: number;
             references?: components["schemas"]["AgentAuthorizedReference"][];
+            /** @description Present only after Java revalidates and persists a Practice Coach proposal. Python candidate data is never forwarded directly. */
+            pendingPracticeAction?: components["schemas"]["PendingPracticeAction"];
             error?: components["schemas"]["AgentSafeError"];
         } & (unknown & unknown & unknown);
         AgentRunEventPage: {
@@ -4284,8 +4447,11 @@ export interface components {
         AssessmentSummary: {
             /** Format: uuid */
             id: string;
-            /** Format: uuid */
-            courseId: string;
+            /**
+             * Format: uuid
+             * @description Null only for an owner-bound autonomous PRACTICE; course task and teacher APIs never return autonomous assessments.
+             */
+            courseId: string | null;
             /** Format: uuid */
             lessonId: string | null;
             title: string;
@@ -4519,8 +4685,11 @@ export interface components {
         AttemptResultAssessment: {
             /** Format: uuid */
             id: string;
-            /** Format: uuid */
-            courseId: string;
+            /**
+             * Format: uuid
+             * @description Null only for an owner-bound autonomous PRACTICE result.
+             */
+            courseId: string | null;
             /** Format: uuid */
             lessonId: string | null;
             title: string;
@@ -5569,6 +5738,10 @@ export interface components {
         AgentMessageId: string;
         /** @description Owner-scoped Agent run ID; foreign IDs are reported as not found. */
         AgentRunId: string;
+        PendingPracticeActionId: string;
+        AutonomousPracticeId: string;
+        /** @description Stable UUID for retrying one logical read. Reads are naturally idempotent and this identifier is used for correlation rather than selecting domain data. */
+        ReadRequestId: string;
         CourseId: string;
         /** @description Course-domain lesson ID; it must belong to the version selected by the authorization endpoint. */
         LessonId: string;
@@ -9824,6 +9997,159 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["AgentNotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getPendingPracticeActionForConversation: {
+        parameters: {
+            query: {
+                /** @description Stable UUID for retrying one logical read. Reads are naturally idempotent and this identifier is used for correlation rather than selecting domain data. */
+                requestId: components["parameters"]["ReadRequestId"];
+            };
+            header?: never;
+            path: {
+                /** @description Owner-scoped AI conversation ID; foreign IDs are reported as not found. */
+                conversationId: components["parameters"]["AgentConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The unique current action. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPracticeAction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getPendingPracticeAction: {
+        parameters: {
+            query: {
+                /** @description Stable UUID for retrying one logical read. Reads are naturally idempotent and this identifier is used for correlation rather than selecting domain data. */
+                requestId: components["parameters"]["ReadRequestId"];
+            };
+            header?: never;
+            path: {
+                actionId: components["parameters"]["PendingPracticeActionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current action state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPracticeAction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    confirmPendingPracticeAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                actionId: components["parameters"]["PendingPracticeActionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmPendingPracticeActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Stable confirmed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPracticeAction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            409: components["responses"]["AgentConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["AgentUnavailable"];
+        };
+    };
+    cancelPendingPracticeAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                actionId: components["parameters"]["PendingPracticeActionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelPendingPracticeActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Stable cancelled action or idempotent replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPracticeAction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AgentNotFound"];
+            409: components["responses"]["AgentConflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getAutonomousPracticeEntry: {
+        parameters: {
+            query: {
+                /** @description Stable UUID for retrying one logical read. Reads are naturally idempotent and this identifier is used for correlation rather than selecting domain data. */
+                requestId: components["parameters"]["ReadRequestId"];
+            };
+            header?: never;
+            path: {
+                autonomousPracticeId: components["parameters"]["AutonomousPracticeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-visible practice entry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomousPracticeEntry"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
             429: components["responses"]["TooManyRequests"];
         };
     };

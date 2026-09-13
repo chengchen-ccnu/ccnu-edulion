@@ -211,7 +211,7 @@ class ToolExecutor:
             collection=collection,
             query=str(args["query"]),
             intent=intent.value,
-            limit=min(8, int(args.get("limit", 8))),
+            limit=min(20, int(args.get("limit", 8))),
             course_id=args.get("courseId"),
             course_version_id=args.get("courseVersionId"),
             lesson_ids=tuple(args.get("lessonIds", ())),
@@ -245,6 +245,8 @@ class ToolExecutor:
                 title=hit.title[:200] or evidence_type,
                 summary=hit.summary[:4000],
                 revision=hit.source_revision,
+                questionId=hit.entity_id if evidence_type == "QUESTION" else None,
+                questionVersionId=hit.payload.get("question_version_id") if evidence_type == "QUESTION" else None,
             )
             for hit in hits
         ]

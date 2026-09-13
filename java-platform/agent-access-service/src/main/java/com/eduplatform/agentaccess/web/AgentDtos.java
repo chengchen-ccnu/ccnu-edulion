@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,24 @@ public final class AgentDtos {
     public enum ExplanationPreference { GUIDED_STEP_BY_STEP, COMPLETE_SOLUTION }
     public enum QuestionProjectionStatus { AVAILABLE, UNAVAILABLE }
     public enum MediaDisposition { INLINE, ATTACHMENT }
+    public enum PracticeDifficulty { EASY, MEDIUM, HARD }
+    public enum PracticeQuestionType { SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, COMPOSITE }
+    public enum PendingPracticeActionStatus { PENDING, CONFIRMED, CANCELLED, EXPIRED, EXECUTING, SUCCEEDED, FAILED }
+
+    public record PracticeGenerationCriteria(String topic, PracticeDifficulty difficulty, int requestedCount) {}
+    public record PracticeCandidateQuestion(UUID questionId, UUID questionVersionId,
+            PracticeQuestionType questionType, PracticeDifficulty difficulty) {}
+    public record AutonomousPracticeExecutionResult(UUID autonomousPracticeId, UUID assessmentId,
+            String startRoute) {}
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record PendingPracticeAction(UUID actionId, UUID conversationId,
+            PracticeGenerationCriteria criteria, int requestedCount, int actualCount,
+            List<PracticeCandidateQuestion> candidateQuestions, PendingPracticeActionStatus status,
+            long revision, Instant expiresAt, AutonomousPracticeExecutionResult executionResult) {}
+    public record ConfirmPendingPracticeActionRequest(@NotNull UUID requestId,
+            @NotNull @PositiveOrZero Long expectedRevision) {}
+    public record CancelPendingPracticeActionRequest(@NotNull UUID requestId,
+            @NotNull @PositiveOrZero Long expectedRevision) {}
 
     /** 普通 bean 允许浏览器省略可选 title；必填字段仍由 Bean Validation 拒绝。 */
     public static final class CreateConversationRequest {

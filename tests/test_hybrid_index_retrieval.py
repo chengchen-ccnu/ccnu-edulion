@@ -93,6 +93,27 @@ class HybridIndexRetrievalTests(unittest.TestCase):
         self.assertEqual(response.hits, [])
         self.assertEqual(response.trace.accepted_count, 0)
 
+    def test_practice_recommendation_allows_twenty_candidates_only_for_that_intent(self):
+        class LargeIndex:
+            def search_dense(self, _request, _vector, _limit):
+                return [candidate(f"q-{index}", "一元一次方程") for index in range(20)]
+
+            def search_bm25(self, _request, _limit):
+                return []
+
+        class AcceptAllReranker:
+            def score(self, _query, documents):
+                return [0.9] * len(documents)
+
+        request = RetrievalRequest("math_questions", "一元一次方程", "RECOMMEND_PRACTICE", 20)
+        response = HybridSearchService(
+            self.settings(), LargeIndex(), FakeEncoder(), AcceptAllReranker()
+        ).search(request)
+
+        self.assertEqual(len(response.hits), 20)
+        with self.assertRaisesRegex(ValueError, "1..8"):
+            RetrievalRequest("math_questions", "一元一次方程", "SOLVE_PROBLEM", 9).validate()
+
 
 if __name__ == "__main__":
     unittest.main()

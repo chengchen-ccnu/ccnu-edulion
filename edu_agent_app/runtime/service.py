@@ -11,8 +11,9 @@ from time import monotonic, perf_counter
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .budget import LimitReached, RunLimits
-from .intent import ClassifiedIntent, IntentClassifier, wants_full_answer
+from .intent import ClassifiedIntent, IntentClassifier, latest_explicit_practice_topic, wants_full_answer
 from .model import ModelUnavailable
+from .practice_skill import PUBLIC_PRACTICE_GENERATION_SKILL
 from .protocol import (
     AgentRole,
     AgentRunRequest,
@@ -54,6 +55,8 @@ class RunHandle:
     checkpoint_sequence: int | None = None
     cancel_ids: set[str] = field(default_factory=set)
     abort_reason: str = ""
+    practice_proposal: dict[str, Any] | None = None
+    action_control: str | None = None
 
 
 class EventSink:
@@ -254,6 +257,24 @@ class DynamicAgentRuntime:
                     attached.content if attached else None,
                 )
             decision = classified.decision
+            # 本轮明确主题优先；只有本轮没给主题时，才使用进程内或 Java 最近消息中的明确数学主题。
+            # 两处都没有可靠主题则保留 NEEDS_CLARIFICATION，绝不让模型自由猜测。
+            current_topic = (
+                decision.slots.practiceTopic
+                or decision.slots.conceptName
+                or decision.slots.problemText
+                or session_state.topic_key
+                or latest_explicit_practice_topic(request.recentMessages, request.trustedContext)
+            )
+            if decision.secondaryIntent is SecondaryIntent.RECOMMEND_PRACTICE \
+                    and decision.slots.practiceTopic is None and current_topic:
+                decision.slots.practiceTopic = current_topic[:200]
+                decision.missingSlots = [item for item in decision.missingSlots if item != "practiceTopic"]
+                decision.resolution = "NEEDS_CLARIFICATION" if decision.missingSlots else "ROUTED"
+            for sub_request in decision.subRequests:
+                if sub_request.secondaryIntent is SecondaryIntent.RECOMMEND_PRACTICE \
+                        and sub_request.slots.practiceTopic is None and current_topic:
+                    sub_request.slots.practiceTopic = current_topic[:200]
             if decision.resolution == "NEEDS_CLARIFICATION":
                 question = self._clarification(decision.missingSlots)
                 sink.emit("CLARIFICATION_REQUIRED", {"question": question, "missingSlots": decision.missingSlots})
@@ -353,7 +374,8 @@ class DynamicAgentRuntime:
         if intent is SecondaryIntent.UNSUPPORTED:
             return "这个请求超出当前初中数学学习助手的范围。你可以改问一道数学题、一个概念或学习方法。", TerminalStatus.COMPLETED, []
         if intent in {SecondaryIntent.ACTION_CONFIRMATION, SecondaryIntent.ACTION_CANCELLATION}:
-            return "当前没有可确认或取消的动作；自主组题写入将在 T14.3 实现。", TerminalStatus.DEGRADED, []
+            handle.action_control = "CONFIRM_CURRENT" if intent is SecondaryIntent.ACTION_CONFIRMATION else "CANCEL_CURRENT"
+            return "正在处理当前会话中唯一明确的待确认动作。", TerminalStatus.COMPLETED, []
 
         stage = "PLANNING" if role is AgentRole.STUDY_PLANNER else "RETRIEVING"
         sink.emit("STAGE_CHANGED", {"stage": stage, "message": "正在准备可靠的回答"})
@@ -369,6 +391,17 @@ class DynamicAgentRuntime:
                 )
             if evidence[0].directAnswer:
                 return evidence[0].summary, TerminalStatus.COMPLETED, evidence[:1]
+        if role is AgentRole.PRACTICE_COACH and intent is SecondaryIntent.RECOMMEND_PRACTICE:
+            # Skill 仅在精确角色/意图命中后加载；候选不足也不调用模型补题或扩大条件。
+            handle.practice_proposal = PUBLIC_PRACTICE_GENERATION_SKILL.build_proposal(slots, evidence)
+            actual = len(handle.practice_proposal["candidates"])
+            requested = handle.practice_proposal["requestedCount"]
+            return (
+                f"已按“{slots.practiceTopic}”、{slots.difficulty or 'MEDIUM'} 难度检索到 {actual} 道候选题"
+                f"（请求 {requested} 道）。平台还会再次校验题目有效性，确认前不会创建练习。",
+                TerminalStatus.COMPLETED,
+                evidence,
+            )
         sink.emit("STAGE_CHANGED", {"stage": "EXPLAINING", "message": "正在组织回答"})
 
         text = request.userMessage.text
@@ -437,7 +470,10 @@ class DynamicAgentRuntime:
                 "lessonIds": [str(course.lessonId)] if course.lessonId else [], "limit": 5,
             }))
         elif intent in {SecondaryIntent.SOLVE_PROBLEM, SecondaryIntent.CHECK_STUDENT_WORK, SecondaryIntent.GIVE_HINT, SecondaryIntent.RECOMMEND_PRACTICE} and ToolName.QUESTION_SEARCH in granted:
-            arguments: dict[str, Any] = {"query": query, "limit": 5}
+            arguments: dict[str, Any] = {
+                "query": query,
+                "limit": 20 if intent is SecondaryIntent.RECOMMEND_PRACTICE else 5,
+            }
             if request.trustedContext.question:
                 arguments["resourceIds"] = [str(request.trustedContext.question.questionVersionId)]
             invocations.append(ToolInvocation(ToolName.QUESTION_SEARCH, arguments))
@@ -599,6 +635,10 @@ class DynamicAgentRuntime:
             payload["savedCheckpointSequence"] = handle.checkpoint_sequence
         if references:
             payload["references"] = references[:20]
+        if handle.practice_proposal is not None and status is TerminalStatus.COMPLETED:
+            payload["practiceProposal"] = handle.practice_proposal
+        if handle.action_control is not None and status is TerminalStatus.COMPLETED:
+            payload["actionControl"] = handle.action_control
         return payload
 
     def _interrupted_payload(self, handle: RunHandle, status: TerminalStatus) -> dict[str, Any]:

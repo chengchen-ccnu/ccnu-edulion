@@ -109,7 +109,7 @@ T14.1/T14.2 在 agent-access 自身 Schema 向前建立所需表，不预建其�
 |---|---|
 | ai_conversation / ai_message | 会话 owner、入口、标题、消息内容和逐消息上下文 |
 | ai_run / ai_tool_call | 执行终态、预算、模型、耗时；工具 ID、脱敏参数/结果摘要 |
-| ai_pending_action | 后续练习建议、确认、过期和 Java 执行结果；到 T14.3 才建 |
+| ai_pending_action / ai_pending_action_audit | T14.3 已落地的练习建议、确认/取消/过期、Java 执行结果及脱敏状态审计；MySQL 是唯一事实源 |
 | ai_conversation_summary | 覆盖消息范围、摘要版本 |
 | ai_memory / ai_memory_evidence | 类型、来源、有效性、保留期、证据 |
 | ai_profile_topic / ai_preference | 主题与宏观维度的轻量判断、明确/推断偏好 |
@@ -149,7 +149,7 @@ Java 事务 → Outbox → RabbitMQ confirm/return → 独立 Python Index Worke
 
 意图分路：解题优先精确题目/题库再知识补充；概念优先知识；主动课程问题先授权课程再公共知识；检查过程使用题目与相关知识；错题用本人事实；学习建议通常不查题库；寒暄不检索。图片/公式识别不确定先澄清，不能把不可靠 OCR 当事实。
 
-Dense 复用本地 `bge-base-zh`（768 维），查询按模型说明加检索指令，文档不加；Sparse 使用具备中文/多语言分词的 BM25；RRF 融合后由本地 `bge-reranker-base` 重排约 20～30 条候选，最终约 3～8 条。各集合/意图的阈值通过真实题目验证，不能沿用旧 0.42/0.38。BGE-M3 暂不下载，同向量字段不混模型；模型升级须重建索引。实现时核对 Qdrant 服务端 BM25 和客户端版本，不能把英文默认分词或仅全文过滤冒充 BM25 排序。
+Dense 复用本地 `bge-base-zh`（768 维），查询按模型说明加检索指令，文档不加；Sparse 使用具备中文/多语言分词的 BM25；RRF 融合后由本地 `bge-reranker-base` 重排约 20～30 条候选，普通回答最终约 3～8 条。T14.3 的 `RECOMMEND_PRACTICE` 为满足 1～20 道主问题的业务上限，可保留最多 20 个仅含稳定身份与安全元数据的候选，仍由 Learning 逐项复核后才形成待确认动作；其他意图继续保持 8 条上限。各集合/意图的阈值通过真实题目验证，不能沿用旧 0.42/0.38。BGE-M3 暂不下载，同向量字段不混模型；模型升级须重建索引。实现时核对 Qdrant 服务端 BM25 和客户端版本，不能把英文默认分词或仅全文过滤冒充 BM25 排序。
 
 Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退和学习路径；不存学生画像，不每次解题都查。故障时省略图关系增强，继续公共知识讲解。仅执行受控参数化查询，模型不得自由生成无界 Cypher。知识图可从既有 Java 事实重建。
 
@@ -164,6 +164,8 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 ## 10. 后移能力
 
 ### 自主练习 Skill：T14.3 → T15C
+
+T14.3 已于 2026-09-13 实现，外部契约为 OpenAPI 0.23.4，内部 Agent 契约为 1.3.0。Python 平台运行时按 `public-practice-generation@1.0.0` 提出候选；Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。T15C 只需消费公开的安全动作投影、确认/取消/查询和自主练习入口，不得读取 Python 私有状态或另建答题器。
 
 平台运行时 Skill 是项目维护的可复用说明、槽位与工具允许列表，由 Practice Coach 按需加载；Codex skill-creator 仅是开发工具，不能代替平台运行时，也不在聊天中安装任意脚本。主题从明确请求/当前对话取，缺失澄清；默认中等、5 道，1～20 主问题，组合题不拆。选 ACTIVE SYSTEM 公共题，保持初中范围，套内去重、尽量避开近期题；数量不足先说明，不静默放宽。
 
