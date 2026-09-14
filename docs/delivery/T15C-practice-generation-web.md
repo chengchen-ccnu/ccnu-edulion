@@ -58,4 +58,4 @@ pnpm.cmd --dir web-apps --filter @edu/student-web run dev
 
 已知风险：卡片的进程内 requestId 只覆盖当前页面生命周期；浏览器刷新后不会重发未知命令，而是按 action 查询真实结果，这是契约要求的安全降级。EXECUTING 只做三次有限轮询，长任务需要用户手动查询。生产构建仍有既有大 chunk 警告。真实候选依赖本地 Qdrant 可用性；索引停止时实际数量可能为 0，页面会如实禁用确认，不伪造补足。
 
-分支为 `codex/t15c-practice-generation-web`，前置审计提交为 `ebeeabd`。实现提交与 Ready PR 链接将在创建 PR 后补录；PR 保持 Open，不自行合并。
+分支为 `codex/t15c-practice-generation-web`，前置审计提交为 `ebeeabd`，关键实现提交为 `88a4bdb`。[Ready PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 目标为 `main`，保持 Open，不自行合并。
