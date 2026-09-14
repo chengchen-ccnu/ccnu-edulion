@@ -172,6 +172,10 @@ T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动
 
 选择顺序为显式开发测试调用优先，其次规则/一二级意图筛选，再在多个允许候选中用一次计费、计预算的 LLM 结构化选择；唯一候选直接使用，无匹配走普通专家回答，不反复选择或并行试跑。学生界面不展示 `$skill-name`、内部名称或脚本路径。每个子请求最多一个 Skill，一轮最多两个；Skill 指令优先级低于平台安全、用户明确要求和 Runtime 公共规则，不能扩大工具 grant、资源 scope、调用预算或 Java 写确认权限。
 
+T15D 向浏览器开放的不是任意内部名称，而是 OpenAPI 中有限的用户可选能力枚举；当前只有“生成自主练习”。该选择仅绑定下一条消息，Java 映射为受信 Skill 名并写入内部运行请求，Python 仍校验注册状态、角色/意图 eligibility、预算、工具授权和审计。自然语言中的“出 3 道题给我练习”“生成几道一元一次方程练习”属于高精度 `RECOMMEND_PRACTICE`，不应被较宽的“方程”数学标记提前吞为普通解题。
+
+专家在讲解后认为需要巩固时，只能输出一个结构化、单轮有效的 Skill 建议；这不是 pending practice action，不运行脚本、不访问 Qdrant，也不创建练习。只有学生下一轮明确同意且建议仍有效时，Runtime 才按显式选择路径调用组题 Skill；拒绝、改问其他问题或超过有效轮次即清除。普通问答没有真实 action 时，前端完全不显示自主练习卡。
+
 Skill 选中后才加载完整 `SKILL.md`，模型只能通过 Runtime 的 `read_skill_reference` 读取当前目录 UTF-8 文本，通过 `run_skill_script` 执行当前 `scripts/` 内的 `.py`；绝对路径、`..`、符号链接、二进制和其他 Skill 均拒绝。默认每轮最多 3 个 reference、单文件 128 KiB、总量 256 KiB；脚本默认 10 秒、Skill 可在全局 30 秒上限内申请，输出最大 64 KiB，全局并发默认 4。上述均为可配置默认值并计入现有上下文、工具、模型和总时限预算，取消/断线/耗尽立即终止，不遗留后台进程。
 
 脚本属于受信生产代码，但仍以只读 Skill 目录、独立临时工作目录、清理后的非秘密环境和 JSON stdin/stdout 运行；首期只支持 Runtime 已安装依赖中的 Python，不自行安装包、不访问网络/数据库、不启动子进程。Runtime 使用 `yaml.safe_load`，因此 PyYAML 进入正式依赖；本地仍可用既有 `D:\Anaconda\envs\langgraph\python.exe`，部署与 CI 只依赖仓库声明，不依赖该绝对路径。

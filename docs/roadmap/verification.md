@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-09-14 T15D 人工验收缺陷与插队规划
+
+- 插队决定：T15C 合并后用户在真实页面发现 6 项 AI 会话/Skill 交互问题。尚未推送和实施的 T12C.1 保留规划事实但暂停，原本地准备分支已改名为 `codex/t15d-ai-chat-skill-interaction-fixes`；T15D 修复合并后再从最新 `main` 重新准备 T12C.1。
+- 停止与输入：`AiHomePage.vue` 把“停止生成”放在顶部 `ai-chat__header`，发送按钮位于底部 composer；两个入口目前只有文件 input，没有 `paste` 处理或统一“＋”菜单。T15D 将生成态按钮放回发送按钮位置，并在两个既有输入区复用同一套可访问菜单和现有 AI 题图上传链路。
+- 会话管理：OpenAPI `/api/v1/ai/conversations/{conversationId}` 只有 GET，Agent Controller 也没有改名/删除命令；数据库已有 title、revision 和 `ACTIVE/ARCHIVED`，因此首期可向前增加幂等重命名与用户可见删除而无需新表。删除复用 ARCHIVED 和既有保留策略，列表/详情/消息/run 必须按 owner 与 ACTIVE 收口；活动 run 不允许静默删除。
+- 常驻卡原因：`AiHomePage.vue` 与 `PracticeFloatingChat.vue` 都以 `v-if="conversation"` 挂载 `PracticeSuggestionCard`，组件在当前 action 404 后仍渲染“当前没有待确认”的完整空卡。T15D 只在 SSE 或恢复查询取得真实 action 时渲染，不把空卡当作组题入口。
+- 漏判原因：Python 高精度规则只覆盖“推荐…题”“练习…推荐”“相似题”，随后“方程”数学标记把“出 3 道题给我练习”路由为普通解题。T15D 需补齐出题/组题/生成练习的肯定与否定边界、槽位清洗和规则优先级，并以用户原句及近义表达做回归；模糊表达仍只允许一次结构化模型分类。
+- 显式选择缺口：标准 `SkillSelector` 已有 `explicit_name`，但外部 `SendAgentMessageRequest`、Java 内部请求和 Python `AgentRunRequest` 都没有浏览器选择字段，当前 service 调用也未传 `explicit_name`。T15D 需向前演进外部/内部契约，只公开有限能力枚举，由 Java 映射白名单后传入；显式选择不得绕过 eligibility、工具授权、额度、私有审计或 Java 题目复核。
+- 建议后确认：讲解后推荐练习必须是结构化、单轮有效的 Skill offer，与已检索候选的 pending practice action 分开；offer 不执行 Skill。只有学生明确同意后才在下一轮调用，拒绝、转移话题或失效后清除，避免模型普通文字或历史建议触发写动作。
+- 边界与数据：T15D 可修改 OpenAPI/生成客户端、Agent Access、内部协议、Python Runtime 和两个既有 AI 输入区，但不得进入课程播放器、HOMEWORK/EXAM，不新增 Skill 商店、第二套上传或聊天页面，不物理删除审计/用量/记忆事实。本次只读审计和文档规划未连接或修改任何数据库、Redis、RabbitMQ、Qdrant、Neo4j 或 OSS，未创建迁移、伪数据、消息、索引点或媒体对象。
+
 ## 2026-09-14 PR #71 合并与 T12C.1 前置审计
 
 - 合并与清理：[PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@4d7eba512ee25bed2bfb809d8d9d92ec163373d2`；本地 `main` 已 `--ff-only` 同步，T15C 本地和远端分支均已删除。
