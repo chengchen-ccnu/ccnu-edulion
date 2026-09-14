@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-09-14 PR #71 合并与 T12C.1 前置审计
+
+- 合并与清理：[PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@4d7eba512ee25bed2bfb809d8d9d92ec163373d2`；本地 `main` 已 `--ff-only` 同步，T15C 本地和远端分支均已删除。
+- T15C 状态：独立 AI 页和公共题悬浮窗已共用自主练习建议/结果卡片，`/practice/:assessmentId` 已按服务端事实复用既有作答器；真实 5→4 数量不足、确认/并发幂等、未知结果恢复、作答评分和隔离长链通过，临时 Learning、Agent、Redis 数据均清理为 0。
+- 优先级：T12C 原先仅因 T12D.1/T12E 账号闭环后移，两项现已合并；T12C 又是 T17B 的直接依赖。T12H 仍需和尚未完成的 T16 协调跨领域保留，T16A/T17A/T17C 也依赖 T16，因此当前先补齐 T12C 最短依赖链。
+- 契约缺口：现有 `GET /api/v1/teacher/learning/courses/{courseId}/students` 仅返回 learnerId、报名状态、完课数、观看秒数、提交/批改次数和平均分，查询也只有 page/size；它不能支撑页面规格要求的昵称/课程学生编号、课时级进度、成绩摘要、薄弱知识点证据、可解释风险、课程聚合、筛选排序与依赖降级。前端直接实施会被迫跨接口拼接或自行推断，因此 T12C 拆为 T12C.1 后端契约和 T12C.2 前端。
+- T12C.1 前置：T11/T11C 已提供报名、进度、测评、作答、成绩册与课程 owner 门禁，T12G.1 明确教师报表只读 MySQL 持久事实，IAM 已有内部批量昵称投影；所需事实基础存在。具体风险阈值、知识点掌握口径、聚合维度和降级展示仍需在实现前完成产品确认并先冻结 OpenAPI，不能由实现任务猜测。
+- 准备结论：T12C.1 前置依赖满足，已从干净 `main@4d7eba5` 创建 `codex/t12c1-teacher-learning-analytics-contract`。当前只更新任务拆分、合并状态和前置审计，没有修改 OpenAPI、Java、Vue、数据库或业务逻辑。
+- 数据：本次合并、只读审计、文档更新和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
 ## 2026-09-14 T15C 自主练习建议与创建结果卡片
 
 - 实现边界：独立 AI 工作区与普通公共题悬浮答疑共用 `PracticeSuggestionCard`；只消费 OpenAPI 0.23.4 生成路径/类型和服务端 `actionId/revision/status/executionResult`。没有修改 OpenAPI、Java、Python、Skill、数据层、索引、消息队列、OSS、导航、课程播放器或正式测评边界。
