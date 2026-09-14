@@ -17,6 +17,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -67,6 +69,23 @@ public class AgentController {
             @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @PathVariable UUID conversationId) {
         return conversations.get(AgentIdentity.requireLearner(userId, permissions), conversationId);
+    }
+
+    /** 标题修改只作用于本人 ACTIVE 会话，并以 revision 防止覆盖另一窗口的新标题。 */
+    @PatchMapping("/conversations/{conversationId}")
+    public AgentDtos.Conversation rename(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID conversationId, @Valid @RequestBody AgentDtos.RenameConversationRequest input) {
+        return conversations.rename(AgentIdentity.requireLearner(userId, permissions), conversationId, input);
+    }
+
+    /** 删除是可审计归档；活动 run 必须先经既有取消接口停止。 */
+    @DeleteMapping("/conversations/{conversationId}")
+    public ResponseEntity<Void> archive(@RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
+            @PathVariable UUID conversationId, @Valid @RequestBody AgentDtos.ArchiveConversationRequest input) {
+        conversations.archive(AgentIdentity.requireLearner(userId, permissions), conversationId, input);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/conversations/{conversationId}/messages")

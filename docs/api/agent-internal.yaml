@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.5.0
+  version: 1.6.0
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -324,6 +324,9 @@ components:
           default: []
           items: {$ref: '#/components/schemas/RecentMessage'}
           description: 可选向前兼容窗口；按 sequenceNo 升序，总正文最多 16000 字符，且不含当前 messageId。
+        requestedSkill:
+          $ref: '#/components/schemas/RequestedSkill'
+          description: Java 将浏览器有限能力枚举映射后的可信单轮 Skill 请求；浏览器内部名称不得直传。
         trustedContext: {$ref: '#/components/schemas/TrustedContext'}
         budget: {$ref: '#/components/schemas/RunBudget'}
         timeoutPolicy: {$ref: '#/components/schemas/TimeoutPolicy'}
@@ -366,6 +369,27 @@ components:
         completeness: {type: string, enum: [COMPLETE, PARTIAL]}
         sequenceNo: {type: integer, minimum: 1}
       description: 只来自 Agent Access 已持久化 ai_message；排除当前消息、临时 URL、Token、工具原始结果和隐藏画像。
+
+    RequestedSkill:
+      type: object
+      additionalProperties: false
+      required: [skillName, selectionSource]
+      properties:
+        skillName: {type: string, const: public-practice-generation}
+        selectionSource: {type: string, enum: [USER_EXPLICIT]}
+
+    ActiveSkillOffer:
+      type: object
+      additionalProperties: false
+      required: [offerId, skillName, topic, offeredAfterMessageId]
+      properties:
+        offerId: {type: string, format: uuid}
+        skillName: {type: string, const: public-practice-generation}
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        offeredAfterMessageId: {type: string, format: uuid}
+      description: 仅由 Java 从紧邻上一轮已持久化 FINAL_RESULT 恢复；只对当前下一轮有效，拒绝、转题或消费后自然失效。
 
     TrustedContext:
       type: object
@@ -411,6 +435,8 @@ components:
           maxItems: 16
           uniqueItems: true
           items: {$ref: '#/components/schemas/ToolGrant'}
+        activeSkillOffer:
+          $ref: '#/components/schemas/ActiveSkillOffer'
       description: |
         仅包含 Java 已授权的事实。字段中故意不存在 browserRole、permissions、arbitraryCourseId、
         arbitraryQuestionId 或 arbitraryMediaUrl；Python 不得把浏览器原始提交提升为可信事实。
@@ -775,6 +801,9 @@ components:
           type: string
           enum: [CONFIRM_CURRENT, CANCEL_CURRENT]
           description: Natural-language control only. Java may execute it only when the owner-visible conversation has exactly one unexpired PENDING action; otherwise it replaces the answer with a clarification.
+        skillOffer:
+          $ref: '#/components/schemas/SkillOffer'
+          description: 单轮建议事实；不得与 practiceProposal 同时出现，也不得在生成它时运行 Skill 或查询候选题。
         error: {$ref: '#/components/schemas/SafeError'}
       allOf:
         - if: {properties: {terminalStatus: {const: COMPLETED}}}
@@ -793,6 +822,18 @@ components:
     TerminalStatus:
       type: string
       enum: [COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED]
+
+    SkillOffer:
+      type: object
+      additionalProperties: false
+      required: [offerId, skillName, topic, prompt]
+      properties:
+        offerId: {type: string, format: uuid}
+        skillName: {type: string, const: public-practice-generation}
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        prompt: {type: string, minLength: 1, maxLength: 200}
 
     AuthorizedReference:
       type: object

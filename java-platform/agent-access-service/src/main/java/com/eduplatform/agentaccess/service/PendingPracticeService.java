@@ -69,7 +69,7 @@ public class PendingPracticeService {
     }
 
     public AgentDtos.PendingPracticeAction get(UUID owner, UUID actionId) {
-        return projection(expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound)));
+        return projection(expireIfNeeded(activeOwned(owner, actionId)));
     }
 
     public AgentDtos.PendingPracticeAction current(UUID owner, UUID conversationId) {
@@ -102,6 +102,17 @@ public class PendingPracticeService {
             }
             if (action == null) payload.put("finalAnswer", "当前会话没有唯一、有效的待确认动作，请先生成新的组题方案。");
         }
+        if (payload.has("skillOffer")) {
+            JsonNode internalOffer = payload.remove("skillOffer");
+            ObjectNode externalOffer = mapper.createObjectNode();
+            externalOffer.set("offerId", internalOffer.get("offerId"));
+            externalOffer.put("capability", "GENERATE_AUTONOMOUS_PRACTICE");
+            externalOffer.set("topic", internalOffer.get("topic"));
+            if (internalOffer.has("difficulty")) externalOffer.set("difficulty", internalOffer.get("difficulty"));
+            if (internalOffer.has("questionCount")) externalOffer.set("questionCount", internalOffer.get("questionCount"));
+            externalOffer.set("prompt", internalOffer.get("prompt"));
+            payload.set("skillOffer", externalOffer);
+        }
         if (action != null) payload.set("pendingPracticeAction", mapper.valueToTree(action));
         return event;
     }
@@ -121,7 +132,7 @@ public class PendingPracticeService {
 
     private AgentDtos.PendingPracticeAction confirm(UUID owner, UUID actionId, UUID requestId,
             long expectedRevision, String traceId) {
-        Row row = expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound));
+        Row row = expireIfNeeded(activeOwned(owner, actionId));
         if (row.status() == AgentDtos.PendingPracticeActionStatus.SUCCEEDED) return projection(row);
         if (row.status() == AgentDtos.PendingPracticeActionStatus.EXECUTING) return recover(row, traceId);
         if (row.status() != AgentDtos.PendingPracticeActionStatus.PENDING) {
@@ -154,7 +165,7 @@ public class PendingPracticeService {
     /** 取消只允许 PENDING→CANCELLED；相同 requestId 重试返回同一动作且不删除任何领域事实。 */
     public AgentDtos.PendingPracticeAction cancel(UUID owner, UUID actionId,
             AgentDtos.CancelPendingPracticeActionRequest request, String traceId) {
-        Row row = expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound));
+        Row row = expireIfNeeded(activeOwned(owner, actionId));
         if (row.status() == AgentDtos.PendingPracticeActionStatus.CANCELLED
                 && request.requestId().equals(row.cancellationRequestId())) return projection(row);
         if (row.status() != AgentDtos.PendingPracticeActionStatus.PENDING) {
@@ -202,6 +213,13 @@ public class PendingPracticeService {
             }
             return repository.owned(row.ownerUserId(), row.id()).orElseThrow();
         }
+        return row;
+    }
+
+    /** 动作必须同时属于本人和仍为 ACTIVE 的会话；归档后按与不存在相同的 404 处理。 */
+    private Row activeOwned(UUID owner, UUID actionId) {
+        Row row = repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound);
+        if (agents.findConversation(owner, row.conversationId()).isEmpty()) throw notFound();
         return row;
     }
 

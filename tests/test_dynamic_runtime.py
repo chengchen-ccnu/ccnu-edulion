@@ -19,6 +19,7 @@ from edu_agent_app.runtime.protocol import (
     RunBudget,
     SafeToolEvidence,
     SecondaryIntent,
+    TerminalStatus,
     ToolName,
     TrustedContext,
 )
@@ -56,6 +57,7 @@ def run_request(
     context_extra=None,
     budget_extra=None,
     student_work=None,
+    requested_skill=None,
 ):
     trusted = {
         "userId": str(uuid4()),
@@ -77,7 +79,7 @@ def run_request(
         }
     request_budget = budget()
     request_budget.update(budget_extra or {})
-    return AgentRunRequest.model_validate({
+    payload = {
         "protocolVersion": 1,
         "conversationId": str(conversation_id or uuid4()),
         "messageId": str(uuid4()),
@@ -94,7 +96,10 @@ def run_request(
             "idleTimeoutMs": 5000,
             "slowClientBufferMaxEvents": 64,
         },
-    })
+    }
+    if requested_skill:
+        payload["requestedSkill"] = requested_skill
+    return AgentRunRequest.model_validate(payload)
 
 
 class FakeModel:
@@ -180,6 +185,48 @@ async def collect(runtime, request):
 
 
 class DynamicRuntimeTests(unittest.TestCase):
+    def test_explicit_skill_and_single_turn_offer_require_server_state(self):
+        class OfferRuntime(DynamicAgentRuntime):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs); self.practice_calls = []
+
+            async def _prepare_practice(self, handle, role, intent, slots, sequence, limits):
+                self.practice_calls.append((slots.practiceTopic, handle.request.requestedSkill is not None,
+                                            handle.request.trustedContext.activeSkillOffer is not None))
+                return "已进入受控组题路径。", TerminalStatus.COMPLETED, []
+
+        async def scenario():
+            conversation_id = uuid4()
+            runtime = OfferRuntime(model=FakeModel(), tools=ToolExecutor(search_service=FakeSearch()))
+            await collect(runtime, run_request("解释一元一次方程", conversation_id=conversation_id))
+            offered = await collect(runtime, run_request("我还是不明白", conversation_id=conversation_id))
+            offer = offered[-1]["payload"]["skillOffer"]
+            self.assertEqual(offer["skillName"], "public-practice-generation")
+            self.assertEqual(runtime.practice_calls, [])
+
+            active = {key: value for key, value in offer.items() if key != "prompt"}
+            active["offeredAfterMessageId"] = str(uuid4())
+            confirmed = await collect(runtime, run_request("好的", conversation_id=conversation_id,
+                context_extra={"activeSkillOffer": active}))
+            self.assertIn("受控组题路径", confirmed[-1]["payload"]["finalAnswer"])
+            self.assertEqual(runtime.practice_calls[-1], (offer["topic"], False, True))
+
+            before = len(runtime.practice_calls)
+            declined = await collect(runtime, run_request("不用了", conversation_id=conversation_id,
+                context_extra={"activeSkillOffer": active}))
+            self.assertIn("建议已取消", declined[-1]["payload"]["finalAnswer"])
+            await collect(runtime, run_request("那还是解释三角形", conversation_id=conversation_id,
+                context_extra={"activeSkillOffer": active}))
+            await collect(runtime, run_request("好的", conversation_id=conversation_id))
+            self.assertEqual(len(runtime.practice_calls), before)
+
+            explicit = await collect(runtime, run_request("一元一次方程，3道，中等", conversation_id=conversation_id,
+                requested_skill={"skillName": "public-practice-generation", "selectionSource": "USER_EXPLICIT"}))
+            self.assertIn("受控组题路径", explicit[-1]["payload"]["finalAnswer"])
+            self.assertTrue(runtime.practice_calls[-1][1])
+
+        asyncio.run(scenario())
+
     def test_rule_intent_negation_ambiguous_slots_and_subrequest_limit(self):
         async def scenario():
             classifier = IntentClassifier(FakeModel())
@@ -189,6 +236,35 @@ class DynamicRuntimeTests(unittest.TestCase):
 
             goodbye = await classifier.classify("再见", context, RunLimits(RunBudget(**budget())))
             self.assertEqual(goodbye.decision.secondaryIntent, SecondaryIntent.SMALL_TALK)
+
+            for text in (
+                "我刚学完一元一次方程的知识，请你出3道题目给我练习一下",
+                "围绕勾股定理来几道题给我做",
+                "生成一组二次根式自主练习",
+                "给我若干题练习概率",
+            ):
+                practice = await classifier.classify(text, context, RunLimits(RunBudget(**budget())))
+                self.assertEqual(practice.decision.secondaryIntent, SecondaryIntent.RECOMMEND_PRACTICE, text)
+            original = await classifier.classify(
+                "我刚学完一元一次方程的知识，请你出3道题目给我练习一下",
+                context, RunLimits(RunBudget(**budget())),
+            )
+            self.assertEqual(original.decision.slots.practiceTopic, "一元一次方程")
+            self.assertEqual(original.decision.slots.questionCount, 3)
+            too_many = await classifier.classify("请出21道一元一次方程题", context, RunLimits(RunBudget(**budget())))
+            self.assertEqual(too_many.decision.resolution, "NEEDS_CLARIFICATION")
+            self.assertIn("questionCount", too_many.decision.missingSlots)
+
+            for text in ("不要给我出题，解释概念就行", "不要给我出3道题", "如何设计一道好题",
+                         "他说‘给我出3道题练习’是什么意思"):
+                negative_model = FakeModel(json_value={
+                    "primaryIntent": "MATH_TUTORING", "secondaryIntent": "EXPLAIN_CONCEPT",
+                    "role": "MATH_TUTOR", "resolution": "ROUTED",
+                    "slots": {"conceptName": "出题表达"}, "subRequests": [],
+                })
+                negative = await IntentClassifier(negative_model).classify(
+                    text, context, RunLimits(RunBudget(**budget())))
+                self.assertNotEqual(negative.decision.secondaryIntent, SecondaryIntent.RECOMMEND_PRACTICE, text)
 
             ambiguous = await classifier.classify("帮我检查一下", context, RunLimits(RunBudget(**budget())))
             self.assertEqual(ambiguous.decision.resolution, "NEEDS_CLARIFICATION")

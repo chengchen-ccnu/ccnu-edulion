@@ -151,7 +151,9 @@ class SkillSelectionTest(unittest.IsolatedAsyncioTestCase):
             model = ScriptedModel(json_values=[{"skillName": "beta"}, {"skillName": "missing"}])
             selector = SkillSelector(registry, policy, model)
             current = limits()
-            self.assertEqual("alpha", (await selector.select(role="OTHER", intent="NO", limits=current,
+            self.assertIsNone(await selector.select(role="OTHER", intent="NO", limits=current,
+                                                     explicit_name="alpha"))
+            self.assertEqual("alpha", (await selector.select(role="MATH_TUTOR", intent="SOLVE", limits=current,
                                                                explicit_name="alpha")).descriptor.name)
             self.assertIsNone(await selector.select(role="OTHER", intent="NO", limits=current))
             selected = await selector.select(role="MATH_TUTOR", intent="SOLVE", limits=current)

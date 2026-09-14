@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-09-14 T15D 实现与本地验收
+
+- 契约与存储：先把外部 OpenAPI 从 0.23.4 向前升级到 0.24.0，再把 Java→Python 契约从 1.5.0 升到 1.6.0并重新生成前端类型。PATCH/DELETE 会话命令使用 title/expectedRevision/稳定 requestId；Agent Access V8 新增 `ai_conversation_command` 保存命令重放事实，因为会话现有 create request 字段不能区分改名/归档或检测 requestId 载荷复用。删除只把会话改为 `ARCHIVED`，没有级联删除业务历史。
+- 会话与生成：底部发送按钮在生成中原位变为“停止生成”，仍复用既有 SSE cancel、部分回答和“回答已中断”；流 reader、路由离开及卸载统一取消。最近会话三点菜单只含重命名/删除，409 保留编辑输入并允许重载 revision；ACTIVE run 删除为 409，列表、详情、消息、run、Action 和继续发送均按 owner+ACTIVE 收口，非 owner/归档/不存在统一安全 404。真实浏览器发现 Gateway CORS 漏放 PATCH 后已补测试修复。
+- Skill 与卡片：`PracticeSuggestionCard` 无 Action 时根节点不进入 DOM；两个入口都只在 SSE/恢复得到真实 Action 后显示。组题高精度规则优先于普通数学关键词，覆盖用户原句、出题/组题/生成练习/来几道/给我若干题，并排除否定、讨论如何出题和引用；不确定仍最多一次结构化分类。浏览器只提交 `GENERATE_AUTONOMOUS_PRACTICE`，Java 白名单映射为内部 `public-practice-generation`，Python 仍执行 eligibility、授权、预算、循环、审计、脚本和 Java 复核。
+- Offer：完成讲解且本轮有明确困难证据时，Runtime 只在终态返回结构化单轮 `skillOffer` 并把询问追加到回答，不执行 Skill、Qdrant 或 Action；只有下一条消息与相邻服务端 Offer 对应且明确同意才走显式选择路径。拒绝、转移话题或非相邻消息失效。真实浏览器进一步发现“我还是不明白”未被困难规则覆盖，已将“不明白”补入同一服务端规则并用回归测试固定。
+- 输入与可访问性：独立页和普通题悬浮窗共用 `AiInputMenu`，只显示“添加题图/生成自主练习”；选择 chip 可取消且只绑定下一条成功发送，切会话恢复自动。菜单支持方向键、Home/End、Tab、Enter/Space、Escape 和焦点恢复。文件选择与剪贴板 JPG/JPEG、PNG、WebP 继续复用 `AI_QUESTION_IMAGE`，文本粘贴不拦截，错误/取消/卸载清理临时状态与 URL。
+- 自动化：Python `compileall` 与完整 unittest 90/90 通过、10 项按环境设计跳过；前端 generate、typecheck、53 文件 346 项测试和 admin/student/teacher 三个生产构建通过，仅保留既有大 chunk 警告；真实 MySQL `AgentMemoryMysqlAcceptanceTest` 2/2 通过并把 `edu_platform_agent_dev` 从 V7 迁到 V8。最终全仓 Maven `clean verify` 9 个模块全部成功，耗时 3:07；OpenAPI 生成一致性在提交前后分别检查。
+- 真实浏览器：登录固定合成学生后，已真实验证输入区 Stop/中断保存、原用户句、三点改名、删除确认及归档深链 404、两个“＋”菜单、方向键/Enter、单轮选择 chip、无 Action 时 DOM 不存在卡片、文本粘贴、PNG 粘贴启动既有上传链、浏览器返回/刷新及 390px 悬浮窗布局。对象存储端点未启动，PNG 直传按既有契约进入取消/离线态，没有把上传写成成功；Offer 长回答两次在本地浏览器长连接中断并正确保存“回答已中断”，因此真实 Offer 同意/拒绝/转移话题/过期未写成页面通过，自动化状态机测试通过。
+- 数据与清理：只保留 Agent V8 表结构/Flyway 历史。精确删除本轮 3 个会话及其 11 条消息、6 个 run、1 个 Action、命令/事件/Skill/用量等从属事实；删除 1 个 `CANCELED` 且无 mediaId 的上传会话及审计；删除本轮 9 条刷新会话和 2 条登录审计，逐项复核为 0。未创建数据库、账号、题目、课程、正式媒体、OSS 对象、索引点或永久 Seed；固定学生和既有 648 道题保持不变，所有 5173/8000/8080/8081/8083/8084/8086 验收端口已停止。
+
 ## 2026-09-14 T15D 人工验收缺陷与插队规划
 
 - 插队决定：T15C 合并后用户在真实页面发现 6 项 AI 会话/Skill 交互问题。尚未推送和实施的 T12C.1 保留规划事实但暂停，原本地准备分支已改名为 `codex/t15d-ai-chat-skill-interaction-fixes`；T15D 修复合并后再从最新 `main` 重新准备 T12C.1。

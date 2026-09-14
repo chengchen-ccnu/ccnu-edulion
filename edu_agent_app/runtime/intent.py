@@ -66,6 +66,16 @@ _SPLIT = re.compile(
     r"(?:，?然后|，再|再(?=帮我|给我|说说|讲讲|推荐|制定|创建|调整|解释|检查|解|计算)|；|;|并且)"
 )
 _FULL_ANSWER = re.compile(r"(?:完整|直接|最终)(?:答案|解答)|给出答案|一步到位")
+_PRACTICE_REQUEST = re.compile(
+    r"(?:请你|请|帮我|给我)?(?:出|组|生成|来)(?:上|个)?(?:[一二三四五六七八九十两\d]{0,3}|几|若干)?道?"
+    r"(?:关于|有关|相关|类似|相似)?(?:[^，。！？!?]{0,24})?(?:练习题|题目|习题|题)(?:给我)?(?:练习|做)?|"
+    r"(?:生成|创建).{0,24}(?:自主)?练习"
+    r"|给我(?:来|出)?(?:[一二三四五六七八九十两\d]{0,3}|几|若干)?道?题(?:目)?(?:来)?练习"
+)
+_PRACTICE_META = re.compile(r"(?:如何|怎么|怎样)(?:给|为)?.{0,8}(?:出题|组题)|讨论.{0,8}(?:出题|组题)|出题方法")
+_PRACTICE_NEGATION = re.compile(
+    r"(?:不要|不用|不需要|别)(?:给我|帮我|请你)?.{0,16}(?:出|组|生成|来|练习).{0,12}(?:题|练习)"
+)
 
 
 @dataclass(frozen=True)
@@ -118,7 +128,7 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
             values["studentWork"] = text[:20_000]
     elif intent is SecondaryIntent.RECOMMEND_PRACTICE:
         count_match = re.search(r"(\d{1,2})\s*道", text)
-        if count_match:
+        if count_match and 1 <= int(count_match.group(1)) <= 20:
             values["questionCount"] = int(count_match.group(1))
         if re.search(r"(?:简单|容易|基础)", text):
             values["difficulty"] = "EASY"
@@ -126,9 +136,11 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
             values["difficulty"] = "HARD"
         else:
             values["difficulty"] = "MEDIUM"
-        topic = re.sub(r"^(?:请|帮我|给我)?(?:推荐|来|出|生成)?", "", text).strip()
+        learned = re.search(r"(?:学完|复习完|学习了|关于)(.{1,100}?)(?:的知识)?[，,。]?(?:请你|请|帮我|给我)?(?:出|组|生成|来)", text)
+        topic = learned.group(1) if learned else re.sub(r"^(?:请你|请|帮我|给我)?(?:推荐|来|出|组|生成)?", "", text).strip()
         topic = re.sub(r"\d{1,2}\s*道|(?:简单|容易|基础|中等|普通|困难|难题|高难)(?:难度)?|关于", "", topic)
-        topic = re.sub(r"(?:的)?(?:练习题|题目|习题|练习|复习)$", "", topic)
+        topic = re.sub(r"(?:请你|请|帮我|给我)?(?:出|组|生成|来).*$", "", topic)
+        topic = re.sub(r"(?:的)?(?:知识|练习题|题目|习题|练习|复习)$", "", topic)
         topic = topic.strip(" 的，。")
         if topic:
             values["practiceTopic"] = topic[:200]
@@ -139,10 +151,26 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
     return IntentSlots(**{key: value for key, value in values.items() if value is not None})
 
 
+def practice_request_slots(text: str, context: TrustedContext) -> IntentSlots:
+    """为服务端显式能力选择复用同一组题槽位解析与 1～20 校验，不建立第二套解析规则。"""
+
+    return _slot_values(text, SecondaryIntent.RECOMMEND_PRACTICE, context)
+
+
+def practice_count_out_of_range(text: str) -> bool:
+    """显式阿拉伯数字题数超出 1～20 时要求用户修正，绝不静默回落到默认 5 道。"""
+
+    match = re.search(r"(\d{1,3})\s*道", text)
+    return bool(match and not 1 <= int(match.group(1)) <= 20)
+
+
 def _rule_intent(text: str, context: TrustedContext) -> SecondaryIntent | None:
     """识别高精度表达并优先处理否定，无法可靠判定时返回 None 交给模型。"""
 
     normalized = re.sub(r"\s+", "", text)
+    if _PRACTICE_NEGATION.search(normalized) or _PRACTICE_META.search(normalized) \
+            or (re.search(r"(?:他说|她说|引用|原话|这句话)", normalized) and _PRACTICE_REQUEST.search(normalized)):
+        return None
     if re.search(r"不要(?:答案|完整解答)|别(?:直接)?告诉我答案|只(?:要|给)(?:一点)?提示", normalized):
         return SecondaryIntent.GIVE_HINT
     if re.search(r"不要检查|不用检查", normalized) and re.search(r"概念|解释|讲", normalized):
@@ -157,7 +185,7 @@ def _rule_intent(text: str, context: TrustedContext) -> SecondaryIntent | None:
         return SecondaryIntent.GIVE_HINT
     if re.search(r"错题|做错", normalized) and re.search(r"复习|回顾|讲", normalized):
         return SecondaryIntent.REVIEW_WRONG_QUESTION
-    if re.search(r"推荐.*题|练习.*推荐|相似题", normalized):
+    if re.search(r"推荐.*题|练习.*推荐|相似题", normalized) or _PRACTICE_REQUEST.search(normalized):
         return SecondaryIntent.RECOMMEND_PRACTICE
     if re.search(r"调整.*计划|改.*计划", normalized):
         return SecondaryIntent.ADJUST_PLAN
@@ -219,6 +247,8 @@ def _make_decision(intent: SecondaryIntent, text: str, context: TrustedContext) 
             slots.studentWork = attached
     primary, role = _primary(intent, text)
     missing = _missing(intent, slots)
+    if intent is SecondaryIntent.RECOMMEND_PRACTICE and practice_count_out_of_range(text):
+        missing.append("questionCount")
     return IntentDecision(
         primaryIntent=primary,
         secondaryIntent=intent,

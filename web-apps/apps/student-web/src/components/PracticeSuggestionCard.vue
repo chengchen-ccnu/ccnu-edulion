@@ -196,11 +196,10 @@ function formatExpiry() {
 </script>
 
 <template>
-  <section class="practice-suggestion" aria-labelledby="practice-suggestion-title" :aria-busy="loading || busy">
+  <section v-if="action" class="practice-suggestion" aria-labelledby="practice-suggestion-title" :aria-busy="busy">
     <header><div><span>自主练习建议</span><h3 id="practice-suggestion-title">{{ action?.criteria.topic ?? "等待建议" }}</h3></div>
       <strong v-if="action" :class="`practice-suggestion__status is-${action.status.toLowerCase()}`">{{ statusText }}</strong></header>
-    <p v-if="loading" class="practice-suggestion__empty" role="status">正在读取练习建议…</p>
-    <template v-else-if="action">
+    <template>
       <dl class="practice-suggestion__facts"><div><dt>主题</dt><dd>{{ action.criteria.topic }}</dd></div>
         <div><dt>难度</dt><dd>{{ difficultyLabel(action.criteria.difficulty) }}</dd></div>
         <div><dt>请求题数</dt><dd>{{ action.requestedCount }} 道</dd></div>
@@ -226,7 +225,5 @@ function formatExpiry() {
       </div>
       <small v-if="action.status === 'SUCCEEDED'">练习只创建一次；你可以稍后再开始，不会自动跳转。</small>
     </template>
-    <p v-else class="practice-suggestion__empty">当前没有待确认的自主练习建议。你可以在对话中说明主题、难度和题数。</p>
-    <p v-if="!action && message" class="practice-suggestion__message" role="alert">{{ message }}</p>
   </section>
 </template>

@@ -46,15 +46,15 @@ class AgentMemoryMysqlAcceptanceTest {
         }
     }
 
-    /** V1 至 V7 必须按顺序在真实 MySQL 成功，Skill 私有审计表不得缺失。 */
+    /** V1 至 V8 必须按顺序在真实 MySQL 成功，Skill 审计与会话命令幂等表不得缺失。 */
     @Test
-    void migrationsThroughV7AreCompleteAndRestartSafe() {
+    void migrationsThroughV8AreCompleteAndRestartSafe() {
         assertThat(jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank",
-                String.class)).containsExactly("1", "2", "3", "4", "5", "6", "7");
+                String.class)).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         assertThat(jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()", String.class))
-                .containsAll(V3_TABLES).contains("ai_skill_execution");
+                .containsAll(V3_TABLES).contains("ai_skill_execution", "ai_conversation_command");
         assertThat(jdbc.queryForList("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_schema=DATABASE() AND table_name='ai_run'

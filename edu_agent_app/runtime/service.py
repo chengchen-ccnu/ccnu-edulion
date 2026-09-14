@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import UUID
 
 from .budget import LimitReached, RunLimits
-from .intent import ClassifiedIntent, IntentClassifier, latest_explicit_practice_topic, wants_full_answer
+from .intent import ClassifiedIntent, IntentClassifier, latest_explicit_practice_topic, practice_count_out_of_range, practice_request_slots, wants_full_answer
 from .model import ModelUnavailable
 from .protocol import (
     AgentRole,
@@ -33,7 +33,7 @@ from .tools import ToolExecutor, ToolInvocation
 
 
 LOGGER = logging.getLogger("edu_agent_app.runtime")
-_NOT_UNDERSTOOD = re.compile(r"(?:还是|又|完全)?(?:不懂|不会|没明白|看不懂|听不懂)")
+_NOT_UNDERSTOOD = re.compile(r"(?:还是|又|完全)?(?:不懂|不会|没明白|不明白|看不懂|听不懂)")
 
 
 class RunConflict(RuntimeError):
@@ -58,6 +58,7 @@ class RunHandle:
     abort_reason: str = ""
     practice_proposal: dict[str, Any] | None = None
     action_control: str | None = None
+    skill_offer: dict[str, Any] | None = None
 
 
 class EventSink:
@@ -294,6 +295,35 @@ class DynamicAgentRuntime:
                     attached.content if attached else None,
                 )
             decision = classified.decision
+            active_offer = request.trustedContext.activeSkillOffer
+            if request.requestedSkill is not None:
+                explicit_missing = ["questionCount"] if practice_count_out_of_range(request.userMessage.text) else []
+                decision = IntentDecision(
+                    primaryIntent=PrimaryIntent.PRACTICE_COACHING,
+                    secondaryIntent=SecondaryIntent.RECOMMEND_PRACTICE,
+                    role=AgentRole.PRACTICE_COACH,
+                    resolution="NEEDS_CLARIFICATION" if explicit_missing else "ROUTED",
+                    slots=practice_request_slots(request.userMessage.text, request.trustedContext),
+                    missingSlots=explicit_missing,
+                    subRequests=[],
+                )
+            elif active_offer is not None and decision.secondaryIntent is SecondaryIntent.ACTION_CONFIRMATION:
+                decision = IntentDecision(
+                    primaryIntent=PrimaryIntent.PRACTICE_COACHING,
+                    secondaryIntent=SecondaryIntent.RECOMMEND_PRACTICE,
+                    role=AgentRole.PRACTICE_COACH,
+                    resolution="ROUTED",
+                    slots=IntentSlots(practiceTopic=active_offer.topic,
+                        difficulty=active_offer.difficulty or "MEDIUM",
+                        questionCount=active_offer.questionCount or 5),
+                    subRequests=[],
+                )
+            elif active_offer is not None and decision.secondaryIntent is SecondaryIntent.ACTION_CANCELLATION:
+                answer = "好的，本次练习建议已取消。"
+                handle.answer = answer
+                sink.emit("FINAL_RESULT", self._final_payload(TerminalStatus.COMPLETED, answer, "COMPLETE", handle))
+                limits.usage.termination_reason = "SKILL_OFFER_DECLINED"
+                return
             # 本轮明确主题优先；只有本轮没给主题时，才使用进程内或 Java 最近消息中的明确数学主题。
             # 两处都没有可靠主题则保留 NEEDS_CLARIFICATION，绝不让模型自由猜测。
             current_topic = (
@@ -472,6 +502,11 @@ class DynamicAgentRuntime:
         answer = "".join(chunks).strip()
         if not answer:
             raise ModelUnavailable("模型没有返回可用文本")
+        if says_not_understood and status is TerminalStatus.COMPLETED:
+            prompt = "是否需要我生成几道相关练习题，帮助你巩固这一部分？"
+            handle.skill_offer = {"offerId": str(UUID(int=(handle.request.runId.int ^ sequence) & ((1 << 128) - 1))),
+                "skillName": "public-practice-generation", "topic": topic_key[:200], "prompt": prompt}
+            answer = f"{answer}\n\n{prompt}"
         return answer, status, evidence
 
     async def _prepare_practice(
@@ -488,7 +523,11 @@ class DynamicAgentRuntime:
         execution = None
         evidence: list[SafeToolEvidence] = []
         try:
-            selection = await self.select_skill(role=role, intent=intent, limits=limits)
+            explicit_name = handle.request.requestedSkill.skillName if handle.request.requestedSkill else None
+            if explicit_name is None and handle.request.trustedContext.activeSkillOffer is not None:
+                explicit_name = handle.request.trustedContext.activeSkillOffer.skillName
+            selection = await self.select_skill(role=role, intent=intent, limits=limits,
+                                                explicit_name=explicit_name)
             if selection is None:
                 return "本次练习准备失败，请稍后重试", TerminalStatus.DEGRADED, []
             execution = await self.begin_skill_execution(
@@ -714,6 +753,7 @@ class DynamicAgentRuntime:
             "studentWork": "请主动附上你希望我检查的解题过程。",
             "wrongQuestionId": "请从具体错题上下文重新发起。",
             "practiceTopic": "请说明想练习的数学主题。",
+            "questionCount": "每次可生成 1～20 道主问题，请把题目数量调整到这个范围。",
             "planGoal": "请说明学习或复习目标。",
             "actionId": "当前没有可确认的动作标识。",
         }
@@ -756,6 +796,8 @@ class DynamicAgentRuntime:
             payload["practiceProposal"] = handle.practice_proposal
         if handle.action_control is not None and status is TerminalStatus.COMPLETED:
             payload["actionControl"] = handle.action_control
+        if handle.skill_offer is not None and status is TerminalStatus.COMPLETED:
+            payload["skillOffer"] = handle.skill_offer
         return payload
 
     def _interrupted_payload(self, handle: RunHandle, status: TerminalStatus) -> dict[str, Any]:

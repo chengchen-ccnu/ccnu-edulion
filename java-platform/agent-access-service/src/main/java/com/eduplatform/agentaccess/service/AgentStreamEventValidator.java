@@ -113,7 +113,7 @@ final class AgentStreamEventValidator {
     private static void finalResult(JsonNode node, String traceId) {
         Set<String> allowed = Set.of("terminal", "terminalStatus", "finalAnswer", "answerCompleteness",
                 "interruptionNotice", "savedCheckpointSequence", "references", "practiceProposal",
-                "actionControl", "pendingPracticeAction", "error");
+                "actionControl", "pendingPracticeAction", "skillOffer", "error");
         object(node, Set.of("terminal", "terminalStatus", "answerCompleteness"), allowed);
         if (!bool(node, "terminal")) fail();
         String status = text(node, "terminalStatus", 1, 32);
@@ -133,7 +133,27 @@ final class AgentStreamEventValidator {
         if (node.has("actionControl") && !Set.of("CONFIRM_CURRENT", "CANCEL_CURRENT")
                 .contains(text(node, "actionControl", 1, 30))) fail();
         if (node.has("pendingPracticeAction")) pendingPracticeAction(node.get("pendingPracticeAction"));
+        if (node.has("skillOffer")) skillOffer(node.get("skillOffer"));
+        if (node.has("skillOffer") && (node.has("practiceProposal") || node.has("pendingPracticeAction"))) fail();
         if (node.has("error")) safeError(node.get("error"), traceId);
+    }
+
+    /** 同一校验器先检查 Python 私有名称，再检查 Java 投影后的公开能力枚举。 */
+    private static void skillOffer(JsonNode node) {
+        Set<String> common = Set.of("offerId", "topic", "difficulty", "questionCount", "prompt");
+        Set<String> names = new HashSet<>();
+        node.properties().forEach(entry -> names.add(entry.getKey()));
+        boolean internal = names.contains("skillName");
+        Set<String> allowed = new HashSet<>(common);
+        allowed.add(internal ? "skillName" : "capability");
+        object(node, Set.of("offerId", internal ? "skillName" : "capability", "topic", "prompt"), allowed);
+        uuid(node, "offerId"); text(node, "topic", 1, 200); text(node, "prompt", 1, 200);
+        String identity = text(node, internal ? "skillName" : "capability", 1, 80);
+        if (!(internal ? "public-practice-generation" : "GENERATE_AUTONOMOUS_PRACTICE").equals(identity)) fail();
+        if (node.has("difficulty")) difficulty(node, "difficulty");
+        if (node.has("questionCount")) {
+            long count = integer(node, "questionCount", 1); if (count > 20) fail();
+        }
     }
 
     private static void practiceProposal(JsonNode node) {

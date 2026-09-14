@@ -32,6 +32,7 @@ public final class AgentDtos {
     public enum PracticeDifficulty { EASY, MEDIUM, HARD }
     public enum PracticeQuestionType { SINGLE_CHOICE, MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK, COMPOSITE }
     public enum PendingPracticeActionStatus { PENDING, CONFIRMED, CANCELLED, EXPIRED, EXECUTING, SUCCEEDED, FAILED }
+    public enum SelectableCapability { GENERATE_AUTONOMOUS_PRACTICE }
 
     public record PracticeGenerationCriteria(String topic, PracticeDifficulty difficulty, int requestedCount) {}
     public record PracticeCandidateQuestion(UUID questionId, UUID questionVersionId,
@@ -69,10 +70,20 @@ public final class AgentDtos {
         public void setTitle(String value) { title = value; }
     }
 
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Conversation(UUID id, EntryPoint entryPoint, String title, ConversationStatus status,
             long revision, UUID activeRunId, Instant createdAt, Instant updatedAt, Instant lastMessageAt) {}
 
     public record ConversationPage(List<Conversation> items, int page, int size, long total) {}
+
+    /** 会话标题命令使用稳定 requestId 与 revision CAS；服务端还会 strip 并再次拒绝控制字符。 */
+    public record RenameConversationRequest(@NotNull UUID requestId,
+            @NotBlank @Size(max = 80) @Pattern(regexp = "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$") String title,
+            @NotNull @PositiveOrZero Long expectedRevision) {}
+
+    /** 用户可见删除只归档会话，不级联删除消息、run、审计、用量或记忆事实。 */
+    public record ArchiveConversationRequest(@NotNull UUID requestId,
+            @NotNull @PositiveOrZero Long expectedRevision) {}
 
     /** 所有上下文字段都是可选浏览器提示；普通 bean 与严格 Jackson 的缺省属性语义兼容。 */
     public static final class MessageContextRequest {
@@ -113,20 +124,29 @@ public final class AgentDtos {
         @NotNull private UUID clientRequestId;
         @NotBlank @Size(max = 10000) private String content;
         @Valid private MessageContextRequest context;
+        private SelectableCapability selectedCapability;
 
         public SendMessageRequest() {}
         @JsonCreator(mode = JsonCreator.Mode.DISABLED)
         public SendMessageRequest(UUID clientRequestId, String content, MessageContextRequest context) {
+            this(clientRequestId, content, context, null);
+        }
+        @JsonCreator(mode = JsonCreator.Mode.DISABLED)
+        public SendMessageRequest(UUID clientRequestId, String content, MessageContextRequest context,
+                SelectableCapability selectedCapability) {
             this.clientRequestId = clientRequestId;
             this.content = content;
             this.context = context;
+            this.selectedCapability = selectedCapability;
         }
         public UUID clientRequestId() { return clientRequestId; }
         public String content() { return content; }
         public MessageContextRequest context() { return context; }
+        public SelectableCapability selectedCapability() { return selectedCapability; }
         public void setClientRequestId(UUID value) { clientRequestId = value; }
         public void setContent(String value) { content = value; }
         public void setContext(MessageContextRequest value) { context = value; }
+        public void setSelectedCapability(SelectableCapability value) { selectedCapability = value; }
     }
 
     public record UpdateExplanationPreferenceRequest(@NotNull UUID clientRequestId,

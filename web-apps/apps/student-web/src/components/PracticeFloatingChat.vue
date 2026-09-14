@@ -4,7 +4,7 @@
  * 切题保留会话、消息、生成和草稿原关联。关闭或离开页面会取消活动 run、恢复服务端已保存部分并清理请求/监听器。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { AgentConversation, AgentMessage, SystemQuestion } from "@edu/api-client";
+import type { AgentConversation, AgentMessage, AgentSelectableCapability, SystemQuestion } from "@edu/api-client";
 import { SafeArticleContent } from "@edu/ui";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -12,11 +12,13 @@ import { useRouter } from "vue-router";
 import { studentAgentApi } from "../agent-api";
 import { agentError } from "../agent-errors";
 import { consumeAgentSse, emptyAgentStreamState, reduceAgentEvent } from "../agent-stream";
+import { uploadAiQuestionImage } from "../ai-image-upload";
 import type { AgentStreamState } from "../agent-stream";
 import { capturePracticeDraftContext, isReusablePracticeConversation,
   fallbackPracticeActivityAt } from "../practice-floating-chat";
 import type { PracticeDraftContext } from "../practice-floating-chat";
 import AgentQuestionContextCard from "./AgentQuestionContextCard.vue";
+import AiInputMenu from "./AiInputMenu.vue";
 import PracticeSuggestionCard from "./PracticeSuggestionCard.vue";
 
 const props = defineProps<{ question: SystemQuestion | null }>();
@@ -25,9 +27,11 @@ const openButton = ref<HTMLButtonElement | null>(null); const panel = ref<HTMLEl
 const panelOpen = ref(false); const loading = ref(false); const sending = ref(false); const creating = ref(false);
 const conversation = ref<AgentConversation | null>(null); const messages = ref<AgentMessage[]>([]);
 const stream = ref<AgentStreamState | null>(null); const errorMessage = ref(""); const draft = ref("");
+const imageIds = ref<string[]>([]); const uploading = ref(false); const uploadMessage = ref("");
+const selectedCapability = ref<AgentSelectableCapability | null>(null);
 const draftContext = ref<PracticeDraftContext | null>(null); const initialized = ref(false);
 const resolvedActivityAt = ref<number | undefined>();
-let controller: AbortController | null = null;
+let controller: AbortController | null = null; let uploadController: AbortController | null = null;
 const lifetime = new AbortController(); let disposed = false;
 const currentQuestionChanged = computed(() => Boolean(draft.value && draftContext.value && props.question
   && draftContext.value.questionId !== props.question.id));
@@ -51,7 +55,7 @@ watch(draft, value => {
 watch(() => [messages.value.length, stream.value?.answer], () => void scrollToBottom());
 onMounted(() => document.addEventListener("keydown", onDocumentKeydown));
 onBeforeUnmount(() => {
-  disposed = true; document.removeEventListener("keydown", onDocumentKeydown); lifetime.abort(); controller?.abort();
+  disposed = true; document.removeEventListener("keydown", onDocumentKeydown); lifetime.abort(); controller?.abort(); uploadController?.abort();
   const runId = activeRunId(); if (runId) void studentAgentApi.cancel(runId, "PAGE_CLOSED").catch(() => {});
 });
 
@@ -103,6 +107,7 @@ async function conversationForSend() {
   try {
     const created = await studentAgentApi.createConversation(crypto.randomUUID(), "PRACTICE_FLOATING", lifetime.signal);
     conversation.value = created; messages.value = []; stream.value = null;
+    selectedCapability.value = null;
     resolvedActivityAt.value = fallbackPracticeActivityAt(created); return created;
   } finally { creating.value = false; }
 }
@@ -126,8 +131,10 @@ async function send() {
   const active = new AbortController(); controller = active; let accepted = false;
   try {
     const response = await studentAgentApi.send(item.id, { clientRequestId: crypto.randomUUID(), content,
-      context: { questionId: context.questionId, questionMediaIds: context.mediaIds } }, active.signal);
-    accepted = true; draft.value = ""; draftContext.value = null;
+      context: { questionId: context.questionId, questionMediaIds: context.mediaIds,
+        aiQuestionMediaIds: imageIds.value.length ? [...imageIds.value] : undefined },
+      selectedCapability: selectedCapability.value ?? undefined }, active.signal);
+    accepted = true; draft.value = ""; draftContext.value = null; imageIds.value = []; selectedCapability.value = null;
     stream.value.runId = response.headers.get("X-Agent-Run-Id") ?? "";
     await consumeAgentSse(response, event => { stream.value = reduceAgentEvent(stream.value!, event); }, active.signal);
     if (!stream.value.terminal) throw new Error("AGENT_STREAM_TRUNCATED");
@@ -202,6 +209,14 @@ async function stop(reason: "USER_STOP" | "PAGE_CLOSED" = "USER_STOP") {
   } catch (error) { errorMessage.value = agentError(error, "停止请求未确认，请稍后重新打开查看最终状态。"); }
   finally { sending.value = Boolean(activeRunId()); }
 }
+async function uploadImage(file: File) {
+  uploadController?.abort(); const active = new AbortController(); uploadController = active;
+  uploading.value = true; uploadMessage.value = "";
+  try { imageIds.value.push(await uploadAiQuestionImage(file, active.signal, message => uploadMessage.value = message)); uploadMessage.value = "题图已就绪，只会随下一条消息发送。"; }
+  catch (error) { if (!active.signal.aborted) uploadMessage.value = agentError(error, "题图上传失败。"); }
+  finally { if (uploadController === active) { uploadController = null; uploading.value = false; } }
+}
+function pasteImage(event: ClipboardEvent) { const file = [...(event.clipboardData?.files ?? [])].find(item => item.type.startsWith("image/")); if (file) void uploadImage(file); }
 async function closePanel() {
   if (activeRunId()) await stop("PAGE_CLOSED");
   panelOpen.value = false; await nextTick(); openButton.value?.focus();
@@ -274,10 +289,11 @@ async function scrollToBottom() {
           <button type="button" @click="switchDraftToCurrentQuestion">切换为当前题目</button></p>
         <label for="practice-chat-question" class="sr-only">输入关于当前题目的问题</label>
         <textarea id="practice-chat-question" v-model="draft" rows="3" maxlength="10000"
-          placeholder="输入关于这道题的疑问；不会发送正在编辑的答案"></textarea>
-        <div class="practice-chat__actions"><button v-if="sending" class="button button--danger" type="button" @click="stop('USER_STOP')">停止</button>
+          placeholder="输入关于这道题的疑问；不会发送正在编辑的答案" @paste="pasteImage"></textarea>
+        <div class="practice-chat__actions"><AiInputMenu :disabled="sending" :uploading="uploading" :selected-capability="selectedCapability" @file="uploadImage" @capability="selectedCapability = $event"/><span v-if="imageIds.length">已附加 {{ imageIds.length }} 张题图</span><button v-if="sending" class="button button--danger" type="button" @click="stop('USER_STOP')">停止生成</button>
           <button v-else class="button button--primary" type="submit" :disabled="creating || !draft.trim()">{{ creating ? "正在创建…" : "发送" }}</button>
           <button class="button button--quiet" type="button" :disabled="!conversation" @click="openFullPage">转到完整页面</button></div>
+        <p v-if="uploadMessage" role="status">{{ uploadMessage }}</p>
       </form>
     </section>
   </div>

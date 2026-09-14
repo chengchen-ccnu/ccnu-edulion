@@ -262,7 +262,10 @@ class SkillSelector:
 
         if explicit_name is not None:
             descriptor = self.registry.get(explicit_name)
-            return SkillSelection(descriptor, "EXPLICIT") if descriptor else None
+            policy = self.policies.get(explicit_name)
+            eligible = descriptor is not None and policy is not None \
+                and role in policy.roles and intent in policy.intents
+            return SkillSelection(descriptor, "EXPLICIT") if eligible else None
         candidates = [item for item in self.registry.descriptors()
                       if (policy := self.policies.get(item.name)) is not None
                       and role in policy.roles and intent in policy.intents]

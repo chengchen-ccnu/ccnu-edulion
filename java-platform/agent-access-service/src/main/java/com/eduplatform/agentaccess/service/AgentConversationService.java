@@ -5,6 +5,7 @@ import com.eduplatform.agentaccess.persistence.AgentRepository.ConversationRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.EventRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.MessageRow;
 import com.eduplatform.agentaccess.persistence.AgentRepository.RunRow;
+import com.eduplatform.agentaccess.persistence.AgentRepository.ConversationCommandRow;
 import com.eduplatform.agentaccess.service.RunGovernance.Lease;
 import com.eduplatform.agentaccess.service.RunGovernance.Reservation;
 import com.eduplatform.agentaccess.web.AgentDtos;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -56,7 +58,8 @@ public class AgentConversationService {
     private final AgentDomainClient domains;
 
     public record PreparedRun(RunRow run, MessageRow userMessage, AgentDtos.AuthorizedContext context,
-            List<AgentDtos.RecentMessage> recentMessages, boolean replayed, Lease lease) {}
+            List<AgentDtos.RecentMessage> recentMessages, Map<String, Object> requestedSkill,
+            boolean replayed, Lease lease) {}
 
     /** 会话创建结果同时标记本次是否真正插入，供 HTTP 层区分 201 与幂等重放的 200。 */
     public record ConversationCreation(AgentDtos.Conversation conversation, boolean created) {}
@@ -132,6 +135,84 @@ public class AgentConversationService {
                 .map(this::conversation).toList(), page, size, repository.countConversations(owner));
     }
 
+    /**
+     * 修改本人 ACTIVE 会话标题。requestId 的首个响应保存在既有领域库的新命令表中，网络重试
+     * 返回同一投影；同键不同参数和 revision 竞争均为明确 409，不覆盖其他窗口的修改。
+     */
+    public AgentDtos.Conversation rename(UUID owner, UUID conversationId,
+            AgentDtos.RenameConversationRequest input) {
+        String title = input.title().strip();
+        if (title.isBlank() || title.codePointCount(0, title.length()) > 80
+                || title.codePoints().anyMatch(Character::isISOControl)) {
+            throw new AgentException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "AGENT.CONVERSATION_TITLE_INVALID", "会话标题不能为空、超过 80 个字符或包含控制字符");
+        }
+        String fingerprint = fingerprint(Map.of("type", "RENAME", "conversationId", conversationId,
+                "title", title, "expectedRevision", input.expectedRevision()));
+        return transactions.execute(status -> {
+            ConversationCommandRow replay = checkedCommand(owner, input.requestId(), conversationId,
+                    "RENAME", fingerprint);
+            if (replay != null) return read(replay.responseJson(), AgentDtos.Conversation.class);
+            ConversationRow locked = repository.lockConversation(owner, conversationId)
+                    .orElseThrow(AgentConversationService::notFound);
+            // 并发重试可能在等待会话行锁期间由首个请求写入命令事实；加锁后必须再次读取，
+            // 否则同一稳定 requestId 会被误报为 revision 冲突。
+            replay = checkedCommand(owner, input.requestId(), conversationId, "RENAME", fingerprint);
+            if (replay != null) return read(replay.responseJson(), AgentDtos.Conversation.class);
+            if (locked.revision() != input.expectedRevision()
+                    || repository.renameConversation(conversationId, locked.revision(), title, Instant.now()) != 1) {
+                throw new AgentException(HttpStatus.CONFLICT, "AGENT.CONVERSATION_REVISION_CONFLICT",
+                        "会话 revision 已变化，请重新加载后重试");
+            }
+            AgentDtos.Conversation result = conversation(repository.findConversation(owner, conversationId).orElseThrow());
+            repository.insertConversationCommand(new ConversationCommandRow(owner, input.requestId(), conversationId,
+                    "RENAME", fingerprint, write(result), Instant.now()));
+            return result;
+        });
+    }
+
+    /**
+     * 将本人静止的 ACTIVE 会话归档。活动 run 返回 409，调用方必须先使用现有取消链路；归档不删除
+     * 消息、运行、Skill 审计、用量或记忆，后续 owner 查询也统一按安全 404 收口。
+     */
+    public void archive(UUID owner, UUID conversationId, AgentDtos.ArchiveConversationRequest input) {
+        String fingerprint = fingerprint(Map.of("type", "ARCHIVE", "conversationId", conversationId,
+                "expectedRevision", input.expectedRevision()));
+        transactions.executeWithoutResult(status -> {
+            ConversationCommandRow replay = checkedCommand(owner, input.requestId(), conversationId,
+                    "ARCHIVE", fingerprint);
+            if (replay != null) return;
+            ConversationRow locked = repository.lockConversation(owner, conversationId).orElse(null);
+            if (locked == null) {
+                replay = checkedCommand(owner, input.requestId(), conversationId, "ARCHIVE", fingerprint);
+                if (replay != null) return;
+                throw notFound();
+            }
+            if (repository.findActiveRun(conversationId).isPresent()) {
+                throw new AgentException(HttpStatus.CONFLICT, "AGENT.CONVERSATION_RUN_ACTIVE",
+                        "回答仍在生成，请先停止生成再删除对话");
+            }
+            if (locked.revision() != input.expectedRevision()
+                    || repository.archiveConversation(conversationId, locked.revision(), Instant.now()) != 1) {
+                throw new AgentException(HttpStatus.CONFLICT, "AGENT.CONVERSATION_REVISION_CONFLICT",
+                        "会话 revision 已变化，请重新加载后重试");
+            }
+            repository.insertConversationCommand(new ConversationCommandRow(owner, input.requestId(), conversationId,
+                    "ARCHIVE", fingerprint, null, Instant.now()));
+        });
+    }
+
+    private ConversationCommandRow checkedCommand(UUID owner, UUID requestId, UUID conversationId,
+            String type, String fingerprint) {
+        ConversationCommandRow row = repository.findConversationCommand(owner, requestId).orElse(null);
+        if (row != null && (!row.conversationId().equals(conversationId) || !row.commandType().equals(type)
+                || !row.requestFingerprint().equals(fingerprint))) {
+            throw new AgentException(HttpStatus.CONFLICT, "AGENT.IDEMPOTENCY_CONFLICT",
+                    "requestId 已用于不同的会话命令");
+        }
+        return row;
+    }
+
     public AgentDtos.MessagePage messages(UUID owner, UUID conversationId, int page, int size) {
         return messages(owner, conversationId, page, size, "message-page");
     }
@@ -200,7 +281,7 @@ public class AgentConversationService {
         try {
             Lease lease = governance.bind(reservation, prepared.run());
             return new PreparedRun(prepared.run(), prepared.userMessage(), prepared.context(),
-                    prepared.recentMessages(), false, lease);
+                    prepared.recentMessages(), prepared.requestedSkill(), false, lease);
         } catch (RuntimeException failure) {
             governance.rollback(reservation);
             terminate(prepared.run().id(), AgentDtos.RunStatus.FAILED,
@@ -250,7 +331,7 @@ public class AgentConversationService {
         try {
             Lease lease = governance.bind(reservation, prepared.run());
             return new PreparedRun(prepared.run(), prepared.userMessage(), prepared.context(),
-                    prepared.recentMessages(), false, lease);
+                    prepared.recentMessages(), prepared.requestedSkill(), false, lease);
         } catch (RuntimeException failure) {
             governance.rollback(reservation);
             terminate(prepared.run().id(), AgentDtos.RunStatus.FAILED,
@@ -386,7 +467,14 @@ public class AgentConversationService {
         }
         repository.insertRun(run);
         repository.advanceConversation(conversationId, locked.nextMessageSequence() + 2, now);
-        return new PreparedRun(run, user, context, recentMessages(conversationId, user.sequenceNo()), false, null);
+        Map<String, Object> requestedSkill = input.selectedCapability() == null ? null
+                : Map.of("skillName", "public-practice-generation", "selectionSource", "USER_EXPLICIT");
+        Map<String, Object> trusted = new LinkedHashMap<>(context.trustedContext());
+        previousSkillOffer(conversationId, user.sequenceNo()).ifPresent(offer -> trusted.put("activeSkillOffer", offer));
+        AgentDtos.AuthorizedContext runtimeContext = new AgentDtos.AuthorizedContext(
+                context.stableContext(), Map.copyOf(trusted));
+        return new PreparedRun(run, user, runtimeContext, recentMessages(conversationId, user.sequenceNo()),
+                requestedSkill, false, null);
     }
 
     /** 会话锁内再次确认最后一问和活动槽，随后仅追加 assistant 消息与新 run，旧记录不修改。 */
@@ -412,7 +500,7 @@ public class AgentConversationService {
         repository.insertRun(run, clientRequestId);
         repository.advanceConversation(conversationId, locked.nextMessageSequence() + 1, now);
         return new PreparedRun(run, original, context, recentMessages(conversationId, original.sequenceNo()),
-                false, null);
+                null, false, null);
     }
 
     private PreparedRun existingRegeneration(ConversationRow conversation, UUID requestedMessageId,
@@ -427,7 +515,7 @@ public class AgentConversationService {
                 run.userMessageId()).orElseThrow(AgentConversationService::notFound);
         AgentDtos.MessageContext stable = original.contextJson() == null ? null
                 : read(original.contextJson(), AgentDtos.MessageContext.class);
-        return new PreparedRun(run, original, new AgentDtos.AuthorizedContext(stable, null), List.of(), true, null);
+        return new PreparedRun(run, original, new AgentDtos.AuthorizedContext(stable, null), List.of(), null, true, null);
     }
 
     /** 重新校验原快照中的稳定 ID；当前领域投影若已变化则拒绝，而不是偷换为最新页面上下文。 */
@@ -493,7 +581,7 @@ public class AgentConversationService {
                 new AgentException(HttpStatus.INTERNAL_SERVER_ERROR, "AGENT.STATE_INVALID", "AI 会话状态异常"));
         AgentDtos.MessageContext stable = existing.contextJson() == null ? null
                 : read(existing.contextJson(), AgentDtos.MessageContext.class);
-        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), List.of(), true, null);
+        return new PreparedRun(run, existing, new AgentDtos.AuthorizedContext(stable, null), List.of(), null, true, null);
     }
 
     /** 同一幂等键正在另一线程授权时有界等待其 MySQL 事实；超时返回冲突而不再占额度。 */
@@ -534,6 +622,29 @@ public class AgentConversationService {
         }
         Collections.reverse(newest);
         return List.copyOf(newest);
+    }
+
+    /** 将上一轮浏览器安全 offer 重新映射为内部受信 Skill 名；普通文字和更早历史均不会参与。 */
+    private java.util.Optional<Map<String, Object>> previousSkillOffer(UUID conversationId, long currentSequence) {
+        EventRow row = repository.previousFinalEvent(conversationId, currentSequence).orElse(null);
+        if (row == null) return java.util.Optional.empty();
+        try {
+            JsonNode event = mapper.readTree(row.eventJson());
+            JsonNode offer = event.path("payload").path("skillOffer");
+            if (!"GENERATE_AUTONOMOUS_PRACTICE".equals(offer.path("capability").asText())) {
+                return java.util.Optional.empty();
+            }
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("offerId", UUID.fromString(offer.path("offerId").asText()));
+            value.put("skillName", "public-practice-generation");
+            value.put("topic", offer.path("topic").asText());
+            if (offer.has("difficulty")) value.put("difficulty", offer.path("difficulty").asText());
+            if (offer.has("questionCount")) value.put("questionCount", offer.path("questionCount").asInt());
+            value.put("offeredAfterMessageId", UUID.fromString(event.path("messageId").asText()));
+            return java.util.Optional.of(Map.copyOf(value));
+        } catch (RuntimeException invalid) {
+            return java.util.Optional.empty();
+        }
     }
 
     private static String safeHistoryContent(String content) {

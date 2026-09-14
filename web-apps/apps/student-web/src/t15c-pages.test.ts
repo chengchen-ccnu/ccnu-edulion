@@ -95,7 +95,9 @@ describe("T15C suggestion and creation card", () => {
     api.pendingPracticeActionForConversation.mockImplementation((_id: string, signal: AbortSignal) => {
       observed = signal; return Promise.reject(new GatewayRequestError(new Response(null, { status: 404 })));
     });
-    await mountCard(false); await vi.waitFor(() => expect(host.textContent).toContain("当前没有待确认"));
+    await mountCard(false); await vi.waitFor(() => expect(api.pendingPracticeActionForConversation).toHaveBeenCalled());
+    expect(host.querySelector(".practice-suggestion")).toBeNull();
+    expect(host.textContent).not.toContain("等待建议");
     app?.unmount(); app = undefined; expect(observed?.aborted).toBe(true);
   });
 });

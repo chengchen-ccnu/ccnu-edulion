@@ -85,6 +85,7 @@ class AgentAccessIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_conversation_command");
         jdbc.update("DELETE FROM ai_skill_execution");
         jdbc.update("DELETE FROM ai_pending_action_audit");
         jdbc.update("DELETE FROM ai_pending_action");
@@ -242,6 +243,51 @@ class AgentAccessIntegrationTest {
                         error -> assertThat(error.code()).isEqualTo("AGENT.RUN_CONFLICT"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE conversation_id=? AND active_slot=1",
                 Integer.class, first.id().toString())).isEqualTo(1);
+    }
+
+    @Test
+    /** 重命名使用 requestId/revision；归档拒绝活动 run，并让会话、消息和 run 全部按安全 404 收口。 */
+    void conversationRenameArchiveAndActiveVisibilityAreConsistent() {
+        var created = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, "原标题"));
+        UUID renameRequest = UUID.randomUUID();
+        var renamed = conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(renameRequest, "  新标题  ", created.revision()));
+        assertThat(renamed.title()).isEqualTo("新标题");
+        assertThat(conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(renameRequest, "  新标题  ", created.revision())).revision())
+                .isEqualTo(renamed.revision());
+        assertThatThrownBy(() -> conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(UUID.randomUUID(), "冲突标题", created.revision())))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.CONVERSATION_REVISION_CONFLICT"));
+        assertThatThrownBy(() -> conversations.rename(OTHER, created.id(),
+                new AgentDtos.RenameConversationRequest(UUID.randomUUID(), "越权", renamed.revision())))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        var prepared = conversations.prepareRun(OWNER, created.id(),
+                new AgentDtos.SendMessageRequest(UUID.randomUUID(), "解释方程", null), "trace-archive-active");
+        var current = conversations.get(OWNER, created.id());
+        long activeRevision = current.revision();
+        UUID archiveRequest = UUID.randomUUID();
+        assertThatThrownBy(() -> conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, activeRevision)))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.CONVERSATION_RUN_ACTIVE"));
+        complete(prepared, "解释完成");
+        current = conversations.get(OWNER, created.id());
+        conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, current.revision()));
+        conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, current.revision()));
+        assertThat(conversations.list(OWNER, 1, 20).items()).isEmpty();
+        assertThatThrownBy(() -> conversations.get(OWNER, created.id())).isInstanceOf(AgentException.class);
+        assertThatThrownBy(() -> conversations.messages(OWNER, created.id(), 1, 20)).isInstanceOf(AgentException.class);
+        assertThatThrownBy(() -> conversations.events(OWNER, prepared.run().id(), 0)).isInstanceOf(AgentException.class);
+        assertThat(jdbc.queryForObject("SELECT status FROM ai_conversation WHERE id=?", String.class,
+                created.id().toString())).isEqualTo("ARCHIVED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=?", Integer.class,
+                created.id().toString())).isEqualTo(2);
     }
 
     @Test

@@ -125,7 +125,7 @@ public class GatewaySecurityConfig {
     CorsWebFilter corsWebFilter(GatewayProperties properties) {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOrigins());
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Trace-Id"));
         // 成绩册下载需要读取安全文件名；只暴露响应头，不放宽来源、Cookie 或教学权限。
         configuration.setExposedHeaders(List.of("X-Trace-Id", "Retry-After", "Content-Disposition", "X-Agent-Run-Id"));

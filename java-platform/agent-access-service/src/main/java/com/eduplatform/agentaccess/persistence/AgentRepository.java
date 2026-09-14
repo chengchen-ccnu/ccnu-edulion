@@ -54,6 +54,8 @@ public class AgentRepository {
     public record MediaReferenceRow(UUID messageId, UUID mediaId, String purpose) {}
     public record MediaOutboxRow(UUID eventId, String eventType, UUID aggregateId, String exchange,
             String routingKey, String traceId, String payloadJson, int attempts) {}
+    public record ConversationCommandRow(UUID ownerUserId, UUID requestId, UUID conversationId,
+            String commandType, String requestFingerprint, String responseJson, Instant createdAt) {}
 
     public Optional<ConversationRow> findConversationByCreateRequest(UUID owner, UUID requestId) {
         return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND create_request_id=?",
@@ -61,12 +63,12 @@ public class AgentRepository {
     }
 
     public Optional<ConversationRow> findConversation(UUID owner, UUID id) {
-        return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND id=?", this::conversation,
+        return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND id=? AND status='ACTIVE'", this::conversation,
                 owner.toString(), id.toString()).stream().findFirst();
     }
 
     public Optional<ConversationRow> lockConversation(UUID owner, UUID id) {
-        return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND id=? FOR UPDATE", this::conversation,
+        return jdbc.query("SELECT * FROM ai_conversation WHERE owner_user_id=? AND id=? AND status='ACTIVE' FOR UPDATE", this::conversation,
                 owner.toString(), id.toString()).stream().findFirst();
     }
 
@@ -83,14 +85,44 @@ public class AgentRepository {
 
     public List<ConversationRow> listConversations(UUID owner, int page, int size) {
         return jdbc.query("""
-                SELECT * FROM ai_conversation WHERE owner_user_id=?
+                SELECT * FROM ai_conversation WHERE owner_user_id=? AND status='ACTIVE'
                 ORDER BY last_message_at DESC, id DESC LIMIT ? OFFSET ?
                 """, this::conversation, owner.toString(), size, (page - 1) * size);
     }
 
     public long countConversations(UUID owner) {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM ai_conversation WHERE owner_user_id=?",
+        return jdbc.queryForObject("SELECT COUNT(*) FROM ai_conversation WHERE owner_user_id=? AND status='ACTIVE'",
                 Long.class, owner.toString());
+    }
+
+    /** 读取 owner 维度稳定会话命令；用于网络重试返回首个事实并检测 requestId 复用。 */
+    public Optional<ConversationCommandRow> findConversationCommand(UUID owner, UUID requestId) {
+        return jdbc.query("SELECT * FROM ai_conversation_command WHERE owner_user_id=? AND request_id=?",
+                (rs, ignored) -> new ConversationCommandRow(uuid(rs, "owner_user_id"), uuid(rs, "request_id"),
+                        uuid(rs, "conversation_id"), rs.getString("command_type"),
+                        rs.getString("request_fingerprint"), rs.getString("response_json"),
+                        instant(rs, "created_at")), owner.toString(), requestId.toString()).stream().findFirst();
+    }
+
+    public void insertConversationCommand(ConversationCommandRow row) {
+        jdbc.update("INSERT INTO ai_conversation_command(owner_user_id,request_id,conversation_id,command_type,"
+                        + "request_fingerprint,response_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                row.ownerUserId().toString(), row.requestId().toString(), row.conversationId().toString(),
+                row.commandType(), row.requestFingerprint(), row.responseJson(), timestamp(row.createdAt()));
+    }
+
+    /** revision 条件更新保证另一窗口已修改时不会被静默覆盖。 */
+    public int renameConversation(UUID conversationId, long expectedRevision, String title, Instant now) {
+        return jdbc.update("UPDATE ai_conversation SET title=?,revision=revision+1,updated_at=? "
+                        + "WHERE id=? AND status='ACTIVE' AND revision=?",
+                title, timestamp(now), conversationId.toString(), expectedRevision);
+    }
+
+    /** 归档只推进会话状态；关联消息、run、审计、用量和记忆事实全部保留。 */
+    public int archiveConversation(UUID conversationId, long expectedRevision, Instant now) {
+        return jdbc.update("UPDATE ai_conversation SET status='ARCHIVED',revision=revision+1,updated_at=? "
+                        + "WHERE id=? AND status='ACTIVE' AND revision=?",
+                timestamp(now), conversationId.toString(), expectedRevision);
     }
 
     public Optional<RunRow> findActiveRun(UUID conversationId) {
@@ -117,7 +149,7 @@ public class AgentRepository {
     /** 只返回当前 owner 会话中的指定用户消息；其他身份和资源关系统一不可枚举。 */
     public Optional<MessageRow> findUserMessage(UUID owner, UUID conversationId, UUID messageId) {
         return jdbc.query("SELECT m.* FROM ai_message m JOIN ai_conversation c ON c.id=m.conversation_id "
-                        + "WHERE c.owner_user_id=? AND m.conversation_id=? AND m.id=? AND m.role='USER'",
+                        + "WHERE c.owner_user_id=? AND c.status='ACTIVE' AND m.conversation_id=? AND m.id=? AND m.role='USER'",
                 this::message, owner.toString(), conversationId.toString(), messageId.toString()).stream().findFirst();
     }
 
@@ -129,7 +161,8 @@ public class AgentRepository {
     }
 
     public Optional<RunRow> findRun(UUID owner, UUID runId) {
-        return jdbc.query("SELECT * FROM ai_run WHERE owner_user_id=? AND id=?", this::run,
+        return jdbc.query("SELECT r.* FROM ai_run r JOIN ai_conversation c ON c.id=r.conversation_id "
+                        + "WHERE r.owner_user_id=? AND r.id=? AND c.status='ACTIVE'", this::run,
                 owner.toString(), runId.toString()).stream().findFirst();
     }
 
@@ -281,6 +314,18 @@ public class AgentRepository {
     public List<EventRow> listEvents(UUID runId, long afterSequence) {
         return jdbc.query("SELECT * FROM ai_run_event WHERE run_id=? AND sequence_no>? ORDER BY sequence_no",
                 this::event, runId.toString(), afterSequence);
+    }
+
+    /**
+     * 只读取当前新用户消息紧邻上一条 assistant 的已持久化终态。Skill offer 因而最多对下一轮
+     * 有效；拒绝、转题或消费后不会从更早历史重新激活。
+     */
+    public Optional<EventRow> previousFinalEvent(UUID conversationId, long currentUserSequence) {
+        return jdbc.query("SELECT e.* FROM ai_run_event e JOIN ai_run r ON r.id=e.run_id "
+                        + "JOIN ai_message m ON m.id=r.assistant_message_id "
+                        + "WHERE r.conversation_id=? AND m.sequence_no=? AND e.event_type='FINAL_RESULT' "
+                        + "ORDER BY e.sequence_no DESC LIMIT 1",
+                this::event, conversationId.toString(), currentUserSequence - 1).stream().findFirst();
     }
 
     /** 连续序号由同一行的条件更新确认；并发或乱序事件不会插入事件表。 */

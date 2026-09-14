@@ -147,6 +147,14 @@ class GatewayRouteSecurityTest {
                 .exchange()
                 .expectStatus().isOk()
                 .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("DELETE"));
+
+        client.options().uri("/api/v1/ai/conversations/00000000-0000-4000-8000-000000000901")
+                .header("Origin", "http://localhost:5173")
+                .header("Access-Control-Request-Method", "PATCH")
+                .header("Access-Control-Request-Headers", "authorization,content-type")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().value("Access-Control-Allow-Methods", value -> assertThat(value).contains("PATCH"));
     }
 
     @Test
