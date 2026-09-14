@@ -23,7 +23,7 @@ describe("student fixed navigation", () => {
     expect(buildStudentNavigation(routeName).find(item => item.id === "ai-tutor")?.href).toBe("/ai");
   });
 
-  it.each(["practice", "practice-question", "practice-legacy-entry", "attempt-result", "wrong-questions"])(
+  it.each(["practice", "practice-question", "practice-autonomous-attempt", "attempt-result", "wrong-questions"])(
     "keeps %s in the practice-center highlight group", routeName => {
       const items = buildStudentNavigation(routeName);
       expect(items.filter(item => item.current).map(item => item.id)).toEqual(["practice-center"]);

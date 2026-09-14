@@ -8,7 +8,7 @@ export function buildStudentNavigation(routeName: string | null | undefined): Sh
   const isCourse = routeName === "courses" || routeName === "course-detail";
   const isLearning = routeName === "course-learning" || routeName === "my-learning" || routeName === "course-tasks"
     || routeName === "course-task-attempt" || routeName === "course-task-result";
-  const isPractice = routeName === "practice" || routeName === "practice-question" || routeName === "practice-legacy-entry"
+  const isPractice = routeName === "practice" || routeName === "practice-question" || routeName === "practice-autonomous-attempt"
     || routeName === "attempt-result" || routeName === "wrong-questions";
   const isAi = routeName === "ai" || routeName === "ai-conversation";
   return [

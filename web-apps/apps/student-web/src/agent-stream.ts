@@ -1,4 +1,4 @@
-import type { AgentAuthorizedReference, AgentClientStreamEvent } from "@edu/api-client";
+import type { AgentAuthorizedReference, AgentClientStreamEvent, PendingPracticeAction } from "@edu/api-client";
 
 export interface AgentStreamState {
   runId: string;
@@ -11,11 +11,12 @@ export interface AgentStreamState {
   terminal: boolean;
   partial: boolean;
   error: string;
+  pendingPracticeAction: PendingPracticeAction | null;
 }
 
 export function emptyAgentStreamState(): AgentStreamState {
   return { runId: "", messageId: "", answer: "", stage: "", references: [], lastSequence: 0,
-    lastOccurredAt: "", terminal: false, partial: false, error: "" };
+    lastOccurredAt: "", terminal: false, partial: false, error: "", pendingPracticeAction: null };
 }
 
 /**
@@ -43,7 +44,8 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentClientStre
         answer: event.payload.finalAnswer ?? next.answer,
         references: event.payload.references ?? next.references,
         partial: event.payload.answerCompleteness === "INTERRUPTED",
-        error: event.payload.error?.message ?? next.error };
+        error: event.payload.error?.message ?? next.error,
+        pendingPracticeAction: event.payload.pendingPracticeAction ?? null };
   }
 }
 

@@ -36,6 +36,7 @@ const questions = computed(() => assessment.value?.questions ?? []);
 const currentQuestion = computed(() => questions.value[currentIndex.value] ?? null);
 const answeredCount = computed(() => questions.value.filter(question => isAnswered(question)).length);
 const isCourseTask = computed(() => route.name === "course-task-attempt");
+const isAutonomousEntry = computed(() => route.name === "practice-autonomous-attempt");
 const courseTask = computed(() => isCourseTask.value ? assessment.value as LearnerCourseTask | null : null);
 const taskIsLate = computed(() => courseTask.value?.timeState === "LATE_WINDOW");
 const totalPoints = computed(() => assessment.value && "totalPoints" in assessment.value
@@ -62,11 +63,29 @@ async function load() {
   const assessmentId = String(route.params.assessmentId ?? "");
   pageAbort = new AbortController();
   try {
+    if (isAutonomousEntry.value) {
+      try {
+        const entry = await studentAssessmentApi.assessmentEntry(assessmentId, pageAbort.signal);
+        const resultAvailable = entry.finalAttempt?.status !== undefined && entry.finalAttempt.status !== "DRAFT"
+          && (entry.timeState === "CLOSED" || entry.attemptsUsed >= entry.maxAttempts);
+        await router.replace({ path: `/learn/${entry.courseId}/tasks/${entry.id}${resultAvailable ? "/result" : ""}`,
+          query: entry.type === "PRACTICE" ? { type: "PRACTICE" } : undefined });
+        return;
+      } catch (error) {
+        // entry 的 404 表示“没有可访问的课程任务归属”，随后仍须由本人测评详情确认自主 PRACTICE，不能据此自行猜测。
+        if (!(error instanceof GatewayRequestError) || error.status !== 404) throw error;
+      }
+    }
     const detail = isCourseTask.value
       ? await studentAssessmentApi.courseTask(String(route.params.courseId ?? ""), assessmentId,
         currentLessonQuery(), pageAbort.signal)
       : await studentAssessmentApi.detail(assessmentId, pageAbort.signal);
     assessment.value = detail;
+    if (isAutonomousEntry.value && detail.courseId !== null) {
+      await router.replace({ path: `/learn/${detail.courseId}/tasks/${detail.id}`,
+        query: detail.type === "PRACTICE" ? { type: "PRACTICE" } : undefined });
+      return;
+    }
     if (!isCourseTask.value && detail.type !== "PRACTICE") {
       if (detail.type === "HOMEWORK" || detail.type === "EXAM") {
         await router.replace(`/learn/${detail.courseId}/tasks/${detail.id}`);

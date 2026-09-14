@@ -20,7 +20,6 @@ import PlaceholderPage from "./views/PlaceholderPage.vue";
 import PracticeAttemptPage from "./views/PracticeAttemptPage.vue";
 import QuestionBankPage from "./views/QuestionBankPage.vue";
 import SystemQuestionDetailPage from "./views/SystemQuestionDetailPage.vue";
-import LegacyPracticeRedirectPage from "./views/LegacyPracticeRedirectPage.vue";
 import AttemptResultPage from "./views/AttemptResultPage.vue";
 import WrongQuestionsPage from "./views/WrongQuestionsPage.vue";
 import CourseTasksPage from "./views/CourseTasksPage.vue";
@@ -49,7 +48,7 @@ export const studentRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/practice/questions/:questionId", name: "practice-question", component: SystemQuestionDetailPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
-  { path: "/practice/:assessmentId", name: "practice-legacy-entry", component: LegacyPracticeRedirectPage,
+  { path: "/practice/:assessmentId", name: "practice-autonomous-attempt", component: PracticeAttemptPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/attempt/:attemptId/result", name: "attempt-result", component: AttemptResultPage,
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
