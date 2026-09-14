@@ -166,7 +166,7 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime，Agent Access Flyway 最高版本为 V7。T13.5.2 随后把 `public-practice-generation` 迁移为首个标准目录 Skill 1.1.0，内部 Agent 契约向前升级为 1.5.0；硬编码 `PracticeGenerationSkill` 类、单例和专用调用已删除。T15C 可在本任务真实长链验收及合并后恢复。
+T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime，Agent Access Flyway 最高版本为 V7。T13.5.2 已于 2026-09-14 通过 PR #70 合并，把 `public-practice-generation` 迁移为首个标准目录 Skill 1.1.0，内部 Agent 契约向前升级为 1.5.0；硬编码 `PracticeGenerationSkill` 类、单例和专用调用已删除。真实长链验收通过，T15C 已恢复实施条件。
 
 T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
 
@@ -184,7 +184,7 @@ T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skill
 
 Java 保存经过校验的 pendingAction，默认 10 分钟过期，绑定用户、参数、revision、候选版本/条件和确认身份。学生明确确认后由 Learning 创建普通自主练习，无倒计时，复用作答/评分。条件或数量实质变化重新确认；修改条件使旧建议失效。文字“好的”仅在唯一、明确待确认动作时适用。重复确认/超时重试必须返回同次结果，未知结果先查询；数据库事务和唯一约束负责最终幂等。
 
-T13.5.1/T13.5.2 合并后重新准备 T15C。成功卡片显示主题/实际题数/开始练习，不强制跳转；失败保留条件。模型小例题只用于聊天，不自动成为正式题目、试卷或评分答案。Skill 创建练习不授权 Agent 替学生提交或打分。
+T13.5.1/T13.5.2 已合并并从最新 `main` 重新准备 T15C。成功卡片显示主题/实际题数/开始练习，不强制跳转；失败保留条件。模型小例题只用于聊天，不自动成为正式题目、试卷或评分答案。Skill 创建练习不授权 Agent 替学生提交或打分。
 
 ### 平台帮助：T13.4
 

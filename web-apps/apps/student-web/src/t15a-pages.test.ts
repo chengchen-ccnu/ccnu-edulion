@@ -3,14 +3,16 @@ import { createApp, h, nextTick } from "vue";
 import type { App } from "vue";
 import { createMemoryHistory, createRouter, RouterView } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GatewayRequestError } from "@edu/api-client";
 import AiHomePage from "./views/AiHomePage.vue";
 
 const api = vi.hoisted(() => ({ conversations: vi.fn(), preference: vi.fn(), createConversation: vi.fn(), updatePreference: vi.fn(),
   conversation: vi.fn(), messages: vi.fn(), events: vi.fn(), cancel: vi.fn(), send: vi.fn(), regenerate: vi.fn(),
-  messageQuestionMediaGrant: vi.fn() }));
+  messageQuestionMediaGrant: vi.fn(), pendingPracticeActionForConversation: vi.fn(), pendingPracticeAction: vi.fn(),
+  confirmPendingPracticeAction: vi.fn(), cancelPendingPracticeAction: vi.fn() }));
 vi.mock("./agent-api", () => ({ studentAgentApi: api }));
 let app: App | undefined; let host: HTMLDivElement;
-beforeEach(() => { vi.resetAllMocks(); Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) }); host = document.createElement("div"); document.body.append(host); api.conversations.mockResolvedValue({ items: [], page: 1, size: 30, total: 0 }); api.preference.mockResolvedValue({ value: "GUIDED_STEP_BY_STEP", revision: 0, explicitlySet: false }); });
+beforeEach(() => { vi.resetAllMocks(); Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) }); host = document.createElement("div"); document.body.append(host); api.conversations.mockResolvedValue({ items: [], page: 1, size: 30, total: 0 }); api.preference.mockResolvedValue({ value: "GUIDED_STEP_BY_STEP", revision: 0, explicitlySet: false }); api.pendingPracticeActionForConversation.mockRejectedValue(new GatewayRequestError(new Response(null, { status: 404 }))); });
 afterEach(() => { app?.unmount(); host.remove(); });
 async function mount() { const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/ai", component: AiHomePage }, { path: "/ai/conversations/:id", component: { template: "<p>会话页</p>" } }] }); await router.push("/ai"); await router.isReady(); app = createApp({ render: () => h(RouterView) }); app.use(router); app.mount(host); await nextTick(); return router; }
 async function mountWorkspace(path: string) { const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/ai", component: AiHomePage }, { path: "/ai/conversations/:conversationId", component: AiHomePage }] }); await router.push(path); await router.isReady(); app = createApp({ render: () => h(RouterView) }); app.use(router); app.mount(host); await nextTick(); return router; }

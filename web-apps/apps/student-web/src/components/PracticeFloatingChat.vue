@@ -17,6 +17,7 @@ import { capturePracticeDraftContext, isReusablePracticeConversation,
   fallbackPracticeActivityAt } from "../practice-floating-chat";
 import type { PracticeDraftContext } from "../practice-floating-chat";
 import AgentQuestionContextCard from "./AgentQuestionContextCard.vue";
+import PracticeSuggestionCard from "./PracticeSuggestionCard.vue";
 
 const props = defineProps<{ question: SystemQuestion | null }>();
 const router = useRouter();
@@ -150,6 +151,17 @@ async function regenerate() {
   await runExisting(signal => studentAgentApi.regenerate(conversation.value!.id, lastUserMessage.value!.id,
     crypto.randomUUID(), signal));
 }
+/** 复用悬浮会话的 SSE 生命周期发送新条件，卡片本身不构造或确认任何题目身份。 */
+async function regeneratePractice(prompt: string) {
+  try {
+    const item = await conversationForSend();
+    await runExisting(signal => studentAgentApi.send(item.id, {
+      clientRequestId: crypto.randomUUID(), content: prompt
+    }, signal));
+  } catch (error) {
+    errorMessage.value = agentError(error, "新练习条件暂时无法发送；编辑内容仍保留在建议卡片中。");
+  }
+}
 async function runExisting(open: (signal: AbortSignal) => Promise<Response>) {
   errorMessage.value = ""; sending.value = true; stream.value = emptyAgentStreamState();
   const active = new AbortController(); controller = active;
@@ -254,6 +266,8 @@ async function scrollToBottom() {
           <SafeArticleContent :source="stream.answer" :images="[]" />
           <small v-if="stream.partial" class="ai-partial">回答已中断</small>
         </article>
+        <PracticeSuggestionCard v-if="conversation" :conversation-id="conversation.id"
+          :initial-action="stream?.pendingPracticeAction" @regenerate="regeneratePractice" />
       </div>
       <form class="practice-chat__composer" @submit.prevent="send">
         <p v-if="currentQuestionChanged" class="practice-chat__draft-note">这段提问仍关联上一道题

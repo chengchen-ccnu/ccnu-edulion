@@ -1,6 +1,8 @@
 import { createGatewayClient, gatewayRequestError } from "@edu/api-client";
 import type { AgentConversation, AgentConversationPage, AgentExplanationPreference, AgentMessagePage,
-  AgentRunEventPage, CancelAgentRunResponse, GatewayClient, MediaAccessGrant, SendAgentMessageRequest } from "@edu/api-client";
+  AgentRunEventPage, CancelAgentRunResponse, CancelPendingPracticeActionRequest,
+  ConfirmPendingPracticeActionRequest, GatewayClient, MediaAccessGrant, PendingPracticeAction,
+  SendAgentMessageRequest } from "@edu/api-client";
 import type { AuthStore } from "@edu/auth";
 import { authStore } from "./auth";
 
@@ -21,6 +23,12 @@ export interface StudentAgentApi {
     signal: AbortSignal): Promise<Response>;
   messageQuestionMediaGrant(conversationId: string, messageId: string, mediaId: string,
     signal?: AbortSignal): Promise<MediaAccessGrant>;
+  pendingPracticeActionForConversation(conversationId: string, signal?: AbortSignal): Promise<PendingPracticeAction>;
+  pendingPracticeAction(actionId: string, signal?: AbortSignal): Promise<PendingPracticeAction>;
+  confirmPendingPracticeAction(actionId: string, body: ConfirmPendingPracticeActionRequest,
+    signal?: AbortSignal): Promise<PendingPracticeAction>;
+  cancelPendingPracticeAction(actionId: string, body: CancelPendingPracticeActionRequest,
+    signal?: AbortSignal): Promise<PendingPracticeAction>;
 }
 
 /** 学生独立页与练习悬浮答疑共用的 API，只以生成路径/DTO 调用 Gateway；流响应也执行一次 401 刷新。 */
@@ -44,6 +52,26 @@ export function createStudentAgentApi(client: GatewayClient = createGatewayClien
       return data(await authorized(Authorization => client.POST("/api/v1/ai/conversations/{conversationId}/messages/{messageId}/question-media/{mediaId}/access-grants", {
         headers: { Authorization }, params: { path: { conversationId, messageId, mediaId } },
         body: { variant: "ORIGINAL", disposition: "INLINE" }, signal
+      })));
+    },
+    async pendingPracticeActionForConversation(conversationId, signal) {
+      return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations/{conversationId}/pending-practice-action", {
+        headers: { Authorization }, params: { path: { conversationId }, query: { requestId: crypto.randomUUID() } }, signal
+      })));
+    },
+    async pendingPracticeAction(actionId, signal) {
+      return data(await authorized(Authorization => client.GET("/api/v1/ai/pending-practice-actions/{actionId}", {
+        headers: { Authorization }, params: { path: { actionId }, query: { requestId: crypto.randomUUID() } }, signal
+      })));
+    },
+    async confirmPendingPracticeAction(actionId, body, signal) {
+      return data(await authorized(Authorization => client.POST("/api/v1/ai/pending-practice-actions/{actionId}:confirm", {
+        headers: { Authorization }, params: { path: { actionId } }, body, signal
+      })));
+    },
+    async cancelPendingPracticeAction(actionId, body, signal) {
+      return data(await authorized(Authorization => client.POST("/api/v1/ai/pending-practice-actions/{actionId}:cancel", {
+        headers: { Authorization }, params: { path: { actionId } }, body, signal
       })));
     }
   };

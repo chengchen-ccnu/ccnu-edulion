@@ -56,7 +56,7 @@ describe("student application routes", () => {
   it.each([
     ["/practice", "practice"],
     ["/practice/questions/:questionId", "practice-question"],
-    ["/practice/:assessmentId", "practice-legacy-entry"],
+    ["/practice/:assessmentId", "practice-autonomous-attempt"],
     ["/attempt/:attemptId/result", "attempt-result"],
     ["/wrong-questions", "wrong-questions"]
   ])("protects T12B route %s with learning:access", (path, name) => {
@@ -96,11 +96,11 @@ describe("student application routes", () => {
     expect(router.resolve(path).name).toBe(name);
   });
 
-  it("resolves the public question detail before the legacy assessment migration route", () => {
+  it("resolves the public question detail before the autonomous assessment route", () => {
     const router = createRouter({ history: createMemoryHistory(), routes: studentRoutes });
 
     expect(router.resolve("/practice/questions/question-1").name).toBe("practice-question");
-    expect(router.resolve("/practice/assessment-1").name).toBe("practice-legacy-entry");
+    expect(router.resolve("/practice/assessment-1").name).toBe("practice-autonomous-attempt");
   });
 
   it("uses the public question projection instead of a cross-course assessment list", () => {

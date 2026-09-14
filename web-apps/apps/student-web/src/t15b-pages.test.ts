@@ -3,6 +3,7 @@ import { createApp, h, nextTick, ref } from "vue";
 import type { App } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GatewayRequestError } from "@edu/api-client";
 import type { AgentMessage, SystemQuestion } from "@edu/api-client";
 
 import PracticeFloatingChat from "./components/PracticeFloatingChat.vue";
@@ -10,7 +11,8 @@ import AgentQuestionContextCard from "./components/AgentQuestionContextCard.vue"
 
 const api = vi.hoisted(() => ({ conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(),
   messages: vi.fn(), events: vi.fn(), cancel: vi.fn(), send: vi.fn(), regenerate: vi.fn(),
-  messageQuestionMediaGrant: vi.fn() }));
+  messageQuestionMediaGrant: vi.fn(), pendingPracticeActionForConversation: vi.fn(), pendingPracticeAction: vi.fn(),
+  confirmPendingPracticeAction: vi.fn(), cancelPendingPracticeAction: vi.fn() }));
 vi.mock("./agent-api", () => ({ studentAgentApi: api }));
 let app: App | undefined; let host: HTMLDivElement;
 const question = (id: string): SystemQuestion => ({ id, versionId: `${id}-version`, scope: "SYSTEM", type: "SINGLE_CHOICE",
@@ -28,6 +30,7 @@ beforeEach(() => {
   api.messages.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 });
   api.events.mockResolvedValue({ runId: "run-1", status: "COMPLETED", items: [] });
   api.cancel.mockResolvedValue({ runId: "run-1", status: "CANCELLED", terminal: true, terminalEventSequence: 2 });
+  api.pendingPracticeActionForConversation.mockRejectedValue(new GatewayRequestError(new Response(null, { status: 404 })));
 });
 afterEach(() => { app?.unmount(); host.remove(); });
 

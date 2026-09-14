@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import QuestionBankPage from "./views/QuestionBankPage.vue";
 import SystemQuestionDetailPage from "./views/SystemQuestionDetailPage.vue";
 import CourseTasksPage from "./views/CourseTasksPage.vue";
-import LegacyPracticeRedirectPage from "./views/LegacyPracticeRedirectPage.vue";
+import PracticeAttemptPage from "./views/PracticeAttemptPage.vue";
 import QuestionMediaAction from "./components/QuestionMediaAction.vue";
 
 const api = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), mediaGrant: vi.fn(),
-  listCourseTasks: vi.fn(), assessmentEntry: vi.fn() }));
+  listCourseTasks: vi.fn(), assessmentEntry: vi.fn(), start: vi.fn(), draft: vi.fn(), save: vi.fn(), submit: vi.fn() }));
 vi.mock("./question-api", () => ({ studentQuestionApi: api }));
 vi.mock("./assessment-api", () => ({ studentAssessmentApi: api }));
 let app: App | undefined;
@@ -32,7 +32,7 @@ async function mount(path: string) {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: "/practice", component: QuestionBankPage },
     { path: "/practice/questions/:questionId", component: SystemQuestionDetailPage },
-    { path: "/practice/:assessmentId", component: LegacyPracticeRedirectPage },
+    { path: "/practice/:assessmentId", name: "practice-autonomous-attempt", component: PracticeAttemptPage },
     { path: "/learn/:courseId/tasks", component: CourseTasksPage },
     { path: "/:pathMatch(.*)*", component: { template: "<p>目标页面</p>" } }
   ] });
@@ -122,15 +122,16 @@ describe("T10C.2 page behavior", () => {
     await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe("/learn/course-test-1/tasks/task-test-1?type=PRACTICE"));
   });
 
-  it("migrates an old link only from the server entry projection", async () => {
+  it("migrates a course practice link only from the server entry projection", async () => {
     api.assessmentEntry.mockResolvedValue(task());
     const router = await mount("/practice/task-test-1?courseId=untrusted");
     await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe("/learn/course-test-1/tasks/task-test-1?type=PRACTICE"));
     expect(api.detail).not.toHaveBeenCalled();
   });
 
-  it.each([403, 404])("does not redirect a rejected old link (%s)", async status => {
+  it.each([403, 404])("does not redirect a rejected assessment link (%s)", async status => {
     api.assessmentEntry.mockRejectedValue(new GatewayRequestError(new Response(null, { status })));
+    api.detail.mockRejectedValue(new GatewayRequestError(new Response(null, { status })));
     const router = await mount("/practice/task-test-1");
     await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
     expect(router.currentRoute.value.path).toBe("/practice/task-test-1");

@@ -15,6 +15,7 @@ import type { AgentStreamState } from "../agent-stream";
 import { uploadAiQuestionImage } from "../ai-image-upload";
 import AiQuestionImage from "../components/AiQuestionImage.vue";
 import AgentQuestionContextCard from "../components/AgentQuestionContextCard.vue";
+import PracticeSuggestionCard from "../components/PracticeSuggestionCard.vue";
 
 const route = useRoute(); const router = useRouter();
 const conversations = ref<AgentConversation[]>([]); const conversation = ref<AgentConversation | null>(null);
@@ -96,6 +97,13 @@ async function regenerate() {
   const message = messages.value[lastUserIndex.value]; if (!message) return;
   await run(signal => studentAgentApi.regenerate(conversationId.value, message.id, crypto.randomUUID(), signal));
 }
+/** 卡片只把用户明确修改后的条件作为新消息发送；旧 action 已由卡片先取消，不会自动确认。 */
+async function regeneratePractice(prompt: string) {
+  if (sending.value || !conversationId.value) return;
+  await run(signal => studentAgentApi.send(conversationId.value, {
+    clientRequestId: crypto.randomUUID(), content: prompt
+  }, signal), prompt);
+}
 async function run(open: (signal: AbortSignal) => Promise<Response>, optimisticText?: string, mediaIds: string[] = []) {
   errorMessage.value = ""; sending.value = true; references.value = []; stream.value = emptyAgentStreamState();
   if (optimisticText) messages.value.push({ id: crypto.randomUUID(), conversationId: conversationId.value, role: "USER", content: optimisticText, completeness: "COMPLETE", context: mediaIds.length ? { mediaIds } : undefined, sequenceNo: messages.value.length + 1, createdAt: new Date().toISOString() });
@@ -155,7 +163,9 @@ function sourceLabel(source: AgentAuthorizedReference["sourceType"]) { return ({
       <template v-else>
         <section ref="messageViewport" class="ai-message-viewport" aria-live="polite"><div class="ai-message-list"><article v-for="message in messages" :key="message.id" class="ai-message" :class="`ai-message--${message.role.toLowerCase()}`"><header><strong>{{ message.role === "USER" ? "你" : "AI 助教" }}</strong><span>{{ new Date(message.createdAt).toLocaleTimeString() }}</span></header><p v-if="message.contentState === 'PURGED'" class="ai-purged">原始内容已按保留策略清理。</p><SafeArticleContent v-else :source="message.content" :images="[]"/><AgentQuestionContextCard v-if="message.role === 'USER' && message.questionContextProjection" :conversation-id="conversationId" :message="message"/><div v-else-if="message.role === 'USER' && message.context?.mediaIds?.length" class="ai-message-images"><AiQuestionImage v-for="id in message.context.mediaIds" :key="id" :media-id="id" /></div><small v-if="message.completeness === 'PARTIAL' && message.content.trim() !== '回答已中断'" class="ai-partial">回答已中断</small>
           <footer v-if="message.id === lastRegenerableAssistant?.id && canRegenerate" class="ai-answer-actions"><button class="button button--quiet" type="button" @click="regenerate">重新生成回答</button><small>会创建新运行、保留旧回答，并可能消耗额度。</small></footer></article>
-          <article v-if="stream && (sending || !stream.terminal)" class="ai-message ai-message--assistant"><header><strong>AI 助教</strong><span>{{ stream.stage || "正在思考" }}</span></header><SafeArticleContent :source="stream.answer" :images="[]"/><small v-if="stream.partial">回答已中断</small></article></div>
+          <article v-if="stream && (sending || !stream.terminal)" class="ai-message ai-message--assistant"><header><strong>AI 助教</strong><span>{{ stream.stage || "正在思考" }}</span></header><SafeArticleContent :source="stream.answer" :images="[]"/><small v-if="stream.partial">回答已中断</small></article>
+          <PracticeSuggestionCard v-if="conversation" :conversation-id="conversation.id"
+            :initial-action="stream?.pendingPracticeAction" @regenerate="regeneratePractice" /></div>
           <section v-if="references.length" class="ai-references" aria-labelledby="reference-title"><h3 id="reference-title">授权来源</h3><ul><li v-for="item in references" :key="item.referenceId"><span>{{ sourceLabel(item.sourceType) }}</span><RouterLink v-if="item.appRoute" :to="item.appRoute">{{ item.title }}</RouterLink><strong v-else>{{ item.title }}</strong></li></ul></section></section>
         <form class="ai-composer" @submit.prevent="send"><label for="ai-question" class="sr-only">输入数学问题</label><textarea id="ai-question" v-model="content" rows="3" maxlength="8000" placeholder="输入问题；支持 Markdown 与 LaTeX 公式" :disabled="sending"></textarea><div class="ai-composer__actions"><label class="button button--quiet"><input class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" :disabled="sending || uploading" @change="chooseImage">{{ uploading ? "正在上传…" : "添加题图" }}</label><span v-if="imageIds.length">已附加 {{ imageIds.length }} 张题图</span><button class="button button--primary" type="submit" :disabled="sending || uploading || !content.trim()">发送</button></div><p v-if="uploadMessage" role="status">{{ uploadMessage }}</p></form>
       </template>

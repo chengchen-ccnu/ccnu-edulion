@@ -5,7 +5,7 @@ const bank = readFileSync(new URL("./views/QuestionBankPage.vue", import.meta.ur
 const detail = readFileSync(new URL("./views/SystemQuestionDetailPage.vue", import.meta.url), "utf8");
 const course = readFileSync(new URL("./views/CourseDetailPage.vue", import.meta.url), "utf8");
 const tasks = readFileSync(new URL("./views/CourseTasksPage.vue", import.meta.url), "utf8");
-const legacy = readFileSync(new URL("./views/LegacyPracticeRedirectPage.vue", import.meta.url), "utf8");
+const attempt = readFileSync(new URL("./views/PracticeAttemptPage.vue", import.meta.url), "utf8");
 const media = readFileSync(new URL("./components/QuestionMediaAction.vue", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
@@ -31,13 +31,14 @@ describe("T10C.2 public question and course practice boundaries", () => {
     expect(course).toContain("query: { type: 'PRACTICE' }");
     expect(tasks).toContain('type: isPractice.value ? "PRACTICE" : undefined');
     expect(tasks).not.toContain("studentAssessmentApi.list(");
-    expect(legacy).toContain("studentAssessmentApi.assessmentEntry");
-    expect(legacy).not.toContain("studentAssessmentApi.detail");
+    expect(attempt).toContain("isAutonomousEntry");
+    expect(attempt).toContain("studentAssessmentApi.assessmentEntry");
+    expect(attempt).toContain("detail.courseId !== null");
   });
 
   it("keeps partial errors, route restoration, keyboard focus and responsive layouts", () => {
     for (const status of [401, 403, 404, 422, 429, 503]) {
-      expect(`${bank}\n${detail}\n${tasks}\n${legacy}`).toContain(`${status}:`);
+      expect(`${bank}\n${detail}\n${tasks}\n${attempt}`).toContain(`${status}:`);
     }
     expect(bank).toContain("watch(() => route.query");
     expect(styles).toContain("button:focus-visible");

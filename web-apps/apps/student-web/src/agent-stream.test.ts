@@ -14,10 +14,14 @@ describe("T15A Agent stream", () => {
       { ...base, sequence: 6, eventType: "PARTIAL_CHECKPOINT", payload: { text: "已保存片段", complete: false, persisted: true } },
       { ...base, sequence: 7, eventType: "HEARTBEAT", payload: { stage: "EXPLAINING" } },
       { ...base, sequence: 8, eventType: "RUN_ERROR", payload: { error: { code: "TEMP", message: "暂时失败", retryable: true, traceId: "trace-1" }, terminal: false } },
-      { ...base, sequence: 9, eventType: "FINAL_RESULT", payload: { terminal: true, terminalStatus: "COMPLETED", finalAnswer: "最终答案", answerCompleteness: "COMPLETE", references: [] } }
+      { ...base, sequence: 9, eventType: "FINAL_RESULT", payload: { terminal: true, terminalStatus: "COMPLETED", finalAnswer: "最终答案", answerCompleteness: "COMPLETE", references: [],
+        pendingPracticeAction: { actionId: "action-1", conversationId: "conversation-1",
+          criteria: { topic: "方程", difficulty: "MEDIUM", requestedCount: 5 }, requestedCount: 5,
+          actualCount: 4, candidateQuestions: [], status: "PENDING", revision: 0, expiresAt: "2026-09-11T00:10:00Z" } } }
     ];
     const result = events.reduce(reduceAgentEvent, emptyAgentStreamState());
-    expect(result).toMatchObject({ answer: "最终答案", terminal: true, lastSequence: 9, partial: false });
+    expect(result).toMatchObject({ answer: "最终答案", terminal: true, lastSequence: 9, partial: false,
+      pendingPracticeAction: { actionId: "action-1", actualCount: 4 } });
   });
 
   it("rejects gaps and events after the unique terminal", () => {

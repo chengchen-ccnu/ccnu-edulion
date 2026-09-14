@@ -1,5 +1,24 @@
 # Skeleton verification
 
+## 2026-09-14 T15C 自主练习建议与创建结果卡片
+
+- 实现边界：独立 AI 工作区与普通公共题悬浮答疑共用 `PracticeSuggestionCard`；只消费 OpenAPI 0.23.4 生成路径/类型和服务端 `actionId/revision/status/executionResult`。没有修改 OpenAPI、Java、Python、Skill、数据层、索引、消息队列、OSS、导航、课程播放器或正式测评边界。
+- 动作行为：卡片展示主题、难度、请求/实际题数、不足说明、有效期和真实状态；覆盖 PENDING/CONFIRMED/EXECUTING/SUCCEEDED/FAILED/EXPIRED/CANCELLED、401/403/404/409/422/429/503、离线、有限轮询和未知结果查询。修改任一实质条件会永久禁用旧确认，重新生成前先取消旧 PENDING；页面并发点击合并为同一命令，未知响应以固定 action 查询，不解析模型文本或构造业务 ID。
+- 路由行为：`/practice/:assessmentId` 直接复用 `PracticeAttemptPage`。先由课程 assessment entry 返回的服务端归属迁移课程 PRACTICE 旧链；entry 404 后仍须由本人测评详情确认 AUTONOMOUS、PRACTICE、`courseId=null` 才作答。URL、查询参数和 ID 格式不参与归属判断，创建成功只展示可选“开始练习”。
+- 自动验证：OpenAPI 再生成一致、全工作区 typecheck 通过、53 个前端测试文件共 343 项全绿，admin/student/teacher 三个生产构建通过；`git diff --check` 通过。新增行为测试覆盖两个入口、数量不足、全部状态、条件失效、重复点击、响应丢失查询、空状态、离页清理与自主/课程路由。
+- CI：Ready PR #71 的 Java / JDK 17、Python / 3.10、Frontend / Node 20.19、OpenAPI generated source is current 两组共 8 项检查全部通过；最终纯文档状态提交继续以最新 HEAD 同组检查为准。
+- 真实验收：安全包装器运行既有 T14.3 多服务脚本。Qdrant 停止的首次运行得到实际 0 并安全失败，清理仍为 `learning=0/agent=0/redis=0`；启动既有索引后重跑得到 MEDIUM 5→4，通过确认前零创建、确认/重复/并发只创建一次、未知结果恢复、保存/提交/自动评分/结果、条件替换、取消、过期、owner/课程/成绩册隔离，最终清理再次三项为 0。既有题库、Seed 和索引未改，Qdrant 恢复停止。
+- 配置与风险：没有新增/修改 `local.env`，没有读取或记录对话密码，无需删除或迁移配置。页面刷新后的未知命令只查询、不盲重发；EXECUTING 三次有限轮询后需手动查询。未另做真实浏览器连接实际后端的人工录屏，Vue 行为与真实后端长链分别验收，详见 [T15C 交付文档](../delivery/T15C-practice-generation-web.md)。分支 `codex/t15c-practice-generation-web`，关键实现提交 `88a4bdb`；[Ready PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 目标为 `main`，保持 Open，不自行合并。
+
+## 2026-09-14 PR #70 合并与 T15C 前置审计
+
+- 合并与清理：[PR #70](https://github.com/chengchen-ccnu/ccnu-edulion/pull/70) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@f01035c2c8fca4fbc9f6119bbf8cc6a89f9aea79`；本地 `main` 已 `--ff-only` 同步，T13.5.2 本地和远端分支均已删除。
+- Skill 前置：`public-practice-generation@1.1.0` 已只经标准目录 Runtime 发现、规则选择、渐进 reference、受控脚本和私有执行审计运行；旧类、单例和专用调用已删除。真实模型、Qdrant、Learning 两次复核、确认、作答及清理长链已通过，OpenAPI 0.23.4 与生成客户端无回归。
+- 页面与动作前置：T15A/T15B 已提供独立 AI 页、普通公共题悬浮窗、统一消息/SSE/中断生命周期；T14.3 已提供当前动作、按 action 查询、revision 确认/取消、过期/执行中/成功/失败状态及稳定结果；T10C.2/T12B 已提供公共题入口和既有作答器。
+- 路由边界：T15C 只在既有两个 AI 承载区增加建议/结果卡片，并让 `/practice/:assessmentId` 根据服务端归属事实进入本人自主练习或迁移课程旧链接。不得信任 URL 猜归属、强制跳转、复制答题器、修改全局导航，或进入课程播放器、HOMEWORK/EXAM。
+- 准备结论：T13.5.2、T14.3、T15A、T15B、T10C.2 和 T12B 均已合并，所需契约、生成客户端、页面承载区和作答器完整，T15C 前置条件满足。已从干净 `main@f01035c` 创建 `codex/t15c-practice-generation-web`；当前只更新状态和前置审计，没有实现 Vue 或修改 OpenAPI、Java、Python。
+- 数据：本次合并、只读审计、文档更新和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
 ## 2026-09-13 T13.5.2 组题标准 Skill 迁移
 
 - 前置核对：工作区开始时干净，分支为 `codex/t13.5.2-practice-standard-skill`，HEAD 为规划提交 `232a1c4`；完整审计 T13.5.1 Runtime、旧组题类、Python 服务/工具/协议测试、Java 流与 pending 校验及 T14.3 真实验收脚本。
