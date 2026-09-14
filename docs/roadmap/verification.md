@@ -10,6 +10,7 @@
 - 自动化：Python `compileall` 与完整 unittest 90/90 通过、10 项按环境设计跳过；前端 generate、typecheck、53 文件 346 项测试和 admin/student/teacher 三个生产构建通过，仅保留既有大 chunk 警告；真实 MySQL `AgentMemoryMysqlAcceptanceTest` 2/2 通过并把 `edu_platform_agent_dev` 从 V7 迁到 V8。最终全仓 Maven `clean verify` 9 个模块全部成功，耗时 3:07；OpenAPI 生成一致性在提交前后分别检查。
 - 真实浏览器：登录固定合成学生后，已真实验证输入区 Stop/中断保存、原用户句、三点改名、删除确认及归档深链 404、两个“＋”菜单、方向键/Enter、单轮选择 chip、无 Action 时 DOM 不存在卡片、文本粘贴、PNG 粘贴启动既有上传链、浏览器返回/刷新及 390px 悬浮窗布局。对象存储端点未启动，PNG 直传按既有契约进入取消/离线态，没有把上传写成成功；Offer 长回答两次在本地浏览器长连接中断并正确保存“回答已中断”，因此真实 Offer 同意/拒绝/转移话题/过期未写成页面通过，自动化状态机测试通过。
 - 数据与清理：只保留 Agent V8 表结构/Flyway 历史。精确删除本轮 3 个会话及其 11 条消息、6 个 run、1 个 Action、命令/事件/Skill/用量等从属事实；删除 1 个 `CANCELED` 且无 mediaId 的上传会话及审计；删除本轮 9 条刷新会话和 2 条登录审计，逐项复核为 0。未创建数据库、账号、题目、课程、正式媒体、OSS 对象、索引点或永久 Seed；固定学生和既有 648 道题保持不变，所有 5173/8000/8080/8081/8083/8084/8086 验收端口已停止。
+- 交付：规划提交 `fd036dd`、`8ce001a` 均保留，实现提交 `6cdbe2b` 已按普通命令推送；[PR #72](https://github.com/chengchen-ccnu/ccnu-edulion/pull/72) 目标为 `main`，保持 Open 且不自行合并，最终 CI 状态待检查完成后补记。
 
 ## 2026-09-14 T15D 人工验收缺陷与插队规划
 

@@ -57,4 +57,4 @@ Java 仍是授权、会话事实与写操作边界；Python 不连平台 MySQL�
 
 主要风险是生产 OSS 可达性、真实模型响应时间和现有 student/teacher 大 chunk；都不是本次扩展的安全绕过。回退应用版本即可停止消费新可选字段；OpenAPI/内部契约为向前可选扩展，旧客户端仍可发送普通消息。数据库 V8 不应回写或删除，旧应用不读取该表；ARCHIVED 会话及历史事实按原保留策略继续存在。
 
-分支：`codex/t15d-ai-chat-skill-interaction-fixes`。规划提交 `fd036dd`、`8ce001a` 已保留；实现提交、PR 和 CI 状态将在创建后补记，PR 不由本任务自行合并。
+分支：`codex/t15d-ai-chat-skill-interaction-fixes`。规划提交 `fd036dd`、`8ce001a` 已保留，实现提交为 `6cdbe2b`；[PR #72](https://github.com/chengchen-ccnu/ccnu-edulion/pull/72) 目标为 `main`，保持 Open 且不由本任务自行合并。最终 CI 状态在 PR 检查完成后补记。
