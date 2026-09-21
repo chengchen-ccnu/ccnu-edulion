@@ -2521,6 +2521,8 @@ export interface components {
             difficulty: components["schemas"]["PracticeDifficulty"];
             /** @default 5 */
             requestedCount: number;
+            /** @description 未指定难度时为 true，以 difficulty 为优先难度，不足允许同主题其他难度补齐；明确难度和缺省旧记录为 false。候选逐题 difficulty 始终是真实难度。 */
+            allowDifficultyFallback?: boolean;
         };
         /** @description Safe identity-only projection after Learning revalidates exact immutable versions. It contains no stem, answer, analysis, scoring rule, storage location, or temporary URL. */
         PracticeCandidateQuestion: {
@@ -2541,7 +2543,7 @@ export interface components {
             assessmentId: string;
             startRoute: string;
         };
-        /** @description Browser-safe projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent. */
+        /** @description Browser-safe projection containing at least one Java-verified candidate. Zero-candidate retrieval has no action projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent. */
         PendingPracticeAction: {
             /** Format: uuid */
             actionId: string;
@@ -2925,7 +2927,7 @@ export interface components {
             interruptionNotice?: "回答已中断";
             savedCheckpointSequence?: number;
             references?: components["schemas"]["AgentAuthorizedReference"][];
-            /** @description Present only after Java revalidates and persists a Practice Coach proposal. Python candidate data is never forwarded directly. */
+            /** @description Present only after Java revalidates and persists at least one Practice Coach candidate. Zero-candidate retrieval has no action or card. Python candidate data is never forwarded directly. */
             pendingPracticeAction?: components["schemas"]["PendingPracticeAction"];
             /** @description A server-issued, single-next-turn offer. It is not a pending action and does not mean a Skill, search or write has executed. */
             skillOffer?: components["schemas"]["AgentSkillOffer"];

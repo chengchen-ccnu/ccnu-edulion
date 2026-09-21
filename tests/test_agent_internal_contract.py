@@ -144,6 +144,17 @@ class AgentInternalContractTests(unittest.TestCase):
         self.assertIn("/internal/v1/agent/runs/{runId}/skill-executions", paths)
         self.assertIn("/internal/v1/agent/runs/{runId}/skill-executions/{executionId}", paths)
 
+    def test_practice_question_search_accepts_only_bounded_semantic_knowledge_ids(self):
+        """两阶段 RAG 只允许 Runtime 把有界 UUID 知识点结果传给题目检索。"""
+        schema = openapi_schema(self.http_contract, "SearchArguments")
+        valid = {"query": "二次函数", "limit": 20, "knowledgePointIds": [
+            "00000000-0000-4000-8000-000000000221",
+        ]}
+        self.assertFalse(schema_errors(schema, valid))
+        invalid = deepcopy(valid)
+        invalid["knowledgePointIds"] = [f"00000000-0000-4000-8000-{index:012d}" for index in range(9)]
+        self.assertTrue(schema_errors(schema, invalid))
+
     def test_retry_keeps_all_logical_and_execution_ids(self):
         """相同逻辑请求重试必须沿用会话、客户端、消息和 run 身份。"""
         original = self.http_examples["validRequests"]["textQuestion"]

@@ -56,9 +56,51 @@ function terminalEvent(at: string) { return { eventType: "FINAL_RESULT" as const
     finalAnswer: "历史回答", answerCompleteness: "COMPLETE" as const, references: [] } }; }
 
 describe("T15B 普通自主练习悬浮答疑", () => {
+  it("超时旧会话的来源不能残留在新会话空态", async () => {
+    api.conversations.mockResolvedValue({ items: [conversation()], page: 1, size: 100, total: 1 });
+    api.messages.mockResolvedValue({ items: runMessages(), page: 1, size: 100, total: 2 });
+    const final = terminalEvent("2020-01-01T00:00:00Z");
+    api.events.mockResolvedValue({ items: [{ ...final, payload: { ...final.payload, references: [
+      { referenceId: "old", title: "过期来源", sourceType: "KNOWLEDGE_POINT", accessDecision: "AUTHORIZED_BY_JAVA" }
+    ] } }] });
+    await mount(); button("答疑").click();
+    await vi.waitFor(() => expect(host.textContent).toContain("哪一步没想明白"));
+    expect(host.querySelector(".agent-sources")).toBeNull();
+    expect(host.querySelector(".practice-suggestion")).toBeNull();
+  });
+  it("流结束刷新消息后仍保留紧凑来源，不因清空流对象丢失", async () => {
+    const references = [1, 2, 3].map(id => ({ referenceId: `knowledge-${id}`, title: `知识点${id}`,
+      sourceType: "KNOWLEDGE_POINT" as const, accessDecision: "AUTHORIZED_BY_JAVA" as const }));
+    const final = terminalEvent(new Date().toISOString());
+    api.send.mockResolvedValue(new Response(`data: ${JSON.stringify({ ...final, sequence: 1,
+      payload: { ...final.payload, references } })}\n\n`, { headers: { "Content-Type": "text/event-stream" } }));
+    api.conversation.mockResolvedValue(conversation({ id: "conversation-1" }));
+    await mount(); button("答疑").click(); await vi.waitFor(() => expect(api.conversations).toHaveBeenCalled());
+    await input("给我出几道函数题"); button("发送").click();
+    await vi.waitFor(() => expect(api.conversation).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.textContent).toContain("还有 1 条"));
+    expect(host.querySelectorAll(".agent-sources__preview li")).toHaveLength(2);
+  });
+  it("首次建会话保留本次显式能力且连续回车只发送一次", async () => {
+    await mount(); button("答疑").click(); await vi.waitFor(() => expect(api.conversations).toHaveBeenCalledOnce());
+    host.querySelector<HTMLButtonElement>('[aria-label="添加内容"]')!.click(); await nextTick();
+    button("生成自主练习").click(); await input("二次函数");
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(api.send).toHaveBeenCalledOnce());
+    expect(api.send).toHaveBeenCalledWith("conversation-1", expect.objectContaining({
+      selectedCapability: "GENERATE_AUTONOMOUS_PRACTICE"
+    }), expect.any(AbortSignal));
+  });
   it("打开不创建会话，第一次发送才创建 PRACTICE_FLOATING 并附当前题目", async () => {
     await mount(); button("答疑").click(); await vi.waitFor(() => expect(api.conversations).toHaveBeenCalledOnce());
-    expect(api.createConversation).not.toHaveBeenCalled(); await input("这一步怎么想？"); button("发送").click();
+    expect(api.createConversation).not.toHaveBeenCalled(); await input("这一步怎么想？");
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    const lineBreak = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(lineBreak); expect(lineBreak.defaultPrevented).toBe(false); expect(api.send).not.toHaveBeenCalled();
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    textarea.dispatchEvent(enter); expect(enter.defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(api.createConversation).toHaveBeenCalledWith(expect.any(String), "PRACTICE_FLOATING", expect.any(AbortSignal)));
     await vi.waitFor(() => expect(api.send).toHaveBeenCalledWith("conversation-1", expect.objectContaining({
       content: "这一步怎么想？", context: { questionId: "question-1", questionMediaIds: ["question-1-media"] }
@@ -131,6 +173,20 @@ describe("T15B 普通自主练习悬浮答疑", () => {
     });
     await mount(); button("答疑").click(); await vi.waitFor(() => expect(observed).toBeDefined());
     app?.unmount(); app = undefined; expect(observed?.aborted).toBe(true);
+  });
+
+  it("悬浮窗口恢复到历史零候选动作时不渲染建议卡", async () => {
+    api.conversations.mockResolvedValue({ items: [conversation()], page: 1, size: 100, total: 1 });
+    api.messages.mockResolvedValue({ items: runMessages(), page: 1, size: 100, total: 2 });
+    api.events.mockResolvedValue({ runId: "run-1", status: "COMPLETED",
+      items: [terminalEvent(new Date().toISOString())] });
+    api.pendingPracticeActionForConversation.mockResolvedValue({ actionId: "11111111-1111-4111-8111-111111111111",
+      conversationId: "conversation-recent", criteria: { topic: "函数", difficulty: "MEDIUM", requestedCount: 5 },
+      requestedCount: 5, actualCount: 0, candidateQuestions: [], status: "PENDING", revision: 0,
+      expiresAt: "2099-01-01T00:00:00Z" });
+    await mount(); button("答疑").click();
+    await vi.waitFor(() => expect(api.pendingPracticeActionForConversation).toHaveBeenCalled());
+    expect(host.querySelector(".practice-suggestion")).toBeNull(); expect(host.textContent).not.toContain("等待你明确确认");
   });
 
   it("历史题目 AVAILABLE 展示精确投影，UNAVAILABLE 不回退当前题", async () => {

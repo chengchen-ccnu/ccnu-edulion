@@ -166,7 +166,7 @@ Neo4j 仅按需查询有界前置/后续关系，主要用于前置知识回退�
 
 ### 标准 Skill Runtime：T13.5.1 → T13.5.2 → T15C
 
-T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime。T13.5.2 已于 2026-09-14 通过 PR #70 合并，把 `public-practice-generation` 迁移为首个标准目录 Skill 1.1.0。T15D 在不改变 Skill 身份的前提下把外部 OpenAPI 向前升级为 0.24.0、内部 Agent 契约升级为 1.6.0；Agent Access Flyway V8 只新增会话改名/归档命令事实，用于稳定 requestId 重放和载荷指纹冲突检测，不创建平行会话状态机。
+T13.5.1 已于 2026-09-13 通过 PR #69 合并，建立通用目录 Runtime。T13.5.2 已于 2026-09-14 通过 PR #70 合并，把 `public-practice-generation` 迁移为首个标准目录 Skill 1.1.0。T15D 当前外部 OpenAPI 为 0.24.2、内部 Agent 契约为 1.6.2，Skill 身份不变；Agent Access Flyway V8 只新增会话改名/归档命令事实，用于稳定 requestId 重放和载荷指纹冲突检测，不创建平行会话状态机。先前 0.24.1/1.6.1 的零候选边界继续有效：Python 返回普通学生文案，Java 复核后至少保留一题才写 Action，历史零候选记录不可查询或确认。新的可选难度补齐与知识点 ID 过滤见下文；Offer 公开询问字段仅在严格结构校验后按精确路径放行，文本仍检查秘密内容，不能放开其他 prompt 字段。
 
 T13.5.1 Runtime 固定从 Python 包内 `edu_agent_app/skills/*/SKILL.md` 启动扫描，只发现 Git 审查并随 wheel 发布的一层内置目录；禁止用户目录、在线安装、热加载、符号链接和路径逃逸。标准入口只要求 `name`、`description`，可选 `metadata.version` 与 `metadata.script-timeout-seconds`；其他专家、意图识别、记忆压缩和基础工具没有改成 Skill。未来只有用户明确要求或总控评审认为适合时才新增 Skill，且不得再创建 Python `SomethingSkill` 类或全局单例。
 
@@ -182,11 +182,11 @@ Skill 选中后才加载完整 `SKILL.md`，模型只能通过 Runtime 的 `read
 
 Runtime 为成功脚本输出生成模型不可伪造的 `skillName`、版本、script、executionId、resultType 和 payload 信封。Skill 选择后、脚本执行前必须经 Agent Access 私有接口落 `ai_skill_execution`；记录失败则 fail closed，不执行脚本且不产生组题动作。审计只存内部 ID、顺序、名称/版本、选择来源、相对 reference/脚本、状态/耗时和安全失败码，不存指令正文、输入输出、题干答案、秘密或绝对路径；Python 崩溃或 run 终态时将遗留 RUNNING 收口为 ABANDONED/RUNTIME_INTERRUPTED，不自动重跑。该私有事实需要向前迁移和内部协议，不通过浏览器 OpenAPI、SSE 或 RabbitMQ 暴露。
 
-T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skills/public-practice-generation/SKILL.md`、`scripts/validate_proposal.py` 和 `references/practice-rules.md`；无消费者的 `agents/openai.yaml` 已删除。新版本为 `1.1.0`，Java 同时接受 1.1.0 与滚动部署中已开始的 1.0.0 run，但新 Python 只产生 1.1.0。组题脚本只处理主题/难度/数量默认与边界、组合题主问题计数、候选稳定去重和结构校验；Qdrant 只经 `QUESTION_SEARCH` 工具，Java 继续复核和创建，模型文本伪造的 proposal 不得进入 pending action。
+T13.5.2 使用 Codex skill-creator 生成骨架后精简为 `edu_agent_app/skills/public-practice-generation/SKILL.md`、`scripts/validate_proposal.py` 和 `references/practice-rules.md`；无消费者的 `agents/openai.yaml` 已删除。新版本为 `1.1.0`，Java 同时接受 1.1.0 与滚动部署中已开始的 1.0.0 run，但新 Python 只产生 1.1.0。组题脚本只处理主题/难度/数量默认与边界、组合题主问题计数、候选稳定去重和结构校验。T15D 补充修复采用“单次 LLM 预测 0～3 个知识点名称 → 逐项 KNOWLEDGE_SEARCH 语义召回真实知识点 → 稳定 ID 限定 QUESTION_SEARCH 关联题 → Java 复核”流程。预测名称不必匹配库内标签，不能生成 ID；知识点检索继续经过混合召回、重排和阈值，每项至多两条，统一去重。关联题题干可能只有公式，重排只排序，不再要求题干复述知识点名称，但必须验证真实 ID 关联。超纲或不确定主题返回空列表且不检索、不执行提案脚本，不能替换成相近初中主题；模型失败、知识点无命中不扩大到全库，全部调用计入原有预算和取消链；Java 继续复核权限、当前版本、难度和可评分性，最终学生文案和卡片只承诺 Java 复核后数量。
 
-迁移后主题仍从明确请求/当前对话取，缺失澄清；默认中等、5 道，1～20 主问题，组合题不拆。只选 ACTIVE SYSTEM 初中公共题，套内去重、尽量避开近期题；数量不足先说明，不静默放宽。Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。T13.5.2 必须以真实 Qdrant→Java 复核→确认→创建→作答→清理长链证明行为不退化，且保持 T15C 所需 OpenAPI 0.23.4 浏览器契约兼容。
+迁移后主题仍从明确请求/当前对话取，缺失澄清；默认 5 道，1～20 主问题，组合题不拆。T15D 的 OpenAPI 0.24.2/内部契约 1.6.2 可选 `allowDifficultyFallback` 区分未指定难度与明确要求：未指定时优先中等，再以简单、困难补齐；缺失字段的旧请求和明确难度仍严格过滤。该条件保存于既有 criteria_json，不新增表或迁移。只选 ACTIVE SYSTEM 初中公共题，套内去重、尽量避开近期题；数量不足先说明，不扩大知识点或自动评分范围，不生成新题。Agent Access 在写入 `ai_pending_action` 前调用 Learning 复核，确认时再次复核并以 `sourceActionId` 调用 Learning；Learning 以唯一约束事务化创建 `AUTONOMOUS` PRACTICE。授权来源是检索证据，不等于全部可自动评分的最终候选，两个页面只常显前两条，其余在可访问浮层查看。
 
-Java 保存经过校验的 pendingAction，默认 10 分钟过期，绑定用户、参数、revision、候选版本/条件和确认身份。学生明确确认后由 Learning 创建普通自主练习，无倒计时，复用作答/评分。条件或数量实质变化重新确认；修改条件使旧建议失效。文字“好的”仅在唯一、明确待确认动作时适用。重复确认/超时重试必须返回同次结果，未知结果先查询；数据库事务和唯一约束负责最终幂等。
+Java 仅在 Learning 复核后至少保留一道有效候选时保存 pendingAction，默认 10 分钟过期，绑定用户、参数、revision、候选版本/条件和确认身份。Python 检索为零或 Java 复核淘汰至零时只返回自然失败说明，不产生可执行 Action；历史零候选或候选数不一致记录也不得投影或确认。学生明确确认后由 Learning 创建普通自主练习，无倒计时，复用作答/评分。条件或数量实质变化重新确认；修改条件使旧建议失效。文字“好的”仅在唯一、明确待确认动作时适用。重复确认/超时重试必须返回同次结果，未知结果先查询；数据库事务和唯一约束负责最终幂等。
 
 T13.5.1/T13.5.2 已合并并从最新 `main` 重新准备 T15C。成功卡片显示主题/实际题数/开始练习，不强制跳转；失败保留条件。模型小例题只用于聊天，不自动成为正式题目、试卷或评分答案。Skill 创建练习不授权 Agent 替学生提交或打分。
 

@@ -802,15 +802,22 @@ public class AgentConversationService {
 
     /** 递归拒绝任何看起来像秘密或临时 URL 的字段，防止 Python 误把私有状态送入公开事件。 */
     private static void rejectSecrets(JsonNode node) {
+        rejectSecrets(node, "");
+    }
+
+    /** 仅允许严格事件校验后的 skillOffer.prompt 展示询问语；其文本仍须通过秘密内容检查。 */
+    private static void rejectSecrets(JsonNode node, String path) {
         if (node.isObject()) {
             node.properties().forEach(entry -> {
                 String key = entry.getKey().toLowerCase();
-                if (key.contains("prompt") || key.contains("token") || key.contains("secret")
+                String childPath = path + "/" + entry.getKey();
+                boolean offerPrompt = "/skillOffer/prompt".equals(childPath);
+                if ((key.contains("prompt") && !offerPrompt) || key.contains("token") || key.contains("secret")
                         || key.contains("temporaryaccess") || key.equals("url")) throw protocolFailure();
-                rejectSecrets(entry.getValue());
+                rejectSecrets(entry.getValue(), childPath);
             });
         } else if (node.isArray()) {
-            node.forEach(AgentConversationService::rejectSecrets);
+            node.forEach(value -> rejectSecrets(value, path + "/[]"));
         } else if (node.isTextual()) {
             String value = node.asText();
             String normalized = value.toLowerCase(java.util.Locale.ROOT);

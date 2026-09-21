@@ -4,7 +4,7 @@
  * 切题保留会话、消息、生成和草稿原关联。关闭或离开页面会取消活动 run、恢复服务端已保存部分并清理请求/监听器。
  */
 import { GatewayRequestError } from "@edu/api-client";
-import type { AgentConversation, AgentMessage, AgentSelectableCapability, SystemQuestion } from "@edu/api-client";
+import type { AgentAuthorizedReference, AgentConversation, AgentMessage, AgentSelectableCapability, PendingPracticeAction, SystemQuestion } from "@edu/api-client";
 import { SafeArticleContent } from "@edu/ui";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -20,6 +20,7 @@ import type { PracticeDraftContext } from "../practice-floating-chat";
 import AgentQuestionContextCard from "./AgentQuestionContextCard.vue";
 import AiInputMenu from "./AiInputMenu.vue";
 import PracticeSuggestionCard from "./PracticeSuggestionCard.vue";
+import AgentSources from "./AgentSources.vue";
 
 const props = defineProps<{ question: SystemQuestion | null }>();
 const router = useRouter();
@@ -29,6 +30,8 @@ const conversation = ref<AgentConversation | null>(null); const messages = ref<A
 const stream = ref<AgentStreamState | null>(null); const errorMessage = ref(""); const draft = ref("");
 const imageIds = ref<string[]>([]); const uploading = ref(false); const uploadMessage = ref("");
 const selectedCapability = ref<AgentSelectableCapability | null>(null);
+const restoredAction = ref<PendingPracticeAction | null>(null);
+const restoredReferences = ref<AgentAuthorizedReference[]>([]);
 const draftContext = ref<PracticeDraftContext | null>(null); const initialized = ref(false);
 const resolvedActivityAt = ref<number | undefined>();
 let controller: AbortController | null = null; let uploadController: AbortController | null = null;
@@ -81,7 +84,11 @@ async function loadConversation(item: AgentConversation, enforceIdleWindow = fal
   }
   const activityAt = recovered?.lastOccurredAt ? Date.parse(recovered.lastOccurredAt)
     : await resolveLastActivityAt(item, history);
-  if (enforceIdleWindow && !isReusablePracticeConversation(item, Date.now(), activityAt)) return;
+  if (enforceIdleWindow && !isReusablePracticeConversation(item, Date.now(), activityAt)) {
+    // 已超时的旧会话不挂载，其附属来源/动作也不能泄漏到新会话空态。
+    restoredAction.value = null; restoredReferences.value = [];
+    return;
+  }
   if (disposed) return;
   conversation.value = item; messages.value = history; stream.value = recovered;
   resolvedActivityAt.value = activityAt; sending.value = Boolean(recovered && !recovered.terminal);
@@ -93,6 +100,9 @@ async function resolveLastActivityAt(item: AgentConversation, history: AgentMess
   try {
     const events = await studentAgentApi.events(runId, undefined, lifetime.signal);
     const terminal = [...events.items].reverse().find(event => event.eventType === "FINAL_RESULT");
+    // 只恢复所属回答的动作身份，卡片随后查询当前事实，不能凭旧 SSE 再次创建练习。
+    restoredAction.value = terminal?.payload.pendingPracticeAction ?? null;
+    restoredReferences.value = terminal?.payload.references ?? [];
     const terminalAt = terminal ? Date.parse(terminal.occurredAt) : Number.NaN;
     return Number.isFinite(terminalAt) ? terminalAt : fallbackPracticeActivityAt(item);
   } catch (error) {
@@ -107,22 +117,28 @@ async function conversationForSend() {
   try {
     const created = await studentAgentApi.createConversation(crypto.randomUUID(), "PRACTICE_FLOATING", lifetime.signal);
     conversation.value = created; messages.value = []; stream.value = null;
+    restoredAction.value = null;
+    restoredReferences.value = [];
     selectedCapability.value = null;
     resolvedActivityAt.value = fallbackPracticeActivityAt(created); return created;
   } finally { creating.value = false; }
 }
 async function send() {
   const content = draft.value.trim();
-  if (!content || sending.value || creating.value) return;
+  if (!content || sending.value || creating.value || uploading.value || disposed) return;
   if (!draftContext.value) {
     if (!props.question) { errorMessage.value = "题目仍在加载，请稍后再发送。"; return; }
     draftContext.value = capturePracticeDraftContext(props.question);
   }
   const context = draftContext.value;
+  // 捕获本次显式选择；首次创建/过期换会话会重置界面，但不能丢掉学生本次发送的能力。
+  const capability = selectedCapability.value;
+  sending.value = true;
   errorMessage.value = "";
   let item: AgentConversation;
   try { item = await conversationForSend(); }
-  catch (error) { errorMessage.value = agentError(error, "悬浮会话创建失败，提问草稿已保留。"); return; }
+  catch (error) { sending.value = false; errorMessage.value = agentError(error, "悬浮会话创建失败，提问草稿已保留。"); return; }
+  if (disposed) { sending.value = false; return; }
   const optimisticId = `pending-${crypto.randomUUID()}`;
   messages.value.push({ id: optimisticId, conversationId: item.id, role: "USER", content,
     completeness: "COMPLETE", questionContextProjection: { status: "AVAILABLE", question: context.projection },
@@ -133,7 +149,7 @@ async function send() {
     const response = await studentAgentApi.send(item.id, { clientRequestId: crypto.randomUUID(), content,
       context: { questionId: context.questionId, questionMediaIds: context.mediaIds,
         aiQuestionMediaIds: imageIds.value.length ? [...imageIds.value] : undefined },
-      selectedCapability: selectedCapability.value ?? undefined }, active.signal);
+      selectedCapability: capability ?? undefined }, active.signal);
     accepted = true; draft.value = ""; draftContext.value = null; imageIds.value = []; selectedCapability.value = null;
     stream.value.runId = response.headers.get("X-Agent-Run-Id") ?? "";
     await consumeAgentSse(response, event => { stream.value = reduceAgentEvent(stream.value!, event); }, active.signal);
@@ -152,6 +168,12 @@ async function send() {
       }
     }
   } finally { controller = null; sending.value = Boolean(activeRunId()); }
+}
+/** Enter 发送，Shift+Enter 保留换行；中文输入法正在组字时不拦截回车。 */
+function composerKeydown(event: KeyboardEvent) {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  void send();
 }
 async function regenerate() {
   if (!canRegenerate.value || !conversation.value || !lastUserMessage.value) return;
@@ -241,7 +263,14 @@ async function refresh() {
   if (!conversation.value) return;
   const id = conversation.value.id;
   const [history, item] = await Promise.all([loadAllMessages(id), studentAgentApi.conversation(id, lifetime.signal)]);
-  if (conversation.value?.id === id) { messages.value = history; conversation.value = item; stream.value = null; }
+  if (conversation.value?.id === id && !disposed) {
+    // 流结束后改用持久消息渲染，但保留其来源和动作身份，避免刷新消息时丢失附属投影。
+    if (stream.value?.terminal) {
+      restoredReferences.value = stream.value.references;
+      restoredAction.value = stream.value.pendingPracticeAction;
+    }
+    messages.value = history; conversation.value = item; stream.value = null;
+  }
 }
 function onDocumentKeydown(event: KeyboardEvent) { if (event.key === "Escape" && panelOpen.value) { event.preventDefault(); void closePanel(); } }
 async function scrollToBottom() {
@@ -258,12 +287,12 @@ async function scrollToBottom() {
       <span aria-hidden="true">AI</span><strong>答疑</strong>
     </button>
     <section v-else ref="panel" class="practice-chat" role="dialog" aria-modal="true" aria-labelledby="practice-chat-title" tabindex="-1">
-      <header class="practice-chat__header"><div><span>围绕当前公共题目</span><h2 id="practice-chat-title">AI 答疑</h2></div>
+      <header class="practice-chat__header"><div><span>题目讨论</span><h2 id="practice-chat-title">AI 答疑</h2></div>
         <button class="practice-chat__close" type="button" aria-label="关闭 AI 答疑" @click="closePanel">×</button></header>
       <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
       <div class="practice-chat__messages" aria-live="polite" :aria-busy="sending">
         <p v-if="loading" class="practice-chat__empty" role="status">正在读取最近答疑…</p>
-        <div v-else-if="!messages.length && !stream" class="practice-chat__empty"><strong>从这道题开始问</strong><p>我会附带当前题目，但不会提交答案、评分或修改学习进度。</p></div>
+        <div v-else-if="!messages.length && !stream" class="practice-chat__empty"><strong>哪一步没想明白？</strong><p>直接提问即可，当前题目会一并附上。</p></div>
         <article v-for="message in displayMessages" :key="message.id" class="practice-chat-message" :class="`practice-chat-message--${message.role.toLowerCase()}`">
           <header><strong>{{ message.role === "USER" ? "你" : "AI 助教" }}</strong><span>{{ new Date(message.createdAt).toLocaleTimeString() }}</span></header>
           <p v-if="message.contentState === 'PURGED'" class="ai-purged">原始内容已按保留策略清理。</p>
@@ -273,7 +302,7 @@ async function scrollToBottom() {
           <small v-if="message.completeness === 'PARTIAL' && message.content.trim() !== '回答已中断'" class="ai-partial">回答已中断</small>
           <footer v-if="message.id === lastAssistant?.id && canRegenerate" class="practice-chat__answer-actions">
             <button class="button button--quiet" type="button" @click="regenerate">重新生成回答</button>
-            <small>沿用原消息附带题目，保留旧回答，并可能消耗额度。</small>
+            <small>可能消耗提问额度</small>
           </footer>
         </article>
         <article v-if="stream && (sending || stream.answer)" class="practice-chat-message practice-chat-message--assistant">
@@ -282,19 +311,34 @@ async function scrollToBottom() {
           <small v-if="stream.partial" class="ai-partial">回答已中断</small>
         </article>
         <PracticeSuggestionCard v-if="conversation" :conversation-id="conversation.id"
-          :initial-action="stream?.pendingPracticeAction" @regenerate="regeneratePractice" />
+          :initial-action="stream ? stream.pendingPracticeAction : restoredAction" @regenerate="regeneratePractice" />
+        <AgentSources :references="stream ? stream.references : restoredReferences" />
       </div>
       <form class="practice-chat__composer" @submit.prevent="send">
         <p v-if="currentQuestionChanged" class="practice-chat__draft-note">这段提问仍关联上一道题
           <button type="button" @click="switchDraftToCurrentQuestion">切换为当前题目</button></p>
         <label for="practice-chat-question" class="sr-only">输入关于当前题目的问题</label>
         <textarea id="practice-chat-question" v-model="draft" rows="3" maxlength="10000"
-          placeholder="输入关于这道题的疑问；不会发送正在编辑的答案" @paste="pasteImage"></textarea>
+          placeholder="输入问题；Enter 发送，Shift+Enter 换行" @keydown="composerKeydown" @paste="pasteImage"></textarea>
         <div class="practice-chat__actions"><AiInputMenu :disabled="sending" :uploading="uploading" :selected-capability="selectedCapability" @file="uploadImage" @capability="selectedCapability = $event"/><span v-if="imageIds.length">已附加 {{ imageIds.length }} 张题图</span><button v-if="sending" class="button button--danger" type="button" @click="stop('USER_STOP')">停止生成</button>
-          <button v-else class="button button--primary" type="submit" :disabled="creating || !draft.trim()">{{ creating ? "正在创建…" : "发送" }}</button>
+          <button v-else class="button button--primary" type="submit" :disabled="creating || uploading || !draft.trim()">{{ creating ? "正在创建…" : "发送" }}</button>
           <button class="button button--quiet" type="button" :disabled="!conversation" @click="openFullPage">转到完整页面</button></div>
         <p v-if="uploadMessage" role="status">{{ uploadMessage }}</p>
       </form>
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 悬浮窗沿用独立答疑的轻量消息层次，保留明显的关闭入口和输入边界。 */
+.practice-chat { border-color: #dce4ef; box-shadow: 0 20px 70px #20365926; }
+.practice-chat__header { color: #273e64; background: linear-gradient(110deg,#edf4ff,#f7f5ff); border-bottom: 1px solid #e2e8f3; }
+.practice-chat__header span { color: #677b9c; }
+.practice-chat__close { color: #516683; background: #ffffffb3; border-color: #dbe4f0; }
+.practice-chat__messages { background: #fff; }
+.practice-chat-message--assistant { max-width: 100%; padding: 10px 0; border: 0; border-radius: 0; box-shadow: none; }
+.practice-chat-message--user { background: #edf3fc; border-color: transparent; box-shadow: none; border-radius: 15px 15px 4px 15px; }
+.practice-chat__answer-actions { border: 0; }
+.practice-chat__empty { padding: 20px 0; }
+.practice-chat__empty strong { color: #304666; font-size: 1.1rem; }
+</style>

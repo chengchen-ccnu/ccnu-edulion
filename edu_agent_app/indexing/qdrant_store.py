@@ -227,6 +227,12 @@ class QdrantIndex:
         ]
         if request.collection == "math_questions":
             must.append(models.FieldCondition(key="visibility", match=models.MatchValue(value="PUBLIC_SYSTEM")))
+            if request.knowledge_point_ids:
+                # 用户自然语言先在知识点库做语义召回，再以稳定知识点 ID 约束正式题目候选。
+                must.append(models.FieldCondition(
+                    key="knowledge_point_ids",
+                    match=models.MatchAny(any=list(request.knowledge_point_ids)),
+                ))
         elif request.collection == "course_content":
             must.extend(
                 [

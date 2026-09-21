@@ -72,7 +72,10 @@ class AgentAccessClient:
             ) for item in value.get("evidence", [])[:5]]
 
     async def report(self, data: dict[str, Any]) -> None:
-        """终态网络传播可能略晚于 Python 生成器，固定 reportId 有限重试仍保持严格幂等。"""
+        """Java 终态还需复核组题候选；仅对尚未终态重试，固定载荷与 reportId 保持幂等。
+
+        最多六次、累计退避十五秒；内容冲突等其他 409 立即失败，不能盲目重报。
+        """
 
         run_id = str(data["runId"])
         payload = dict(data)
@@ -80,16 +83,17 @@ class AgentAccessClient:
         payload["reportId"] = str(uuid4())
         trace_id = str(data.get("traceId", "trace-agent-report"))
         async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
-            for attempt in range(5):
+            for attempt in range(6):
                 response = await client.put(
                     f"{self.base_url}/internal/v1/agent/runs/{run_id}/result-report",
                     headers=self._headers(trace_id), json=payload,
                 )
                 if response.status_code < 400:
                     return
-                if response.status_code != 409 or attempt == 4:
+                waiting_for_terminal = response.status_code == 409 and response.json().get("code") == "AGENT.RUN_NOT_TERMINAL"
+                if not waiting_for_terminal or attempt == 5:
                     response.raise_for_status()
-                await asyncio.sleep(0.1 * (attempt + 1))
+                await asyncio.sleep(attempt + 1)
 
     async def start_skill_execution(self, run_id: str, payload: Mapping[str, Any], trace_id: str) -> None:
         """在 Skill 获选后创建私有 RUNNING 审计；失败向上抛出并阻止脚本执行。"""

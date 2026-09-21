@@ -59,12 +59,29 @@ describe("T15A entry component", () => {
     [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.getAttribute("aria-label") === "添加内容")!.click();
     await nextTick(); [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "生成自主练习")!.click();
     await nextTick(); expect(host.textContent).toContain("下一条：生成自主练习"); textarea.value = "一元一次方程三道题"; textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    host.querySelector<HTMLFormElement>(".ai-composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const lineBreak = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(lineBreak); expect(lineBreak.defaultPrevented).toBe(false); expect(api.send).not.toHaveBeenCalled();
+    const composing = new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(composing); expect(composing.defaultPrevented).toBe(false); expect(api.send).not.toHaveBeenCalled();
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    textarea.dispatchEvent(enter); expect(enter.defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(api.send).toHaveBeenCalled()); const body = api.send.mock.calls[0][1];
     expect(body.selectedCapability).toBe("GENERATE_AUTONOMOUS_PRACTICE"); expect(body.context.aiQuestionMediaIds).toEqual(["media-pasted"]);
     const stop = [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "停止生成")!;
     expect(stop.closest(".ai-composer")).not.toBeNull(); expect(host.querySelector(".ai-chat__header")?.textContent).not.toContain("停止生成");
     await vi.waitFor(() => expect(host.textContent).not.toContain("下一条：生成自主练习"));
+  });
+  it("does not render a legacy zero-candidate action in the independent AI workspace", async () => {
+    const item = { id: "conversation-zero", entryPoint: "INDEPENDENT_CHAT", title: "空候选", status: "ACTIVE", revision: 1,
+      activeRunId: null, createdAt: "2026-09-14T00:00:00Z", updatedAt: "2026-09-14T00:00:00Z", lastMessageAt: "2026-09-14T00:00:00Z" };
+    api.conversations.mockResolvedValue({ items: [item], page: 1, size: 30, total: 1 }); api.conversation.mockResolvedValue(item);
+    api.messages.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 }); api.events.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 });
+    api.pendingPracticeActionForConversation.mockResolvedValue({ actionId: "11111111-1111-4111-8111-111111111111",
+      conversationId: item.id, criteria: { topic: "函数", difficulty: "MEDIUM", requestedCount: 5 }, requestedCount: 5,
+      actualCount: 0, candidateQuestions: [], status: "PENDING", revision: 0, expiresAt: "2099-01-01T00:00:00Z" });
+    await mountWorkspace(`/ai/conversations/${item.id}`);
+    await vi.waitFor(() => expect(api.pendingPracticeActionForConversation).toHaveBeenCalled());
+    expect(host.querySelector(".practice-suggestion")).toBeNull(); expect(host.textContent).not.toContain("等待你明确确认");
   });
   it("distinguishes loading/empty and creates an independent deep link", async () => { let resolve!: (value: unknown) => void; api.conversations.mockImplementationOnce(() => new Promise(done => { resolve = done; })); const router = await mount(); expect(host.textContent).toContain("正在读取会话"); resolve({ items: [], page: 1, size: 30, total: 0 }); await vi.waitFor(() => expect(host.textContent).toContain("还没有会话")); api.createConversation.mockResolvedValue({ id: "conversation-1" }); [...host.querySelectorAll("button")].find(button => button.textContent?.includes("新建会话"))!.click(); await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/ai/conversations/conversation-1")); expect(api.createConversation).toHaveBeenCalledOnce(); });
   it("saves only the two public preference values with its current revision", async () => { api.updatePreference.mockResolvedValue({ value: "COMPLETE_SOLUTION", revision: 1, explicitlySet: true }); await mount(); await vi.waitFor(() => expect(host.querySelector("select")).not.toBeNull()); const select = host.querySelector("select")!; expect([...select.options].map(option => option.value)).toEqual(["GUIDED_STEP_BY_STEP", "COMPLETE_SOLUTION"]); select.value = "COMPLETE_SOLUTION"; select.dispatchEvent(new Event("change", { bubbles: true })); await vi.waitFor(() => expect(api.updatePreference).toHaveBeenCalledWith("COMPLETE_SOLUTION", 0, expect.any(String))); });
@@ -81,7 +98,7 @@ describe("T15A entry component", () => {
     await vi.waitFor(() => expect(host.textContent).toContain("先移项"));
     expect(host.querySelectorAll(".ai-workspace")).toHaveLength(1); expect(host.querySelector(".ai-sidebar")).not.toBeNull();
     const regenerate = [...host.querySelectorAll("button")].find(button => button.textContent?.includes("重新生成回答"));
-    expect(regenerate?.closest(".ai-message--assistant")).not.toBeNull(); expect(regenerate?.parentElement?.textContent).toContain("保留旧回答");
+    expect(regenerate?.closest(".ai-message--assistant")).not.toBeNull(); expect(regenerate?.parentElement?.textContent).toContain("可能消耗提问额度");
   });
   it("returns focus to the history trigger when the compact drawer closes with Escape", async () => {
     Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });

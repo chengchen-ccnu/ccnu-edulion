@@ -74,6 +74,12 @@ class AgentStreamEventValidatorTest {
             AgentStreamEventValidator.validate(practiceEvent(version), RUN_ID, TRACE_ID);
         }
         assertProtocolViolation(practiceEvent("1.2.0"));
+        ObjectNode fallback = (ObjectNode) practiceEvent("1.1.0");
+        ObjectNode proposal = (ObjectNode) fallback.path("payload").path("practiceProposal");
+        proposal.put("allowDifficultyFallback", true);
+        AgentStreamEventValidator.validate(fallback, RUN_ID, TRACE_ID);
+        proposal.put("allowDifficultyFallback", "true");
+        assertProtocolViolation(fallback);
     }
 
     private LinkedHashMap<String, Map<String, Object>> validPayloads() {

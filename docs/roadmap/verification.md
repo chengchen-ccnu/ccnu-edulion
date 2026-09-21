@@ -1,6 +1,20 @@
 # Skeleton verification
 
-## 2026-09-14 T15D 实现与本地验收
+## 2026-09-21 T15D 补充修复最终本地审计
+
+实际版本为 OpenAPI **0.24.2** / Agent Internal **1.6.2**，不再混用中间版本。旧 HEAD `31f43cd` 的绿灯不是当前工作树结果。38 个 tracked 修改及 3 个新文件均属于本任务；本轮另修 AgentConversationService 的 Offer 误拦截，共 42 个文件，无超范围删除或历史重写。
+
+- Python compileall + 完整 unittest：100 项，90 通过、10 条件跳过。空规划为合法无匹配；用户批准超纲或不确定主题不再硬猜近似初中主题。
+- Maven clean verify：09-20 16:30 全仓 9 模块成功，285 项含 35 条件跳过；Agent 58 项含 3 跳过。真实发现 skillOffer.prompt 被秘密字段检查误拦截，已按精确路径修复且文本仍检查秘密内容。
+- 前端 generate/typecheck/test/三构建通过，54 文件 355 测试。09-21 再生成一致，内部契约解析/正反例与外部 Prism Mock 加载通过，git diff --check 通过。
+- 真实二次函数两入口组题、复核数量、确认、刷新恢复开始入口通过；自主练习空 courseId 不再 500。未指定难度补齐 true，但召回池仍只有 1 道可评分题；来源数不等于可练习题数。Offer 同意链实际返回简单题。
+- 两入口零候选 DOM 无卡、数据库无 Action、刷新一致；修正后椭圆积分不再误召回圆几何，提案脚本未执行。
+- Offer 同意、拒绝、转移话题、跨轮过期四分支真实通过：只有同意触发 EXPLICIT Skill。新 run 用量各一条，无重复；最多六次重试及冲突不重试有自动化。
+- 1440×1000 与 390×844 布局检查、来源点击/Escape/外部关闭通过。真实指针悬停未单独验证；成功题图上传未通过真实验收，09-20 题图服务不可用。其他错误码/断线/清理主要由自动化覆盖，不伪报本轮全部真实故障注入通过。
+- 精确清理 10 会话、34 消息、17 run、352 事件、7 Action、16 Action 审计、9 Skill 审计、16 用量；4 自主练习、4 题快照、2 草稿及幂等事实。逐项目标复核 0，Redis 精确 run/会话键残留 0，无本轮记忆/索引写入。固定 Seed、题库及其他会话保留；共享认证刷新不按时间批量删除。
+- 无新增表/迁移/秘密配置。PR #72 保持 Open，最新提交/CI 见本轮 PR 更新。完整 ID、命令、演示和回退见 [T15D 交付文档](../delivery/T15D-ai-chat-skill-interaction-fixes.md)。
+
+以下为历史阶段记录，当前版本、完成状态和结果以 09-21 审计为准。
 
 - 契约与存储：先把外部 OpenAPI 从 0.23.4 向前升级到 0.24.0，再把 Java→Python 契约从 1.5.0 升到 1.6.0并重新生成前端类型。PATCH/DELETE 会话命令使用 title/expectedRevision/稳定 requestId；Agent Access V8 新增 `ai_conversation_command` 保存命令重放事实，因为会话现有 create request 字段不能区分改名/归档或检测 requestId 载荷复用。删除只把会话改为 `ARCHIVED`，没有级联删除业务历史。
 - 会话与生成：底部发送按钮在生成中原位变为“停止生成”，仍复用既有 SSE cancel、部分回答和“回答已中断”；流 reader、路由离开及卸载统一取消。最近会话三点菜单只含重命名/删除，409 保留编辑输入并允许重载 revision；ACTIVE run 删除为 409，列表、详情、消息、run、Action 和继续发送均按 owner+ACTIVE 收口，非 owner/归档/不存在统一安全 404。真实浏览器发现 Gateway CORS 漏放 PATCH 后已补测试修复。

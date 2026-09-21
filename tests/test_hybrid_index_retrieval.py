@@ -54,6 +54,27 @@ class FakeIndex:
 
 
 class HybridIndexRetrievalTests(unittest.TestCase):
+    def test_grounded_questions_need_real_association_not_topic_words_in_stem(self):
+        """公式题重排分低仍可通过真实关联入选；错误关联即使混入检索响应也被排除。"""
+        from uuid import uuid4
+        knowledge_id = str(uuid4())
+
+        class AssociatedIndex(FakeIndex):
+            def search_dense(self, _request, _vector, _limit):
+                linked = candidate("linked", "y=ax²+bx+c，求a、b、c")
+                linked.payload["knowledge_point_ids"] = [knowledge_id]
+                return [linked, candidate("unlinked", "三角形全等判定")]
+
+            def search_bm25(self, _request, _limit):
+                return []
+
+        service = HybridSearchService(self.settings(), AssociatedIndex(), FakeEncoder(), FakeReranker())
+        response = service.search(RetrievalRequest(
+            "math_questions", "求二次函数的解析式", "RECOMMEND_PRACTICE", 20,
+            knowledge_point_ids=[knowledge_id]))
+        self.assertEqual(["linked"], [hit.entity_id for hit in response.hits])
+        self.assertLess(response.hits[0].rerank_score, response.threshold)
+
     def settings(self, threshold=0.5):
         return SimpleNamespace(
             dense_candidate_k=30,

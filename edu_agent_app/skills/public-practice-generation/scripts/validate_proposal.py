@@ -69,6 +69,11 @@ def validate(value: Any) -> dict[str, Any]:
     # Learning 还要按难度、当前版本和自动评分能力做领域复核，因此这里保留最多 20 个
     # 检索候选作为复核池；requestedCount 只决定 Java 最终截取的主问题数量。
     selected = ordered[:20]
+    if not selected:
+        raise ValueError("零候选不能形成组题提案")
+    fallback = value.get("allowDifficultyFallback", False)
+    if not isinstance(fallback, bool):
+        raise ValueError("allowDifficultyFallback 必须为布尔值")
     return {
         "resultType": "PRACTICE_PROPOSAL",
         "payload": {
@@ -76,6 +81,7 @@ def validate(value: Any) -> dict[str, Any]:
             "difficulty": difficulty,
             "requestedCount": requested,
             "candidates": selected,
+            **({"allowDifficultyFallback": True} if fallback else {}),
         },
     }
 

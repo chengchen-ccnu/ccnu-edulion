@@ -34,7 +34,28 @@ public final class AgentDtos {
     public enum PendingPracticeActionStatus { PENDING, CONFIRMED, CANCELLED, EXPIRED, EXECUTING, SUCCEEDED, FAILED }
     public enum SelectableCapability { GENERATE_AUTONOMOUS_PRACTICE }
 
-    public record PracticeGenerationCriteria(String topic, PracticeDifficulty difficulty, int requestedCount) {}
+    /** 难度默认为硬条件；只有未指定难度的新请求显式允许补齐，旧 JSON 缺失按 false。 */
+    public static final class PracticeGenerationCriteria {
+        @com.fasterxml.jackson.annotation.JsonProperty private String topic;
+        @com.fasterxml.jackson.annotation.JsonProperty private PracticeDifficulty difficulty;
+        @com.fasterxml.jackson.annotation.JsonProperty private int requestedCount;
+        @com.fasterxml.jackson.annotation.JsonProperty private boolean allowDifficultyFallback;
+        public PracticeGenerationCriteria() {}
+        @JsonCreator(mode = JsonCreator.Mode.DISABLED)
+        public PracticeGenerationCriteria(String topic, PracticeDifficulty difficulty, int requestedCount,
+                boolean allowDifficultyFallback) {
+            this.topic = topic; this.difficulty = difficulty; this.requestedCount = requestedCount;
+            this.allowDifficultyFallback = allowDifficultyFallback;
+        }
+        @JsonCreator(mode = JsonCreator.Mode.DISABLED)
+        public PracticeGenerationCriteria(String topic, PracticeDifficulty difficulty, int requestedCount) {
+            this(topic, difficulty, requestedCount, false);
+        }
+        public String topic() { return topic; }
+        public PracticeDifficulty difficulty() { return difficulty; }
+        public int requestedCount() { return requestedCount; }
+        public boolean allowDifficultyFallback() { return allowDifficultyFallback; }
+    }
     public record PracticeCandidateQuestion(UUID questionId, UUID questionVersionId,
             PracticeQuestionType questionType, PracticeDifficulty difficulty) {}
     public record AutonomousPracticeExecutionResult(UUID autonomousPracticeId, UUID assessmentId,

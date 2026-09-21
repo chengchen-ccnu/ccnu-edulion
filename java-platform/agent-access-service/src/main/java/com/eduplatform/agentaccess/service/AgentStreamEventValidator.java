@@ -158,13 +158,14 @@ final class AgentStreamEventValidator {
 
     private static void practiceProposal(JsonNode node) {
         object(node, Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"),
-                Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"));
+                Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates", "allowDifficultyFallback"));
         if (!"public-practice-generation".equals(text(node, "skillName", 1, 40))
                 || !Set.of("1.0.0", "1.1.0").contains(text(node, "skillVersion", 1, 20))) fail();
         text(node, "topic", 1, 200); difficulty(node, "difficulty");
         long requested = integer(node, "requestedCount", 1); if (requested > 20) fail();
+        if (node.has("allowDifficultyFallback") && !node.get("allowDifficultyFallback").isBoolean()) fail();
         Set<UUID> versions = new HashSet<>();
-        array(node, "candidates", 0, 20).forEach(value -> {
+        array(node, "candidates", 1, 20).forEach(value -> {
             object(value, Set.of("questionId", "questionVersionId"), Set.of("questionId", "questionVersionId"));
             uuid(value, "questionId"); if (!versions.add(uuid(value, "questionVersionId"))) fail();
         });
@@ -178,13 +179,14 @@ final class AgentStreamEventValidator {
         uuid(node, "actionId"); uuid(node, "conversationId");
         JsonNode criteria = node.get("criteria");
         object(criteria, Set.of("topic", "difficulty", "requestedCount"),
-                Set.of("topic", "difficulty", "requestedCount"));
+                Set.of("topic", "difficulty", "requestedCount", "allowDifficultyFallback"));
         text(criteria, "topic", 1, 200); difficulty(criteria, "difficulty");
+        if (criteria.has("allowDifficultyFallback") && !criteria.get("allowDifficultyFallback").isBoolean()) fail();
         long requested = integer(node, "requestedCount", 1);
-        long actual = integer(node, "actualCount", 0);
+        long actual = integer(node, "actualCount", 1);
         if (requested > 20 || actual > requested || integer(criteria, "requestedCount", 1) != requested) fail();
         Set<UUID> versions = new HashSet<>();
-        JsonNode candidates = array(node, "candidateQuestions", 0, 20);
+        JsonNode candidates = array(node, "candidateQuestions", 1, 20);
         if (candidates.size() != actual) fail();
         candidates.forEach(value -> {
             object(value, Set.of("questionId", "questionVersionId", "questionType", "difficulty"),

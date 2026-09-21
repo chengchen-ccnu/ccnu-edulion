@@ -251,6 +251,18 @@ class DynamicRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(original.decision.slots.practiceTopic, "一元一次方程")
             self.assertEqual(original.decision.slots.questionCount, 3)
+            topic_cases = {
+                "我刚学完一元一次方程的计算，请你给我出几道题帮我巩固一下知识": "一元一次方程的计算",
+                "我复习完勾股定理，麻烦你帮我出几道题练习一下": "勾股定理",
+                "围绕函数图像来几道题给我做": "函数图像",
+                "请给我出3道二次根式题目": "二次根式",
+                "生成一组概率自主练习": "概率",
+                "给我若干题练习整式": "整式",
+                "我最近学完了二次函数相关的内容，请帮我出几道题巩固一下我的知识": "二次函数",
+            }
+            for text, expected_topic in topic_cases.items():
+                parsed = await classifier.classify(text, context, RunLimits(RunBudget(**budget())))
+                self.assertEqual(parsed.decision.slots.practiceTopic, expected_topic, text)
             too_many = await classifier.classify("请出21道一元一次方程题", context, RunLimits(RunBudget(**budget())))
             self.assertEqual(too_many.decision.resolution, "NEEDS_CLARIFICATION")
             self.assertIn("questionCount", too_many.decision.missingSlots)

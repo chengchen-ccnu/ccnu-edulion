@@ -76,6 +76,9 @@ _PRACTICE_META = re.compile(r"(?:如何|怎么|怎样)(?:给|为)?.{0,8}(?:出�
 _PRACTICE_NEGATION = re.compile(
     r"(?:不要|不用|不需要|别)(?:给我|帮我|请你)?.{0,16}(?:出|组|生成|来|练习).{0,12}(?:题|练习)"
 )
+_PRACTICE_COMMAND = re.compile(
+    r"(?:请你|请|麻烦(?:你)?|劳驾)?\s*(?:帮我|给我)?\s*(?:出|组|生成|来)"
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,42 @@ def wants_full_answer(text: str, context: TrustedContext) -> bool:
         and any(word in item.value for word in ("完整", "详细", "直接答案"))
         for item in context.preferences
     )
+
+
+def _clean_practice_topic(text: str) -> str:
+    """从组题请求中提取数学主题，并统一剔除礼貌语、动作短语和学习目的尾句。"""
+
+    value = re.sub(r"\s+", "", text).strip("，,。！？!? ")
+    learned = re.search(
+        r"^(?:我)?(?:最近|刚刚|刚)?(?:学完了?|复习完了?|学习了)(.+?)(?=[，,。！？!?]?" + _PRACTICE_COMMAND.pattern + r")",
+        value,
+    )
+    if learned:
+        value = learned.group(1)
+    else:
+        # “围绕主题来几道题”和“麻烦帮我出题”共享同一切分规则，避免按具体句子硬编码。
+        value = re.sub(r"^(?:围绕|关于)", "", value)
+        command = _PRACTICE_COMMAND.search(value)
+        if command and command.start() > 0:
+            value = value[:command.start()]
+        else:
+            value = re.sub(
+                r"^(?:请你|请|麻烦(?:你)?|劳驾)?(?:帮我|给我)?(?:推荐|出|组|生成|来)(?:上|个|一组)?",
+                "",
+                value,
+            )
+    value = re.sub(
+        r"^(?:给我)?(?:(?:若干|几|[一二三四五六七八九十两\d]{1,3})道(?:题目|习题|题)?|(?:若干|几)(?:题目|习题|题))(?:来)?(?:练习|做)?",
+        "",
+        value,
+    )
+    value = re.sub(r"(?:请你|请|麻烦(?:你)?|劳驾)?(?:帮我|给我)?(?:出|组|生成|来).*$", "", value)
+    value = re.sub(r"\d{1,3}道|(?:简单|容易|基础|中等|普通|困难|难题|高难)(?:难度)?", "", value)
+    value = re.sub(r"(?:帮我)?(?:巩固|复习)(?:一下)?(?:相关)?(?:的)?知识$", "", value)
+    value = re.sub(r"(?:给我(?:练习|做)(?:一下)?|(?:练习|做)一下)$", "", value)
+    value = re.sub(r"(?:相关)?(?:的)?(?:知识|内容)$", "", value)
+    value = re.sub(r"(?:的知识|自主练习|练习题|题目|习题|练习|复习|题)$", "", value)
+    return value.strip(" 的，,。！？!? ")[:200]
 
 
 def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) -> IntentSlots:
@@ -134,16 +173,11 @@ def _slot_values(text: str, intent: SecondaryIntent, context: TrustedContext) ->
             values["difficulty"] = "EASY"
         elif re.search(r"(?:困难|难题|高难)", text):
             values["difficulty"] = "HARD"
-        else:
+        elif re.search(r"(?:中等|普通)(?:难度)?", text):
             values["difficulty"] = "MEDIUM"
-        learned = re.search(r"(?:学完|复习完|学习了|关于)(.{1,100}?)(?:的知识)?[，,。]?(?:请你|请|帮我|给我)?(?:出|组|生成|来)", text)
-        topic = learned.group(1) if learned else re.sub(r"^(?:请你|请|帮我|给我)?(?:推荐|来|出|组|生成)?", "", text).strip()
-        topic = re.sub(r"\d{1,2}\s*道|(?:简单|容易|基础|中等|普通|困难|难题|高难)(?:难度)?|关于", "", topic)
-        topic = re.sub(r"(?:请你|请|帮我|给我)?(?:出|组|生成|来).*$", "", topic)
-        topic = re.sub(r"(?:的)?(?:知识|练习题|题目|习题|练习|复习)$", "", topic)
-        topic = topic.strip(" 的，。")
+        topic = _clean_practice_topic(text)
         if topic:
-            values["practiceTopic"] = topic[:200]
+            values["practiceTopic"] = topic
     elif intent in {SecondaryIntent.CREATE_PLAN, SecondaryIntent.ADJUST_PLAN}:
         values["planGoal"] = text[:500]
     elif intent is SecondaryIntent.PLATFORM_USAGE_HELP:

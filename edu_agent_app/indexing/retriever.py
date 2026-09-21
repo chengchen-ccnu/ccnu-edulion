@@ -68,7 +68,16 @@ class HybridSearchService:
             reverse=True,
         )
         threshold = self._threshold(request)
-        accepted = [item for item in reranked if float(item[1]) >= threshold]
+        grounded_practice = (request.collection == "math_questions"
+                             and request.intent == "RECOMMEND_PRACTICE"
+                             and bool(request.knowledge_point_ids))
+        if grounded_practice:
+            # 知识点已通过语义阈值，关联题的题干常只有公式，不必复述标签名称。
+            # 重排仅决定先后；仍复核关联 ID，防止索引适配器返回越界候选，Java 再做领域复核。
+            accepted = [item for item in reranked if set(request.knowledge_point_ids).intersection(
+                item[0][0].payload.get("knowledge_point_ids", []))]
+        else:
+            accepted = [item for item in reranked if float(item[1]) >= threshold]
         # 自主组题需要一次取得最多 20 个稳定候选 ID；其余问答意图仍沿用 T13.2 的 8 条上限，
         # 避免把组题专用容量扩散到普通回答上下文。
         intent_max_results = 20 if request.intent == "RECOMMEND_PRACTICE" else self.settings.final_max_results
