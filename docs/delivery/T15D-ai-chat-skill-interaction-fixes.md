@@ -89,6 +89,10 @@ Redis DB6 精确 run/会话幂等键残留为 0，共享账号 quota 键也未�
 
 提交、push 与最新 HEAD CI 的最终状态以 PR #72 本轮更新为准，不使用旧 CI 绿灯替代。
 
+## 合并记录
+
+[PR #72](https://github.com/chengchen-ccnu/ccnu-edulion/pull/72) 已于 2026-09-22 在最新提交 `763f6b8` 的 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@135e03d`。本地 `main` 已快进同步，T15D 本地和远端分支均已删除；成功题图上传和真实指针悬停仍按上文作为后续集成风险保留，不改写为已通过。
+
 ## 工作树逐文件范围审查
 
 原 38 个已跟踪修改与 3 个新增文件全部保留，另增加 Offer 实际缺陷修复，共 42 个文件；没有发现需要移除的无关修改。

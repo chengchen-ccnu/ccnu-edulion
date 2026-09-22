@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-22 PR #72 合并与 T12C.1 恢复审计
+
+- 合并与清理：[PR #72](https://github.com/chengchen-ccnu/ccnu-edulion/pull/72) 在 Ready、可合并且最新 `763f6b8` 的 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@135e03d81fe569ae0e60d71a8af677616dbd85c1`；本地 `main` 已 `--ff-only` 同步，T15D 本地和远端分支均已删除。
+- T15D 状态：OpenAPI 0.24.2、内部 Agent 1.6.2、会话命令、三类 Skill 触发、零候选拒绝和两入口视觉恢复已合并；Python 100 项、Java 285 项、前端 355 项及三端构建通过，真实组题/Offer 四分支通过，临时业务数据精确清零。成功题图上传与真实指针悬停仍按交付文档保留为后续集成风险，不伪报通过。
+- T12C.1 事实前置：Learning 已持久化报名、课程学生编号、课时进度、测评/最终 attempt、批改和成绩册事实，并通过 Course API 校验 owner；T12G.1 冻结教师报表只读 MySQL 持久事实。IAM 已提供 `learning-service` 专用、最多 5000 人的昵称批量投影及安全降级，知识点与题目版本绑定也在 Learning 域内。上述依赖均已合并，无需前端跨接口拼接或跨 Schema 查询。
+- T12C.1 契约缺口：现有 `GET /api/v1/teacher/learning/courses/{courseId}/students` 仍只有基础报名、完成课时、观看秒数、提交/批改计数和平均分；T12C.1 自身必须先冻结课时级投影、成绩摘要、知识点证据、风险原因/阈值、课程聚合、筛选排序分页和 IAM 失败降级。Redis 未落库实时进度、Agent 隐藏画像、联系方式和运营全局数据均不进入教师学情事实。
+- 准备结论：外部依赖满足，已从干净 `main@135e03d` 创建 `codex/t12c1-teacher-learning-analytics-contract`。保留此前 T12C.1 后端契约、T12C.2 前端消费的拆分；当前只更新合并状态和前置审计，不修改 OpenAPI、Java、Vue、数据库或业务逻辑。T12C.1 实施前仍需确认风险阈值、知识点掌握口径和课程聚合维度，不能由实现自行猜测。
+- 数据：本次合并、同步、分支清理和只读前置审计未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
 ## 2026-09-21 T15D 补充修复最终本地审计
 
 实际版本为 OpenAPI **0.24.2** / Agent Internal **1.6.2**，不再混用中间版本。旧 HEAD `31f43cd` 的绿灯不是当前工作树结果。38 个 tracked 修改及 3 个新文件均属于本任务；本轮另修 AgentConversationService 的 Offer 误拦截，共 42 个文件，无超范围删除或历史重写。
