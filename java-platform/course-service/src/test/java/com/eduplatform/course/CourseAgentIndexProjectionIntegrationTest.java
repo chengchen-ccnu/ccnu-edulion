@@ -55,9 +55,9 @@ class CourseAgentIndexProjectionIntegrationTest {
         jdbc.update("INSERT INTO chapter(id,course_version_id,title,position,created_at,updated_at) VALUES(?,?,?,?,?,?)",
                 CHAPTER, VERSION, "方程", 1, now, now);
         jdbc.update("""
-                INSERT INTO lesson(id,chapter_id,title,lesson_type,position,previewable,article_markdown,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?)
-                """, LESSON, CHAPTER, "二元一次方程", "ARTICLE", 1, false, "# 二元一次方程\n正文", now, now);
+                INSERT INTO lesson(id,content_revision_id,chapter_id,title,lesson_type,position,previewable,article_markdown,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """, LESSON, LESSON, CHAPTER, "二元一次方程", "ARTICLE", 1, false, "# 二元一次方程\n正文", now, now);
         jdbc.update("INSERT INTO course_text_index_revision(lesson_id,revision,updated_at) VALUES(?,?,?)",
                 LESSON, 7, now);
     }

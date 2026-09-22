@@ -62,28 +62,38 @@ public final class LearningDtos {
             EnrollmentStatus status, Instant enrolledAt, Instant canceledAt, Instant updatedAt) {}
     public record EnrollmentPage(List<Enrollment> items, int page, int size, long total) {}
 
-    public record ReportProgressRequest(@NotNull UUID clientEventId, @NotNull Instant occurredAt,
+    /** 播放器进度命令；新客户端回传 Course 内容投影的修订 ID，旧客户端可空并由服务端解析当前身份。 */
+    public record ReportProgressRequest(@NotNull UUID clientEventId, UUID contentRevisionId, @NotNull Instant occurredAt,
             @Min(0) @Max(28800) long positionSeconds, @Min(0) @Max(300) int watchedSeconds,
             boolean completed, ProgressEventType eventType) {
         /** 兼容 T11/T12A 旧调用方：缺少 eventType 时仍同步写 MySQL，不按请求间隔猜事件类型。 */
         public ReportProgressRequest(UUID clientEventId, Instant occurredAt, long positionSeconds,
                 int watchedSeconds, boolean completed) {
-            this(clientEventId, occurredAt, positionSeconds, watchedSeconds, completed, null);
+            this(clientEventId, null, occurredAt, positionSeconds, watchedSeconds, completed, null);
+        }
+        public ReportProgressRequest(UUID clientEventId, Instant occurredAt, long positionSeconds,
+                int watchedSeconds, boolean completed, ProgressEventType eventType) {
+            this(clientEventId, null, occurredAt, positionSeconds, watchedSeconds, completed, eventType);
         }
     }
-    public record LessonProgress(String courseId, String lessonId, long positionSeconds, long watchedSeconds,
+    public record LessonProgress(String courseId, String lessonId, String contentRevisionId,
+            long positionSeconds, long watchedSeconds,
             boolean completed, Instant lastEventAt, long revision, boolean replayed,
             ProgressPersistenceStatus persistenceStatus) {
         /** 兼容既有 Java 测试/调用点；新 HTTP 响应明确返回持久化结果。 */
         public LessonProgress(String courseId, String lessonId, long positionSeconds, long watchedSeconds,
                 boolean completed, Instant lastEventAt, long revision, boolean replayed) {
-            this(courseId, lessonId, positionSeconds, watchedSeconds, completed, lastEventAt, revision,
+            this(courseId, lessonId, lessonId, positionSeconds, watchedSeconds, completed, lastEventAt, revision,
                     replayed, ProgressPersistenceStatus.PERSISTED);
         }
     }
-    public record CompleteArticleLessonRequest(@NotNull UUID clientRequestId) {}
+    /** 图文完成命令；正文修改沿用修订，类型变化后的新修订不会继承旧完成事实。 */
+    public record CompleteArticleLessonRequest(@NotNull UUID clientRequestId, UUID contentRevisionId) {
+        public CompleteArticleLessonRequest(UUID clientRequestId) { this(clientRequestId, null); }
+    }
     /** ARTICLE 的独立 0→100 单调完成事实，不复用视频位置或观看时长字段。 */
-    public record ArticleLessonCompletion(String courseId, String lessonId, int completionPercent,
+    public record ArticleLessonCompletion(String courseId, String lessonId, String contentRevisionId,
+            int completionPercent,
             Instant completedAt, long revision, boolean replayed) {}
     public record CourseProgress(String courseId, int completedLessonCount, int lessonCount,
             double completionPercent, List<LessonProgress> lessons) {}

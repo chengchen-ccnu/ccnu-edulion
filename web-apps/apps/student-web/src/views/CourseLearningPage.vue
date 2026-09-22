@@ -206,6 +206,8 @@ async function loadLearningFacts(detail: CourseDetail, lessonId: string, control
 }
 
 function startProgressSync(courseId: string, lessonId: string) {
+  if (!content.value) return;
+  const contentRevisionId = content.value.contentRevisionId;
   progressSync?.dispose();
   progressSync = createProgressSyncController(
     (body, signal) => studentLearningApi.reportProgress(courseId, lessonId, body, signal),
@@ -224,7 +226,8 @@ function startProgressSync(courseId: string, lessonId: string) {
     },
     undefined,
     undefined,
-    { reportKeepalive: body => studentLearningApi.reportProgressKeepalive(courseId, lessonId, body) }
+    { contentRevisionId,
+      reportKeepalive: body => studentLearningApi.reportProgressKeepalive(courseId, lessonId, body) }
   );
 }
 
@@ -339,7 +342,7 @@ async function completeRenderedArticle() {
   articleCompletionError.value = "";
   try {
     await studentLearningApi.completeArticle(course.value.id, current.value.lesson.id,
-      { clientRequestId: articleClientRequestId }, pageAbort.signal);
+      { clientRequestId: articleClientRequestId, contentRevisionId: content.value.contentRevisionId }, pageAbort.signal);
     articleCompleted.value = true;
   } catch (error) {
     if (!pageAbort.signal.aborted) {

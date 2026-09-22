@@ -73,14 +73,16 @@ public interface CourseSeedMapper {
     int upsertChapter();
 
     @Insert("""
-            INSERT INTO lesson (id, chapter_id, title, lesson_type, position, previewable, row_version)
+            INSERT INTO lesson (id, content_revision_id, chapter_id, title, lesson_type, position, previewable, row_version)
             VALUES (
+                '00000000-0000-4000-8000-000000000231',
                 '00000000-0000-4000-8000-000000000231',
                 '00000000-0000-4000-8000-000000000221',
                 '正数与负数', 'VIDEO', 1, TRUE, 0
             )
             ON DUPLICATE KEY UPDATE
                 title = VALUES(title),
+                content_revision_id = VALUES(content_revision_id),
                 lesson_type = VALUES(lesson_type),
                 position = 1,
                 previewable = TRUE,

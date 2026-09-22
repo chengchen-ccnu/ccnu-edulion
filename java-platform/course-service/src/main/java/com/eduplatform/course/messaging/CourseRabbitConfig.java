@@ -31,6 +31,7 @@ public class CourseRabbitConfig {
     public static final String ENROLLMENT_ROUTING_KEY = "learning.enrollment.access-changed.v1";
     public static final String ENROLLMENT_DEAD_ROUTING_KEY = "course.enrollment-access.dead.v1";
     public static final String AGENT_INDEX_EVENTS_EXCHANGE = "edu.agent.index.events.v1";
+    public static final String LESSON_CONTENT_EVENTS_EXCHANGE = "edu.course.lesson-content.events.v1";
 
     @Bean
     @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
@@ -42,6 +43,13 @@ public class CourseRabbitConfig {
     @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
     TopicExchange courseAgentIndexEventsExchange() {
         return new TopicExchange(AGENT_INDEX_EVENTS_EXCHANGE, true, false);
+    }
+
+    /** Course 发布 Outbox 与媒体引用共用可靠发布器，但使用独立版本化 Exchange。 */
+    @Bean
+    @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
+    TopicExchange courseLessonContentEventsExchange() {
+        return new TopicExchange(LESSON_CONTENT_EVENTS_EXCHANGE, true, false);
     }
 
     @Bean

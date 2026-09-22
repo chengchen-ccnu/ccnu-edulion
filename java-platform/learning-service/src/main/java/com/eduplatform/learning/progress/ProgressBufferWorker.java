@@ -83,7 +83,7 @@ public class ProgressBufferWorker {
             snapshot = store.leasedSnapshot(key).orElse(null);
             if (snapshot == null) return;
             String[] ids = RedisProgressBufferStore.ids(key);
-            repository.applyBufferedProgress(ids[0], ids[1], ids[2], snapshot.positionSeconds(),
+            repository.applyBufferedProgress(ids[0], ids[1], snapshot.lessonId(), ids[2], snapshot.positionSeconds(),
                     snapshot.watchedSeconds(), snapshot.completed(), snapshot.lastEventAt(), snapshot.version(), now);
             if (store.acknowledge(key, snapshot)) {
                 meterRegistry.counter("learning.progress.worker.persisted").increment();

@@ -13,6 +13,7 @@ public class CourseMediaAccessRow {
     private String lifecycleStatus;
     private String accessType;
     private String lessonId;
+    private String contentRevisionId;
     private boolean previewable;
     private String resourceId;
     private String mediaId;
@@ -40,6 +41,8 @@ public class CourseMediaAccessRow {
     public void setAccessType(String accessType) { this.accessType = accessType; }
     public String getLessonId() { return lessonId; }
     public void setLessonId(String lessonId) { this.lessonId = lessonId; }
+    public String getContentRevisionId() { return contentRevisionId; }
+    public void setContentRevisionId(String contentRevisionId) { this.contentRevisionId = contentRevisionId; }
     public boolean isPreviewable() { return previewable; }
     public void setPreviewable(boolean previewable) { this.previewable = previewable; }
     public String getResourceId() { return resourceId; }

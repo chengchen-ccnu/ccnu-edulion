@@ -17,7 +17,9 @@ describe("lesson progress sync controller", () => {
       calls.push(body);
       return progress(body.positionSeconds, body.completed, body.eventType === "HEARTBEAT" ? "BUFFERED" : "PERSISTED");
     });
-    const controller = createProgressSyncController(report, vi.fn(), vi.fn(), ids(), fixedNow());
+    const controller = createProgressSyncController(report, vi.fn(), vi.fn(), ids(), fixedNow(), {
+      contentRevisionId: "00000000-0000-4000-8000-000000000101"
+    });
 
     controller.enqueue(sample(5, 5, "HEARTBEAT"));
     await vi.waitFor(() => expect(calls).toHaveLength(1));
@@ -29,6 +31,7 @@ describe("lesson progress sync controller", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(5));
 
     expect(calls.map(item => item.eventType)).toEqual(["HEARTBEAT", "PAUSE", "LESSON_SWITCH", "LEAVE", "ENDED"]);
+    expect(calls.every(item => item.contentRevisionId === "00000000-0000-4000-8000-000000000101")).toBe(true);
     expect(calls.slice(0, 4).every(item => item.completed === false)).toBe(true);
     expect(calls[4]?.completed).toBe(true);
   });
@@ -124,6 +127,7 @@ function fixedNow(): () => Date {
 }
 
 function progress(positionSeconds: number, completed: boolean, persistenceStatus: LessonProgress["persistenceStatus"]): LessonProgress {
-  return { courseId: "course-1", lessonId: "lesson-1", positionSeconds, watchedSeconds: 30,
+  return { courseId: "course-1", lessonId: "lesson-1",
+    contentRevisionId: "00000000-0000-4000-8000-000000000101", positionSeconds, watchedSeconds: 30,
     completed, lastEventAt: "2026-08-26T00:00:00Z", revision: 2, replayed: false, persistenceStatus };
 }

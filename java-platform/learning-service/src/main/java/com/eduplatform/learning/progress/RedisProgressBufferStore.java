@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 /**
  * T12G.1 Redis Hash＋dirty ZSet 实现。
  *
- * <p>Hash 保存每个学习者/课程/课时的最新完整进度，ZSet 只保存待落库成员。Lua 保证基线初始化、乱序判断、
+ * <p>Hash Key 按学习者/课程/内容修订隔离，并在值内保留对应 lessonId；ZSet 只保存待落库成员。Lua 保证基线初始化、乱序判断、
  * 累计观看时长和 dirty 标记在一个 Redis 原子操作内完成；这里不保存逐心跳历史，也不使用 Redis 锁代替 MySQL 事务。</p>
  */
 @Component
@@ -38,7 +38,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             if exists == 0 then
               redis.call('HSET', KEYS[1], 'positionSeconds', ARGV[6], 'watchedSeconds', ARGV[7],
                 'completed', ARGV[8], 'lastEventAt', ARGV[9], 'lastClientEventId', '',
-                'bufferVersion', ARGV[12])
+                'bufferVersion', ARGV[12], 'lessonId', ARGV[13])
               currentAt = tonumber(ARGV[9])
             end
             local oldPosition = tonumber(redis.call('HGET', KEYS[1], 'positionSeconds')) or 0
@@ -52,7 +52,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             local version = (tonumber(redis.call('HGET', KEYS[1], 'bufferVersion')) or 0) + 1
             redis.call('HSET', KEYS[1], 'positionSeconds', newPosition, 'watchedSeconds', newWatched,
                 'completed', newCompleted and '1' or '0', 'lastEventAt', eventAt,
-                'lastClientEventId', ARGV[1], 'bufferVersion', version)
+                'lastClientEventId', ARGV[1], 'bufferVersion', version, 'lessonId', ARGV[13])
             redis.call('ZADD', KEYS[2], ARGV[10], ARGV[11])
             return 2
             """;
@@ -97,25 +97,27 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
     }
 
     @Override
-    public BufferResult buffer(String learnerId, String courseId, String lessonId, ProgressRow persisted,
+    public BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
+            ProgressRow persisted,
             LearningDtos.ReportProgressRequest input, Instant now) {
-        String key = key(learnerId, courseId, lessonId);
+        String key = key(learnerId, courseId, contentRevisionId);
         ProgressRow base = persisted;
         List<String> args = List.of(input.clientEventId().toString(), String.valueOf(input.occurredAt().toEpochMilli()),
                 String.valueOf(input.positionSeconds()), String.valueOf(input.watchedSeconds()),
                 input.completed() ? "1" : "0", String.valueOf(base == null ? 0 : base.positionSeconds()),
                 String.valueOf(base == null ? 0 : base.watchedSeconds()), base != null && base.completed() ? "1" : "0",
                 String.valueOf(base == null ? 0 : base.lastEventAt().toEpochMilli()), String.valueOf(now.toEpochMilli()), key,
-                String.valueOf(base == null ? 0 : base.bufferVersion()));
+                String.valueOf(base == null ? 0 : base.bufferVersion()), lessonId);
         try {
             Long result = redis.execute(new DefaultRedisScript<>(SCRIPT_BUFFER, Long.class), List.of(key, DIRTY_KEY),
                     args.toArray());
             if (result == null) throw new IllegalStateException("Redis Lua returned no result");
             Optional<BufferedProgress> current = readAvailable(key);
             BufferedProgress value = current.orElseGet(() -> base == null
-                    ? new BufferedProgress(learnerId, courseId, lessonId, input.positionSeconds(),
+                    ? new BufferedProgress(learnerId, courseId, lessonId, contentRevisionId, input.positionSeconds(),
                             input.watchedSeconds(), input.completed(), input.occurredAt(), 0)
-                    : new BufferedProgress(learnerId, courseId, lessonId, base.positionSeconds(), base.watchedSeconds(),
+                    : new BufferedProgress(learnerId, courseId, lessonId, contentRevisionId,
+                            base.positionSeconds(), base.watchedSeconds(),
                             base.completed(), base.lastEventAt(), base.bufferVersion()));
             if (result == 2) meterRegistry.counter("learning.progress.heartbeat.buffered").increment();
             return new BufferResult(value, result == 0 || result == 1);
@@ -126,9 +128,9 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
     }
 
     @Override
-    public ReadResult read(String learnerId, String courseId, String lessonId) {
+    public ReadResult read(String learnerId, String courseId, String contentRevisionId) {
         try {
-            return new ReadResult(true, readAvailable(key(learnerId, courseId, lessonId)));
+            return new ReadResult(true, readAvailable(key(learnerId, courseId, contentRevisionId)));
         } catch (Exception exception) {
             meterRegistry.counter("learning.progress.redis.read.errors").increment();
             return new ReadResult(false, Optional.empty());
@@ -226,8 +228,9 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
 
     public String instanceId() { return instanceId; }
 
-    public static String key(String learnerId, String courseId, String lessonId) {
-        return HASH_PREFIX + learnerId + ":" + courseId + ":" + lessonId;
+    /** 以服务端内容修订生成唯一 Hash Key；lessonId 只存入 Hash 值，不能参与隔离。 */
+    public static String key(String learnerId, String courseId, String contentRevisionId) {
+        return HASH_PREFIX + learnerId + ":" + courseId + ":" + contentRevisionId;
     }
 
     public static String[] ids(String key) {
@@ -243,7 +246,10 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
         Map<Object, Object> values = redis.opsForHash().entries(key);
         if (values.isEmpty()) return Optional.empty();
         String[] ids = ids(key);
-        return Optional.of(new BufferedProgress(ids[0], ids[1], ids[2], number(values, "positionSeconds"),
+        Object lessonId = values.get("lessonId");
+        if (lessonId == null) throw new IllegalStateException("missing progress buffer lessonId");
+        return Optional.of(new BufferedProgress(ids[0], ids[1], String.valueOf(lessonId), ids[2],
+                number(values, "positionSeconds"),
                 number(values, "watchedSeconds"), "1".equals(String.valueOf(values.get("completed"))),
                 Instant.ofEpochMilli(number(values, "lastEventAt")), number(values, "bufferVersion")));
     }

@@ -52,9 +52,9 @@ class CourseAgentAccessIntegrationTest {
         jdbc.update("INSERT INTO chapter(id,course_version_id,title,position,created_at,updated_at) VALUES(?,?,?,1,?,?)",
                 CHAPTER, VERSION, "方程", now, now);
         jdbc.update("""
-                INSERT INTO lesson(id,chapter_id,title,lesson_type,position,previewable,article_markdown,created_at,updated_at)
-                VALUES(?,?,'移项','ARTICLE',1,FALSE,'# 正文',?,?)
-                """, LESSON, CHAPTER, now, now);
+                INSERT INTO lesson(id,content_revision_id,chapter_id,title,lesson_type,position,previewable,article_markdown,created_at,updated_at)
+                VALUES(?, ?,?,'移项','ARTICLE',1,FALSE,'# 正文',?,?)
+                """, LESSON, LESSON, CHAPTER, now, now);
         jdbc.update("INSERT INTO course_text_index_revision(lesson_id,revision,updated_at) VALUES(?,7,?)", LESSON, now);
         jdbc.update("""
                 INSERT INTO course_enrollment_access(learner_id,course_id,enrollment_id,status,changed_at,updated_at)

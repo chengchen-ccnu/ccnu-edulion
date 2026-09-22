@@ -102,6 +102,7 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
     private final HttpClient http = HttpClient.newHttpClient();
 
     private static String runPrefix;
+    private String contentRevisionId;
     private final Set<String> learners = new HashSet<>();
     private final Set<String> keys = new HashSet<>();
 
@@ -123,10 +124,13 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
 
     @Test
     void realProgressBufferContractAndRecovery() throws Exception {
+        var publishedCourse = courses.requirePublished(COURSE, runPrefix);
+        assertThat(publishedCourse.lessonIds()).contains(LESSON);
+        contentRevisionId = publishedCourse.contentRevisionId(LESSON);
+        assertThat(contentRevisionId).isNotBlank();
         String learnerId = learner("primary");
         String key = key(learnerId);
         try {
-            assertThat(courses.requirePublished(COURSE, runPrefix).lessonIds()).contains(LESSON);
             assertThat(redis.opsForZSet().zCard(DIRTY_KEY)).as("shared Redis DB 4 must start without dirty progress").isZero();
 
             ResponseEntity<Map> heartbeat = report(learnerId, ProgressEventType.HEARTBEAT, 10, 4, false);
@@ -192,9 +196,9 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
             StringRedisTemplate badRedis = new StringRedisTemplate(badFactory);
             badRedis.afterPropertiesSet();
             RedisProgressBufferStore unavailableStore = new RedisProgressBufferStore(badRedis, properties, meterRegistry);
-            assertThat(unavailableStore.read(learnerId, COURSE, LESSON).available()).isFalse();
-            assertThatThrownBy(() -> unavailableStore.buffer(learnerId, COURSE, LESSON, progressRow(learnerId),
-                    request(ProgressEventType.HEARTBEAT, 40, 1, false, Instant.now()), Instant.now()))
+            assertThat(unavailableStore.read(learnerId, COURSE, contentRevisionId).available()).isFalse();
+            assertThatThrownBy(() -> unavailableStore.buffer(learnerId, COURSE, LESSON, contentRevisionId,
+                    progressRow(learnerId), request(ProgressEventType.HEARTBEAT, 40, 1, false, Instant.now()), Instant.now()))
                     .isInstanceOf(ProgressBufferUnavailableException.class);
             LearningAssessmentService degradedLearning = new LearningAssessmentService(repository, courses, events,
                     questions, questionService, media, mapper, unavailableStore, meterRegistry);
@@ -223,7 +227,8 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
 
     private ResponseEntity<Map> reportWithEventId(String learnerId, ProgressEventType eventType, long position, int watched,
             boolean completed, String eventId, Instant occurredAt) throws Exception {
-        String body = mapper.writeValueAsString(Map.of("clientEventId", eventId, "occurredAt", occurredAt.toString(),
+        String body = mapper.writeValueAsString(Map.of("clientEventId", eventId,
+                "contentRevisionId", contentRevisionId, "occurredAt", occurredAt.toString(),
                 "positionSeconds", position, "watchedSeconds", watched, "completed", completed,
                 "eventType", eventType.name()));
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
@@ -242,11 +247,12 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
 
     private LearningDtos.ReportProgressRequest request(ProgressEventType eventType, long position, int watched,
             boolean completed, Instant occurredAt) {
-        return new LearningDtos.ReportProgressRequest(UUID.randomUUID(), occurredAt, position, watched, completed, eventType);
+        return new LearningDtos.ReportProgressRequest(UUID.randomUUID(), UUID.fromString(contentRevisionId), occurredAt,
+                position, watched, completed, eventType);
     }
 
     private ProgressRow progressRow(String learnerId) {
-        return repository.findProgress(learnerId, COURSE, LESSON).orElseThrow();
+        return repository.findProgress(learnerId, COURSE, contentRevisionId).orElseThrow();
     }
 
     private String learner(String label) {
@@ -258,7 +264,7 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
     }
 
     private String key(String learnerId) {
-        String value = RedisProgressBufferStore.key(learnerId, COURSE, LESSON);
+        String value = RedisProgressBufferStore.key(learnerId, COURSE, contentRevisionId);
         keys.add(value);
         return value;
     }

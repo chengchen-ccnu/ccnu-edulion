@@ -92,10 +92,10 @@ class T12F1CourseContentDemoSeedTest {
                 """, VERSION, COURSE, CATEGORY, "f".repeat(64));
         jdbc.update("INSERT INTO chapter(id,course_version_id,title,position,row_version) VALUES(?,?,?,1,0)",
                 CHAPTER, VERSION, "内容与资源");
-        jdbc.update("INSERT INTO lesson(id,chapter_id,title,lesson_type,position,previewable,article_markdown,row_version) "
-                + "VALUES(?,?,?,'VIDEO',1,TRUE,NULL,0)", VIDEO_LESSON, CHAPTER, "短视频与自动海报");
-        jdbc.update("INSERT INTO lesson(id,chapter_id,title,lesson_type,position,previewable,article_markdown,row_version) "
-                + "VALUES(?,?,?,'ARTICLE',2,TRUE,?,0)", ARTICLE_LESSON, CHAPTER, "公式、表格、代码与正文图片", MARKDOWN);
+        jdbc.update("INSERT INTO lesson(id,content_revision_id,chapter_id,title,lesson_type,position,previewable,article_markdown,row_version) "
+                + "VALUES(?,?,?,?,'VIDEO',1,TRUE,NULL,0)", VIDEO_LESSON, VIDEO_LESSON, CHAPTER, "短视频与自动海报");
+        jdbc.update("INSERT INTO lesson(id,content_revision_id,chapter_id,title,lesson_type,position,previewable,article_markdown,row_version) "
+                + "VALUES(?,?,?,?,'ARTICLE',2,TRUE,?,0)", ARTICLE_LESSON, ARTICLE_LESSON, CHAPTER, "公式、表格、代码与正文图片", MARKDOWN);
         bind("00000000-0000-4000-8000-00000000f301", VIDEO_LESSON, VIDEO, "LESSON_VIDEO", 1,
                 "演示短视频", "INLINE", "t12f1-short-video.mp4", "video/mp4", 1, "hls-fmp4-v2,poster-v1", "LESSON_VIDEO_V5");
         bind("00000000-0000-4000-8000-00000000f302", VIDEO_LESSON, CUSTOM_POSTER, "VIDEO_POSTER", 1,

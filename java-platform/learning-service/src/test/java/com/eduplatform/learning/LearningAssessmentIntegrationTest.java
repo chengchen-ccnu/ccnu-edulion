@@ -69,6 +69,9 @@ class LearningAssessmentIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM consumed_course_content_event");
+        jdbc.update("DELETE FROM published_lesson_content_projection");
+        jdbc.update("DELETE FROM published_course_content_projection");
         jdbc.update("DELETE FROM article_completion_request");
         jdbc.update("DELETE FROM article_lesson_completion");
         jdbc.update("DELETE FROM manual_grading_record");
@@ -223,6 +226,99 @@ class LearningAssessmentIntegrationTest {
         assertThat(ended.completed()).isTrue();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lesson_progress_event WHERE event_type='ENDED'",
                 Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    /**
+     * Given 播放器先后打开 A、B、再次绑定 A 的三个内容修订；When 旧页面继续保存且新页面查询当前进度；
+     * Then 旧事实继续保留但只展示当前修订，同一事件 ID 也不能跨修订复用。
+     */
+    void progressIsIsolatedByContentRevisionAndOldPlayerCanFinishHistoricalRevision() {
+        UUID revisionA = UUID.fromString("00000000-0000-4000-8000-000000012201");
+        UUID revisionB = UUID.fromString("00000000-0000-4000-8000-000000012202");
+        UUID revisionA2 = UUID.fromString("00000000-0000-4000-8000-000000012203");
+        CourseFactsClient.CourseFact currentA = courseFact(8, "VIDEO", revisionA);
+        when(courses.requirePublished(eq(COURSE), anyString())).thenReturn(currentA);
+        service.enroll(LEARNER, COURSE, "trace-revision-enroll");
+        UUID eventA = UUID.randomUUID();
+        service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(eventA, revisionA, Instant.now(), 100, 20, false,
+                        LearningDtos.ProgressEventType.PAUSE), "trace-revision-a");
+
+        CourseFactsClient.CourseFact currentB = courseFact(9, "VIDEO", revisionB);
+        when(courses.requirePublished(eq(COURSE), anyString())).thenReturn(currentB);
+        when(courses.requireContentIdentity(eq(COURSE), eq(LESSON), eq(revisionA.toString()), anyString()))
+                .thenReturn(new CourseFactsClient.LessonContentIdentity(COURSE, LESSON,
+                        revisionA.toString(), "VIDEO", false));
+        assertThat(service.progress(LEARNER, COURSE, "trace-current-b").lessons()).isEmpty();
+
+        var historical = service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(UUID.randomUUID(), revisionA, Instant.now(), 120, 5, false,
+                        LearningDtos.ProgressEventType.LEAVE), "trace-old-player");
+        assertThat(historical.contentRevisionId()).isEqualTo(revisionA.toString());
+        assertThat(service.progress(LEARNER, COURSE, "trace-current-b-after-old").lessons()).isEmpty();
+
+        UUID eventB = UUID.randomUUID();
+        service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(eventB, revisionB, Instant.now(), 10, 3, false,
+                        LearningDtos.ProgressEventType.PAUSE), "trace-revision-b");
+        var visibleB = service.progress(LEARNER, COURSE, "trace-visible-b").lessons().get(0);
+        assertThat(visibleB.contentRevisionId()).isEqualTo(revisionB.toString());
+        assertThat(visibleB.positionSeconds()).isEqualTo(10);
+        when(courses.requireOwnedPublished(eq(COURSE), eq(TEACHER_AS_LEARNER), anyString()))
+                .thenReturn(currentB);
+        var teacherCurrentB = service.studentLearning(TEACHER_AS_LEARNER, COURSE, 1, 20,
+                "trace-teacher-current-b").items().get(0);
+        assertThat(teacherCurrentB.watchedSeconds()).isEqualTo(3);
+        assertThat(teacherCurrentB.completedLessonCount()).isZero();
+        when(courses.requireOwnedPublished(eq(COURSE), eq(OTHER), anyString())).thenThrow(
+                new QuestionException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "LEARNING.NOT_FOUND", "学习资源不存在或不可见"));
+        assertThatThrownBy(() -> service.studentLearning(OTHER, COURSE, 1, 20,
+                "trace-teacher-non-owner"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> service.reportProgress(LEARNER, COURSE, LESSON,
+                new LearningDtos.ReportProgressRequest(eventB, revisionA, Instant.now(), 999, 10, false,
+                        LearningDtos.ProgressEventType.PAUSE), "trace-cross-revision-idempotency"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.code()).isEqualTo("LEARNING.IDEMPOTENCY_CONFLICT"));
+
+        CourseFactsClient.CourseFact currentA2 = courseFact(10, "VIDEO", revisionA2);
+        when(courses.requirePublished(eq(COURSE), anyString())).thenReturn(currentA2);
+        when(courses.requireOwnedPublished(eq(COURSE), eq(TEACHER_AS_LEARNER), anyString()))
+                .thenReturn(currentA2);
+        assertThat(service.progress(LEARNER, COURSE, "trace-a-b-a").lessons()).isEmpty();
+        var teacherCurrentA2 = service.studentLearning(TEACHER_AS_LEARNER, COURSE, 1, 20,
+                "trace-teacher-current-a2").items().get(0);
+        assertThat(teacherCurrentA2.watchedSeconds()).isZero();
+        assertThat(teacherCurrentA2.completedLessonCount()).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lesson_progress", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lesson_progress WHERE content_revision_id=?",
+                Integer.class, revisionA.toString())).isEqualTo(1);
+    }
+
+    @Test
+    /** Given 发布内容事件重复和乱序到达；Then eventId 幂等，较旧 publicationRevision 不覆盖当前投影。 */
+    void publishedContentProjectionIgnoresDuplicateAndStaleEvents() {
+        Instant now = Instant.now();
+        var revision9 = new LearningAssessmentRepository.PublishedLessonContentRow(COURSE, LESSON,
+                "00000000-0000-4000-8000-000000012209", "VIDEO", 9, now);
+        var first = repository.applyPublishedContentEvent("event-9", COURSE, "version-9", 9,
+                List.of(revision9), now);
+        var duplicate = repository.applyPublishedContentEvent("event-9", COURSE, "version-9", 9,
+                List.of(revision9), now.plusSeconds(1));
+        var stale = repository.applyPublishedContentEvent("event-8", COURSE, "version-8", 8,
+                List.of(new LearningAssessmentRepository.PublishedLessonContentRow(COURSE, LESSON,
+                        "00000000-0000-4000-8000-000000012208", "VIDEO", 8, now)), now.plusSeconds(2));
+
+        assertThat(first).isEqualTo(LearningAssessmentRepository.ContentProjectionResult.APPLIED);
+        assertThat(duplicate).isEqualTo(LearningAssessmentRepository.ContentProjectionResult.DUPLICATE);
+        assertThat(stale).isEqualTo(LearningAssessmentRepository.ContentProjectionResult.STALE_OR_ALREADY_CURRENT);
+        assertThat(repository.publishedCourseContent(COURSE).orElseThrow().publicationRevision()).isEqualTo(9);
+        assertThat(repository.publishedLessonContent(COURSE)).singleElement()
+                .extracting(LearningAssessmentRepository.PublishedLessonContentRow::contentRevisionId)
+                .isEqualTo(revision9.contentRevisionId());
     }
 
     @Test
@@ -875,12 +971,13 @@ class LearningAssessmentIntegrationTest {
                 .singleElement().satisfies(fact -> assertThat(fact.summary())
                         .doesNotContain("作业解析", "标准答案"));
         Instant now = Instant.now();
+        repository.reconcilePublishedContent(courseFact(8, "ARTICLE", UUID.fromString(LESSON)), now);
         String progressId = UUID.randomUUID().toString();
         jdbc.update("""
-                INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,position_seconds,watched_seconds,
+                INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,content_revision_id,position_seconds,watched_seconds,
                     completed,last_event_at,revision,buffer_version,created_at,updated_at)
-                VALUES(?,?,?,?,120,90,TRUE,?,2,0,?,?)
-                """, progressId, LEARNER, COURSE, LESSON, java.sql.Timestamp.from(now),
+                VALUES(?,?,?,?,?,120,90,TRUE,?,2,0,?,?)
+                """, progressId, LEARNER, COURSE, LESSON, LESSON, java.sql.Timestamp.from(now),
                 java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
         assertThat(agentFacts.query(new AgentAccessDtos.QueryRequest(UUID.fromString(LEARNER),
                 AgentAccessDtos.ToolName.STUDENT_PROGRESS, List.of(), 8)).facts())
@@ -1151,6 +1248,13 @@ class LearningAssessmentIntegrationTest {
         service.streamGradebook(teacherId, courseId, assessmentId, type, submissionStatus, gradingStatus, late,
                 keyword, requestId, traceId, output);
         return output.toByteArray();
+    }
+
+    private CourseFactsClient.CourseFact courseFact(int publicationRevision, String lessonType,
+            UUID contentRevisionId) {
+        return new CourseFactsClient.CourseFact(COURSE, "v" + publicationRevision, "PUBLIC", TEACHER_AS_LEARNER,
+                publicationRevision, Set.of(LESSON), Map.of(LESSON, lessonType),
+                Map.of(LESSON, contentRevisionId.toString()));
     }
 
     private void seedPublishedAssessment() {

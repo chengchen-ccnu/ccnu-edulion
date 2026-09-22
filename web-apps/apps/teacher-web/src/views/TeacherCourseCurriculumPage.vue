@@ -157,8 +157,9 @@ async function save() {
   try {
     const updated = await teacherCourseApi.replaceCurriculum(course.value.id, {
       expectedRevision: course.value.revision,
+      lessonIdentityMode: "EXPLICIT",
       chapters: chapters.value.map(chapter => ({ title: chapter.title, sequence: chapter.sequence,
-        lessons: chapter.lessons.map(lesson => ({ title: lesson.title, type: lesson.type,
+        lessons: chapter.lessons.map(lesson => ({ id: lesson.id ?? null, title: lesson.title, type: lesson.type,
           sequence: lesson.sequence, previewable: lesson.previewable,
           articleMarkdown: lesson.type === "ARTICLE" ? lesson.articleMarkdown ?? "" : null,
           resources: writableResources(lesson) })) }))

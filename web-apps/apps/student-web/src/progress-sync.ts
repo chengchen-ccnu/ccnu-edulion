@@ -34,6 +34,8 @@ export interface ProgressSyncController {
 }
 
 export interface ProgressSyncOptions {
+  /** 受保护课时内容响应给出的 Course 修订身份；所有重试和 keepalive 原样复用。 */
+  contentRevisionId?: string;
   /** 测试注入的有界等待函数；生产实现由控制器内部使用可取消 setTimeout。 */
   wait?: Wait;
   /** 普通请求（含 429/网络/503）的总尝试次数。 */
@@ -100,6 +102,7 @@ export function createProgressSyncController(
   function bodyFrom(snapshot: ProgressSnapshot): ReportLessonProgressRequest {
     return {
       clientEventId: createId(),
+      contentRevisionId: options.contentRevisionId ?? null,
       occurredAt: snapshot.occurredAt.toISOString(),
       positionSeconds: snapshot.positionSeconds,
       watchedSeconds: Math.min(MAX_REQUEST_WATCHED_SECONDS, snapshot.watchedSeconds),
