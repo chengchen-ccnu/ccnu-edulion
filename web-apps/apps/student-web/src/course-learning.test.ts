@@ -33,11 +33,12 @@ function fixture(accessType: CourseDetail["accessType"]): CourseDetail {
     id: "course-1", title: "线性代数", summary: "摘要", description: "介绍", coverMediaId: null,
     coverUrl: null, teacher: { id: "teacher-1", displayName: "测试教师" },
     category: { id: "category-1", name: "数学" }, level: "BEGINNER", accessType,
-    publishedVersion: "v1", chapters: [{ id: "chapter-1", title: "第一章", sequence: 1, lessons: [
-      { id: "lesson-2", title: "试看视频", type: "VIDEO", sequence: 2, previewable: true,
+    publishedVersion: "v1", publicationRevision: 1,
+    chapters: [{ id: "chapter-1", title: "第一章", sequence: 1, lessons: [
+      { id: "lesson-2", contentRevisionId: "revision-2", title: "试看视频", type: "VIDEO", sequence: 2, previewable: true,
         resources: [resource("resource-2", "media-2", "LESSON_VIDEO", 1)] },
-      { id: "lesson-article", title: "图文", type: "ARTICLE", sequence: 3, previewable: true, resources: [] },
-      { id: "lesson-1", title: "正式视频", type: "VIDEO", sequence: 1, previewable: false,
+      { id: "lesson-article", contentRevisionId: "revision-article", title: "图文", type: "ARTICLE", sequence: 3, previewable: true, resources: [] },
+      { id: "lesson-1", contentRevisionId: "revision-1", title: "正式视频", type: "VIDEO", sequence: 1, previewable: false,
         resources: [
           resource("resource-other", "media-other", "ARTICLE_ATTACHMENT", 1),
           resource("resource-1", "media-1", "LESSON_VIDEO", 2)

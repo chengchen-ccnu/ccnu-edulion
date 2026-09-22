@@ -69,6 +69,7 @@
                cv.lifecycle_status,
                cv.access_type,
                l.id AS lesson_id,
+               l.content_revision_id,
                l.title AS lesson_title,
                l.lesson_type,
                l.article_markdown,
@@ -103,6 +104,7 @@
                cv.lifecycle_status,
                cv.access_type,
                l.id AS lesson_id,
+               l.content_revision_id,
                l.title AS lesson_title,
                l.lesson_type,
                l.article_markdown,
@@ -131,7 +133,7 @@
     <!-- 内容读取按发布版本与精确课时返回全部绑定；LEFT JOIN 允许无资源的合法 ARTICLE。 -->
     <select id="listPublishedLessonContentRows" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
         SELECT c.id AS course_id, c.owner_teacher_id, cv.id AS version_id, cv.lifecycle_status,
-               cv.access_type, l.id AS lesson_id, l.title AS lesson_title, l.lesson_type,
+               cv.access_type, l.id AS lesson_id, l.content_revision_id, l.title AS lesson_title, l.lesson_type,
                l.article_markdown, l.previewable, r.id AS resource_id, r.media_id, r.purpose,
                r.display_name, r.presentation, r.original_file_name, r.mime_type, r.size_bytes,
                r.variant_names, r.processing_contract_version
@@ -148,7 +150,7 @@
     <!-- 教师正文读取先限定 owner 与当前可编辑版本；LEFT JOIN 允许正文尚未插图的合法 ARTICLE 草稿。 -->
     <select id="listOwnedEditableLessonContentRows" resultType="com.eduplatform.course.domain.CourseMediaAccessRow">
         SELECT c.id AS course_id, c.owner_teacher_id, cv.id AS version_id, cv.lifecycle_status,
-               cv.access_type, l.id AS lesson_id, l.title AS lesson_title, l.lesson_type,
+               cv.access_type, l.id AS lesson_id, l.content_revision_id, l.title AS lesson_title, l.lesson_type,
                l.article_markdown, l.previewable, r.id AS resource_id, r.media_id, r.purpose,
                r.display_name, r.presentation, r.original_file_name, r.mime_type, r.size_bytes,
                r.variant_names, r.processing_contract_version
@@ -293,8 +295,8 @@
     </insert>
 
     <insert id="insertLesson">
-        INSERT INTO lesson (id, chapter_id, title, lesson_type, position, previewable, article_markdown)
-        VALUES (#{id}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable}, #{articleMarkdown})
+        INSERT INTO lesson (id, content_revision_id, chapter_id, title, lesson_type, position, previewable, article_markdown)
+        VALUES (#{id}, #{contentRevisionId}, #{chapterId}, #{title}, #{lessonType}, #{position}, #{previewable}, #{articleMarkdown})
     </insert>
 
     <insert id="insertLessonMediaResource">
@@ -315,7 +317,7 @@
     </select>
 
     <select id="listLessons" resultType="com.eduplatform.course.domain.LessonEntity">
-        SELECT id, chapter_id, title, lesson_type, position, previewable, article_markdown
+        SELECT id, content_revision_id, chapter_id, title, lesson_type, position, previewable, article_markdown
         FROM lesson
         WHERE chapter_id = #{chapterId}
         ORDER BY position, id
@@ -337,6 +339,26 @@
         JOIN chapter ch ON ch.id = l.chapter_id
         WHERE ch.course_version_id = #{versionId}
         ORDER BY ch.position, l.position, r.purpose, r.position, r.id
+    </select>
+
+    <!-- 只验证精确不可枚举身份；课程必须仍处于发布状态，历史版本必须确实曾发布后归档。 -->
+    <select id="findPublishedContentIdentity" resultType="com.eduplatform.course.domain.LessonEntity">
+        SELECT l.id,l.content_revision_id,l.chapter_id,l.title,l.lesson_type,l.position,l.previewable,l.article_markdown
+        FROM course c
+        JOIN course_version cv ON cv.course_id=c.id AND cv.lifecycle_status IN ('PUBLISHED','ARCHIVED')
+        JOIN chapter ch ON ch.course_version_id=cv.id
+        JOIN lesson l ON l.chapter_id=ch.id
+        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED'
+          AND l.id=#{lessonId} AND l.content_revision_id=#{contentRevisionId}
+        LIMIT 1
+    </select>
+
+    <select id="countCurrentContentIdentity" resultType="int">
+        SELECT COUNT(*) FROM course c
+        JOIN chapter ch ON ch.course_version_id=c.published_version_id
+        JOIN lesson l ON l.chapter_id=ch.id
+        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED'
+          AND l.id=#{lessonId} AND l.content_revision_id=#{contentRevisionId}
     </select>
 
     <select id="countChapters" resultType="int">
@@ -383,7 +405,7 @@
 
     <!-- Agent 索引事件只枚举 ARTICLE 身份；正文由 Worker 另走受控分页 API 读取。 -->
     <select id="listVersionArticleLessons" resultType="com.eduplatform.course.domain.LessonEntity">
-        SELECT l.id,l.chapter_id,l.title,l.lesson_type,l.position,l.previewable,l.article_markdown
+        SELECT l.id,l.content_revision_id,l.chapter_id,l.title,l.lesson_type,l.position,l.previewable,l.article_markdown
         FROM chapter ch JOIN lesson l ON l.chapter_id=ch.id
         WHERE ch.course_version_id=#{versionId} AND l.lesson_type='ARTICLE'
           AND l.article_markdown IS NOT NULL AND l.article_markdown&lt;&gt;''

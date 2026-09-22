@@ -15,13 +15,14 @@ import org.springframework.stereotype.Component;
 @ConditionalOnMissingBean(RedisProgressBufferStore.class)
 public class DisabledProgressBufferStore implements ProgressBufferStore {
     @Override
-    public BufferResult buffer(String learnerId, String courseId, String lessonId, ProgressRow persisted,
+    public BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
+            ProgressRow persisted,
             LearningDtos.ReportProgressRequest input, Instant now) {
         throw new ProgressBufferUnavailableException("进度缓冲暂时不可用");
     }
 
     @Override
-    public ReadResult read(String learnerId, String courseId, String lessonId) {
+    public ReadResult read(String learnerId, String courseId, String contentRevisionId) {
         return new ReadResult(false, Optional.empty());
     }
 

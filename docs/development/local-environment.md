@@ -683,6 +683,37 @@ Agent Access 在 `local` profile 强制启用 Redis 运行治理，使用独立 
 
 专项每轮使用随机前缀并在 `finally` 按已知 Key 删除；错误端口只用于模拟 503，不停止共享 Redis。禁止 `FLUSHDB`、按整前缀模糊删除他人 Key 或为通过测试修改 DB 0～5。
 
+## T12C.0 发布课时内容身份与进度隔离
+
+T12C.0 没有新增本地秘密。Course 的 Learning 专用精确身份校验复用 `Initialize-LocalEnvironment.ps1` 已写入 DPAPI 的 `course-media-auth.credential.clixml`；`Invoke-WithLocalEnvironment.ps1` 仅在子进程中把它注入 `COURSE_MEDIA_AUTH_SECRET`。禁止将该值复制到 `local.env`、命令参数、测试输出或交付文档；部署继续使用 Secret Manager。RabbitMQ 事件开关沿用 `RABBITMQ_ENABLED`，Learning 进度仍固定使用 `LEARNING_REDIS_DATABASE=4`，没有 Redis Stream 或新的 Redis DB。
+
+固定 Seed 只允许在包装器确认 `LEARNING_MYSQL_DATABASE=edu_platform_learning_dev` 和 Redis DB 4 后运行。`INITIALIZE`、`CLEANUP`、`REBUILD` 都只匹配固定 `c120` course、`c121` learner 和列出的修订 Key；不得改成 `FLUSHDB`、全表清空或模糊前缀删除：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  $env:T12C0_DEMO_SEED_ENABLED = "true"
+  $env:T12C0_DEMO_SEED_ACTION = "REBUILD"
+  $env:RABBITMQ_ENABLED = "false"
+  mvn.cmd "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml `
+    -pl learning-service -am "-Dtest=T12C0ProgressIdentityDemoSeedTest" `
+    "-Dsurefire.failIfNoSpecifiedTests=false" test
+}
+```
+
+真实 MySQL/Redis/RabbitMQ 专项要求 Course 8082 可读，并只读核验《线性代数》及其第二课时。用例使用随机 learner 与随机 synthetic course/event，`finally` 精确删除进度、事件、Redis Hash/dirty member、消费幂等事实和 synthetic 投影，随后再次比对课程发布版本、publicationRevision 与完整目录。不得修改该课程、绑定、媒体或 OSS：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  $env:T12C0_REAL_ACCEPTANCE_ENABLED = "true"
+  $env:RABBITMQ_ENABLED = "true"
+  mvn.cmd "-Dmaven.repo.local=.m2/repository" -f java-platform/pom.xml `
+    -pl learning-service -am "-Dtest=T12C0RealEnvironmentAcceptanceTest" `
+    "-Dsurefire.failIfNoSpecifiedTests=false" test
+}
+```
+
+任务没有改写个人 `local.env`。如果人工调试时曾临时加入 `COURSE_MEDIA_AUTH_SECRET`、MySQL 或 RabbitMQ 密码，结束后必须从 `local.env` 删除，并通过初始化脚本迁回 DPAPI；本任务正常流程不需要删除任何非敏感配置。
+
 ## 全量验证
 
 ## T15D 会话命令与浏览器验收

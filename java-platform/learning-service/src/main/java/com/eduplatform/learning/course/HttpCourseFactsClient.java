@@ -24,6 +24,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
     private static final int MAX_CACHED_COURSES = 256;
     private final RestClient course;
     private final Duration factCacheTtl;
+    private final String serviceToken;
     private final ConcurrentHashMap<String, CachedFact> publishedFacts = new ConcurrentHashMap<>();
     private final Object cacheLock = new Object();
 
@@ -33,6 +34,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
         factory.setReadTimeout(properties.course().requestTimeout());
         this.course = RestClient.builder().baseUrl(properties.course().baseUrl()).requestFactory(factory).build();
         this.factCacheTtl = properties.course().factCacheTtl();
+        this.serviceToken = properties.media().authorizationSecret();
     }
 
     @Override
@@ -96,6 +98,33 @@ public class HttpCourseFactsClient implements CourseFactsClient {
         }
     }
 
+    @Override
+    public LessonContentIdentity requireContentIdentity(String courseId, String lessonId,
+            String contentRevisionId, String traceId) {
+        try {
+            Identity response = course.post()
+                    .uri("/internal/v1/courses/{courseId}/lesson-content-identities:verify", courseId)
+                    .header("X-Trace-Id", traceId)
+                    .header("X-Internal-Caller", "learning-service")
+                    .header("X-Internal-Service-Token", serviceToken == null ? "" : serviceToken)
+                    .body(Map.of("lessonId", lessonId, "contentRevisionId", contentRevisionId))
+                    .retrieve().body(Identity.class);
+            if (response == null || isBlank(response.courseId()) || isBlank(response.lessonId())
+                    || isBlank(response.contentRevisionId()) || !isSupportedLessonType(response.lessonType())
+                    || !courseId.equals(response.courseId()) || !lessonId.equals(response.lessonId())
+                    || !contentRevisionId.equals(response.contentRevisionId())) throw unavailable();
+            return new LessonContentIdentity(response.courseId(), response.lessonId(), response.contentRevisionId(),
+                    response.lessonType(), response.currentPublished());
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 404) throw notFound();
+            throw unavailable();
+        } catch (QuestionException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw unavailable();
+        }
+    }
+
     /**
      * 将 Course 发布详情裁剪为 Learning 所需的稳定事实，并拒绝缺失、空白或未知枚举值。
      * @param value Course HTTP 响应的 Learning 局部读取投影
@@ -113,21 +142,27 @@ public class HttpCourseFactsClient implements CourseFactsClient {
             throw unavailable();
         }
         Set<String> lessonIds = new LinkedHashSet<>();
+        if (value.publicationRevision() == null || !value.publicationRevision().canConvertToInt()
+                || value.publicationRevision().intValue() < 1) throw unavailable();
         Map<String, String> lessonTypes = new LinkedHashMap<>();
+        Map<String, String> contentRevisionIds = new LinkedHashMap<>();
         for (Chapter chapter : value.chapters()) {
             if (chapter == null || chapter.lessons() == null) throw unavailable();
             for (Lesson lesson : chapter.lessons()) {
                 String lessonId = lesson == null ? null : strictText(lesson.id());
                 String lessonType = lesson == null ? null : strictText(lesson.type());
-                if (isBlank(lessonId) || !isSupportedLessonType(lessonType)) {
+                String contentRevisionId = lesson == null ? null : strictText(lesson.contentRevisionId());
+                if (isBlank(lessonId) || isBlank(contentRevisionId) || !isSupportedLessonType(lessonType)) {
                     throw unavailable();
                 }
                 lessonIds.add(lessonId);
                 lessonTypes.put(lessonId, lessonType);
+                contentRevisionIds.put(lessonId, contentRevisionId);
             }
         }
         return new CourseFact(courseId, publishedVersion, accessType, ownerTeacherId,
-                Set.copyOf(lessonIds), Map.copyOf(lessonTypes));
+                value.publicationRevision().intValue(), Set.copyOf(lessonIds), Map.copyOf(lessonTypes),
+                Map.copyOf(contentRevisionIds));
     }
 
     /** 只接受 JSON 字符串，避免 Jackson 对数字等标量的默认字符串强制转换掩盖错误响应。 */
@@ -160,7 +195,8 @@ public class HttpCourseFactsClient implements CourseFactsClient {
      * 必需字段仍由 fact(Published) 做完整性和枚举校验，异常响应统一转为安全 503。
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record Published(JsonNode id, JsonNode publishedVersion, JsonNode accessType, Teacher teacher,
+    private record Published(JsonNode id, JsonNode publishedVersion, JsonNode publicationRevision,
+            JsonNode accessType, Teacher teacher,
             List<Chapter> chapters) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -170,6 +206,9 @@ public class HttpCourseFactsClient implements CourseFactsClient {
     private record Chapter(List<Lesson> lessons) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record Lesson(JsonNode id, JsonNode type) {}
+    private record Lesson(JsonNode id, JsonNode contentRevisionId, JsonNode type) {}
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Identity(String courseId, String lessonId, String contentRevisionId,
+            String lessonType, boolean currentPublished) {}
     private record CachedFact(CourseFact value, java.time.Instant expiresAt) {}
 }

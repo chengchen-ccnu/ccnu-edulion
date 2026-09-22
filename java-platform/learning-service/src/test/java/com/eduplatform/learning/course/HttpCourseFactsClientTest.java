@@ -131,10 +131,10 @@ class HttpCourseFactsClientTest {
                 + "\"coverMediaId\":null,\"coverUrl\":null,"
                 + "\"teacher\":{\"id\":\"" + TEACHER_ID + "\",\"displayName\":\"教师测试\"},"
                 + "\"category\":{\"id\":\"00000000-0000-4000-8000-000000000103\",\"name\":\"数学\"},"
-                + "\"level\":\"BEGINNER\",\"accessType\":\"ENROLLMENT_REQUIRED\",\"publishedVersion\":\"v8\","
+                + "\"level\":\"BEGINNER\",\"accessType\":\"ENROLLMENT_REQUIRED\",\"publishedVersion\":\"v8\",\"publicationRevision\":8,"
                 + "\"chapters\":[{\"id\":\"00000000-0000-4000-8000-000000000104\",\"title\":\"第一章\","
                 + "\"sequence\":1,\"lessons\":[{\"id\":\"" + LESSON_ID + "\",\"title\":\"第一课时\","
-                + "\"type\":\"ARTICLE\",\"sequence\":1,\"previewable\":false,"
+                + "\"type\":\"ARTICLE\",\"sequence\":1,\"previewable\":false,\"contentRevisionId\":\"" + LESSON_ID + "\","
                 + "\"articleMarkdown\":\"# 内容\",\"resources\":[]}],\"chapterExtra\":true}],"
                 + "\"createdAt\":\"2026-09-06T00:00:00Z\",\"updatedAt\":\"2026-09-06T00:00:00Z\"}");
     }

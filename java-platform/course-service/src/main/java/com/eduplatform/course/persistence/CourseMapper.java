@@ -97,6 +97,14 @@ public interface CourseMapper {
 
     List<LessonMediaResourceEntity> listVersionMediaResources(String versionId);
 
+    /** 精确验证某课时/修订曾属于该课程的发布版本；不返回正文、媒体或可枚举列表。 */
+    LessonEntity findPublishedContentIdentity(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId, @Param("contentRevisionId") String contentRevisionId);
+
+    /** @return 精确身份是否仍属于当前公开版本，用于区分旧播放器与当前学生投影。 */
+    int countCurrentContentIdentity(@Param("courseId") String courseId,
+            @Param("lessonId") String lessonId, @Param("contentRevisionId") String contentRevisionId);
+
     int countChapters(String versionId);
 
     int countEmptyChapters(String versionId);

@@ -54,10 +54,10 @@ class T12F1LearningDemoSeedTest {
     private void initialize() {
         cleanup();
         jdbc.update("""
-                INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,position_seconds,watched_seconds,
+                INSERT INTO lesson_progress(id,learner_id,course_id,lesson_id,content_revision_id,position_seconds,watched_seconds,
                     completed,last_event_at,revision,created_at,updated_at)
-                VALUES(?,?,?,?,0,0,FALSE,CURRENT_TIMESTAMP(6),0,CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6))
-                """, PROGRESS, STUDENT, COURSE, ARTICLE_LESSON);
+                VALUES(?,?,?,?,?,0,0,FALSE,CURRENT_TIMESTAMP(6),0,CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6))
+                """, PROGRESS, STUDENT, COURSE, ARTICLE_LESSON, ARTICLE_LESSON);
         validateZero();
     }
 

@@ -37,11 +37,11 @@ describe("learning aggregation model", () => {
 function course(): CourseDetail {
   return { id: "course-1", title: "数学", summary: "", description: "", coverMediaId: null, coverUrl: null,
     teacher: { id: "teacher-1", displayName: "测试教师" }, category: { id: "category-1", name: "数学" },
-    level: "BEGINNER", accessType: "ENROLLMENT_REQUIRED", publishedVersion: "v2", chapters: [{
+    level: "BEGINNER", accessType: "ENROLLMENT_REQUIRED", publishedVersion: "v2", publicationRevision: 2, chapters: [{
       id: "chapter-1", title: "第一章", sequence: 1, lessons: [
-        { id: "lesson-1", title: "第一课", type: "VIDEO", sequence: 1, previewable: false,
+        { id: "lesson-1", contentRevisionId: "revision-1", title: "第一课", type: "VIDEO", sequence: 1, previewable: false,
           resources: [resource("resource-1", "media-1")] },
-        { id: "lesson-2", title: "第二课", type: "VIDEO", sequence: 2, previewable: false,
+        { id: "lesson-2", contentRevisionId: "revision-2", title: "第二课", type: "VIDEO", sequence: 2, previewable: false,
           resources: [resource("resource-2", "media-2")] }
       ]
     }] };
@@ -59,6 +59,6 @@ function courseProgress(lessons: LessonProgress[]): CourseProgress {
 
 function lessonProgress(lessonId: string, positionSeconds: number, completed: boolean, lastEventAt: string,
     revision = 1, watchedSeconds = positionSeconds): LessonProgress {
-  return { courseId: "course-1", lessonId, positionSeconds, watchedSeconds, completed,
+  return { courseId: "course-1", lessonId, contentRevisionId: `revision-${lessonId}`, positionSeconds, watchedSeconds, completed,
     lastEventAt, revision, replayed: false, persistenceStatus: "PERSISTED" };
 }

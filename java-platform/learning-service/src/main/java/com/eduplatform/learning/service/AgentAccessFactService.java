@@ -80,10 +80,14 @@ public class AgentAccessFactService {
                 + row.get("score") + "/" + row.get("total_points"));
     }
 
+    /** Agent 学习事实也只暴露 Course 当前修订；投影缺失时宁可暂不返回，也不混入历史观看事实。 */
     private List<AgentAccessDtos.SafeFact> progress(AgentAccessDtos.QueryRequest request) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT id,course_id,lesson_id,position_seconds,watched_seconds,completed,revision
-                FROM lesson_progress WHERE learner_id=? ORDER BY updated_at DESC,id LIMIT ?
+                SELECT p.id,p.course_id,c.lesson_id,p.position_seconds,p.watched_seconds,p.completed,p.revision
+                FROM lesson_progress p
+                JOIN published_lesson_content_projection c
+                  ON c.course_id=p.course_id AND c.content_revision_id=p.content_revision_id
+                WHERE p.learner_id=? ORDER BY p.updated_at DESC,p.id LIMIT ?
                 """, request.ownerUserId().toString(), 100);
         return select(rows, request, "学习进度", row -> "课程 " + row.get("course_id") + "，课时 "
                 + row.get("lesson_id") + "，已观看 " + row.get("watched_seconds") + " 秒，完成="

@@ -172,6 +172,48 @@ class CourseHttpIntegrationTest {
                 HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
     }
 
+    @Test
+    /** Learning 精确校验接口要求内部调用身份；成功响应只返回三元组、类型和当前标记。 */
+    void lessonContentIdentityVerificationIsInternalAndExact() throws Exception {
+        CourseDtos.TeacherCourse draft = courseService.create(TEACHER_ID,
+                new CourseDtos.CreateCourseRequest(UUID.randomUUID(), "内容身份 HTTP", "摘要", "说明", null,
+                        "测试教师", UUID.fromString(CATEGORY_ID), CourseDtos.CourseLevel.BEGINNER,
+                        CourseDtos.CourseAccessType.PUBLIC)).course();
+        CourseDtos.TeacherCourse saved = courseService.replaceCurriculum(draft.id(), TEACHER_ID,
+                new CourseDtos.ReplaceCurriculumRequest(draft.revision(),
+                        List.of(new CourseDtos.ChapterInput("正文", 1,
+                                List.of(new CourseDtos.LessonInput("图文课", CourseDtos.LessonType.ARTICLE,
+                                        1, false, "正文", List.of()))))));
+        courseService.updatePublication(saved.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, saved.revision()));
+        CourseDtos.LessonSummary lesson = courseService.getPublished(saved.id()).chapters().get(0).lessons().get(0);
+        String requestBody = "{\"lessonId\":\"" + lesson.id() + "\",\"contentRevisionId\":\""
+                + lesson.contentRevisionId() + "\"}";
+        URI endpoint = URI.create("http://127.0.0.1:" + port + "/internal/v1/courses/" + saved.id()
+                + "/lesson-content-identities:verify");
+
+        HttpResponse<String> unauthorized = client.send(HttpRequest.newBuilder(endpoint)
+                        .header("Content-Type", "application/json")
+                        .header("X-Internal-Caller", "learning-service")
+                        .header("X-Internal-Service-Token", "wrong")
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(unauthorized.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> verified = client.send(HttpRequest.newBuilder(endpoint)
+                        .header("Content-Type", "application/json")
+                        .header("X-Internal-Caller", "learning-service")
+                        .header("X-Internal-Service-Token", "test-only-course-media-auth-secret-32-bytes")
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(verified.statusCode()).isEqualTo(200);
+        var verifiedBody = objectMapper.readTree(verified.body());
+        assertThat(verifiedBody.get("courseId").asString()).isEqualTo(saved.id());
+        assertThat(verifiedBody.get("lessonId").asString()).isEqualTo(lesson.id());
+        assertThat(verifiedBody.get("contentRevisionId").asString()).isEqualTo(lesson.contentRevisionId());
+        assertThat(verifiedBody.get("currentPublished").asBoolean()).isTrue();
+    }
+
     private HttpResponse<String> sendArticleContent(String path, String userId, String roles) throws Exception {
         return client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + path))

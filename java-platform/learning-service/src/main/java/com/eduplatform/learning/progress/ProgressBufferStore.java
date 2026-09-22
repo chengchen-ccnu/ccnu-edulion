@@ -10,11 +10,11 @@ import java.util.Optional;
  */
 public interface ProgressBufferStore {
     /** 将一条显式 HEARTBEAT 与已持久化基线原子合并；Redis 不可用时必须抛出可映射的依赖异常。 */
-    BufferResult buffer(String learnerId, String courseId, String lessonId,
+    BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
             ProgressRow persisted, LearningDtos.ReportProgressRequest input, Instant now);
 
     /** 读取一个学习者课时的缓冲投影；available=false 只表示 Redis 读失败，不表示没有缓冲记录。 */
-    ReadResult read(String learnerId, String courseId, String lessonId);
+    ReadResult read(String learnerId, String courseId, String contentRevisionId);
 
     /** 当前缓冲积压是否已经达到保护阈值；检查失败不能静默放行新的普通心跳。 */
     boolean backlogExceedsLimit();
@@ -23,6 +23,7 @@ public interface ProgressBufferStore {
     record ReadResult(boolean available, Optional<BufferedProgress> value) {}
 
     /** Redis Hash 中保存的完整聚合快照，watchedSeconds 已是该课时的累计值而非本次增量。 */
-    record BufferedProgress(String learnerId, String courseId, String lessonId, long positionSeconds,
+    record BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
+            long positionSeconds,
             long watchedSeconds, boolean completed, Instant lastEventAt, long version) {}
 }

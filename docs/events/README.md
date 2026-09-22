@@ -42,3 +42,14 @@ T11 冻结 [`learning-enrollment-events.v1.yaml`](./learning-enrollment-events.v
 报名创建、重新激活或取消与 `EnrollmentAccessChanged` Outbox 在 learning-service 本地事务内提交。course-service 最多 3 次指数退避消费，先以 `eventId` 持久化幂等，再按事件 `changedAt` 单调更新本地 `(learnerId, courseId)` 投影；重复或乱序消息不会让旧状态覆盖新状态。报名投影只用于当前发布课程的 `ENROLLMENT_REQUIRED` 非试看播放判断，不复制课程表，也不向 learning-service 发起同步回调。超限消息进入 DLQ，不自动回流；RabbitMQ 不可用时 Learning Outbox 保留并按既有限次策略补投。
 
 T13.1 冻结 [`agent-index-events.v1.yaml`](./agent-index-events.v1.yaml)，统一承载题目、知识点、课程文字和后续学生记忆的派生索引变化通知。事件只携带稳定 ID、事实源 revision、学段、可见范围和最小授权元数据，不复制题干、答案、课程正文、记忆正文、签名 URL 或隐私。真实 Outbox、RabbitMQ 资源、Qdrant/Neo4j 消费、DLQ 和重建由 T14.1/T13.2/T14.2 实现；消费者必须按 `eventId` 幂等，并拒绝旧 revision 覆盖新投影或复活较新的删除 tombstone。
+
+T12C.0 冻结 [`course-lesson-content-events.v1.yaml`](./course-lesson-content-events.v1.yaml)，由 Course 发布事务向 Learning 同步完整的当前发布课时内容身份：
+
+| 资源 | 名称 | 类型/绑定 |
+|---|---|---|
+| 课时内容 Exchange | `edu.course.lesson-content.events.v1` | durable topic |
+| Learning 当前内容 Queue | `edu.learning.lesson-content.v1` | durable classic；绑定 `course.lesson-content.published.v1`；DLX routing key `learning.lesson-content.dead.v1` |
+| Learning 当前内容死信 Exchange | `edu.learning.lesson-content.dlx.v1` | durable direct |
+| Learning 当前内容死信 Queue | `edu.learning.lesson-content.dlq.v1` | durable classic；绑定 `learning.lesson-content.dead.v1` |
+
+Course 与发布事务一并写 Outbox；Learning 总计最多尝试 3 次，按 `eventId` 持久化幂等并以 `publicationRevision` 拒绝乱序旧事件。完整课时映射原子替换当前投影，消息不含 mediaId、正文、学习事实或存储信息。Outbox 未及时送达时，Learning 只可通过受控 Course HTTP 事实有限补齐，不得跨 Schema 查询。

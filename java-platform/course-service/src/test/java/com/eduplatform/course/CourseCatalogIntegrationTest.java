@@ -10,6 +10,9 @@ import com.eduplatform.course.web.CourseDtos;
 import java.util.List;
 import java.util.UUID;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -252,6 +255,73 @@ class CourseCatalogIntegrationTest {
     }
 
     @Test
+    /**
+     * Given 显式课时身份；When 修改非主内容、替换主视频并执行 A→B→A、类型变化和删除后新建；
+     * Then 只有主视频、类型和新课时生成新内容修订，且发布事件携带最终映射。
+     */
+    void lessonContentRevisionFollowsPublishedContentIdentityRules() {
+        UUID videoA = UUID.randomUUID();
+        UUID videoB = UUID.randomUUID();
+        mediaClient.register(videoA.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+        mediaClient.register(videoB.toString(), TEACHER_ID, "LESSON_VIDEO", "READY");
+        CourseDtos.TeacherCourse created = service.create(TEACHER_ID,
+                createRequest(UUID.randomUUID(), "内容身份规则", null)).course();
+
+        CourseDtos.TeacherCourse withA = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(created.revision(), null, "视频 A", CourseDtos.LessonType.VIDEO,
+                        null, videoA));
+        CourseDtos.LessonSummary lessonA = withA.chapters().get(0).lessons().get(0);
+
+        CourseDtos.TeacherCourse metadataOnly = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(withA.revision(), UUID.fromString(lessonA.id()), "只改标题",
+                        CourseDtos.LessonType.VIDEO, null, videoA));
+        CourseDtos.LessonSummary metadataLesson = metadataOnly.chapters().get(0).lessons().get(0);
+        assertThat(metadataLesson.contentRevisionId()).isEqualTo(lessonA.contentRevisionId());
+
+        CourseDtos.TeacherCourse withB = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(metadataOnly.revision(), UUID.fromString(metadataLesson.id()), "视频 B",
+                        CourseDtos.LessonType.VIDEO, null, videoB));
+        CourseDtos.LessonSummary lessonB = withB.chapters().get(0).lessons().get(0);
+        assertThat(lessonB.contentRevisionId()).isNotEqualTo(lessonA.contentRevisionId());
+
+        CourseDtos.TeacherCourse backToA = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(withB.revision(), UUID.fromString(lessonB.id()), "再次绑定 A",
+                        CourseDtos.LessonType.VIDEO, null, videoA));
+        CourseDtos.LessonSummary secondA = backToA.chapters().get(0).lessons().get(0);
+        assertThat(secondA.contentRevisionId()).isNotIn(lessonA.contentRevisionId(), lessonB.contentRevisionId());
+
+        CourseDtos.TeacherCourse article = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(backToA.revision(), UUID.fromString(secondA.id()), "切换图文",
+                        CourseDtos.LessonType.ARTICLE, "第一版正文", null));
+        CourseDtos.LessonSummary articleLesson = article.chapters().get(0).lessons().get(0);
+        assertThat(articleLesson.contentRevisionId()).isNotEqualTo(secondA.contentRevisionId());
+
+        CourseDtos.TeacherCourse articleEdited = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(article.revision(), UUID.fromString(articleLesson.id()), "图文改标题",
+                        CourseDtos.LessonType.ARTICLE, "第二版正文和图片占位", null));
+        CourseDtos.LessonSummary editedArticle = articleEdited.chapters().get(0).lessons().get(0);
+        assertThat(editedArticle.contentRevisionId()).isEqualTo(articleLesson.contentRevisionId());
+
+        CourseDtos.TeacherCourse recreated = service.replaceCurriculum(created.id(), TEACHER_ID,
+                explicitCurriculum(articleEdited.revision(), null, "删除后新建",
+                        CourseDtos.LessonType.ARTICLE, "第二版正文和图片占位", null));
+        CourseDtos.LessonSummary recreatedLesson = recreated.chapters().get(0).lessons().get(0);
+        assertThat(recreatedLesson.id()).isNotEqualTo(editedArticle.id());
+        assertThat(recreatedLesson.contentRevisionId()).isNotEqualTo(editedArticle.contentRevisionId());
+
+        service.updatePublication(created.id(), TEACHER_ID,
+                new CourseDtos.UpdatePublicationRequest(CourseDtos.PublishTarget.PUBLISHED, recreated.revision()));
+        String event = jdbc.queryForObject("""
+                SELECT payload_json FROM outbox_event
+                WHERE event_type='PublishedLessonContentChanged' AND aggregate_id=?
+                ORDER BY created_at DESC LIMIT 1
+                """, String.class, created.id());
+        assertThat(event).contains("\"eventVersion\":1", "\"publicationRevision\":1",
+                "\"lessonId\":\"" + recreatedLesson.id() + "\"",
+                "\"contentRevisionId\":\"" + recreatedLesson.contentRevisionId() + "\"");
+    }
+
+    @Test
     /** Given v1 已发布；When v2 草稿替换封面；Then 公共课程仍引用 v1 封面，草稿引用独立演进。 */
     void publishedVersionCoverIsNotPollutedByDraftReplacement() {
         UUID publishedCover = UUID.randomUUID();
@@ -411,6 +481,41 @@ class CourseCatalogIntegrationTest {
         assertThatThrownBy(() -> service.getPublished(draft.id()))
                 .isInstanceOfSatisfying(CourseException.class,
                         error -> assertThat(error.status().value()).isEqualTo(404));
+    }
+
+    @Test
+    /** 两个教师会话并发发布同一 revision 时只提交一次发布映射和 Outbox，后到请求返回同一结果。 */
+    void concurrentPublicationOfSameRevisionIsIdempotent() throws Exception {
+        CourseDtos.TeacherCourse draft = service.create(
+                TEACHER_ID, createRequest(UUID.randomUUID(), "并发发布课程")).course();
+        CourseDtos.TeacherCourse saved = service.replaceCurriculum(draft.id(), TEACHER_ID,
+                curriculum(draft.revision()));
+        var request = new CourseDtos.UpdatePublicationRequest(
+                CourseDtos.PublishTarget.PUBLISHED, saved.revision());
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                return service.updatePublication(draft.id(), TEACHER_ID, request);
+            });
+            var second = pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                return service.updatePublication(draft.id(), TEACHER_ID, request);
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS).publishedVersion())
+                    .isEqualTo(second.get(10, TimeUnit.SECONDS).publishedVersion());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_event WHERE event_type='PublishedLessonContentChanged'",
+                    Integer.class)).isEqualTo(1);
+        } finally {
+            start.countDown();
+            pool.shutdownNow();
+        }
     }
 
     @Test
@@ -812,8 +917,19 @@ class CourseCatalogIntegrationTest {
                         List.of(new CourseDtos.LessonInput(
                                 "第一课", videoMediaId == null ? CourseDtos.LessonType.ARTICLE : CourseDtos.LessonType.VIDEO,
                                 1, previewable, videoMediaId == null ? "# 图文课时\n\n正文内容。" : null,
-                                videoMediaId == null ? List.of() : List.of(new CourseDtos.LessonMediaResourceInput(
+                        videoMediaId == null ? List.of() : List.of(new CourseDtos.LessonMediaResourceInput(
                                         videoMediaId, CourseDtos.LessonMediaPurpose.LESSON_VIDEO, 1)))))));
+    }
+
+    private CourseDtos.ReplaceCurriculumRequest explicitCurriculum(long revision, UUID lessonId, String title,
+            CourseDtos.LessonType type, String articleMarkdown, UUID videoMediaId) {
+        List<CourseDtos.LessonMediaResourceInput> resources = videoMediaId == null ? List.of()
+                : List.of(new CourseDtos.LessonMediaResourceInput(videoMediaId,
+                        CourseDtos.LessonMediaPurpose.LESSON_VIDEO, 1));
+        return new CourseDtos.ReplaceCurriculumRequest(revision, CourseDtos.LessonIdentityMode.EXPLICIT,
+                List.of(new CourseDtos.ChapterInput("第一章", 1,
+                        List.of(new CourseDtos.LessonInput(lessonId, title, type, 1, true,
+                                articleMarkdown, resources)))));
     }
 
     private void assertOutboxCount(String eventType, UUID mediaId, int expected) {

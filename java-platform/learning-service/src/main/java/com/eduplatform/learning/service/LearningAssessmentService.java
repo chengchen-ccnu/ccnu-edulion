@@ -182,7 +182,8 @@ public class LearningAssessmentService {
     public LearningDtos.LessonProgress reportProgress(String learnerId, String courseId, String lessonId,
             LearningDtos.ReportProgressRequest input, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
-        requireLesson(course, lessonId);
+        ProgressIdentity identity = requireProgressIdentity(course, lessonId,
+                input.contentRevisionId() == null ? null : input.contentRevisionId().toString(), traceId);
         Instant now = Instant.now();
         if (input.occurredAt().isAfter(now.plus(MAX_CLOCK_SKEW))
                 || input.occurredAt().isBefore(now.minus(MAX_OFFLINE_AGE))) {
@@ -204,9 +205,10 @@ public class LearningAssessmentService {
                 throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
                         "LEARNING.PROGRESS_BUFFER_UNAVAILABLE", "进度缓冲暂时不可用，请稍后重试");
             }
-            ProgressRow persisted = repository.findProgress(learnerId, courseId, lessonId).orElse(null);
+            ProgressRow persisted = repository.findProgress(learnerId, courseId, identity.contentRevisionId()).orElse(null);
             try {
-                var buffered = progressBuffer.buffer(learnerId, courseId, lessonId, persisted, input, now);
+                var buffered = progressBuffer.buffer(learnerId, courseId, lessonId,
+                        identity.contentRevisionId(), persisted, input, now);
                 return progress(buffered.value(), buffered.replayed(), LearningDtos.ProgressPersistenceStatus.BUFFERED);
             } catch (ProgressBufferUnavailableException unavailable) {
                 throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
@@ -217,7 +219,8 @@ public class LearningAssessmentService {
             throw invalid("LEARNING.PROGRESS_COMPLETION_EVENT_INVALID", "只有 ENDED 事件可以记录完成");
         }
         try {
-            return persistCheckpoint(learnerId, courseId, lessonId, input, eventType, now);
+            return persistCheckpoint(learnerId, courseId, lessonId, identity.contentRevisionId(),
+                    input, eventType, now);
         } catch (DataAccessException databaseFailure) {
             // 强制检查点失败必须明确返回 503，不能把未落库结果包装成成功响应。
             meterRegistry.counter("learning.progress.checkpoint.failures").increment();
@@ -228,17 +231,27 @@ public class LearningAssessmentService {
 
     /** 强制检查点与旧客户端兼容写入同一 MySQL 聚合和幂等表，Worker 不会参与该路径。 */
     private LearningDtos.LessonProgress persistCheckpoint(String learnerId, String courseId, String lessonId,
+            String contentRevisionId,
             LearningDtos.ReportProgressRequest input, LearningDtos.ProgressEventType eventType, Instant now) {
         boolean inserted = repository.insertProgressEvent(input.clientEventId().toString(), learnerId, courseId,
-                lessonId, input.occurredAt(), input.positionSeconds(), input.watchedSeconds(), input.completed(),
+                lessonId, contentRevisionId, input.occurredAt(), input.positionSeconds(), input.watchedSeconds(), input.completed(),
                 eventType, now);
-        repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId, input.occurredAt(), now);
+        if (!inserted) {
+            var existing = repository.progressEventIdentity(input.clientEventId().toString()).orElseThrow();
+            if (!existing.learnerId().equals(learnerId) || !existing.courseId().equals(courseId)
+                    || !existing.lessonId().equals(lessonId)
+                    || !existing.contentRevisionId().equals(contentRevisionId)) {
+                throw conflict("LEARNING.IDEMPOTENCY_CONFLICT", "相同进度事件 ID 已用于其他课时内容");
+            }
+        }
+        repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId,
+                contentRevisionId, input.occurredAt(), now);
         if (inserted) {
-            ProgressRow locked = repository.lockProgress(learnerId, courseId, lessonId);
+            ProgressRow locked = repository.lockProgress(learnerId, courseId, contentRevisionId);
             repository.mergeProgress(locked, input.positionSeconds(), input.watchedSeconds(), input.completed(),
                     input.occurredAt(), now);
         }
-        ProgressRow value = repository.lockProgress(learnerId, courseId, lessonId);
+        ProgressRow value = repository.lockProgress(learnerId, courseId, contentRevisionId);
         meterRegistry.counter("learning.progress.checkpoint.persisted").increment();
         return progress(value, !inserted, LearningDtos.ProgressPersistenceStatus.PERSISTED);
     }
@@ -254,34 +267,40 @@ public class LearningAssessmentService {
         var replay = repository.articleCompletionRequest(requestId);
         if (replay.isPresent()) {
             var existingRequest = replay.orElseThrow();
+            String requestedRevision = input.contentRevisionId() == null
+                    ? existingRequest.contentRevisionId() : input.contentRevisionId().toString();
             if (!existingRequest.learnerId().equals(learnerId) || !existingRequest.courseId().equals(courseId)
-                    || !existingRequest.lessonId().equals(lessonId)) {
+                    || !existingRequest.lessonId().equals(lessonId)
+                    || !existingRequest.contentRevisionId().equals(requestedRevision)) {
                 throw conflict("LEARNING.IDEMPOTENCY_CONFLICT", "相同请求 ID 已用于其他图文课时");
             }
-            var fact = repository.articleCompletion(learnerId, courseId, lessonId);
+            var fact = repository.articleCompletion(learnerId, courseId, existingRequest.contentRevisionId());
             return articleCompletion(fact, true);
         }
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
-        requireLesson(course, lessonId);
-        if (!course.isArticle(lessonId)) {
+        ProgressIdentity identity = requireProgressIdentity(course, lessonId,
+                input.contentRevisionId() == null ? null : input.contentRevisionId().toString(), traceId);
+        if (!"ARTICLE".equals(identity.lessonType())) {
             throw new QuestionException(HttpStatus.UNPROCESSABLE_CONTENT, "LEARNING.LESSON_TYPE_INVALID",
                     "只有 ARTICLE 课时可以使用图文完成命令");
         }
         Instant now = Instant.now();
         var candidate = new LearningAssessmentRepository.ArticleCompletionRow(UUID.randomUUID().toString(),
-                learnerId, courseId, lessonId, now);
+                learnerId, courseId, lessonId, identity.contentRevisionId(), now, 1);
         boolean newFact = repository.insertArticleCompletionFact(candidate);
-        var fact = repository.articleCompletion(learnerId, courseId, lessonId);
+        var fact = repository.articleCompletion(learnerId, courseId, identity.contentRevisionId());
         if (newFact) {
-            repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId, now, now);
-            repository.markArticleProgressCompleted(learnerId, courseId, lessonId, now);
+            repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId,
+                    identity.contentRevisionId(), now, now);
+            repository.markArticleProgressCompleted(learnerId, courseId, identity.contentRevisionId(), now);
         }
         boolean inserted = repository.insertArticleCompletionRequest(requestId, learnerId, courseId,
-                lessonId, fact.id(), now);
+                lessonId, identity.contentRevisionId(), fact.id(), now);
         if (!inserted) {
             var current = repository.articleCompletionRequest(requestId).orElseThrow();
             if (!current.learnerId().equals(learnerId) || !current.courseId().equals(courseId)
-                    || !current.lessonId().equals(lessonId)) {
+                    || !current.lessonId().equals(lessonId)
+                    || !current.contentRevisionId().equals(identity.contentRevisionId())) {
                 throw conflict("LEARNING.IDEMPOTENCY_CONFLICT", "相同请求 ID 已用于其他图文课时");
             }
         }
@@ -293,22 +312,23 @@ public class LearningAssessmentService {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
         List<ProgressRow> rows = repository.progress(learnerId, courseId);
         List<LearningDtos.LessonProgress> views = new ArrayList<>();
-        Set<String> returnedLessons = new HashSet<>();
-        for (ProgressRow row : rows) {
-            var read = progressBuffer.read(learnerId, courseId, row.lessonId());
-            if (!read.available()) meterRegistry.counter("learning.progress.read.degraded").increment();
-            views.add(read.available() && read.value().isPresent()
-                    ? progress(row, read.value().orElseThrow(), false, LearningDtos.ProgressPersistenceStatus.BUFFERED)
-                    : progress(row, false, read.available() ? LearningDtos.ProgressPersistenceStatus.PERSISTED
-                            : LearningDtos.ProgressPersistenceStatus.PERSISTED_ONLY));
-            returnedLessons.add(row.lessonId());
-        }
-        // 心跳尚未落库时 lesson_progress 不存在，仍把 Redis 中的最新课时投影返回给学生。
+        Map<String, ProgressRow> currentRows = rows.stream().collect(java.util.stream.Collectors.toMap(
+                ProgressRow::contentRevisionId, row -> row, (left, right) -> right));
         for (String lessonId : course.lessonIds()) {
-            if (returnedLessons.contains(lessonId)) continue;
-            var read = progressBuffer.read(learnerId, courseId, lessonId);
-            if (read.available() && read.value().isPresent()) {
-                views.add(progress(read.value().orElseThrow(), false, LearningDtos.ProgressPersistenceStatus.BUFFERED));
+            String contentRevisionId = course.contentRevisionId(lessonId);
+            ProgressRow row = currentRows.get(contentRevisionId);
+            var read = progressBuffer.read(learnerId, courseId, contentRevisionId);
+            if (!read.available()) meterRegistry.counter("learning.progress.read.degraded").increment();
+            if (row != null) {
+                views.add(read.available() && read.value().isPresent()
+                        ? progress(row, read.value().orElseThrow(), lessonId, false,
+                                LearningDtos.ProgressPersistenceStatus.BUFFERED)
+                        : progress(row, lessonId, false, read.available()
+                                ? LearningDtos.ProgressPersistenceStatus.PERSISTED
+                                : LearningDtos.ProgressPersistenceStatus.PERSISTED_ONLY));
+            } else if (read.available() && read.value().isPresent()) {
+                views.add(progress(read.value().orElseThrow(), lessonId, false,
+                        LearningDtos.ProgressPersistenceStatus.BUFFERED));
             }
         }
         int completed = (int) views.stream().filter(LearningDtos.LessonProgress::completed).count();
@@ -1693,7 +1713,9 @@ public class LearningAssessmentService {
     /** 验证课程 owner 后返回该课程学习者的报名、进度和成绩汇总投影。 */
     public LearningDtos.StudentLearningPage studentLearning(String teacherId, String courseId,
             int page, int size, String traceId) {
-        courses.requireOwnedPublished(courseId, teacherId, traceId);
+        CourseFact course = courses.requireOwnedPublished(courseId, teacherId, traceId);
+        // 教师查询也先对齐 Course 当前发布映射，避免 Outbox 延迟时把历史修订误算为当前学情。
+        repository.reconcilePublishedContent(course, Instant.now());
         return new LearningDtos.StudentLearningPage(repository.studentProjections(courseId, page, size).stream()
                 .map(row -> new LearningDtos.StudentLearningSummary(row.learnerId(), row.enrollmentStatus(),
                         row.completedLessons(), row.watchedSeconds(), row.submittedAttempts(), row.gradedAttempts(),
@@ -1754,11 +1776,28 @@ public class LearningAssessmentService {
 
     private CourseFact requireLearningAccess(String learnerId, String courseId, String traceId) {
         CourseFact course = courses.requirePublished(courseId, traceId);
+        repository.reconcilePublishedContent(course, Instant.now());
         if (!"PUBLIC".equals(course.accessType())
                 && repository.enrollment(learnerId, courseId).filter(value -> value.status() == EnrollmentStatus.ACTIVE).isEmpty()) {
             throw new QuestionException(HttpStatus.FORBIDDEN, "LEARNING.ENROLLMENT_REQUIRED", "请先报名课程");
         }
         return course;
+    }
+
+    /** 当前映射直接接受；不匹配时只做一次精确 Course 校验，从而兼容旧播放器且不把新视频写入旧修订。 */
+    private ProgressIdentity requireProgressIdentity(CourseFact course, String lessonId,
+            String requestedRevisionId, String traceId) {
+        String currentRevision = course.contentRevisionId(lessonId);
+        if (requestedRevisionId == null) {
+            requireLesson(course, lessonId);
+            return new ProgressIdentity(lessonId, currentRevision, course.lessonTypes().get(lessonId), true);
+        }
+        if (requestedRevisionId.equals(currentRevision)) {
+            return new ProgressIdentity(lessonId, currentRevision, course.lessonTypes().get(lessonId), true);
+        }
+        var verified = courses.requireContentIdentity(course.courseId(), lessonId, requestedRevisionId, traceId);
+        return new ProgressIdentity(verified.lessonId(), verified.contentRevisionId(),
+                verified.lessonType(), verified.currentPublished());
     }
 
     private static void requireLesson(CourseFact course, String lessonId) {
@@ -2116,18 +2155,30 @@ public class LearningAssessmentService {
 
     private static LearningDtos.LessonProgress progress(ProgressRow row, boolean replayed,
             LearningDtos.ProgressPersistenceStatus status) {
-        return new LearningDtos.LessonProgress(row.courseId(), row.lessonId(), row.positionSeconds(),
+        return progress(row, row.lessonId(), replayed, status);
+    }
+
+    private static LearningDtos.LessonProgress progress(ProgressRow row, String projectedLessonId, boolean replayed,
+            LearningDtos.ProgressPersistenceStatus status) {
+        return new LearningDtos.LessonProgress(row.courseId(), projectedLessonId, row.contentRevisionId(), row.positionSeconds(),
                 row.watchedSeconds(), row.completed(), row.lastEventAt(), row.revision(), replayed, status);
     }
 
     private static LearningDtos.LessonProgress progress(BufferedProgress value, boolean replayed,
             LearningDtos.ProgressPersistenceStatus status) {
-        return new LearningDtos.LessonProgress(value.courseId(), value.lessonId(), value.positionSeconds(),
+        return progress(value, value.lessonId(), replayed, status);
+    }
+
+    private static LearningDtos.LessonProgress progress(BufferedProgress value, String projectedLessonId,
+            boolean replayed, LearningDtos.ProgressPersistenceStatus status) {
+        return new LearningDtos.LessonProgress(value.courseId(), projectedLessonId, value.contentRevisionId(),
+                value.positionSeconds(),
                 value.watchedSeconds(), value.completed(), value.lastEventAt(), value.version(), replayed, status);
     }
 
     /** 合并 MySQL 事实与 Redis 最新快照，位置/时长/完成和事件时间都保持单调。 */
     private static LearningDtos.LessonProgress progress(ProgressRow persisted, BufferedProgress buffered,
+            String projectedLessonId,
             boolean replayed, LearningDtos.ProgressPersistenceStatus status) {
         long position = Math.max(persisted.positionSeconds(), buffered.positionSeconds());
         long watched = Math.max(persisted.watchedSeconds(), buffered.watchedSeconds());
@@ -2135,13 +2186,14 @@ public class LearningAssessmentService {
         Instant eventAt = persisted.lastEventAt().isAfter(buffered.lastEventAt())
                 ? persisted.lastEventAt() : buffered.lastEventAt();
         long revision = Math.max(persisted.revision(), buffered.version());
-        return new LearningDtos.LessonProgress(persisted.courseId(), persisted.lessonId(), position, watched,
+        return new LearningDtos.LessonProgress(persisted.courseId(), projectedLessonId,
+                persisted.contentRevisionId(), position, watched,
                 completed, eventAt, revision, replayed, status);
     }
 
     private static LearningDtos.ArticleLessonCompletion articleCompletion(
             LearningAssessmentRepository.ArticleCompletionRow row, boolean replayed) {
-        return new LearningDtos.ArticleLessonCompletion(row.courseId(), row.lessonId(), 100,
+        return new LearningDtos.ArticleLessonCompletion(row.courseId(), row.lessonId(), row.contentRevisionId(), 100,
                 row.completedAt(), row.revision(), replayed);
     }
 
@@ -2149,6 +2201,9 @@ public class LearningAssessmentService {
         return new LearningDtos.LearningNote(row.id(), row.courseId(), row.lessonId(), row.content(),
                 row.positionSeconds(), row.revision(), row.createdAt(), row.updatedAt());
     }
+
+    private record ProgressIdentity(String lessonId, String contentRevisionId,
+            String lessonType, boolean currentPublished) {}
 
     private String idempotentResource(LearningAssessmentRepository.IdempotencyRow replay, String fingerprint,
             String type) {

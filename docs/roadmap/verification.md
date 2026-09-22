@@ -1,5 +1,18 @@
 # Skeleton verification
 
+## 2026-09-22 T12C.0 课时内容身份与进度继承实现及真实验收
+
+- Git 与范围：在指定分支 `codex/t12c0-lesson-content-progress-identity` 开始，基线 `main/origin/main@135e03d`，工作区初始干净且仅含两笔已审计的 T12C 规划提交。本任务没有实施 T12C.1 教师统计接口、T12C.2 页面、第二套学习路由、Redis Stream 或 RabbitMQ 进度队列。
+- 契约先行：OpenAPI 升为 0.25.0，Course 公开发布投影、课时内容、进度与 ARTICLE 完成契约增加 `contentRevisionId`，课程发布增加 `publicationRevision`，教师目录写入增加显式课时身份模式；生成 TypeScript 客户端随后重新生成。新增 `PublishedLessonContentChanged` v1 完整映射事件、独立 Learning queue/DLX/DLQ，既有事件版本未改写。
+- Course 实现：V6 为每个课时保存 UUID 内容修订并回填既有 lesson ID；新课时、主视频替换/解绑/重新绑定、课时类型变化生成新 UUID，标题/排序/说明/海报/普通附件及 ARTICLE 内容变化沿用。草稿复制保留修订；发布事务把完整当前映射写入既有 Outbox。新增 Learning 专用精确历史身份校验，固定调用方、常量时间验证 DPAPI/部署服务密钥，不枚举目录。
+- Learning 实现：V17 将课时进度、进度事件、ARTICLE 完成和请求幂等事实按修订隔离，新增当前 Course 投影与消费幂等表。消费者按 eventId 幂等并拒绝旧 publicationRevision；受控 Course HTTP 补齐不会覆盖同代正式事件。Redis Hash/dirty ZSet/Lua/Worker/强制检查点使用修订 Key；当前查询只投影 Course 当前修订，旧播放器可继续写已精确校验的历史修订。Course 或 Redis 不可用时返回既有通用 503/PERSISTED_ONLY 语义，不猜测或串写身份。
+- 前端接线：学生播放器和 ARTICLE 完成命令保存打开课时时服务端返回的修订 ID，刷新/重新进入/切课重新加载当前内容；教师课程编排发送服务端课时 ID 与 `EXPLICIT` 模式。没有增加“课程已更新”提示、页面、路由、导航或布局。
+- 自动化：Course/Learning 定向套件通过（Course 最终 37 项、Learning 113 项；环境专项默认跳过），新增并发发布用例单独复跑 20/20 通过；随后 Java 9 模块 `clean verify` 共 294 项（37 项条件跳过）全绿、0 failure/0 error。覆盖并发同 revision 发布、重复请求、revision 409、A→B→A、元数据/ARTICLE/类型变化、Outbox、重复/旧事件、权限、旧播放器、Redis/Worker/检查点和依赖失败。前端 OpenAPI 生成、8 个 workspace typecheck、54 文件/355 项 Vitest 和三端 production build 全部通过；仅保留既有大 chunk 警告。
+- 真实基础设施：通过安全包装器启动本轮 Course 8082/Media 8083，连接明确的 MySQL 8 开发 Schema、Learning Redis DB 4 与本地 RabbitMQ。Course v5→v6、Learning v16→v17 迁移成功；随机 learner 的 HEARTBEAT→Redis→Worker→MySQL、PAUSE 强制检查点，以及随机 Rabbit 事件的应用/重复/乱序均通过。用例 `finally` 将随机进度/事件、精确 Redis Hash/dirty、随机消费事实和 synthetic 投影清为 0，进程按记录 PID 停止。
+- 《线性代数》保护：验收只读课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057` 及第二个短视频课时；测试前后标题、发布版本、publicationRevision 与完整目录相等。没有修改其课程结构、主视频、媒体绑定、发布状态或 OSS 对象。
+- Seed 与数据：先实际执行既有 T12F.1 Seed 自带的精确 `CLEANUP`，删除固定 `f401` 图文 0% 进度及关联完成事实；随后在 `edu_platform_learning_dev` 和 Redis DB 4 执行 T12C.0 固定 Seed `REBUILD`，保留 course `...c120`、learner `...c121` 的 6 个当前投影、8 条进度/事件和 1 条 ARTICLE 完成事实，覆盖六类继承/重置场景。Seed 的 Initialize/Cleanup/Rebuild 都先精确清理相同固定标识；未清理任何来源不明数据，也未创建或修改 Course 演示课程。
+- 前置结论：T12C.1 所需的当前发布内容映射与修订隔离 MySQL 事实已满足，但必须等待本 Ready PR 合并后再实施；后续统计只读当前修订的 MySQL 持久事实，不得读取旧修订或 Redis 未落库值。完整说明见 [`docs/delivery/T12C.0-lesson-content-progress-identity.md`](../delivery/T12C.0-lesson-content-progress-identity.md)。
+
 ## 2026-09-22 T12C 需求确认、三段拆分与 T12C.0 准备
 
 - 需求收敛：经完整产品问答，T12C 不再实现旧规划中的薄弱知识点、风险/预警、课程转化、AI 班级总结、观看达标、提醒或导出。教师学情只呈现可解释的持久统计事实：当前发布内容的学习进度、VIDEO 观看时长、ARTICLE 完成、课程 PRACTICE，以及 HOMEWORK/EXAM 的提交、批改、成绩、排名和趋势。

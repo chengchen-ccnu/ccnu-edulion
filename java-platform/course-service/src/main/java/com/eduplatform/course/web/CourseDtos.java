@@ -57,7 +57,16 @@ public final class CourseDtos {
 
     public record ReplaceCurriculumRequest(
             @PositiveOrZero long expectedRevision,
-            @NotNull @Size(max = 100) List<@Valid ChapterInput> chapters) {}
+            LessonIdentityMode lessonIdentityMode,
+            @NotNull @Size(max = 100) List<@Valid ChapterInput> chapters) {
+        /** 兼容 T05～T12F Java 调用点；旧请求继续按位置保留课时身份。 */
+        public ReplaceCurriculumRequest(long expectedRevision, List<ChapterInput> chapters) {
+            this(expectedRevision, null, chapters);
+        }
+    }
+
+    /** 新生成客户端显式回传既有 lessonId；旧客户端省略时只保留原有按位置兼容行为。 */
+    public enum LessonIdentityMode { EXPLICIT }
 
     public record ChapterInput(
             @NotBlank @Size(max = 120) String title,
@@ -65,6 +74,7 @@ public final class CourseDtos {
             @NotNull @Size(max = 200) List<@Valid LessonInput> lessons) {}
 
     public record LessonInput(
+            UUID id,
             @NotBlank @Size(max = 120) String title,
             @NotNull LessonType type,
             @Positive @Max(200) int sequence,
@@ -74,7 +84,13 @@ public final class CourseDtos {
         /** 兼容既有 Java 测试夹具；HTTP 契约仍包含显式可空 articleMarkdown。 */
         public LessonInput(String title, LessonType type, int sequence, boolean previewable,
                 List<LessonMediaResourceInput> resources) {
-            this(title, type, sequence, previewable, null, resources);
+            this(null, title, type, sequence, previewable, null, resources);
+        }
+
+        /** 兼容已有正文测试构造器；新 HTTP 编辑器会额外回传 id。 */
+        public LessonInput(String title, LessonType type, int sequence, boolean previewable,
+                String articleMarkdown, List<LessonMediaResourceInput> resources) {
+            this(null, title, type, sequence, previewable, articleMarkdown, resources);
         }
     }
 
@@ -121,6 +137,7 @@ public final class CourseDtos {
             CourseLevel level,
             CourseAccessType accessType,
             String publishedVersion,
+            int publicationRevision,
             List<Chapter> chapters) {}
 
     public record TeacherSummary(String id, String displayName) {}
@@ -129,12 +146,12 @@ public final class CourseDtos {
 
     public record Chapter(String id, String title, int sequence, List<LessonSummary> lessons) {}
 
-    public record LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable,
+    public record LessonSummary(String id, String contentRevisionId, String title, LessonType type, int sequence, boolean previewable,
             String articleMarkdown, List<LessonMediaResource> resources) {
         /** 兼容既有 Java 调用；公开投影与旧测试不携带正文。 */
         public LessonSummary(String id, String title, LessonType type, int sequence, boolean previewable,
                 List<LessonMediaResource> resources) {
-            this(id, title, type, sequence, previewable, null, resources);
+            this(id, id, title, type, sequence, previewable, null, resources);
         }
     }
 
@@ -163,7 +180,8 @@ public final class CourseDtos {
     public record CreateCourseResourceAccessGrantRequest(@NotNull CourseResourceAction action) {}
 
     /** 受保护课时内容；附件仅暴露课程域 resourceId，浏览器不能凭 mediaId 申请授权。 */
-    public record LessonContent(String courseId, String courseVersionId, String lessonId, String title, LessonType type,
+    public record LessonContent(String courseId, String courseVersionId, String lessonId, String contentRevisionId,
+            String title, LessonType type,
             boolean previewable, String articleMarkdown, String playbackResourceId,
             CourseMediaAccessGrant poster, List<LessonInlineImage> inlineImages,
             List<LessonContentResource> resources) {}
@@ -212,4 +230,11 @@ public final class CourseDtos {
             boolean hasUnpublishedChanges,
             long revision,
             Instant updatedAt) {}
+
+    /** Learning 的受控精确校验响应；只能证明某个已发布/归档课时与修订身份的关系。 */
+    public record LessonContentIdentity(String courseId, String lessonId, String contentRevisionId,
+            LessonType lessonType, boolean currentPublished) {}
+
+    /** Learning 只提交从播放器打开时取得的精确课时与修订 ID，不允许以空值或媒体 ID 替代。 */
+    public record VerifyLessonContentIdentityRequest(@NotNull UUID lessonId, @NotNull UUID contentRevisionId) {}
 }
