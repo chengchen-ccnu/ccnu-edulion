@@ -739,7 +739,8 @@ public class LearningAssessmentService {
     public LearningDtos.LearnerCourseTaskSummary learnerAssessmentEntry(String learnerId, String assessmentId,
             String traceId) {
         AssessmentRow stored = repository.assessment(assessmentId).orElseThrow(this::notFound);
-        if (stored.status() != AssessmentStatus.PUBLISHED) throw notFound();
+        // 自主练习没有课程归属；返回安全 404，让既有深链流程继续按本人测评权限读取。
+        if (stored.status() != AssessmentStatus.PUBLISHED || stored.courseId() == null) throw notFound();
         CourseFact course = requireEnrolledCourse(learnerId, stored.courseId(), traceId);
         AssessmentRow assessment = learnerTaskAssessment(learnerId, course, assessmentId);
         var value = taskSummary(learnerId, assessment, null, Instant.now());

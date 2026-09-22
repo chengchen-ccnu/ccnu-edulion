@@ -76,14 +76,14 @@ class PracticeProposalScriptTests(unittest.TestCase):
         for count in (1, 5, 20):
             with self.subTest(count=count):
                 result = run_script({"topic": " 一元一次方程 ", "requestedCount": count,
-                                     "candidates": [candidate() for _ in range(max(0, count - 1))]})
+                                     "candidates": [candidate() for _ in range(max(1, count - 1))]})
                 self.assertEqual(0, result.returncode, result.stderr)
                 value = json.loads(result.stdout)
                 self.assertEqual({"resultType", "payload"}, set(value))
                 self.assertEqual("PRACTICE_PROPOSAL", value["resultType"])
                 self.assertEqual("MEDIUM", value["payload"]["difficulty"])
                 self.assertEqual(count, value["payload"]["requestedCount"])
-                self.assertEqual(max(0, count - 1), len(value["payload"]["candidates"]))
+                self.assertEqual(max(1, count - 1), len(value["payload"]["candidates"]))
 
     def test_default_count_deduplication_order_and_recent_soft_avoidance(self):
         first, recent, last = candidate(), candidate(), candidate()
@@ -94,6 +94,12 @@ class PracticeProposalScriptTests(unittest.TestCase):
         self.assertEqual(5, payload["requestedCount"])
         self.assertEqual([first["questionId"], last["questionId"], recent["questionId"]],
                          [item["questionId"] for item in payload["candidates"]])
+
+    def test_difficulty_fallback_is_explicit_boolean_and_old_input_stays_strict(self):
+        for fallback in (True, False):
+            result = run_script({"topic": "函数", "allowDifficultyFallback": fallback, "candidates": [candidate()]})
+            self.assertEqual(fallback, json.loads(result.stdout)["payload"].get("allowDifficultyFallback", False))
+        self.assertNotEqual(0, run_script({"topic": "函数", "allowDifficultyFallback": "true", "candidates": [candidate()]}).returncode)
 
     def test_keeps_twenty_candidate_validation_pool_independent_of_requested_count(self):
         candidates = [candidate() for _ in range(21)]
@@ -107,6 +113,7 @@ class PracticeProposalScriptTests(unittest.TestCase):
     def test_missing_topic_21_invalid_candidate_and_invalid_json_are_rejected(self):
         cases = [
             {"topic": "", "candidates": []},
+            {"topic": "函数", "candidates": []},
             {"topic": "函数", "requestedCount": 21, "candidates": []},
             {"topic": "函数", "candidates": [candidate(evidenceType="KNOWLEDGE_POINT")]},
             {"topic": "函数", "candidates": [candidate(questionVersionId="bad")]},
@@ -118,10 +125,87 @@ class PracticeProposalScriptTests(unittest.TestCase):
 
 
 class PracticeStandardSkillRuntimeTests(unittest.TestCase):
+    def test_unspecified_difficulty_remains_distinct_from_explicit_preference(self):
+        """默认偏好在脚本层才补值，槽位为空才能允许跨难度；用户明确难度必须保留。"""
+        from edu_agent_app.runtime.intent import practice_request_slots
+        context = run_request("出题").trustedContext
+        for text, expected in (("请出几道二次函数题", None),
+                               ("请出几道中等难度二次函数题", "MEDIUM"),
+                               ("请出几道简单二次函数题", "EASY"),
+                               ("请出几道高难二次函数题", "HARD")):
+            with self.subTest(text=text):
+                self.assertEqual(expected, practice_request_slots(text, context).difficulty)
+
+    def test_llm_hypotheses_are_grounded_before_question_lookup(self):
+        """宽泛自然语言经模型变成非精确标签，再经知识库得到真实 ID；不能把预测当作 ID。"""
+        async def scenario():
+            knowledge_id, question_id, version_id = (str(uuid4()) for _ in range(3))
+
+            class GroundedSearch:
+                def __init__(self):
+                    self.requests = []
+
+                def search(self, request):
+                    self.requests.append(request)
+                    if request.collection == "math_knowledge":
+                        return SimpleNamespace(hits=[SimpleNamespace(
+                            entity_id=knowledge_id, title="求二次函数的解析式", summary="已入库知识点",
+                            source_revision=1, payload={})])
+                    self_ids = list(request.knowledge_point_ids)
+                    if self_ids != [knowledge_id]:
+                        raise AssertionError("必须使用检索到的真实知识点 ID")
+                    return SimpleNamespace(hits=[SimpleNamespace(
+                        entity_id=question_id, title="公共数学题", summary="已知抛物线经过三个点，求函数表达式",
+                        source_revision=1, payload={"question_version_id": version_id})])
+
+            search, audit = GroundedSearch(), FakeAudit()
+            runtime = self.runtime(search, audit)
+            runtime.model = FakeModel(json_value={"knowledgePoints": ["二次函数表达式的求法", "抛物线解析式"]})
+            events = await collect(runtime, run_request(
+                "我最近学完了二次函数相关的内容，请帮我出几道题巩固一下我的知识  "))
+            proposal = events[-1]["payload"]["practiceProposal"]
+            self.assertEqual("二次函数", proposal["topic"])
+            self.assertTrue(proposal["allowDifficultyFallback"])
+            self.assertEqual(["二次函数表达式的求法", "抛物线解析式"], [r.query for r in search.requests[:2]])
+            self.assertEqual(1, runtime.model.json_calls)
+            self.assertEqual([{ "questionId": question_id, "questionVersionId": version_id}], proposal["candidates"])
+        asyncio.run(scenario())
+
+    def test_invalid_prediction_fails_closed_without_search_or_retry(self):
+        async def scenario():
+            for prediction in ({}, {"knowledgePoints": ["a"] * 4},
+                               {"knowledgePoints": [123]}, {"knowledgePoints": ["a"], "id": str(uuid4())}):
+                search, audit = QuestionSearch([]), FakeAudit()
+                runtime = self.runtime(search, audit)
+                runtime.model = FakeModel(json_value=prediction)
+                events = await collect(runtime, run_request("请给我出几道二次函数题"))
+                self.assertNotIn("practiceProposal", events[-1]["payload"])
+                self.assertFalse(search.requests)
+                self.assertEqual(1, runtime.model.json_calls)
+                self.assertEqual("FAILED", audit.finished[0]["status"])
+        asyncio.run(scenario())
+
+    def test_empty_prediction_is_no_match_without_search_or_script(self):
+        """无法可靠落到初中知识点时，空规划是正常无结果；不得检索或执行组题脚本。"""
+        async def scenario():
+            search, audit = QuestionSearch([]), FakeAudit()
+            runtime = self.runtime(search, audit)
+            runtime.model = FakeModel(json_value={"knowledgePoints": []})
+            events = await collect(runtime, run_request("请给我出3道困难的椭圆积分练习题"))
+            final = events[-1]["payload"]
+            self.assertEqual("COMPLETED", final["terminalStatus"])
+            self.assertNotIn("practiceProposal", final)
+            self.assertIn("暂时没有找到适合“椭圆积分”", final["finalAnswer"])
+            self.assertFalse(search.requests)
+            self.assertEqual(1, runtime.model.json_calls)
+            self.assertEqual("SUCCEEDED", audit.finished[0]["status"])
+            self.assertIsNone(audit.finished[0].get("scriptPath"))
+        asyncio.run(scenario())
+
     def runtime(self, search, audit):
         config = SkillRuntimeConfig()
         return DynamicAgentRuntime(
-            model=FakeModel(), tools=ToolExecutor(search_service=search),
+            model=FakeModel(json_value={"knowledgePoints": ["一元一次方程的计算"]}), tools=ToolExecutor(search_service=search),
             skill_registry=SkillRegistry.discover(SKILL_ROOT), skill_runner=SkillScriptRunner(config),
             skill_audit=audit,
             skill_policies={"public-practice-generation": SkillEligibility(
@@ -144,10 +228,35 @@ class PracticeStandardSkillRuntimeTests(unittest.TestCase):
             self.assertEqual("public-practice-generation", proposal["skillName"])
             self.assertEqual("1.1.0", proposal["skillVersion"])
             self.assertEqual(3, len(proposal["candidates"]))
-            self.assertEqual(0, runtime.model.json_calls)
+            self.assertEqual(1, runtime.model.json_calls)
             self.assertEqual("RULE", audit.started[0]["selectionSource"])
             self.assertEqual("SUCCEEDED", audit.finished[0]["status"])
             self.assertEqual(["references/practice-rules.md"], audit.finished[0]["referencePaths"])
+            self.assertEqual(["math_knowledge", "math_questions"],
+                             [request.collection for request in runtime.tools.search_service.requests])
+            self.assertEqual(
+                [question_id for question_id, _ in identities[:2]],
+                list(runtime.tools.search_service.requests[1].knowledge_point_ids),
+            )
+
+        asyncio.run(scenario())
+
+    def test_zero_search_result_returns_natural_answer_without_proposal(self):
+        """零候选完成一次受审计检索，但不运行提案脚本、不暴露调试摘要或产生 Action 输入。"""
+
+        async def scenario():
+            audit, search = FakeAudit(), QuestionSearch([])
+            events = await collect(self.runtime(search, audit), run_request(
+                "我刚学完一元一次方程的计算，请你给我出几道题帮我巩固一下知识"))
+            final = events[-1]["payload"]
+            self.assertEqual(
+                "暂时没有找到适合“一元一次方程的计算”的练习题。你可以换一个主题或调整难度后再试。",
+                final["finalAnswer"],
+            )
+            self.assertNotIn("practiceProposal", final)
+            self.assertNotIn("候选", final["finalAnswer"])
+            self.assertNotIn("请求 5 道", final["finalAnswer"])
+            self.assertEqual("SUCCEEDED", audit.finished[0]["status"])
 
         asyncio.run(scenario())
 

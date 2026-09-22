@@ -49,7 +49,7 @@ pnpm.cmd --dir web-apps --filter @edu/student-web run dev
 - `pnpm.cmd --dir web-apps run build`：通过，admin、student、teacher 三个生产构建均成功；student/teacher 保留既有大 chunk 警告。
 - `scripts/Invoke-WithLocalEnvironment.ps1 -ScriptBlock { scripts/Invoke-T14.3PracticeGenerationRealAcceptance.ps1 ... }`：首次在 Qdrant 停止时得到 5→0 并按约束失败，仍精确清理为三项 0；启动既有 Qdrant 且不改索引后重跑通过，真实请求 5 道 MEDIUM、实际召回 4 道并保留不足。确认前零创建，确认/重复/两路并发只创建一次，未知结果查询恢复，保存、提交、自动评分、结果查看、条件替换、取消、过期、owner/课程/成绩册隔离全部通过，最终三项清理为 0。
 - `git diff --check`：通过。
-- PR #71 CI：实现与首次文档收口对应的两组 Java、Python、Frontend、OpenAPI 共 8 项检查全部通过；最终状态收口提交推送后继续等待最新 HEAD 的同组检查全绿。
+- PR #71 CI：最终 HEAD 的两组 Java、Python、Frontend、OpenAPI 共 8 项检查全部通过。
 
 本次没有修改 Java/Python 生产代码，因此未重复运行全量 Maven 与 Python 单元测试；真实多服务脚本已覆盖受影响的既有 Agent Access、Python Runtime、Learning 和 Gateway 长链。没有另行执行“真实浏览器 + 实际后端”的人工登录录屏；浏览器交互由真实 Vue/jsdom 行为测试验证，后端事实由真实多服务验收验证，这一点保留为 PR 复核项。
 
@@ -59,4 +59,8 @@ pnpm.cmd --dir web-apps --filter @edu/student-web run dev
 
 已知风险：卡片的进程内 requestId 只覆盖当前页面生命周期；浏览器刷新后不会重发未知命令，而是按 action 查询真实结果，这是契约要求的安全降级。EXECUTING 只做三次有限轮询，长任务需要用户手动查询。生产构建仍有既有大 chunk 警告。真实候选依赖本地 Qdrant 可用性；索引停止时实际数量可能为 0，页面会如实禁用确认，不伪造补足。
 
-分支为 `codex/t15c-practice-generation-web`，前置审计提交为 `ebeeabd`，关键实现提交为 `88a4bdb`。[Ready PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 目标为 `main`，检查全绿后仍保持 Open，不自行合并。
+分支为 `codex/t15c-practice-generation-web`，前置审计提交为 `ebeeabd`，关键实现提交为 `88a4bdb`。[PR #71](https://github.com/chengchen-ccnu/ccnu-edulion/pull/71) 已于 2026-09-14 以普通 merge 合并为 `4d7eba5`。
+
+## 合并后人工验收发现
+
+用户在真实页面发现：停止按钮远离发送区；会话无重命名/删除入口；建议卡在没有组题动作时仍显示空状态；“我刚学完一元一次方程，请出 3 道题练习”未命中组题 Skill；输入区没有统一“＋”菜单和图片粘贴；浏览器显式 Skill 选择及“讲解后建议、确认后调用”的链路尚未形成。只读代码复核确认这些分别来自现有布局、缺失 OpenAPI、卡片永久挂载、规则遗漏和内部请求缺少显式选择字段，不归因于 Qdrant 或模型速度。T15D 负责修复，T15C 的已合并历史与既有真实验收记录保持不变。

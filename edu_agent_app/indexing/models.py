@@ -247,6 +247,7 @@ class RetrievalRequest:
     course_version_id: str | None = None
     lesson_ids: Sequence[str] = ()
     user_id: str | None = None
+    knowledge_point_ids: Sequence[str] = ()
 
     def validate(self) -> None:
         if self.collection not in ENTITY_TO_COLLECTION.values():
@@ -262,6 +263,11 @@ class RetrievalRequest:
             _uuid(self.course_id, "courseId")
             for lesson_id in self.lesson_ids:
                 _uuid(lesson_id, "lessonId")
+        if self.knowledge_point_ids:
+            if self.collection != "math_questions" or len(self.knowledge_point_ids) > 8:
+                raise ValueError("knowledgePointIds 只允许为题目检索提供至多 8 个知识点")
+            for knowledge_point_id in self.knowledge_point_ids:
+                _uuid(knowledge_point_id, "knowledgePointId")
         if self.collection == "student_memories":
             if not self.user_id:
                 raise PermissionError("记忆检索缺少全局 userId")

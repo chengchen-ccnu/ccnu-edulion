@@ -20,6 +20,7 @@ const conditionsChanged = ref(false);
 const message = ref(""); const topic = ref(""); const difficulty = ref<PracticeDifficulty>("MEDIUM");
 const requestedCount = ref(5); const remainingSeconds = ref<number | null>(null);
 const statusTarget = ref<HTMLElement | null>(null);
+const cardTarget = ref<HTMLElement | null>(null);
 const lifetime = new AbortController();
 let loadController: AbortController | null = null;
 let expiryTimer: ReturnType<typeof setInterval> | null = null;
@@ -32,17 +33,21 @@ const dirty = computed(() => Boolean(action.value) && (conditionsChanged.value |
 const canConfirm = computed(() => action.value?.status === "PENDING" && action.value.actualCount > 0
   && !dirty.value && !loading.value && !busy.value && !unknownResult.value);
 const shortage = computed(() => action.value && action.value.actualCount < action.value.requestedCount
-  ? `候选题不足：请求 ${action.value.requestedCount} 道，服务端实际召回 ${action.value.actualCount} 道；确认后只会创建实际召回数量。`
+  ? `目前找到 ${action.value.actualCount} 道符合条件的题，少于期望的 ${action.value.requestedCount} 道。`
   : "");
 const statusText = computed(() => action.value ? ({
-  PENDING: "等待你明确确认", CONFIRMED: "已确认，等待执行", EXECUTING: "正在创建练习",
+  PENDING: "待确认", CONFIRMED: "已确认", EXECUTING: "正在创建练习",
   SUCCEEDED: "练习已创建", FAILED: "创建失败，可保留条件重新生成",
   EXPIRED: "建议已过期", CANCELLED: "建议已取消"
 } as const)[action.value.status] : "当前没有待确认的自主练习建议");
+const difficultyDistribution = computed(() => (["EASY", "MEDIUM", "HARD"] as const)
+  .map(value => ({ value, count: action.value?.candidateQuestions.filter(item => item.difficulty === value).length ?? 0 }))
+  .filter(item => item.count).map(item => `${difficultyLabel(item.value)} ${item.count} 道`).join("、"));
 
 watch(() => props.conversationId, () => void loadCurrent(), { immediate: true });
 watch(() => props.initialAction, value => {
-  if (value && value.conversationId === props.conversationId) applyAction(value);
+  // 恢复事件可能晚于首次 current 查询；身份到达后重查，不能展示历史 PENDING 快照。
+  if (value && value.conversationId === props.conversationId) void loadCurrent();
 }, { deep: true });
 onBeforeUnmount(() => {
   lifetime.abort(); loadController?.abort();
@@ -63,8 +68,17 @@ async function loadCurrent() {
   } catch (error) {
     if (active.signal.aborted) return;
     if (error instanceof GatewayRequestError && error.status === 404) {
-      if (props.initialAction?.conversationId === props.conversationId) applyAction(props.initialAction);
-      else action.value = null;
+      // 消息里的 SSE 是历史快照；当前 pending 404 后按动作 ID 读取，才能恢复成功/过期等最新状态。
+      if (props.initialAction?.conversationId === props.conversationId) {
+        try {
+          const restored = await studentAgentApi.pendingPracticeAction(props.initialAction.actionId, active.signal);
+          if (!active.signal.aborted && restored) applyAction(restored);
+        } catch (restoreError) {
+          if (!active.signal.aborted && !(restoreError instanceof GatewayRequestError && restoreError.status === 404)) {
+            message.value = practiceActionError(restoreError, "练习结果暂时无法读取。");
+          }
+        }
+      } else action.value = null;
     } else message.value = practiceActionError(error, "练习建议暂时无法读取。");
   } finally { if (!active.signal.aborted) loading.value = false; }
 }
@@ -76,9 +90,9 @@ async function queryResult(announce = true) {
   try {
     applyAction(await studentAgentApi.pendingPracticeAction(action.value.actionId, lifetime.signal));
     unknownResult.value = false;
-    if (announce) message.value = "已读取服务端最新状态。";
+    if (announce) message.value = "状态已更新。";
     else message.value = action.value?.status === "PENDING"
-      ? "服务端仍为待确认；可使用原幂等键重试确认。" : "已通过查询恢复服务端真实结果。";
+      ? "练习尚未创建，你可以再次确认。" : "练习状态已恢复。";
     if (action.value?.status === "EXECUTING" || action.value?.status === "CONFIRMED") schedulePoll(0);
   } catch (error) {
     if (!lifetime.signal.aborted) message.value = practiceActionError(error, "真实结果暂时无法查询。");
@@ -113,7 +127,7 @@ async function command(kind: "confirm" | "cancel") {
       ? studentAgentApi.confirmPendingPracticeAction(snapshot.actionId, { requestId, expectedRevision }, timeoutController.signal)
       : studentAgentApi.cancelPendingPracticeAction(snapshot.actionId, { requestId, expectedRevision }, timeoutController.signal));
     applyAction(result);
-    message.value = kind === "confirm" ? "服务端已接受确认。" : "建议已取消。";
+    message.value = kind === "confirm" ? "" : "已取消这次练习。";
     if (result.status === "CONFIRMED" || result.status === "EXECUTING") schedulePoll();
     await restoreFocus();
     return true;
@@ -134,7 +148,17 @@ async function command(kind: "confirm" | "cancel") {
   }
 }
 
+/** 浏览器最后一道防线：不把旧版本遗留的空候选或计数不一致动作挂入 DOM。 */
 function applyAction(value: PendingPracticeAction) {
+  if (value.actualCount < 1 || value.candidateQuestions.length < 1
+      || value.candidateQuestions.length !== value.actualCount) {
+    action.value = null;
+    conditionsChanged.value = false;
+    unknownResult.value = false;
+    if (expiryTimer) clearInterval(expiryTimer);
+    remainingSeconds.value = null;
+    return;
+  }
   const changed = action.value?.actionId !== value.actionId;
   action.value = value;
   if (changed || !conditionsChanged.value) {
@@ -157,7 +181,7 @@ function invalidateConditions() {
 function schedulePoll(attempt = 0) {
   if (pollTimer) clearTimeout(pollTimer);
   if (attempt >= 3 || lifetime.signal.aborted) {
-    message.value = "创建仍在执行，可稍后点击“查询真实结果”。";
+    message.value = "练习还在创建中，可稍后刷新状态。";
     return;
   }
   pollTimer = setTimeout(async () => {
@@ -185,7 +209,8 @@ function updateExpiry() {
   tick(); expiryTimer = setInterval(tick, 1_000);
 }
 
-async function restoreFocus() { await nextTick(); statusTarget.value?.focus(); }
+/** 操作后聚焦反馈；没有额外提示时回到卡片，避免原按钮移除后焦点丢失。 */
+async function restoreFocus() { await nextTick(); (statusTarget.value ?? cardTarget.value)?.focus(); }
 function difficultyLabel(value: PracticeDifficulty) { return ({ EASY: "简单", MEDIUM: "中等", HARD: "困难" } as const)[value]; }
 function formatExpiry() {
   if (!action.value) return "";
@@ -196,37 +221,48 @@ function formatExpiry() {
 </script>
 
 <template>
-  <section class="practice-suggestion" aria-labelledby="practice-suggestion-title" :aria-busy="loading || busy">
+  <section v-if="action" ref="cardTarget" tabindex="-1" class="practice-suggestion" aria-labelledby="practice-suggestion-title" :aria-busy="busy">
     <header><div><span>自主练习建议</span><h3 id="practice-suggestion-title">{{ action?.criteria.topic ?? "等待建议" }}</h3></div>
       <strong v-if="action" :class="`practice-suggestion__status is-${action.status.toLowerCase()}`">{{ statusText }}</strong></header>
-    <p v-if="loading" class="practice-suggestion__empty" role="status">正在读取练习建议…</p>
-    <template v-else-if="action">
-      <dl class="practice-suggestion__facts"><div><dt>主题</dt><dd>{{ action.criteria.topic }}</dd></div>
-        <div><dt>难度</dt><dd>{{ difficultyLabel(action.criteria.difficulty) }}</dd></div>
-        <div><dt>请求题数</dt><dd>{{ action.requestedCount }} 道</dd></div>
-        <div><dt>实际召回</dt><dd>{{ action.actualCount }} 道</dd></div>
-        <div><dt>动作状态</dt><dd>{{ action.status }} · revision {{ action.revision }}</dd></div>
-        <div><dt>有效期</dt><dd>{{ formatExpiry() }}</dd></div></dl>
+      <dl class="practice-suggestion__facts">
+        <div><dt>可练习题数</dt><dd>{{ action.actualCount }} 道</dd></div>
+        <div><dt>实际难度</dt><dd>{{ difficultyDistribution }}</dd></div>
+        <div v-if="action.status === 'PENDING'"><dt>有效期</dt><dd>{{ formatExpiry() }}</dd></div></dl>
       <p v-if="shortage" class="practice-suggestion__notice" role="status">{{ shortage }}</p>
-      <p v-if="action.actualCount === 0" class="practice-suggestion__notice" role="status">没有可创建的候选题，请修改条件后重新生成。</p>
+      <details class="practice-suggestion__settings"><summary>调整练习条件</summary>
+      <p v-if="action.criteria.allowDifficultyFallback" class="practice-suggestion__message">中等优先，不足时其他难度补齐。选择难度后，仅查找该难度的题目。</p>
       <fieldset class="practice-suggestion__editor" :disabled="busy || action.status === 'CONFIRMED' || action.status === 'EXECUTING'">
         <legend>修改条件并重新生成</legend>
         <label>主题<input v-model="topic" maxlength="200" autocomplete="off" @input="invalidateConditions"></label>
         <label>难度<select v-model="difficulty" @change="invalidateConditions"><option value="EASY">简单</option><option value="MEDIUM">中等</option><option value="HARD">困难</option></select></label>
         <label>数量<input v-model.number="requestedCount" type="number" min="1" max="20" inputmode="numeric" @input="invalidateConditions"></label>
       </fieldset>
-      <p ref="statusTarget" class="practice-suggestion__message" :class="{ 'is-unknown': unknownResult }" role="status" tabindex="-1">{{ message || statusText }}</p>
+      </details>
+      <p v-if="message || unknownResult" ref="statusTarget" class="practice-suggestion__message" :class="{ 'is-unknown': unknownResult }" role="status" tabindex="-1">{{ message }}</p>
       <div class="practice-suggestion__actions">
         <button v-if="action.status === 'PENDING'" class="button button--primary" type="button" :disabled="!canConfirm" @click="confirm">{{ busy ? "处理中…" : "确认创建" }}</button>
         <button v-if="action.status === 'PENDING'" class="button button--quiet" type="button" :disabled="busy" @click="cancel(false)">取消</button>
         <button v-if="dirty || ['FAILED','EXPIRED','CANCELLED'].includes(action.status)" class="button button--quiet" type="button"
           :disabled="busy || !topic.trim() || requestedCount < 1 || requestedCount > 20" @click="cancel(true)">按新条件重新生成</button>
-        <button v-if="unknownResult || ['CONFIRMED','EXECUTING'].includes(action.status)" class="button button--quiet" type="button" :disabled="busy" @click="queryResult()">查询真实结果</button>
+        <button v-if="unknownResult || ['CONFIRMED','EXECUTING'].includes(action.status)" class="button button--quiet" type="button" :disabled="busy" @click="queryResult()">刷新状态</button>
         <RouterLink v-if="action.status === 'SUCCEEDED' && action.executionResult" class="button button--primary" :to="action.executionResult.startRoute">开始练习</RouterLink>
       </div>
-      <small v-if="action.status === 'SUCCEEDED'">练习只创建一次；你可以稍后再开始，不会自动跳转。</small>
-    </template>
-    <p v-else class="practice-suggestion__empty">当前没有待确认的自主练习建议。你可以在对话中说明主题、难度和题数。</p>
-    <p v-if="!action && message" class="practice-suggestion__message" role="alert">{{ message }}</p>
   </section>
 </template>
+
+<style scoped>
+/* 卡片只强调题量和下一步，条件编辑收进原生 details，保留键盘操作。 */
+.practice-suggestion { box-sizing: border-box; padding: 22px; gap: 16px; background: linear-gradient(120deg,#f4f8ff,#fff 70%); border-color: #dce5f2; border-radius: 18px; box-shadow: none; }
+.practice-suggestion h3 { margin-top: 7px; font-size: 1.15rem; line-height: 1.5; }
+.practice-suggestion__facts > div { padding: 0 12px 0 0; background: transparent; border-radius: 0; }
+.practice-suggestion__facts dd { margin-top: 6px; font-weight: 600; }
+.practice-suggestion__facts > div:first-child dd { color: #2858ae; font-size: 1.2rem; }
+.practice-suggestion__notice { background: #fff8eb; color: #795827; }
+.practice-suggestion__settings { border-top: 1px solid #e2e9f3; padding-top: 12px; }
+.practice-suggestion__settings summary { width: fit-content; padding: 5px 0; color: #53647c; font-size: .76rem; cursor: pointer; }
+.practice-suggestion__settings[open] > p { margin: 8px 0 12px; }
+.practice-suggestion__editor { margin-top: 10px; }
+.practice-suggestion__actions .button { min-height: 40px; padding: 0 16px; font-size: .78rem; border-radius: 10px; }
+.practice-suggestion:focus { outline: 2px solid #7398d3; outline-offset: 3px; }
+@media (max-width: 620px) { .practice-suggestion { padding: 16px; }.practice-suggestion h3 { font-size: 1rem; } }
+</style>

@@ -113,7 +113,7 @@ final class AgentStreamEventValidator {
     private static void finalResult(JsonNode node, String traceId) {
         Set<String> allowed = Set.of("terminal", "terminalStatus", "finalAnswer", "answerCompleteness",
                 "interruptionNotice", "savedCheckpointSequence", "references", "practiceProposal",
-                "actionControl", "pendingPracticeAction", "error");
+                "actionControl", "pendingPracticeAction", "skillOffer", "error");
         object(node, Set.of("terminal", "terminalStatus", "answerCompleteness"), allowed);
         if (!bool(node, "terminal")) fail();
         String status = text(node, "terminalStatus", 1, 32);
@@ -133,18 +133,39 @@ final class AgentStreamEventValidator {
         if (node.has("actionControl") && !Set.of("CONFIRM_CURRENT", "CANCEL_CURRENT")
                 .contains(text(node, "actionControl", 1, 30))) fail();
         if (node.has("pendingPracticeAction")) pendingPracticeAction(node.get("pendingPracticeAction"));
+        if (node.has("skillOffer")) skillOffer(node.get("skillOffer"));
+        if (node.has("skillOffer") && (node.has("practiceProposal") || node.has("pendingPracticeAction"))) fail();
         if (node.has("error")) safeError(node.get("error"), traceId);
+    }
+
+    /** 同一校验器先检查 Python 私有名称，再检查 Java 投影后的公开能力枚举。 */
+    private static void skillOffer(JsonNode node) {
+        Set<String> common = Set.of("offerId", "topic", "difficulty", "questionCount", "prompt");
+        Set<String> names = new HashSet<>();
+        node.properties().forEach(entry -> names.add(entry.getKey()));
+        boolean internal = names.contains("skillName");
+        Set<String> allowed = new HashSet<>(common);
+        allowed.add(internal ? "skillName" : "capability");
+        object(node, Set.of("offerId", internal ? "skillName" : "capability", "topic", "prompt"), allowed);
+        uuid(node, "offerId"); text(node, "topic", 1, 200); text(node, "prompt", 1, 200);
+        String identity = text(node, internal ? "skillName" : "capability", 1, 80);
+        if (!(internal ? "public-practice-generation" : "GENERATE_AUTONOMOUS_PRACTICE").equals(identity)) fail();
+        if (node.has("difficulty")) difficulty(node, "difficulty");
+        if (node.has("questionCount")) {
+            long count = integer(node, "questionCount", 1); if (count > 20) fail();
+        }
     }
 
     private static void practiceProposal(JsonNode node) {
         object(node, Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"),
-                Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates"));
+                Set.of("skillName", "skillVersion", "topic", "difficulty", "requestedCount", "candidates", "allowDifficultyFallback"));
         if (!"public-practice-generation".equals(text(node, "skillName", 1, 40))
                 || !Set.of("1.0.0", "1.1.0").contains(text(node, "skillVersion", 1, 20))) fail();
         text(node, "topic", 1, 200); difficulty(node, "difficulty");
         long requested = integer(node, "requestedCount", 1); if (requested > 20) fail();
+        if (node.has("allowDifficultyFallback") && !node.get("allowDifficultyFallback").isBoolean()) fail();
         Set<UUID> versions = new HashSet<>();
-        array(node, "candidates", 0, 20).forEach(value -> {
+        array(node, "candidates", 1, 20).forEach(value -> {
             object(value, Set.of("questionId", "questionVersionId"), Set.of("questionId", "questionVersionId"));
             uuid(value, "questionId"); if (!versions.add(uuid(value, "questionVersionId"))) fail();
         });
@@ -158,13 +179,14 @@ final class AgentStreamEventValidator {
         uuid(node, "actionId"); uuid(node, "conversationId");
         JsonNode criteria = node.get("criteria");
         object(criteria, Set.of("topic", "difficulty", "requestedCount"),
-                Set.of("topic", "difficulty", "requestedCount"));
+                Set.of("topic", "difficulty", "requestedCount", "allowDifficultyFallback"));
         text(criteria, "topic", 1, 200); difficulty(criteria, "difficulty");
+        if (criteria.has("allowDifficultyFallback") && !criteria.get("allowDifficultyFallback").isBoolean()) fail();
         long requested = integer(node, "requestedCount", 1);
-        long actual = integer(node, "actualCount", 0);
+        long actual = integer(node, "actualCount", 1);
         if (requested > 20 || actual > requested || integer(criteria, "requestedCount", 1) != requested) fail();
         Set<UUID> versions = new HashSet<>();
-        JsonNode candidates = array(node, "candidateQuestions", 0, 20);
+        JsonNode candidates = array(node, "candidateQuestions", 1, 20);
         if (candidates.size() != actual) fail();
         candidates.forEach(value -> {
             object(value, Set.of("questionId", "questionVersionId", "questionType", "difficulty"),

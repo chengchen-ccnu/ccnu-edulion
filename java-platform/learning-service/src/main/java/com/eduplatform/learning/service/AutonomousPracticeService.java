@@ -51,8 +51,9 @@ public class AutonomousPracticeService {
         List<ValidatedSnapshot> valid = validateSnapshots(request.criteria(), request.candidates());
         Set<String> recent = new HashSet<>(assessments.recentQuestionVersionIds(
                 request.ownerUserId().toString(), 100));
-        valid.sort((left, right) -> Boolean.compare(recent.contains(left.version().id()),
-                recent.contains(right.version().id())));
+        valid.sort(java.util.Comparator
+                .comparingInt((ValidatedSnapshot value) -> difficultyPriority(request.criteria(), value.version()))
+                .thenComparing(value -> recent.contains(value.version().id())));
         return new AgentAccessDtos.ValidatePracticeCandidatesResponse(valid.stream()
                 .limit(request.criteria().requestedCount()).map(this::projection).toList());
     }
@@ -115,6 +116,7 @@ public class AutonomousPracticeService {
                 assessment.title(), row.actualCount(), "/practice/" + row.assessmentId());
     }
 
+    /** 复核精确版本身份与可评分性；仅显式允许补齐时放宽难度，排序不改变题目快照和写入权限。 */
     private List<ValidatedSnapshot> validateSnapshots(AgentAccessDtos.PracticeCriteria criteria,
             List<AgentAccessDtos.PracticeCandidateKey> candidates) {
         List<ValidatedSnapshot> result = new ArrayList<>();
@@ -127,11 +129,20 @@ public class AutonomousPracticeService {
                     .orElse(null);
             if (version == null || version.stage() != QuestionModels.Stage.JUNIOR
                     || version.subject() != QuestionModels.Subject.MATHEMATICS
-                    || version.difficulty() != criteria.difficulty() || !autoScorable(version)) continue;
+                    || (!criteria.allowDifficultyFallback() && version.difficulty() != criteria.difficulty())
+                    || !autoScorable(version)) continue;
             QuestionDtos.VersionResponse snapshot = snapshot(version);
             result.add(new ValidatedSnapshot(aggregate, version, snapshot));
         }
+        // 未指定难度时先保留优先难度，数量不足再按简单、困难补齐；确认时同样按此规则复核。
+        result.sort(java.util.Comparator.comparingInt(value -> difficultyPriority(criteria, value.version())));
         return result;
+    }
+
+    /** 返回组题排序等级；难度补齐只影响排序与难度过滤，不改变权限、主题或评分边界。 */
+    private static int difficultyPriority(AgentAccessDtos.PracticeCriteria criteria, Version version) {
+        if (version.difficulty() == criteria.difficulty()) return 0;
+        return version.difficulty() == QuestionModels.Difficulty.EASY ? 1 : 2;
     }
 
     private boolean autoScorable(Version version) {

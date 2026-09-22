@@ -94,7 +94,11 @@ public final class AgentInternalDtos {
     public record PracticeCandidateKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
     public record PracticeCriteria(@NotBlank @Size(max = 200) String topic,
             @NotNull AgentDtos.PracticeDifficulty difficulty,
-            @Positive @Max(20) int requestedCount) {}
+            @Positive @Max(20) int requestedCount, boolean allowDifficultyFallback) {
+        public PracticeCriteria(String topic, AgentDtos.PracticeDifficulty difficulty, int requestedCount) {
+            this(topic, difficulty, requestedCount, false);
+        }
+    }
     public record ValidatePracticeCandidatesRequest(@NotNull UUID ownerUserId,
             @NotNull @Valid PracticeCriteria criteria,
             @NotNull @Size(max = 20) List<@Valid PracticeCandidateKey> candidates) {}

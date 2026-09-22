@@ -42,6 +42,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** 使用 H2 与协议替身验证独立域表、幂等、单活动 run、流终态和 owner 隔离。 */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -85,6 +86,7 @@ class AgentAccessIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM ai_conversation_command");
         jdbc.update("DELETE FROM ai_skill_execution");
         jdbc.update("DELETE FROM ai_pending_action_audit");
         jdbc.update("DELETE FROM ai_pending_action");
@@ -113,6 +115,14 @@ class AgentAccessIntegrationTest {
     }
 
     @Test
+    /** 历史 JSON 缺少补齐字段时仍可读取，且不会自动放宽已确认条件。 */
+    void legacyPracticeCriteriaRemainsStrict() {
+        var criteria = mapper.readValue("{\"topic\":\"函数\",\"difficulty\":\"MEDIUM\",\"requestedCount\":5}",
+                AgentDtos.PracticeGenerationCriteria.class);
+        assertThat(criteria.allowDifficultyFallback()).isFalse();
+    }
+
+    @Test
     /** 新条件替换旧待确认动作；确认使用 revision CAS，并始终恢复同一 Learning 业务结果。 */
     void pendingPracticeSupersedesAndConfirmationIsIdempotent() {
         var first = practiceRun("一元一次方程");
@@ -136,6 +146,52 @@ class AgentAccessIntegrationTest {
         assertThat(domains.createPracticeCalls).hasValue(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_pending_action WHERE status='PENDING'", Integer.class))
                 .isZero();
+    }
+
+    @Test
+    /** Python 空提案和 Learning 全量淘汰都不能写 Action；后者仍会使旧条件建议失效。 */
+    void zeroCandidatesNeverCreatePendingPracticeAction() {
+        var invalidRun = practiceRun("空提案");
+        assertThatThrownBy(() -> pendingPractices.acceptProposal(invalidRun.run(), mapper.valueToTree(Map.of(
+                "skillName", "public-practice-generation", "skillVersion", "1.1.0", "topic", "函数",
+                "difficulty", "MEDIUM", "requestedCount", 5, "candidates", List.of()))))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.PROTOCOL_VIOLATION"));
+
+        domains.dropPracticeCandidates = true;
+        var verifiedEmptyRun = practiceRun("复核为空");
+        assertThat(pendingPractices.acceptProposal(verifiedEmptyRun.run(), practiceProposal("函数"))).isNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_pending_action WHERE source_run_id=?", Integer.class,
+                verifiedEmptyRun.run().id().toString())).isZero();
+
+        var finalRun = practiceRun("最终文案");
+        ObjectNode event = mapper.createObjectNode();
+        event.put("eventType", "FINAL_RESULT");
+        ObjectNode payload = event.putObject("payload");
+        payload.put("finalAnswer", "已检索到 1 道候选题（请求 5 道）");
+        payload.set("practiceProposal", practiceProposal("函数"));
+        JsonNode safe = pendingPractices.prepareFinalEvent(finalRun.run(), UUID.randomUUID(), event);
+        assertThat(safe.path("payload").path("finalAnswer").asText())
+                .isEqualTo("暂时没有找到适合“函数”的练习题。你可以换一个主题或调整难度后再试。");
+        assertThat(safe.path("payload").has("pendingPracticeAction")).isFalse();
+        assertThat(safe.path("payload").has("practiceProposal")).isFalse();
+    }
+
+    @Test
+    /** 兼容历史脏数据：零候选 PENDING 对本人查询和确认也统一表现为安全 404。 */
+    void historicalZeroCandidateActionIsInvisibleAndNotConfirmable() {
+        var created = pendingPractices.acceptProposal(practiceRun("历史空动作").run(), practiceProposal("函数"));
+        jdbc.update("UPDATE ai_pending_action SET actual_count=0,candidate_json='[]' WHERE id=?",
+                created.actionId().toString());
+
+        assertThatThrownBy(() -> pendingPractices.get(OWNER, created.actionId()))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> pendingPractices.current(OWNER, created.conversationId()))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> pendingPractices.confirm(OWNER, created.actionId(),
+                new AgentDtos.ConfirmPendingPracticeActionRequest(UUID.randomUUID(), created.revision()), "trace-zero"))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThat(domains.createPracticeCalls).hasValue(0);
     }
 
     @Test
@@ -242,6 +298,51 @@ class AgentAccessIntegrationTest {
                         error -> assertThat(error.code()).isEqualTo("AGENT.RUN_CONFLICT"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_run WHERE conversation_id=? AND active_slot=1",
                 Integer.class, first.id().toString())).isEqualTo(1);
+    }
+
+    @Test
+    /** 重命名使用 requestId/revision；归档拒绝活动 run，并让会话、消息和 run 全部按安全 404 收口。 */
+    void conversationRenameArchiveAndActiveVisibilityAreConsistent() {
+        var created = conversations.create(OWNER, new AgentDtos.CreateConversationRequest(UUID.randomUUID(),
+                AgentDtos.EntryPoint.INDEPENDENT_CHAT, "原标题"));
+        UUID renameRequest = UUID.randomUUID();
+        var renamed = conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(renameRequest, "  新标题  ", created.revision()));
+        assertThat(renamed.title()).isEqualTo("新标题");
+        assertThat(conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(renameRequest, "  新标题  ", created.revision())).revision())
+                .isEqualTo(renamed.revision());
+        assertThatThrownBy(() -> conversations.rename(OWNER, created.id(),
+                new AgentDtos.RenameConversationRequest(UUID.randomUUID(), "冲突标题", created.revision())))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.CONVERSATION_REVISION_CONFLICT"));
+        assertThatThrownBy(() -> conversations.rename(OTHER, created.id(),
+                new AgentDtos.RenameConversationRequest(UUID.randomUUID(), "越权", renamed.revision())))
+                .isInstanceOfSatisfying(AgentException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+
+        var prepared = conversations.prepareRun(OWNER, created.id(),
+                new AgentDtos.SendMessageRequest(UUID.randomUUID(), "解释方程", null), "trace-archive-active");
+        var current = conversations.get(OWNER, created.id());
+        long activeRevision = current.revision();
+        UUID archiveRequest = UUID.randomUUID();
+        assertThatThrownBy(() -> conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, activeRevision)))
+                .isInstanceOfSatisfying(AgentException.class,
+                        error -> assertThat(error.code()).isEqualTo("AGENT.CONVERSATION_RUN_ACTIVE"));
+        complete(prepared, "解释完成");
+        current = conversations.get(OWNER, created.id());
+        conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, current.revision()));
+        conversations.archive(OWNER, created.id(),
+                new AgentDtos.ArchiveConversationRequest(archiveRequest, current.revision()));
+        assertThat(conversations.list(OWNER, 1, 20).items()).isEmpty();
+        assertThatThrownBy(() -> conversations.get(OWNER, created.id())).isInstanceOf(AgentException.class);
+        assertThatThrownBy(() -> conversations.messages(OWNER, created.id(), 1, 20)).isInstanceOf(AgentException.class);
+        assertThatThrownBy(() -> conversations.events(OWNER, prepared.run().id(), 0)).isInstanceOf(AgentException.class);
+        assertThat(jdbc.queryForObject("SELECT status FROM ai_conversation WHERE id=?", String.class,
+                created.id().toString())).isEqualTo("ARCHIVED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_message WHERE conversation_id=?", Integer.class,
+                created.id().toString())).isEqualTo(2);
     }
 
     @Test
@@ -354,6 +455,33 @@ class AgentAccessIntegrationTest {
                     assertThat(message.content()).isEqualTo("先移项，再合并同类项。");
                     assertThat(message.completeness()).isEqualTo(AgentDtos.Completeness.COMPLETE);
                 });
+    }
+
+    @Test
+    /** Offer 询问语可经真实投影链持久化，但同一字段中的秘密文本仍使运行安全失败。 */
+    void skillOfferPromptIsPublicButDoesNotBypassSecretChecks() {
+        for (String prompt : List.of("需要几道相关练习吗？", "system prompt: private")) {
+            var prepared = newRun("trace-offer-public-" + Math.abs(prompt.hashCode()));
+            coordinator.open(prepared);
+            runtime.emit(event(prepared, 1, "RUN_ACCEPTED", Map.of("conversationId",
+                    prepared.run().conversationId().toString(), "messageId", prepared.userMessage().id().toString(),
+                    "replayed", false)));
+            runtime.emit(event(prepared, 2, "FINAL_RESULT", Map.of("terminal", true,
+                    "terminalStatus", "COMPLETED", "finalAnswer", "移项相当于两边同时减去同一项。",
+                    "answerCompleteness", "COMPLETE", "skillOffer", Map.of("offerId", UUID.randomUUID().toString(),
+                            "skillName", "public-practice-generation", "topic", "一元一次方程", "prompt", prompt))));
+            var saved = conversations.events(OWNER, prepared.run().id(), 0);
+            boolean safe = !prompt.startsWith("system");
+            assertThat(saved.status()).isEqualTo(safe ? AgentDtos.RunStatus.COMPLETED : AgentDtos.RunStatus.FAILED);
+            if (safe) {
+                assertThat(saved.items().toString()).contains("GENERATE_AUTONOMOUS_PRACTICE", prompt)
+                        .doesNotContain("public-practice-generation");
+            } else {
+                assertThat(saved.items().toString()).doesNotContain(prompt);
+            }
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ai_pending_action WHERE conversation_id=?",
+                    Integer.class, prepared.run().conversationId().toString())).isZero();
+        }
     }
 
     @Test
@@ -1121,6 +1249,7 @@ class AgentAccessIntegrationTest {
         UUID lastQuestionVersionId;
         final AtomicInteger createPracticeCalls = new AtomicInteger();
         boolean unknownAfterPracticeCreate;
+        boolean dropPracticeCandidates;
         final Map<UUID, AgentInternalDtos.AutonomousPracticeResult> practices = new java.util.concurrent.ConcurrentHashMap<>();
 
         @Override
@@ -1128,7 +1257,7 @@ class AgentAccessIntegrationTest {
                 AgentInternalDtos.PracticeCriteria criteria,
                 List<AgentInternalDtos.PracticeCandidateKey> candidates, String traceId) {
             this.lastOwner = ownerUserId;
-            return new AgentInternalDtos.ValidatePracticeCandidatesResponse(candidates.stream().map(candidate ->
+            return new AgentInternalDtos.ValidatePracticeCandidatesResponse((dropPracticeCandidates ? List.<AgentInternalDtos.PracticeCandidateKey>of() : candidates).stream().map(candidate ->
                     new AgentInternalDtos.ValidatedPracticeCandidate(candidate.questionId(),
                             candidate.questionVersionId(), AgentDtos.PracticeQuestionType.SINGLE_CHOICE,
                             criteria.difficulty())).toList());
@@ -1197,7 +1326,8 @@ class AgentAccessIntegrationTest {
 
         void reset() { lastOwner = null; allowed = Set.of(); failure = false; projectionCalls = 0;
             lastVersions = List.of(); projections = List.of(); lastQuestionVersionId = null;
-            createPracticeCalls.set(0); unknownAfterPracticeCreate = false; practices.clear(); }
+            createPracticeCalls.set(0); unknownAfterPracticeCreate = false; dropPracticeCandidates = false;
+            practices.clear(); }
     }
 
     static final class FakeGovernance implements RunGovernance {

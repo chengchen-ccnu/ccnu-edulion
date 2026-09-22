@@ -36,8 +36,28 @@ public final class AgentAccessDtos {
             List<QuestionDtos.MediaResponse> media) {}
     public record QuestionVersionProjectionResponse(List<QuestionVersionProjection> items) {}
 
-    public record PracticeCriteria(@NotBlank @Size(max = 200) String topic,
-            @NotNull QuestionModels.Difficulty difficulty, @Min(1) @Max(20) int requestedCount) {}
+    /** Java 可信条件；普通 bean 保留严格 Jackson 下可选补齐字段缺失为 false 的兼容语义。 */
+    public static final class PracticeCriteria {
+        @com.fasterxml.jackson.annotation.JsonProperty @NotBlank @Size(max = 200) private String topic;
+        @com.fasterxml.jackson.annotation.JsonProperty @NotNull private QuestionModels.Difficulty difficulty;
+        @com.fasterxml.jackson.annotation.JsonProperty @Min(1) @Max(20) private int requestedCount;
+        @com.fasterxml.jackson.annotation.JsonProperty private boolean allowDifficultyFallback;
+        public PracticeCriteria() {}
+        @com.fasterxml.jackson.annotation.JsonCreator(mode = com.fasterxml.jackson.annotation.JsonCreator.Mode.DISABLED)
+        public PracticeCriteria(String topic, QuestionModels.Difficulty difficulty, int requestedCount,
+                boolean allowDifficultyFallback) {
+            this.topic = topic; this.difficulty = difficulty; this.requestedCount = requestedCount;
+            this.allowDifficultyFallback = allowDifficultyFallback;
+        }
+        @com.fasterxml.jackson.annotation.JsonCreator(mode = com.fasterxml.jackson.annotation.JsonCreator.Mode.DISABLED)
+        public PracticeCriteria(String topic, QuestionModels.Difficulty difficulty, int requestedCount) {
+            this(topic, difficulty, requestedCount, false);
+        }
+        public String topic() { return topic; }
+        public QuestionModels.Difficulty difficulty() { return difficulty; }
+        public int requestedCount() { return requestedCount; }
+        public boolean allowDifficultyFallback() { return allowDifficultyFallback; }
+    }
     public record PracticeCandidateKey(@NotNull UUID questionId, @NotNull UUID questionVersionId) {}
     public record ValidatePracticeCandidatesRequest(@NotNull UUID ownerUserId,
             @NotNull @Valid PracticeCriteria criteria,

@@ -685,4 +685,21 @@ Agent Access 在 `local` profile 强制启用 Redis 运行治理，使用独立 
 
 ## 全量验证
 
+## T15D 会话命令与浏览器验收
+
+T15D 将 Agent Access 的专用开发 Schema 向前迁移到 V8，新增 `ai_conversation_command`。现有 `ai_conversation.create_request_id` 只能恢复“创建会话”，无法安全恢复改名/归档的稳定 requestId，也无法拒绝同 requestId 不同载荷，因此不能复用；V8 表只保存命令类型、请求指纹和安全响应，不保存消息、提示词、Token 或模型内容。迁移继续由 `AgentMemoryMysqlAcceptanceTest` 经安全包装器验证，不需要新增环境变量，也不得修改旧迁移。
+
+真实页面联调可在根目录经包装器启动/停止本任务所需的 IAM、Media、Learning、Agent Access、Python Runtime、Gateway 和学生端：
+
+```powershell
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & .\scripts\Invoke-T15DBrowserEnvironment.ps1 -Action START
+}
+& .\scripts\Invoke-WithLocalEnvironment.ps1 -ScriptBlock {
+  & .\scripts\Invoke-T15DBrowserEnvironment.ps1 -Action STOP
+}
+```
+
+脚本在启动前拒绝已占用端口，只停止其记录的进程，并把忽略的日志放在 `.m2/t15d-browser`。题图成功直传仍依赖既有 OSS/MinIO 可达；对象存储未启动时页面应显示失败并取消上传会话，不能伪装成功。T15D 没有向 `local.env` 写入新字段，任务结束无需删除或迁移任何本地配置；秘密仍只放 DPAPI/部署 Secret。
+
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。

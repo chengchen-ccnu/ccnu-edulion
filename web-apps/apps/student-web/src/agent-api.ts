@@ -11,6 +11,10 @@ export interface StudentAgentApi {
   createConversation(clientRequestId: string, entryPoint?: AgentConversation["entryPoint"],
     signal?: AbortSignal): Promise<AgentConversation>;
   conversation(id: string, signal?: AbortSignal): Promise<AgentConversation>;
+  renameConversation(id: string, title: string, expectedRevision: number, requestId: string,
+    signal?: AbortSignal): Promise<AgentConversation>;
+  archiveConversation(id: string, expectedRevision: number, requestId: string,
+    signal?: AbortSignal): Promise<void>;
   messages(id: string, page?: number, size?: number, signal?: AbortSignal): Promise<AgentMessagePage>;
   preference(signal?: AbortSignal): Promise<AgentExplanationPreference>;
   updatePreference(value: AgentExplanationPreference["value"], revision: number,
@@ -41,6 +45,8 @@ export function createStudentAgentApi(client: GatewayClient = createGatewayClien
     async conversations(page = 1, size = 30, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations", { headers: { Authorization }, params: { query: { page, size } }, signal }))); },
     async createConversation(clientRequestId, entryPoint = "INDEPENDENT_CHAT", signal) { return data(await authorized(Authorization => client.POST("/api/v1/ai/conversations", { headers: { Authorization }, body: { clientRequestId, entryPoint }, signal }))); },
     async conversation(conversationId, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations/{conversationId}", { headers: { Authorization }, params: { path: { conversationId } }, signal }))); },
+    async renameConversation(conversationId, title, expectedRevision, requestId, signal) { return data(await authorized(Authorization => client.PATCH("/api/v1/ai/conversations/{conversationId}", { headers: { Authorization }, params: { path: { conversationId } }, body: { title, expectedRevision, requestId }, signal }))); },
+    async archiveConversation(conversationId, expectedRevision, requestId, signal) { const result = await authorized(Authorization => client.DELETE("/api/v1/ai/conversations/{conversationId}", { headers: { Authorization }, params: { path: { conversationId } }, body: { expectedRevision, requestId }, signal })); if (!result.response.ok) throw gatewayRequestError(result.response, result.error as never); },
     async messages(conversationId, page = 1, size = 100, signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/conversations/{conversationId}/messages", { headers: { Authorization }, params: { path: { conversationId }, query: { page, size } }, signal }))); },
     async preference(signal) { return data(await authorized(Authorization => client.GET("/api/v1/ai/preferences/explanation", { headers: { Authorization }, signal }))); },
     async updatePreference(value, expectedRevision, clientRequestId) { return data(await authorized(Authorization => client.PUT("/api/v1/ai/preferences/explanation", { headers: { Authorization }, body: { value, expectedRevision, clientRequestId } }))); },

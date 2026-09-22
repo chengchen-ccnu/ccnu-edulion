@@ -54,6 +54,8 @@ export async function consumeAgentSse(response: Response,
     onEvent: (event: AgentClientStreamEvent) => void, signal: AbortSignal): Promise<void> {
   if (!response.ok || !response.body) throw new Error(`AGENT_STREAM_${response.status}`);
   const reader = response.body.getReader();
+  const abort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", abort, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
   try {
@@ -71,5 +73,5 @@ export async function consumeAgentSse(response: Response,
       }
     }
     if (!signal.aborted && buffer.trim()) throw new Error("AGENT_STREAM_TRUNCATED");
-  } finally { reader.releaseLock(); }
+  } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
 }

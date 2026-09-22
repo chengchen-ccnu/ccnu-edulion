@@ -316,7 +316,11 @@ public class AgentRunCoordinator {
                 Map.entry("recentMessages", prepared.recentMessages()),
                 Map.entry("trustedContext", prepared.context().trustedContext()),
                 Map.entry("budget", budget), Map.entry("timeoutPolicy", timeout));
-        return mapper.valueToTree(request);
+        var node = (tools.jackson.databind.node.ObjectNode) mapper.valueToTree(request);
+        if (prepared.requestedSkill() != null) {
+            node.set("requestedSkill", mapper.valueToTree(prepared.requestedSkill()));
+        }
+        return node;
     }
 
     private static boolean send(SseEmitter emitter, AgentDtos.StreamEvent event) {

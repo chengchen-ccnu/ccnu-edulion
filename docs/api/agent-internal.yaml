@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Edu Agent Internal Protocol
-  version: 1.5.0
+  version: 1.6.2
   description: |
     Java agent-access-service 与 Python edu_agent_app 之间的版本化内部协议。该协议不面向浏览器，
     不替代 docs/api/openapi.yaml。Java 必须先完成用户、会话、题目、课程、媒体和学习事实授权，
@@ -14,7 +14,8 @@ info:
     run 授权的版本化用户帮助查询。T14.3 增加按需加载的公共题库自主组题 Skill 及候选提案；
     Java 必须复核并持久化后才能把安全 pending action 投影给浏览器。T13.5.1 再增加标准目录
     Skill 的开始/终态私有审计；T13.5.2 将组题迁移为标准目录 Skill 1.1.0，并保留滚动部署期间
-    对已开始 1.0.0 run 的读取兼容。审计不承载指令、输入输出或绝对路径。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
+    对已开始 1.0.0 run 的读取兼容。T15D.1 明确零候选不是提案：Python 只返回普通学生文案，
+    不得发送 practiceProposal。审计不承载指令、输入输出或绝对路径。既有 v1 run、SSE、取消与旧客户端请求体仍有效。
 servers:
   - url: http://edu-agent.internal
     description: 仅限服务间网络；Gateway 不向浏览器暴露该地址。
@@ -29,18 +30,25 @@ x-runtime-skills:
     requiredSlots: [practiceTopic]
     defaults: {difficulty: MEDIUM, questionCount: 5}
     ranges: {questionCount: {minimum: 1, maximum: 20}}
-    allowedTools: [QUESTION_SEARCH]
+    allowedTools: [KNOWLEDGE_SEARCH, QUESTION_SEARCH]
     loadPolicy: ON_MATCHED_ROLE_AND_INTENT
     candidatePolicy: ACTIVE_SYSTEM_CURRENT_JUNIOR_MATH_AUTO_SCORABLE_ONLY
     recentAttemptPolicy: BEST_EFFORT_EXCLUDE_WITHOUT_RELAXING_HARD_FILTERS
     prohibited:
       - DATABASE_WRITE
       - QUESTION_GENERATION
+      # 禁止扩大主题/来源或用户明确难度；未指定难度时仅允许下方可选补齐条件。
       - SCOPE_OR_DIFFICULTY_EXPANSION
       - FREE_LOOP
       - FORMAL_GRADING_BY_MODEL
     outputSchema: PracticeGenerationProposal
-    budget: {maxQuestionSearchCalls: 1, maxCandidateCount: 20, timeoutMs: 10000}
+    budget: {maxKnowledgePlanningCalls: 1, maxKnowledgeSearchCalls: 3, maxQuestionSearchCalls: 1, maxCandidateCount: 20, timeoutMs: 10000}
+    knowledgePlanning: |
+      Runtime 私有模型节点从当前请求和已解析主题生成 {knowledgePoints: [string]}，0～3 个、
+      每个 1～80 字符，不生成 ID。逐项 KNOWLEDGE_SEARCH 语义召回至多两个真实知识点并去重，
+      再按这些知识点 ID 查关联题；模型失败或知识点无命中不扩大到全库，不产生 proposal。
+      超出初中范围或无法确定的主题返回空列表，不得猜成相近的初中主题；空列表不检索、不运行提案脚本。
+      预测名称不要求与库内标签一致，不进入浏览器或 Java HTTP DTO；调用计入原有模型/工具预算。
 
 paths:
   /internal/v1/agent/runs:
@@ -324,6 +332,9 @@ components:
           default: []
           items: {$ref: '#/components/schemas/RecentMessage'}
           description: 可选向前兼容窗口；按 sequenceNo 升序，总正文最多 16000 字符，且不含当前 messageId。
+        requestedSkill:
+          $ref: '#/components/schemas/RequestedSkill'
+          description: Java 将浏览器有限能力枚举映射后的可信单轮 Skill 请求；浏览器内部名称不得直传。
         trustedContext: {$ref: '#/components/schemas/TrustedContext'}
         budget: {$ref: '#/components/schemas/RunBudget'}
         timeoutPolicy: {$ref: '#/components/schemas/TimeoutPolicy'}
@@ -366,6 +377,27 @@ components:
         completeness: {type: string, enum: [COMPLETE, PARTIAL]}
         sequenceNo: {type: integer, minimum: 1}
       description: 只来自 Agent Access 已持久化 ai_message；排除当前消息、临时 URL、Token、工具原始结果和隐藏画像。
+
+    RequestedSkill:
+      type: object
+      additionalProperties: false
+      required: [skillName, selectionSource]
+      properties:
+        skillName: {type: string, const: public-practice-generation}
+        selectionSource: {type: string, enum: [USER_EXPLICIT]}
+
+    ActiveSkillOffer:
+      type: object
+      additionalProperties: false
+      required: [offerId, skillName, topic, offeredAfterMessageId]
+      properties:
+        offerId: {type: string, format: uuid}
+        skillName: {type: string, const: public-practice-generation}
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        offeredAfterMessageId: {type: string, format: uuid}
+      description: 仅由 Java 从紧邻上一轮已持久化 FINAL_RESULT 恢复；只对当前下一轮有效，拒绝、转题或消费后自然失效。
 
     TrustedContext:
       type: object
@@ -411,6 +443,8 @@ components:
           maxItems: 16
           uniqueItems: true
           items: {$ref: '#/components/schemas/ToolGrant'}
+        activeSkillOffer:
+          $ref: '#/components/schemas/ActiveSkillOffer'
       description: |
         仅包含 Java 已授权的事实。字段中故意不存在 browserRole、permissions、arbitraryCourseId、
         arbitraryQuestionId 或 arbitraryMediaUrl；Python 不得把浏览器原始提交提升为可信事实。
@@ -770,11 +804,14 @@ components:
           items: {$ref: '#/components/schemas/AuthorizedReference'}
         practiceProposal:
           $ref: '#/components/schemas/PracticeGenerationProposal'
-          description: Python-only proposal. Agent Access must remove it, revalidate every candidate through Learning, persist a new action, and expose only the external PendingPracticeAction projection.
+          description: Python-only non-empty proposal. Zero candidates must produce a normal student-facing answer without this field. Agent Access removes it, revalidates every candidate through Learning, persists an action only when at least one candidate survives, and exposes only the external PendingPracticeAction projection.
         actionControl:
           type: string
           enum: [CONFIRM_CURRENT, CANCEL_CURRENT]
           description: Natural-language control only. Java may execute it only when the owner-visible conversation has exactly one unexpired PENDING action; otherwise it replaces the answer with a clarification.
+        skillOffer:
+          $ref: '#/components/schemas/SkillOffer'
+          description: 单轮建议事实；不得与 practiceProposal 同时出现，也不得在生成它时运行 Skill 或查询候选题。
         error: {$ref: '#/components/schemas/SafeError'}
       allOf:
         - if: {properties: {terminalStatus: {const: COMPLETED}}}
@@ -793,6 +830,18 @@ components:
     TerminalStatus:
       type: string
       enum: [COMPLETED, DEGRADED, LIMIT_REACHED, CANCELLED, FAILED]
+
+    SkillOffer:
+      type: object
+      additionalProperties: false
+      required: [offerId, skillName, topic, prompt]
+      properties:
+        offerId: {type: string, format: uuid}
+        skillName: {type: string, const: public-practice-generation}
+        topic: {type: string, minLength: 1, maxLength: 200}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        prompt: {type: string, minLength: 1, maxLength: 200}
 
     AuthorizedReference:
       type: object
@@ -919,12 +968,17 @@ components:
         topic: {type: string, minLength: 1, maxLength: 200}
         difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
         requestedCount: {type: integer, minimum: 1, maximum: 20}
+        allowDifficultyFallback:
+          type: boolean
+          default: false
+          description: 仅学生未明确指定难度时由 Runtime 设置 true。Java→Learning 的 criteria 原样携带并保存到既有动作 criteria_json；旧请求缺失视为 false。Learning 先按优先难度排序，再用其他难度补足，不能放宽知识点、当前版本、公共来源或自动评分要求。
         candidates:
           type: array
+          minItems: 1
           maxItems: 20
           uniqueItems: true
           items: {$ref: '#/components/schemas/PracticeCandidateKey'}
-      description: Contains identity-only Qdrant candidates. It is not a permission decision or a database write command.
+      description: Contains one or more identity-only Qdrant candidates. Zero candidates are not a proposal and must not cross this boundary. It is not a permission decision or a database write command.
     PracticeCandidateKey:
       type: object
       additionalProperties: false
@@ -994,6 +1048,12 @@ components:
           maxItems: 100
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 128}
+        knowledgePointIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: {type: string, format: uuid}
+          description: 仅供 QUESTION_SEARCH 使用；来自本轮 KNOWLEDGE_SEARCH 语义召回的稳定知识点 ID，不接受浏览器或模型直接生成的 ID。RECOMMEND_PRACTICE 按关联关系取题，题干重排只排序，不因题干未复述知识点名称而丢弃关联题；Java 仍复核当前版本、权限、难度与可评分性。
 
     GraphArguments:
       type: object
@@ -1260,7 +1320,7 @@ x-secondary-intent-contracts:
   CHECK_STUDENT_WORK: {requiredSlots: [studentWork], allowedTools: [QUESTION_SEARCH, KNOWLEDGE_SEARCH, AUTHORIZED_IMAGE_UNDERSTANDING]}
   GIVE_HINT: {requiredAnySlots: [problemText, questionId], allowedTools: [QUESTION_SEARCH, KNOWLEDGE_SEARCH]}
   REVIEW_WRONG_QUESTION: {requiredSlots: [wrongQuestionId], allowedTools: [STUDENT_WRONG_QUESTIONS, STUDENT_SUBMISSIONS, KNOWLEDGE_SEARCH]}
-  RECOMMEND_PRACTICE: {requiredSlots: [practiceTopic], allowedTools: [QUESTION_SEARCH, STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
+  RECOMMEND_PRACTICE: {requiredSlots: [practiceTopic], allowedTools: [KNOWLEDGE_SEARCH, QUESTION_SEARCH, STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
   CREATE_PLAN: {requiredSlots: [planGoal], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
   ADJUST_PLAN: {requiredSlots: [planGoal], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}
   LEARNING_ADVICE: {requiredSlots: [], allowedTools: [STUDENT_PROGRESS, STUDENT_PUBLISHED_GRADES]}

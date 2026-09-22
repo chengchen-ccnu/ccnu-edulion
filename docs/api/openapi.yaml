@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.23.4
-  description: T14.3 public-question autonomous-practice proposal, pending confirmation, idempotent Learning creation, and owner-only entry contract. Python emits identity-only candidates; Java revalidates against Learning's MySQL facts before persistence, and confirmation returns a stable existing practice route. Existing typed streaming, history projection, quota, Redis governance, cancellation, and course assessment semantics remain compatible.
+  version: 0.24.2
+  description: T15D adds owner-only conversation rename/archive commands, a finite next-message capability selection, and a structured single-turn practice offer while preserving T14.3 autonomous-practice confirmation. T15D.1 clarifies that a browser-visible pending practice action always contains at least one Java-verified candidate; zero-candidate retrieval returns only a normal student-facing answer. Java remains the authorization and write boundary; Python still executes eligibility, tool, budget, audit and proposal safeguards.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -3107,6 +3107,46 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/AgentNotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+    patch:
+      tags: [Agent]
+      operationId: renameAgentConversation
+      summary: Rename an active owner-visible AI conversation
+      description: Requires learning:access. requestId is stable for one logical rename and expectedRevision is a CAS guard. Titles are trimmed and reject blank values or control characters. Foreign, archived and missing conversations are indistinguishable safe 404 responses.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenameAgentConversationRequest'}
+      responses:
+        '200': {description: Renamed conversation or an idempotent replay., content: {application/json: {schema: {$ref: '#/components/schemas/AgentConversation'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      tags: [Agent]
+      operationId: archiveAgentConversation
+      summary: Archive an active owner-visible AI conversation
+      description: Requires learning:access. This is user-visible deletion implemented as ACTIVE to ARCHIVED; messages, runs, audit, usage and memory facts remain retained. An active run returns 409 and must be stopped first. requestId is stable and expectedRevision is a CAS guard. Foreign, archived and missing conversations are indistinguishable safe 404 responses.
+      parameters:
+        - {$ref: '#/components/parameters/AgentConversationId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ArchiveAgentConversationRequest'}
+      responses:
+        '204': {description: Conversation archived; no body is returned.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AgentNotFound'}
+        '409': {$ref: '#/components/responses/AgentConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/ai/conversations/{conversationId}/messages:
     get:
       tags: [Agent]
@@ -3901,6 +3941,9 @@ components:
         topic: {type: string, minLength: 1, maxLength: 200}
         difficulty: {$ref: '#/components/schemas/PracticeDifficulty'}
         requestedCount: {type: integer, minimum: 1, maximum: 20, default: 5}
+        allowDifficultyFallback:
+          type: boolean
+          description: 未指定难度时为 true，以 difficulty 为优先难度，不足允许同主题其他难度补齐；明确难度和缺省旧记录为 false。候选逐题 difficulty 始终是真实难度。
     PracticeCandidateQuestion:
       type: object
       additionalProperties: false
@@ -3932,9 +3975,10 @@ components:
         conversationId: {type: string, format: uuid}
         criteria: {$ref: '#/components/schemas/PracticeGenerationCriteria'}
         requestedCount: {type: integer, minimum: 1, maximum: 20}
-        actualCount: {type: integer, minimum: 0, maximum: 20}
+        actualCount: {type: integer, minimum: 1, maximum: 20}
         candidateQuestions:
           type: array
+          minItems: 1
           maxItems: 20
           uniqueItems: true
           items: {$ref: '#/components/schemas/PracticeCandidateQuestion'}
@@ -3945,7 +3989,7 @@ components:
           oneOf:
             - {$ref: '#/components/schemas/AutonomousPracticeExecutionResult'}
             - {type: 'null'}
-      description: Browser-safe projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent.
+      description: Browser-safe projection containing at least one Java-verified candidate. Zero-candidate retrieval has no action projection. ownerUserId, source run details, request fingerprints, answers, prompts, and raw model/tool output are deliberately absent.
     ConfirmPendingPracticeActionRequest:
       type: object
       additionalProperties: false
@@ -4011,6 +4055,26 @@ components:
         page: {type: integer, minimum: 1}
         size: {type: integer, minimum: 1, maximum: 100}
         total: {type: integer, format: int64, minimum: 0}
+    RenameAgentConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, title, expectedRevision]
+      properties:
+        requestId: {type: string, format: uuid, description: Stable logical-rename key generated by the browser.}
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: '^[^\u0000-\u001F\u007F]*\S[^\u0000-\u001F\u007F]*$'
+          description: User-visible title; surrounding whitespace is removed by the server and control characters are rejected.
+        expectedRevision: {type: integer, format: int64, minimum: 0, description: Revision from the last owner-visible conversation projection.}
+    ArchiveAgentConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, expectedRevision]
+      properties:
+        requestId: {type: string, format: uuid, description: Stable logical-archive key generated by the browser.}
+        expectedRevision: {type: integer, format: int64, minimum: 0, description: Revision from the last owner-visible conversation projection.}
     AgentMessageContextRequest:
       type: object
       additionalProperties: false
@@ -4050,6 +4114,13 @@ components:
           description: Stable logical-send key unique within the conversation.
         content: {type: string, minLength: 1, maxLength: 10000}
         context: {$ref: '#/components/schemas/AgentMessageContextRequest'}
+        selectedCapability:
+          $ref: '#/components/schemas/AgentSelectableCapability'
+          description: Optional public capability selected only for this message. The server maps it to a trusted internal Skill and never accepts an internal Skill name from the browser.
+    AgentSelectableCapability:
+      type: string
+      enum: [GENERATE_AUTONOMOUS_PRACTICE]
+      description: Finite student-facing capability allowlist. It is not an internal Skill name, version or script reference.
     AgentExplanationStyle:
       type: string
       enum: [GUIDED_STEP_BY_STEP, COMPLETE_SOLUTION]
@@ -4337,7 +4408,10 @@ components:
         references: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AgentAuthorizedReference'}}
         pendingPracticeAction:
           $ref: '#/components/schemas/PendingPracticeAction'
-          description: Present only after Java revalidates and persists a Practice Coach proposal. Python candidate data is never forwarded directly.
+          description: Present only after Java revalidates and persists at least one Practice Coach candidate. Zero-candidate retrieval has no action or card. Python candidate data is never forwarded directly.
+        skillOffer:
+          $ref: '#/components/schemas/AgentSkillOffer'
+          description: A server-issued, single-next-turn offer. It is not a pending action and does not mean a Skill, search or write has executed.
         error: {$ref: '#/components/schemas/AgentSafeError'}
       description: COMPLETED requires COMPLETE plus finalAnswer; DEGRADED/LIMIT_REACHED require SIMPLIFIED plus finalAnswer; CANCELLED/FAILED require INTERRUPTED plus the fixed interruptionNotice.
       allOf:
@@ -4347,6 +4421,17 @@ components:
           then: {required: [finalAnswer], properties: {answerCompleteness: {const: SIMPLIFIED}}}
         - if: {properties: {terminalStatus: {enum: [CANCELLED, FAILED]}}}
           then: {required: [interruptionNotice], properties: {answerCompleteness: {const: INTERRUPTED}}}
+    AgentSkillOffer:
+      type: object
+      additionalProperties: false
+      required: [offerId, capability, topic, prompt]
+      properties:
+        offerId: {type: string, format: uuid}
+        capability: {$ref: '#/components/schemas/AgentSelectableCapability'}
+        topic: {type: string, minLength: 1, maxLength: 200, description: The bounded topic proposed for the next-turn practice request.}
+        difficulty: {type: string, enum: [EASY, MEDIUM, HARD]}
+        questionCount: {type: integer, minimum: 1, maximum: 20}
+        prompt: {type: string, minLength: 1, maxLength: 200, description: Student-facing confirmation question; no internal Skill identity is exposed.}
     AgentRunEventPage:
       type: object
       additionalProperties: false

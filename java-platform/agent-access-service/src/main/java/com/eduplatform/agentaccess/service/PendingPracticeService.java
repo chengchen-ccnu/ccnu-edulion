@@ -37,13 +37,16 @@ public class PendingPracticeService {
         this.repository = repository; this.agents = agents; this.domains = domains; this.mapper = mapper;
     }
 
-    /** Python FINAL_RESULT 进入持久事件前先经 Learning 复核并创建新动作；同 run 重放返回同一 action。 */
+    /**
+     * Python 非空提案进入持久事件前先经 Learning 复核；只有至少一题通过才创建动作。
+     * 同 run 重放返回同一有效 action，历史零候选脏数据按“无动作”处理。
+     */
     @Transactional
     public AgentDtos.PendingPracticeAction acceptProposal(RunRow run, JsonNode proposal) {
         Row replay = repository.byRun(run.id()).orElse(null);
-        if (replay != null) return projection(expireIfNeeded(replay));
+        if (replay != null) return isExecutable(replay) ? projection(expireIfNeeded(replay)) : null;
         ParsedProposal parsed = parse(proposal);
-        var criteria = new AgentInternalDtos.PracticeCriteria(parsed.topic(), parsed.difficulty(), parsed.requestedCount());
+        var criteria = new AgentInternalDtos.PracticeCriteria(parsed.topic(), parsed.difficulty(), parsed.requestedCount(), parsed.allowDifficultyFallback());
         var verified = domains.validatePracticeCandidates(run.ownerUserId(), criteria, parsed.candidates(), run.traceId());
         List<AgentDtos.PracticeCandidateQuestion> candidates = verified.candidates().stream()
                 .limit(parsed.requestedCount()).map(value -> new AgentDtos.PracticeCandidateQuestion(
@@ -56,9 +59,11 @@ public class PendingPracticeService {
             repository.audit(previous.id(), previous.ownerUserId(), null, "SUPERSEDED",
                     "PENDING", "CANCELLED", run.traceId(), now);
         }
+        // Learning 可能在 Python 检索后淘汰全部候选；此时清除旧 pending，但不写一张空 Action。
+        if (candidates.isEmpty()) return null;
         UUID actionId = UUID.randomUUID();
         AgentDtos.PracticeGenerationCriteria externalCriteria = new AgentDtos.PracticeGenerationCriteria(
-                parsed.topic(), parsed.difficulty(), parsed.requestedCount());
+                parsed.topic(), parsed.difficulty(), parsed.requestedCount(), parsed.allowDifficultyFallback());
         Row created = new Row(actionId, run.conversationId(), run.ownerUserId(), run.id(),
                 write(externalCriteria), write(candidates), parsed.requestedCount(), candidates.size(),
                 AgentDtos.PendingPracticeActionStatus.PENDING, 0, now.plus(DEFAULT_TTL), null, null,
@@ -69,12 +74,13 @@ public class PendingPracticeService {
     }
 
     public AgentDtos.PendingPracticeAction get(UUID owner, UUID actionId) {
-        return projection(expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound)));
+        return projection(expireIfNeeded(activeOwned(owner, actionId)));
     }
 
     public AgentDtos.PendingPracticeAction current(UUID owner, UUID conversationId) {
         if (agents.findConversation(owner, conversationId).isEmpty()) throw notFound();
         Row row = repository.current(owner, conversationId).orElseThrow(PendingPracticeService::notFound);
+        if (!isExecutable(row)) throw notFound();
         row = expireIfNeeded(row);
         if (row.status() != AgentDtos.PendingPracticeActionStatus.PENDING) throw notFound();
         return projection(row);
@@ -90,7 +96,17 @@ public class PendingPracticeService {
         ObjectNode payload = (ObjectNode) event.path("payload");
         AgentDtos.PendingPracticeAction action = null;
         if (payload.has("practiceProposal")) {
-            action = acceptProposal(run, payload.remove("practiceProposal"));
+            JsonNode proposal = payload.remove("practiceProposal");
+            action = acceptProposal(run, proposal);
+            if (action == null) {
+                String topic = proposal.path("topic").asText("").trim();
+                payload.put("finalAnswer", "暂时没有找到适合“" + topic
+                        + "”的练习题。你可以换一个主题或调整难度后再试。");
+            } else {
+                // 只有 Learning 复核后的真实数量可向学生承诺，不能沿用 Python 的检索池大小。
+                payload.put("finalAnswer", "已为你准备好“" + proposal.path("topic").asText()
+                        + "”的 " + action.actualCount() + " 道练习题，确认后即可创建自主练习。");
+            }
         } else if (payload.has("actionControl")) {
             String control = payload.remove("actionControl").asText();
             try {
@@ -101,6 +117,17 @@ public class PendingPracticeService {
                 payload.put("finalAnswer", rejected.getMessage());
             }
             if (action == null) payload.put("finalAnswer", "当前会话没有唯一、有效的待确认动作，请先生成新的组题方案。");
+        }
+        if (payload.has("skillOffer")) {
+            JsonNode internalOffer = payload.remove("skillOffer");
+            ObjectNode externalOffer = mapper.createObjectNode();
+            externalOffer.set("offerId", internalOffer.get("offerId"));
+            externalOffer.put("capability", "GENERATE_AUTONOMOUS_PRACTICE");
+            externalOffer.set("topic", internalOffer.get("topic"));
+            if (internalOffer.has("difficulty")) externalOffer.set("difficulty", internalOffer.get("difficulty"));
+            if (internalOffer.has("questionCount")) externalOffer.set("questionCount", internalOffer.get("questionCount"));
+            externalOffer.set("prompt", internalOffer.get("prompt"));
+            payload.set("skillOffer", externalOffer);
         }
         if (action != null) payload.set("pendingPracticeAction", mapper.valueToTree(action));
         return event;
@@ -121,7 +148,7 @@ public class PendingPracticeService {
 
     private AgentDtos.PendingPracticeAction confirm(UUID owner, UUID actionId, UUID requestId,
             long expectedRevision, String traceId) {
-        Row row = expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound));
+        Row row = expireIfNeeded(activeOwned(owner, actionId));
         if (row.status() == AgentDtos.PendingPracticeActionStatus.SUCCEEDED) return projection(row);
         if (row.status() == AgentDtos.PendingPracticeActionStatus.EXECUTING) return recover(row, traceId);
         if (row.status() != AgentDtos.PendingPracticeActionStatus.PENDING) {
@@ -154,7 +181,7 @@ public class PendingPracticeService {
     /** 取消只允许 PENDING→CANCELLED；相同 requestId 重试返回同一动作且不删除任何领域事实。 */
     public AgentDtos.PendingPracticeAction cancel(UUID owner, UUID actionId,
             AgentDtos.CancelPendingPracticeActionRequest request, String traceId) {
-        Row row = expireIfNeeded(repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound));
+        Row row = expireIfNeeded(activeOwned(owner, actionId));
         if (row.status() == AgentDtos.PendingPracticeActionStatus.CANCELLED
                 && request.requestId().equals(row.cancellationRequestId())) return projection(row);
         if (row.status() != AgentDtos.PendingPracticeActionStatus.PENDING) {
@@ -205,6 +232,26 @@ public class PendingPracticeService {
         return row;
     }
 
+    /** 动作必须同时属于本人和仍为 ACTIVE 的会话；归档后按与不存在相同的 404 处理。 */
+    private Row activeOwned(UUID owner, UUID actionId) {
+        Row row = repository.owned(owner, actionId).orElseThrow(PendingPracticeService::notFound);
+        if (agents.findConversation(owner, row.conversationId()).isEmpty()) throw notFound();
+        if (!isExecutable(row)) throw notFound();
+        return row;
+    }
+
+    /** 历史零候选或计数/候选不一致的动作不能查询、确认或投影给浏览器。 */
+    private boolean isExecutable(Row row) {
+        if (row.actualCount() < 1 || row.actualCount() > row.requestedCount()) return false;
+        try {
+            List<AgentDtos.PracticeCandidateQuestion> candidates = read(row.candidateJson(),
+                    new TypeReference<List<AgentDtos.PracticeCandidateQuestion>>() {});
+            return !candidates.isEmpty() && candidates.size() == row.actualCount();
+        } catch (AgentException invalidHistory) {
+            return false;
+        }
+    }
+
     private AgentDtos.PendingPracticeAction projection(Row row) {
         AgentDtos.AutonomousPracticeExecutionResult execution = row.autonomousPracticeId() == null ? null
                 : new AgentDtos.AutonomousPracticeExecutionResult(row.autonomousPracticeId(), row.assessmentId(), row.startRoute());
@@ -216,7 +263,7 @@ public class PendingPracticeService {
 
     private AgentInternalDtos.PracticeCriteria internalCriteria(Row row) {
         AgentDtos.PracticeGenerationCriteria value = read(row.criteriaJson(), AgentDtos.PracticeGenerationCriteria.class);
-        return new AgentInternalDtos.PracticeCriteria(value.topic(), value.difficulty(), value.requestedCount());
+        return new AgentInternalDtos.PracticeCriteria(value.topic(), value.difficulty(), value.requestedCount(), value.allowDifficultyFallback());
     }
 
     private List<AgentInternalDtos.PracticeCandidateKey> candidateKeys(Row row) {
@@ -233,7 +280,8 @@ public class PendingPracticeService {
         try { difficulty = AgentDtos.PracticeDifficulty.valueOf(proposal.path("difficulty").asText()); }
         catch (RuntimeException invalid) { throw protocol(); }
         if (topic.isEmpty() || topic.length() > 200 || count < 1 || count > 20
-                || !proposal.path("candidates").isArray() || proposal.path("candidates").size() > 20) throw protocol();
+                || !proposal.path("candidates").isArray() || proposal.path("candidates").isEmpty()
+                || proposal.path("candidates").size() > 20) throw protocol();
         List<AgentInternalDtos.PracticeCandidateKey> candidates = new ArrayList<>();
         var seen = new java.util.HashSet<UUID>();
         proposal.path("candidates").forEach(candidate -> {
@@ -243,7 +291,8 @@ public class PendingPracticeService {
                 if (seen.add(versionId)) candidates.add(new AgentInternalDtos.PracticeCandidateKey(questionId, versionId));
             } catch (RuntimeException invalid) { throw protocol(); }
         });
-        return new ParsedProposal(topic, difficulty, count, List.copyOf(candidates));
+        if (proposal.has("allowDifficultyFallback") && !proposal.get("allowDifficultyFallback").isBoolean()) throw protocol();
+        return new ParsedProposal(topic, difficulty, count, proposal.path("allowDifficultyFallback").asBoolean(false), List.copyOf(candidates));
     }
 
     private String write(Object value) {
@@ -260,6 +309,6 @@ public class PendingPracticeService {
     private static AgentException notFound() { return new AgentException(HttpStatus.NOT_FOUND,
             "AGENT.NOT_FOUND", "资源不存在或不可见"); }
     private static AgentException conflict(String code, String message) { return new AgentException(HttpStatus.CONFLICT, code, message); }
-    private record ParsedProposal(String topic, AgentDtos.PracticeDifficulty difficulty, int requestedCount,
+    private record ParsedProposal(String topic, AgentDtos.PracticeDifficulty difficulty, int requestedCount, boolean allowDifficultyFallback,
             List<AgentInternalDtos.PracticeCandidateKey> candidates) {}
 }

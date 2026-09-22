@@ -186,6 +186,18 @@ class TrustedContext(StrictModel):
     media: list[AuthorizedMediaReference] = Field(default_factory=list, max_length=8)
     memorySummaries: list[AuthorizedMemorySummary] = Field(default_factory=list, max_length=8)
     toolGrants: list[ToolGrant] = Field(min_length=1, max_length=16)
+    activeSkillOffer: "ActiveSkillOffer | None" = None
+
+
+class ActiveSkillOffer(StrictModel):
+    """Java 从紧邻上一轮持久化终态恢复的单轮建议；普通历史文字不能伪造。"""
+
+    offerId: UUID
+    skillName: Literal["public-practice-generation"]
+    topic: str = Field(min_length=1, max_length=200)
+    difficulty: Literal["EASY", "MEDIUM", "HARD"] | None = None
+    questionCount: int | None = Field(default=None, ge=1, le=20)
+    offeredAfterMessageId: UUID
 
 
 class RunBudget(StrictModel):
@@ -227,6 +239,7 @@ class AgentRunRequest(StrictModel):
     requestedAt: datetime
     userMessage: UserMessage
     recentMessages: list[RecentMessage] = Field(default_factory=list, max_length=12)
+    requestedSkill: "RequestedSkill | None" = None
     trustedContext: TrustedContext
     budget: RunBudget
     timeoutPolicy: TimeoutPolicy
@@ -241,6 +254,13 @@ class AgentRunRequest(StrictModel):
         if any(item.messageId == self.messageId for item in self.recentMessages):
             raise ValueError("recentMessages 不得重复当前用户消息")
         return self
+
+
+class RequestedSkill(StrictModel):
+    """Java 白名单映射后的单条消息 Skill 请求，不接受浏览器内部名称。"""
+
+    skillName: Literal["public-practice-generation"]
+    selectionSource: Literal["USER_EXPLICIT"]
 
 
 class CancelRunRequest(StrictModel):

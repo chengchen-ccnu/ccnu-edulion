@@ -189,6 +189,9 @@ class QuestionBankIntegrationTest {
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
 
         var paper = assessments.learnerAssessment(learner.toString(), created.assessmentId().toString());
+        assertThatThrownBy(() -> assessments.learnerAssessmentEntry(learner.toString(),
+                created.assessmentId().toString(), "trace-autonomous-entry"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
         assertThat(objectMapper.writeValueAsString(paper)).doesNotContain("完整解析", "\"answers\"");
         var attempt = assessments.startAttempt(learner.toString(), created.assessmentId().toString(),
                 new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
@@ -285,6 +288,27 @@ class QuestionBankIntegrationTest {
 
         assertThat(reordered.candidates()).extracting(AgentAccessDtos.ValidatedPracticeCandidate::questionId)
                 .containsExactly(UUID.fromString(fresh.id()), UUID.fromString(recent.id()));
+    }
+
+    /** 未指定难度允许用其他难度补齐；显式难度/旧请求仍严格，确认创建复用同一排序。 */
+    @Test
+    void autonomousPracticeFillsOtherDifficultiesOnlyWhenAllowed() {
+        UUID learner = UUID.randomUUID();
+        var mediumInput = singleMedium("A");
+        var easyInput = new QuestionDtos.VersionInput(mediumInput.type(), QuestionModels.Difficulty.EASY,
+                mediumInput.stage(), mediumInput.grade(), mediumInput.subject(), mediumInput.stem(),
+                mediumInput.options(), mediumInput.answers(), mediumInput.analysis(), mediumInput.knowledgePointIds(), mediumInput.media());
+        var medium = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(), mediumInput, "test-medium").response();
+        var easy = questions.createImported(ADMIN, QuestionModels.Scope.SYSTEM, UUID.randomUUID().toString(), easyInput, "test-easy").response();
+        var keys = List.of(key(easy), key(medium));
+        var strict = new AgentAccessDtos.PracticeCriteria("方程", QuestionModels.Difficulty.MEDIUM, 5);
+        assertThat(autonomousPractices.validate(new AgentAccessDtos.ValidatePracticeCandidatesRequest(learner, strict, keys)).candidates()).hasSize(1);
+        var flexible = new AgentAccessDtos.PracticeCriteria("方程", QuestionModels.Difficulty.MEDIUM, 5, true);
+        assertThat(autonomousPractices.validate(new AgentAccessDtos.ValidatePracticeCandidatesRequest(learner, flexible, keys)).candidates())
+                .extracting(AgentAccessDtos.ValidatedPracticeCandidate::difficulty)
+                .containsExactly(QuestionModels.Difficulty.MEDIUM, QuestionModels.Difficulty.EASY);
+        var created = autonomousPractices.create(new AgentAccessDtos.CreateAutonomousPracticeRequest(UUID.randomUUID(), learner, flexible, keys));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM assessment_question WHERE assessment_id=?", Integer.class, created.assessmentId().toString())).isEqualTo(2);
     }
 
     @Test
