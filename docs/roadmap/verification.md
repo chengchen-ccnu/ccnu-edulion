@@ -1,5 +1,17 @@
 # Skeleton verification
 
+## 2026-09-22 T12C 需求确认、三段拆分与 T12C.0 准备
+
+- 需求收敛：经完整产品问答，T12C 不再实现旧规划中的薄弱知识点、风险/预警、课程转化、AI 班级总结、观看达标、提醒或导出。教师学情只呈现可解释的持久统计事实：当前发布内容的学习进度、VIDEO 观看时长、ARTICLE 完成、课程 PRACTICE，以及 HOMEWORK/EXAM 的提交、批改、成绩、排名和趋势。
+- 基础缺口：现有进度仅按 `learnerId + courseId + lessonId` 保存；Course 发布版本会复用 lessonId。若主视频被替换，学生端和教师报表都会错误继承旧视频的 100% 与观看时长。单用 `mediaId` 也无法区分 A→B→A 后第二次发布 A；因此 T12C.0 必须先增加发布内容修订身份。该身份不是 Hash：由 Course 发布事务在主视频替换/删除/重新绑定或类型变化时生成，普通标题/排序/说明/海报/附件变化沿用。
+- 继承边界：VIDEO 当前进度、Redis 缓冲、强制检查点和 MySQL 事实按内容修订隔离；旧播放器可静默继续写旧修订，刷新后取得新修订。旧事实内部保留但不进入当前页面。ARTICLE 按最终产品决定不因正文、正文图片或附件变化重置完成，仅类型变化重置；删除后新建课时不继承。
+- 报表口径：只展示 ACTIVE 学生，WITHDRAWN 不进入页面、筛选或常规统计接口。VIDEO 明确区分全班总时长、观看人数、ACTIVE 人均和观看者人均；ARTICLE 不伪造阅读时长。HOMEWORK/EXAM 沿用 T11C 门禁与最后有效 attempt，PRACTICE 使用学生最高有效成绩并与正式成绩分开；竞赛排名为 `1、1、3`，产品“领先比例”为 `(N-rank+1)/N*100`，并列第一均为 100%。
+- 时间事实：当前快照与 7/30/ALL 趋势分开；统一 `Asia/Shanghai`，7/30 按日，ALL 不超过 180 天按日、超过按月。T12C.1 需要 MySQL 幂等日聚合，Worker 与强制检查点按有效观看增量写入；上线前不伪造日历史，教师统计不读取 Redis 未落库值。响应保留 `generatedAt/dataThrough`，正常页面不显示机械横幅，仅降级或延迟时提示。
+- 页面与降级：`/teacher/students` 采用列表加 `overview|lessons|tasks` 按需明细，`/teacher/analytics` 展示课程/课时/任务/趋势；不复制 T11C 成绩册或批改器。IAM 失败保留编号和 Learning 事实，Course 失败返回 503，Redis 失败读取 MySQL。所有 owner 越权安全 404，前端不自行重算排名、均值或分布。
+- 拆分结论：T12C.0“课时内容身份与进度继承”先行；其合并后实施 T12C.1“教师学情与分析后端契约”；最后 T12C.2 只消费生成客户端交付两个页面。此前 `codex/t12c1-teacher-learning-analytics-contract` 尚无业务实现，应调整为 `codex/t12c0-lesson-content-progress-identity`，保留已有 T15D 合并记录但覆盖旧 T12C.1 直接实施结论。
+- local/test 边界：T12C.0 实施时精确清理残缺进度、事件、Redis 缓冲和相关聚合，随后幂等重建最小演示数据。用户手工创建的《线性代数》课程必须保留；只可使用其第二课时短视频做验收，不得改变课程结构、发布版本或媒体绑定。其他数据也仅可按明确 local/test/seed 标识清理。
+- 本次范围：只更新总控规划、页面规格和前置审计，不修改 OpenAPI、事件 Schema、Java、Vue、数据库迁移、脚本或业务数据，不连接 MySQL、Redis、RabbitMQ、OSS；没有创建数据库、表或伪数据。
+
 ## 2026-09-22 PR #72 合并与 T12C.1 恢复审计
 
 - 合并与清理：[PR #72](https://github.com/chengchen-ccnu/ccnu-edulion/pull/72) 在 Ready、可合并且最新 `763f6b8` 的 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@135e03d81fe569ae0e60d71a8af677616dbd85c1`；本地 `main` 已 `--ff-only` 同步，T15D 本地和远端分支均已删除。
