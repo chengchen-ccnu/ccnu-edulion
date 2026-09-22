@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-22 PR #73 合并与 T12C.1 前置审计
+
+- 合并与清理：[PR #73](https://github.com/chengchen-ccnu/ccnu-edulion/pull/73) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@1c981d5f32f559d0f246f06035b4fffb57847c36`；本地 `main` 已快进同步。GitHub 已删除远端 T12C.0 分支，本地功能分支也已清理。
+- T12C.0 状态：OpenAPI 0.25.0、Course V6、Learning V17、发布内容修订身份、Course Outbox/RabbitMQ 事件、内部精确校验、Redis/Worker/强制检查点/MySQL 隔离和生成客户端均已进入主线。真实 MySQL/Redis/RabbitMQ 长链通过，随机验收事实清零，固定最小 Seed 幂等保留；《线性代数》课程结构、发布版本与媒体绑定未改变。
+- T12C.1 事实前置：当前发布课时映射和内容修订隔离已由 T12C.0 提供；T11C 已提供 HOMEWORK/EXAM 最后有效 attempt、批改门禁、课程学生编号和成绩册聚合基础；现有 Learning 也具备课程 PRACTICE、报名与 IAM 批量昵称降级。教师统计可只读 MySQL 当前修订持久事实，不需要读取 Redis、跨服务查表或重新实现内容身份。
+- T12C.1 自有范围：先向前冻结 OpenAPI，再实现仅 ACTIVE 学生、当前内容进度/观看时长、任务成绩/竞赛排名及 `rankingPercent`、课程/课时/任务聚合、7/30/ALL 趋势和幂等日聚合。IAM 故障保留编号和统计，Course 故障返回 503，Redis 故障不影响已落库报表。不得加入 WITHDRAWN 页面、风险/薄弱知识点/转化/AI 总结/提醒/导出、Vue 或第二套成绩册。
+- 准备结论：T12C.1 的外部依赖和产品口径均已冻结，前置条件满足。已从干净 `main@1c981d5` 创建 `codex/t12c1-teacher-learning-analytics-contract`；本次只更新合并状态和前置审计，没有修改 OpenAPI、事件、Java、Vue、数据库、Redis 或业务逻辑。
+- 数据：本轮合并、同步、分支清理和只读审计未连接或修改 MySQL、Redis、RabbitMQ、OSS，未创建或清理数据库、表、迁移、伪数据或媒体对象。
+
 ## 2026-09-22 T12C.0 课时内容身份与进度继承实现及真实验收
 
 - Git 与范围：在指定分支 `codex/t12c0-lesson-content-progress-identity` 开始，基线 `main/origin/main@135e03d`，工作区初始干净且仅含两笔已审计的 T12C 规划提交。本任务没有实施 T12C.1 教师统计接口、T12C.2 页面、第二套学习路由、Redis Stream 或 RabbitMQ 进度队列。
