@@ -12,7 +12,7 @@
 - 《线性代数》保护：验收只读课程 `5cfa6b44-92f4-4d11-9fcb-67dd1c8c5057` 及第二个短视频课时；测试前后标题、发布版本、publicationRevision 与完整目录相等。没有修改其课程结构、主视频、媒体绑定、发布状态或 OSS 对象。
 - Seed 与数据：先实际执行既有 T12F.1 Seed 自带的精确 `CLEANUP`，删除固定 `f401` 图文 0% 进度及关联完成事实；随后在 `edu_platform_learning_dev` 和 Redis DB 4 执行 T12C.0 固定 Seed `REBUILD`，保留 course `...c120`、learner `...c121` 的 6 个当前投影、8 条进度/事件和 1 条 ARTICLE 完成事实，覆盖六类继承/重置场景。Seed 的 Initialize/Cleanup/Rebuild 都先精确清理相同固定标识；未清理任何来源不明数据，也未创建或修改 Course 演示课程。
 - 前置结论：T12C.1 所需的当前发布内容映射与修订隔离 MySQL 事实已满足，但必须等待本 Ready PR 合并后再实施；后续统计只读当前修订的 MySQL 持久事实，不得读取旧修订或 Redis 未落库值。完整说明见 [`docs/delivery/T12C.0-lesson-content-progress-identity.md`](../delivery/T12C.0-lesson-content-progress-identity.md)。
-- 提交与 PR：关键实现提交 `4fcd7899cdc25f6bfaea4ea7c0302f872f507220` 已按规则执行 `git push origin HEAD`；Ready [PR #73](https://github.com/chengchen-ccnu/ccnu-edulion/pull/73) 已创建、保持 Open 且不自行合并。创建时两组 CI 已启动，最终结果以 PR 检查为准。
+- 提交与 PR：关键实现提交 `4fcd7899cdc25f6bfaea4ea7c0302f872f507220` 已按规则执行 `git push origin HEAD`；Ready [PR #73](https://github.com/chengchen-ccnu/ccnu-edulion/pull/73) 已创建、保持 Open 且不自行合并。实现与首次交付记录触发的 push、pull_request 两组 Java、Python、Frontend、OpenAPI 共 8 项 CI 全部成功。
 
 ## 2026-09-22 T12C 需求确认、三段拆分与 T12C.0 准备
 
