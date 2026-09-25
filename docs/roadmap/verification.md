@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-25 PR #74 合并与 T12C.1.1 前置审计
+
+- 合并与清理：[PR #74](https://github.com/chengchen-ccnu/ccnu-edulion/pull/74) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全绿后，以普通 merge 合并为 `main@4ac84c2b92741605b7df9c1998e2328c68dc4d94`；本地 `main` 已快进同步，T12C.1 本地和 GitHub 远端功能分支均已清理。
+- 前端基础：OpenAPI 0.26.0、Learning V18、9 个教师学情接口和生成客户端已经进入 main；`/teacher/students`、`/teacher/analytics` 及固定导航槽位已在页面规格中确定，尚未实现 Vue，属于 T12C.2 范围。
+- 验收阻断：`TeacherAnalyticsService.studentTasks` 当前以整场 `resultsReady` 决定 `rawScore`、`totalPoints`、`scorePercent` 是否返回；`T12C1TeacherAnalyticsIntegrationTest` 也断言整场待批时 `scorePercent=null`。因此整场已关闭并完成草稿结算、本人最后有效 attempt 已批、其他学生仍待批时，教师无法在该学生详情看到已批个人成绩，违反本轮已确认页面规格。成绩册和整场 results 的统一门禁仍应保留。
+- 最小补口：T12C.1.1 先将 OpenAPI 向前标注为 0.26.1，说明现有 nullable 分数字段的可见条件并重生成客户端，再修正 owner 授权的单生任务投影。本人最终有效 attempt 已正式批改即可在单生详情显示原始得分、总分、百分制；未批时仍为 null。整场未全批完时，班级均分、极值、分布、排名、领先比例及成绩排序继续不可用。保持现有响应字段和类型，不新增迁移、第二套 DTO、Vue、缓存或新接口；增加整场关闭/结算、单人已批/未批、非 owner、最后有效 attempt 和门禁不回退测试。
+- 准备结论：T12C.2 的页面规格与生成客户端已具备，但完整验收前置不满足；先从干净 `main@4ac84c2` 准备 `codex/t12c1.1-teacher-graded-score-projection`。本轮只更新规划和状态，不改业务代码，不把旧分支提交复制到新分支；T12C.1.1 合并后再从最新 main 准备 T12C.2。
+- 数据：本轮 Git/PR、文档与只读审计未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，也未创建或清理数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
 ## 2026-09-22 PR #73 合并与 T12C.1 前置审计
 
 - 合并与清理：[PR #73](https://github.com/chengchen-ccnu/ccnu-edulion/pull/73) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@1c981d5f32f559d0f246f06035b4fffb57847c36`；本地 `main` 已快进同步。GitHub 已删除远端 T12C.0 分支，本地功能分支也已清理。
