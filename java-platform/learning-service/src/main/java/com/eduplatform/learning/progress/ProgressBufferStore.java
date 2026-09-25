@@ -3,6 +3,8 @@ package com.eduplatform.learning.progress;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository.ProgressRow;
 import com.eduplatform.learning.web.LearningDtos;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -25,5 +27,13 @@ public interface ProgressBufferStore {
     /** Redis Hash 中保存的完整聚合快照，watchedSeconds 已是该课时的累计值而非本次增量。 */
     record BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
             long positionSeconds,
-            long watchedSeconds, boolean completed, Instant lastEventAt, long version) {}
+            long watchedSeconds, boolean completed, Instant lastEventAt, long version,
+            Map<LocalDate, Long> watchedByDay, LocalDate firstStartedDay) {
+        /** 兼容既有缓冲测试构造；旧快照没有可靠的每日明细，不伪造回填。 */
+        public BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
+                long positionSeconds, long watchedSeconds, boolean completed, Instant lastEventAt, long version) {
+            this(learnerId, courseId, lessonId, contentRevisionId, positionSeconds, watchedSeconds,
+                    completed, lastEventAt, version, Map.of(), null);
+        }
+    }
 }

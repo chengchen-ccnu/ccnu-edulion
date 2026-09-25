@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.25.0
-  description: T12C.0 adds Course-owned published lesson content revision identities. Student content, video progress, ARTICLE completion and current course progress carry the server-issued identity so a replaced/rebound VIDEO or lesson type change starts a new progress aggregate, while title/order/description/poster/attachment and ARTICLE body changes inherit the existing identity. The identity is neither lessonId nor mediaId and is never derived from a content hash.
+  version: 0.26.0
+  description: T12C.1 adds owner-only, ACTIVE-only teacher learning analytics over current published content and persisted Learning facts. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods. Grade distributions and ranks are omitted until the T11C close, settlement and grading gate opens.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2609,15 +2609,143 @@ paths:
         '422': {$ref: '#/components/responses/ValidationFailed'}
   /api/v1/teacher/learning/courses/{courseId}/students:
     get:
-      tags: [Teacher Assessments]
+      tags: [Teacher Learning Analytics]
       operationId: listCourseStudentLearning
-      summary: Page enrollment, progress and grading projections within the current teacher's owned course
+      summary: Page ACTIVE student learning snapshots for the owner teacher
+      description: T12C.1 replaces the old teacher student summary projection; clients must regenerate against 0.26.0. Current published content only. WITHDRAWN students never appear. Score sorting is rejected while any formal assessment is not closed, settled and fully graded. Nickname lookup failure keeps student numbers and marks partial degradation. The former raw cross-task average is removed because it could reveal formal scores before the readiness gate.
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: sort, in: query, schema: {type: string, enum: [STUDENT_NUMBER, LAST_ACTIVITY, PROGRESS, WATCHED_SECONDS, HOMEWORK_AVERAGE, EXAM_AVERAGE], default: STUDENT_NUMBER}}
+        - {name: direction, in: query, schema: {type: string, enum: [asc, desc], default: asc}}
+        - {name: keyword, in: query, schema: {type: string, maxLength: 120}, description: Nickname or course student number; bounded IAM lookup.}
+        - {name: minProgressPercent, in: query, schema: {type: number, minimum: 0, maximum: 100}}
+        - {name: maxProgressPercent, in: query, schema: {type: number, minimum: 0, maximum: 100}}
+        - {name: missingOnly, in: query, schema: {type: boolean}}
+        - {name: pendingOnly, in: query, schema: {type: boolean}}
+      responses:
+        '200': {description: ACTIVE student page or NO_PUBLISHED_VERSION empty state., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentAnalyticsPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '409': {$ref: '#/components/responses/LearningConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/overview:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: getTeacherStudentOverview
+      summary: Get one ACTIVE student's current-content and course-task summary
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - {name: learnerId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Student summary., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentOverview'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/lessons:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: listTeacherStudentLessons
+      summary: Page one ACTIVE student's current published lesson facts
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - {name: learnerId, in: path, required: true, schema: {type: string, format: uuid}}
+        - $ref: '#/components/parameters/Page'
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200': {description: Current lessons only., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentLessonPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/tasks:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: listTeacherStudentTasks
+      summary: Page one ACTIVE student's COURSE tasks and safe score facts
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - {name: learnerId, in: path, required: true, schema: {type: string, format: uuid}}
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200': {description: Last valid formal attempt or highest valid PRACTICE score; closed grading gate controls score fields., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentTaskPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/trend:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: getTeacherStudentTrend
+      summary: Get one ACTIVE student's persisted daily or monthly activity trend
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - {name: learnerId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/AnalyticsWindow'}
+      responses:
+        '200': {description: Current revision trend., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherLearningTrend'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/analytics/overview:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: getTeacherCourseAnalytics
+      summary: Get current-content course metrics for ACTIVE students
+      parameters: [{$ref: '#/components/parameters/CourseId'}]
+      responses:
+        '200': {description: Course snapshot., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseAnalytics'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/analytics/lessons:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: listTeacherCourseLessonAnalytics
+      summary: Page current published lesson aggregates
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - $ref: '#/components/parameters/Page'
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200': {description: Lesson aggregates., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseLessonPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/analytics/tasks:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: listTeacherCourseTaskAnalytics
+      summary: Page COURSE task aggregates with T11C grading gate
       parameters:
         - $ref: '#/components/parameters/CourseId'
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
       responses:
-        '200': {description: Teacher-scoped learning projection., content: {application/json: {schema: {$ref: '#/components/schemas/StudentLearningPage'}}}}
+        '200': {description: Task aggregates., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseTaskPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+  /api/v1/teacher/learning/courses/{courseId}/analytics/trend:
+    get:
+      tags: [Teacher Learning Analytics]
+      operationId: getTeacherCourseTrend
+      summary: Get persisted activity trend for current published content
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - {$ref: '#/components/parameters/AnalyticsWindow'}
+        - {name: lessonId, in: query, schema: {type: string, format: uuid}, description: Optional current published lesson filter.}
+      responses:
+        '200': {description: Course or lesson trend., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherLearningTrend'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
@@ -3414,6 +3542,11 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    AnalyticsWindow:
+      name: window
+      in: query
+      description: Shanghai calendar window; ALL starts at the first available current-content fact.
+      schema: {type: string, enum: [ALL, LAST_7_DAYS, LAST_30_DAYS], default: LAST_7_DAYS}
     AgentConversationId:
       name: conversationId
       in: path
@@ -7238,6 +7371,186 @@ components:
         submittedAttemptCount: {type: integer, minimum: 0}
         gradedAttemptCount: {type: integer, minimum: 0}
         averageScore: {type: [number, 'null'], minimum: 0}
+    TeacherAnalyticsPeriod:
+      type: object
+      description: Snapshot responses use LIFETIME. dataThrough is the latest persisted fact included, never a Redis-only value. Empty courses have null dataThrough.
+      required: [periodStart, periodEnd, zoneId, granularity, generatedAt, dataThrough]
+      properties:
+        periodStart: {type: string, format: date}
+        periodEnd: {type: string, format: date}
+        zoneId: {type: string, const: Asia/Shanghai}
+        granularity: {type: string, enum: [LIFETIME, DAY, MONTH]}
+        generatedAt: {type: string, format: date-time}
+        dataThrough: {type: [string, 'null'], format: date-time}
+    TeacherStudentAnalytics:
+      type: object
+      required: [learnerId, courseStudentNumber, nickname, nicknameAvailable, completedLessons, totalLessons, progressPercent, watchedSeconds, lastActivityAt, homeworkAverage, examAverage, missingCount, pendingCount]
+      properties:
+        learnerId: {type: string, format: uuid}
+        courseStudentNumber: {type: string}
+        nickname: {type: [string, 'null']}
+        nicknameAvailable: {type: boolean}
+        completedLessons: {type: integer, minimum: 0}
+        totalLessons: {type: integer, minimum: 0}
+        progressPercent: {type: number, minimum: 0, maximum: 100}
+        watchedSeconds: {type: integer, format: int64, minimum: 0}
+        lastActivityAt: {type: [string, 'null'], format: date-time}
+        homeworkAverage: {type: [number, 'null'], description: Null while any formal course assessment gate is closed.}
+        examAverage: {type: [number, 'null'], description: Null while any formal course assessment gate is closed.}
+        missingCount: {type: integer, minimum: 0}
+        pendingCount: {type: integer, minimum: 0}
+    TeacherStudentAnalyticsPage:
+      type: object
+      required: [items, page, size, total, state, nicknameDependencyFailed, period]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TeacherStudentAnalytics'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+        state: {type: string, enum: [READY, NO_PUBLISHED_VERSION]}
+        nicknameDependencyFailed: {type: boolean}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherStudentOverview:
+      type: object
+      required: [student, practiceSubmissionCount, nicknameDependencyFailed, period]
+      properties:
+        student: {$ref: '#/components/schemas/TeacherStudentAnalytics'}
+        practiceSubmissionCount: {type: integer, minimum: 0}
+        nicknameDependencyFailed: {type: boolean}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherStudentLesson:
+      type: object
+      required: [lessonId, contentRevisionId, lessonType, started, completed, watchedSeconds, lastActivityAt]
+      properties:
+        lessonId: {type: string, format: uuid}
+        contentRevisionId: {type: string, format: uuid}
+        lessonType: {type: string, enum: [VIDEO, ARTICLE, ASSESSMENT]}
+        started: {type: boolean}
+        completed: {type: boolean}
+        watchedSeconds: {type: [integer, 'null'], format: int64, description: Null for ARTICLE and ASSESSMENT.}
+        lastActivityAt: {type: [string, 'null'], format: date-time}
+    TeacherStudentLessonPage:
+      type: object
+      required: [items, page, size, total, period]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TeacherStudentLesson'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 200}
+        total: {type: integer, format: int64, minimum: 0}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherStudentTask:
+      type: object
+      required: [assessmentId, lessonId, title, type, status, submitted, late, gradingPending, resultsReady, rawScore, totalPoints, scorePercent, rank, rankedStudentCount, rankingPercent]
+      properties:
+        assessmentId: {type: string, format: uuid}
+        lessonId: {type: [string, 'null'], format: uuid}
+        title: {type: string}
+        type: {type: string, enum: [PRACTICE, HOMEWORK, EXAM]}
+        status: {type: string, enum: [PUBLISHED, ARCHIVED]}
+        submitted: {type: boolean}
+        late: {type: boolean}
+        gradingPending: {type: boolean}
+        resultsReady: {type: boolean}
+        rawScore: {type: [number, 'null']}
+        totalPoints: {type: [number, 'null']}
+        scorePercent: {type: [number, 'null']}
+        rank: {type: [integer, 'null'], minimum: 1}
+        rankedStudentCount: {type: [integer, 'null'], minimum: 1}
+        rankingPercent: {type: [number, 'null'], description: Product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile.}
+    TeacherStudentTaskPage:
+      type: object
+      required: [items, page, size, total, period]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TeacherStudentTask'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherCourseAnalytics:
+      type: object
+      required: [state, activeStudentCount, totalLessonCount, completedStudentCount, watchedSeconds, actualViewerCount, averageWatchedPerActiveStudent, averageWatchedPerViewer, period]
+      properties:
+        state: {type: string, enum: [READY, NO_PUBLISHED_VERSION]}
+        activeStudentCount: {type: integer, minimum: 0}
+        totalLessonCount: {type: integer, minimum: 0}
+        completedStudentCount: {type: integer, minimum: 0}
+        watchedSeconds: {type: integer, format: int64, minimum: 0}
+        actualViewerCount: {type: integer, minimum: 0}
+        averageWatchedPerActiveStudent: {type: number, minimum: 0}
+        averageWatchedPerViewer: {type: number, minimum: 0}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherCourseLesson:
+      type: object
+      required: [lessonId, contentRevisionId, lessonType, activeStudentCount, startedCount, completedCount, completionRate, watchedSeconds, actualViewerCount, averageWatchedPerActiveStudent, averageWatchedPerViewer]
+      properties:
+        lessonId: {type: string, format: uuid}
+        contentRevisionId: {type: string, format: uuid}
+        lessonType: {type: string, enum: [VIDEO, ARTICLE, ASSESSMENT]}
+        activeStudentCount: {type: integer, minimum: 0}
+        startedCount: {type: integer, minimum: 0}
+        completedCount: {type: integer, minimum: 0}
+        completionRate: {type: number, minimum: 0, maximum: 100}
+        watchedSeconds: {type: [integer, 'null'], format: int64}
+        actualViewerCount: {type: [integer, 'null']}
+        averageWatchedPerActiveStudent: {type: [number, 'null']}
+        averageWatchedPerViewer: {type: [number, 'null']}
+    TeacherCourseLessonPage:
+      type: object
+      required: [items, page, size, total, period]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TeacherCourseLesson'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 200}
+        total: {type: integer, format: int64, minimum: 0}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherCourseTask:
+      type: object
+      required: [assessmentId, lessonId, title, type, status, expectedCount, submittedCount, missingCount, lateCount, pendingCount, resultsReady, averageScorePercent, highestScorePercent, lowestScorePercent, distribution]
+      properties:
+        assessmentId: {type: string, format: uuid}
+        lessonId: {type: [string, 'null'], format: uuid}
+        title: {type: string}
+        type: {type: string, enum: [PRACTICE, HOMEWORK, EXAM]}
+        status: {type: string, enum: [PUBLISHED, ARCHIVED]}
+        expectedCount: {type: integer, minimum: 0}
+        submittedCount: {type: integer, minimum: 0}
+        missingCount: {type: integer, minimum: 0}
+        lateCount: {type: integer, minimum: 0}
+        pendingCount: {type: integer, minimum: 0}
+        resultsReady: {type: boolean}
+        averageScorePercent: {type: [number, 'null']}
+        highestScorePercent: {type: [number, 'null']}
+        lowestScorePercent: {type: [number, 'null']}
+        distribution: {type: [object, 'null'], additionalProperties: {type: integer, minimum: 0}}
+    TeacherCourseTaskPage:
+      type: object
+      required: [items, page, size, total, period]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TeacherCourseTask'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
+    TeacherLearningTrendPoint:
+      type: object
+      required: [periodStart, periodEnd, watchedSeconds, activeStudentCount, firstStartedLessons, completedLessons, formalSubmissionCount, distinctSubmittingStudents, autoSettledSubmissionCount]
+      properties:
+        periodStart: {type: string, format: date}
+        periodEnd: {type: string, format: date}
+        watchedSeconds: {type: integer, format: int64, minimum: 0}
+        activeStudentCount: {type: integer, minimum: 0}
+        firstStartedLessons: {type: integer, minimum: 0}
+        completedLessons: {type: integer, minimum: 0}
+        formalSubmissionCount: {type: integer, minimum: 0}
+        distinctSubmittingStudents: {type: integer, minimum: 0}
+        autoSettledSubmissionCount: {type: integer, minimum: 0}
+    TeacherLearningTrend:
+      type: object
+      required: [window, points, period]
+      properties:
+        window: {type: string, enum: [ALL, LAST_7_DAYS, LAST_30_DAYS]}
+        points: {type: array, items: {$ref: '#/components/schemas/TeacherLearningTrendPoint'}}
+        period: {$ref: '#/components/schemas/TeacherAnalyticsPeriod'}
     StudentLearningPage:
       type: object
       additionalProperties: false

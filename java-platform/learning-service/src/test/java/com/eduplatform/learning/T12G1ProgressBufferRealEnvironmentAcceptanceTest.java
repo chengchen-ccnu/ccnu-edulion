@@ -292,6 +292,10 @@ class T12G1ProgressBufferRealEnvironmentAcceptanceTest {
 
     private void cleanup() {
         for (String learnerId : learners) {
+            jdbc.update("DELETE FROM lesson_learning_day WHERE learner_id=? AND course_id=? AND lesson_id=?",
+                    learnerId, COURSE, LESSON);
+            jdbc.update("DELETE FROM learning_activity_day WHERE learner_id=? AND course_id=?",
+                    learnerId, COURSE);
             jdbc.update("DELETE FROM lesson_progress_event WHERE learner_id=? AND course_id=? AND lesson_id=?",
                     learnerId, COURSE, LESSON);
             jdbc.update("DELETE FROM lesson_progress WHERE learner_id=? AND course_id=? AND lesson_id=?",

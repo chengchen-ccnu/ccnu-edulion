@@ -120,6 +120,10 @@ class T12C0RealEnvironmentAcceptanceTest {
             assertThat(after.path("title").asText()).isEqualTo("线性代数");
             assertThat(afterProtectedFacts).isEqualTo(protectedCourseFacts);
         } finally {
+            jdbc.update("DELETE FROM lesson_learning_day WHERE learner_id=? AND course_id=?",
+                    learnerId, LINEAR_ALGEBRA_COURSE);
+            jdbc.update("DELETE FROM learning_activity_day WHERE learner_id=? AND course_id=?",
+                    learnerId, LINEAR_ALGEBRA_COURSE);
             jdbc.update("DELETE FROM lesson_progress_event WHERE learner_id=? AND course_id=?",
                     learnerId, LINEAR_ALGEBRA_COURSE);
             jdbc.update("DELETE FROM lesson_progress WHERE learner_id=? AND course_id=?",

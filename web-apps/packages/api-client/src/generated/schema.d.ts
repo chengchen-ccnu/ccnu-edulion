@@ -1986,8 +1986,147 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Page enrollment, progress and grading projections within the current teacher's owned course */
+        /**
+         * Page ACTIVE student learning snapshots for the owner teacher
+         * @description T12C.1 replaces the old teacher student summary projection; clients must regenerate against 0.26.0. Current published content only. WITHDRAWN students never appear. Score sorting is rejected while any formal assessment is not closed, settled and fully graded. Nickname lookup failure keeps student numbers and marks partial degradation. The former raw cross-task average is removed because it could reveal formal scores before the readiness gate.
+         */
         get: operations["listCourseStudentLearning"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one ACTIVE student's current-content and course-task summary */
+        get: operations["getTeacherStudentOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page one ACTIVE student's current published lesson facts */
+        get: operations["listTeacherStudentLessons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page one ACTIVE student's COURSE tasks and safe score facts */
+        get: operations["listTeacherStudentTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one ACTIVE student's persisted daily or monthly activity trend */
+        get: operations["getTeacherStudentTrend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/analytics/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current-content course metrics for ACTIVE students */
+        get: operations["getTeacherCourseAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/analytics/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page current published lesson aggregates */
+        get: operations["listTeacherCourseLessonAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/analytics/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page COURSE task aggregates with T11C grading gate */
+        get: operations["listTeacherCourseTaskAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/learning/courses/{courseId}/analytics/trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get persisted activity trend for current published content */
+        get: operations["getTeacherCourseTrend"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4895,6 +5034,202 @@ export interface components {
             gradedAttemptCount: number;
             averageScore: number | null;
         };
+        /** @description Snapshot responses use LIFETIME. dataThrough is the latest persisted fact included, never a Redis-only value. Empty courses have null dataThrough. */
+        TeacherAnalyticsPeriod: {
+            /** Format: date */
+            periodStart: string;
+            /** Format: date */
+            periodEnd: string;
+            /** @constant */
+            zoneId: "Asia/Shanghai";
+            /** @enum {string} */
+            granularity: "LIFETIME" | "DAY" | "MONTH";
+            /** Format: date-time */
+            generatedAt: string;
+            /** Format: date-time */
+            dataThrough: string | null;
+        };
+        TeacherStudentAnalytics: {
+            /** Format: uuid */
+            learnerId: string;
+            courseStudentNumber: string;
+            nickname: string | null;
+            nicknameAvailable: boolean;
+            completedLessons: number;
+            totalLessons: number;
+            progressPercent: number;
+            /** Format: int64 */
+            watchedSeconds: number;
+            /** Format: date-time */
+            lastActivityAt: string | null;
+            /** @description Null while any formal course assessment gate is closed. */
+            homeworkAverage: number | null;
+            /** @description Null while any formal course assessment gate is closed. */
+            examAverage: number | null;
+            missingCount: number;
+            pendingCount: number;
+        };
+        TeacherStudentAnalyticsPage: {
+            items: components["schemas"]["TeacherStudentAnalytics"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            /** @enum {string} */
+            state: "READY" | "NO_PUBLISHED_VERSION";
+            nicknameDependencyFailed: boolean;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherStudentOverview: {
+            student: components["schemas"]["TeacherStudentAnalytics"];
+            practiceSubmissionCount: number;
+            nicknameDependencyFailed: boolean;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherStudentLesson: {
+            /** Format: uuid */
+            lessonId: string;
+            /** Format: uuid */
+            contentRevisionId: string;
+            /** @enum {string} */
+            lessonType: "VIDEO" | "ARTICLE" | "ASSESSMENT";
+            started: boolean;
+            completed: boolean;
+            /**
+             * Format: int64
+             * @description Null for ARTICLE and ASSESSMENT.
+             */
+            watchedSeconds: number | null;
+            /** Format: date-time */
+            lastActivityAt: string | null;
+        };
+        TeacherStudentLessonPage: {
+            items: components["schemas"]["TeacherStudentLesson"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherStudentTask: {
+            /** Format: uuid */
+            assessmentId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            /** @enum {string} */
+            type: "PRACTICE" | "HOMEWORK" | "EXAM";
+            /** @enum {string} */
+            status: "PUBLISHED" | "ARCHIVED";
+            submitted: boolean;
+            late: boolean;
+            gradingPending: boolean;
+            resultsReady: boolean;
+            rawScore: number | null;
+            totalPoints: number | null;
+            scorePercent: number | null;
+            rank: number | null;
+            rankedStudentCount: number | null;
+            /** @description Product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile. */
+            rankingPercent: number | null;
+        };
+        TeacherStudentTaskPage: {
+            items: components["schemas"]["TeacherStudentTask"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherCourseAnalytics: {
+            /** @enum {string} */
+            state: "READY" | "NO_PUBLISHED_VERSION";
+            activeStudentCount: number;
+            totalLessonCount: number;
+            completedStudentCount: number;
+            /** Format: int64 */
+            watchedSeconds: number;
+            actualViewerCount: number;
+            averageWatchedPerActiveStudent: number;
+            averageWatchedPerViewer: number;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherCourseLesson: {
+            /** Format: uuid */
+            lessonId: string;
+            /** Format: uuid */
+            contentRevisionId: string;
+            /** @enum {string} */
+            lessonType: "VIDEO" | "ARTICLE" | "ASSESSMENT";
+            activeStudentCount: number;
+            startedCount: number;
+            completedCount: number;
+            completionRate: number;
+            /** Format: int64 */
+            watchedSeconds: number | null;
+            actualViewerCount: number | null;
+            averageWatchedPerActiveStudent: number | null;
+            averageWatchedPerViewer: number | null;
+        };
+        TeacherCourseLessonPage: {
+            items: components["schemas"]["TeacherCourseLesson"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherCourseTask: {
+            /** Format: uuid */
+            assessmentId: string;
+            /** Format: uuid */
+            lessonId: string | null;
+            title: string;
+            /** @enum {string} */
+            type: "PRACTICE" | "HOMEWORK" | "EXAM";
+            /** @enum {string} */
+            status: "PUBLISHED" | "ARCHIVED";
+            expectedCount: number;
+            submittedCount: number;
+            missingCount: number;
+            lateCount: number;
+            pendingCount: number;
+            resultsReady: boolean;
+            averageScorePercent: number | null;
+            highestScorePercent: number | null;
+            lowestScorePercent: number | null;
+            distribution: {
+                [key: string]: number;
+            } | null;
+        };
+        TeacherCourseTaskPage: {
+            items: components["schemas"]["TeacherCourseTask"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
+        TeacherLearningTrendPoint: {
+            /** Format: date */
+            periodStart: string;
+            /** Format: date */
+            periodEnd: string;
+            /** Format: int64 */
+            watchedSeconds: number;
+            activeStudentCount: number;
+            firstStartedLessons: number;
+            completedLessons: number;
+            formalSubmissionCount: number;
+            distinctSubmittingStudents: number;
+            autoSettledSubmissionCount: number;
+        };
+        TeacherLearningTrend: {
+            /** @enum {string} */
+            window: "ALL" | "LAST_7_DAYS" | "LAST_30_DAYS";
+            points: components["schemas"]["TeacherLearningTrendPoint"][];
+            period: components["schemas"]["TeacherAnalyticsPeriod"];
+        };
         StudentLearningPage: {
             items: components["schemas"]["StudentLearningSummary"][];
             page: number;
@@ -5828,6 +6163,8 @@ export interface components {
         /** @description One-based page number. */
         Page: number;
         Size: number;
+        /** @description Shanghai calendar window; ALL starts at the first available current-content fact. */
+        AnalyticsWindow: "ALL" | "LAST_7_DAYS" | "LAST_30_DAYS";
         /** @description Owner-scoped AI conversation ID; foreign IDs are reported as not found. */
         AgentConversationId: string;
         /** @description Owner-scoped retained user message ID; foreign, stale or non-last messages are reported as not found. */
@@ -9325,6 +9662,14 @@ export interface operations {
                 /** @description One-based page number. */
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
+                sort?: "STUDENT_NUMBER" | "LAST_ACTIVITY" | "PROGRESS" | "WATCHED_SECONDS" | "HOMEWORK_AVERAGE" | "EXAM_AVERAGE";
+                direction?: "asc" | "desc";
+                /** @description Nickname or course student number; bounded IAM lookup. */
+                keyword?: string;
+                minProgressPercent?: number;
+                maxProgressPercent?: number;
+                missingOnly?: boolean;
+                pendingOnly?: boolean;
             };
             header?: never;
             path: {
@@ -9334,13 +9679,251 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Teacher-scoped learning projection. */
+            /** @description ACTIVE student page or NO_PUBLISHED_VERSION empty state. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StudentLearningPage"];
+                    "application/json": components["schemas"]["TeacherStudentAnalyticsPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["LearningConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherStudentOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                learnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Student summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherStudentOverview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    listTeacherStudentLessons: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: number;
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                learnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current lessons only. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherStudentLessonPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    listTeacherStudentTasks: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                learnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Last valid formal attempt or highest valid PRACTICE score; closed grading gate controls score fields. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherStudentTaskPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherStudentTrend: {
+        parameters: {
+            query?: {
+                /** @description Shanghai calendar window; ALL starts at the first available current-content fact. */
+                window?: components["parameters"]["AnalyticsWindow"];
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+                learnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current revision trend. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherLearningTrend"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherCourseAnalytics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Course snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourseAnalytics"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    listTeacherCourseLessonAnalytics: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: number;
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lesson aggregates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourseLessonPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    listTeacherCourseTaskAnalytics: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Task aggregates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCourseTaskPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LearningNotFound"];
+            503: components["responses"]["LearningDependencyUnavailable"];
+        };
+    };
+    getTeacherCourseTrend: {
+        parameters: {
+            query?: {
+                /** @description Shanghai calendar window; ALL starts at the first available current-content fact. */
+                window?: components["parameters"]["AnalyticsWindow"];
+                /** @description Optional current published lesson filter. */
+                lessonId?: string;
+            };
+            header?: never;
+            path: {
+                courseId: components["parameters"]["CourseId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Course or lesson trend. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherLearningTrend"];
                 };
             };
             401: components["responses"]["Unauthorized"];

@@ -87,6 +87,16 @@ class HttpCourseFactsClientTest {
     }
 
     @Test
+    /** 教师本人草稿无发布版本为合法空态；Course 失败仍 503，其他 owner 仍 404。 */
+    void ownerDraftIsEmptyButFailureAndForeignOwnerAreHidden() {
+        assertThat(client.ownedPublishedOrEmpty("draft", TEACHER_ID, "trace-draft")).isNull();
+        assertThatThrownBy(() -> client.ownedPublishedOrEmpty("failed", TEACHER_ID, "trace-failed"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(503));
+        assertThatThrownBy(() -> client.ownedPublishedOrEmpty("forbidden", TEACHER_ID, "trace-foreign"))
+                .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(404));
+    }
+
+    @Test
     void missingRequiredFieldsAndWrongFieldTypesRemain503() {
         assertThatThrownBy(() -> client.requirePublished("invalid-missing", "trace-invalid-missing"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(503));
@@ -106,6 +116,11 @@ class HttpCourseFactsClientTest {
 
     private void handle(HttpExchange exchange) throws java.io.IOException {
         String path = exchange.getRequestURI().getPath();
+        if (path.endsWith("/draft")) {
+            if (path.contains("/teacher/")) { exchange.sendResponseHeaders(200, -1); exchange.close(); }
+            else { exchange.sendResponseHeaders(404, -1); exchange.close(); }
+            return;
+        }
         if (path.endsWith("/missing")) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
         if (path.endsWith("/forbidden")) { exchange.sendResponseHeaders(403, -1); exchange.close(); return; }
         if (path.endsWith("/failed")) { exchange.sendResponseHeaders(500, -1); exchange.close(); return; }

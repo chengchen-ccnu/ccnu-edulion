@@ -112,6 +112,8 @@ class T12C0ProgressIdentityDemoSeedTest {
     /** 只按固定 test learner/course 和其修订 Key 清理；不会匹配任何来源不明的数据。 */
     private void cleanup() {
         transactions.executeWithoutResult(status -> {
+            jdbc.update("DELETE FROM lesson_learning_day WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
+            jdbc.update("DELETE FROM learning_activity_day WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
             jdbc.update("DELETE FROM article_completion_request WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
             jdbc.update("DELETE FROM article_lesson_completion WHERE learner_id=? AND course_id=?", LEARNER, COURSE);
             jdbc.update("DELETE FROM lesson_progress_event WHERE learner_id=? AND course_id=?", LEARNER, COURSE);

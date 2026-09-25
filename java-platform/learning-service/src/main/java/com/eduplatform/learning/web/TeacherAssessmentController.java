@@ -186,17 +186,6 @@ public class TeacherAssessmentController {
         return learning.manualGrade(LearningIdentity.teaching(userId, roles, permissions).userId(), attemptId, request);
     }
 
-    @GetMapping("/api/v1/teacher/learning/courses/{courseId}/students")
-    /** 验证课程 owner 后分页返回报名学生进度与成绩投影。 */
-    public LearningDtos.StudentLearningPage students(@RequestHeader("X-User-Id") String userId,
-            @RequestHeader(value = "X-User-Roles", required = false) String roles,
-            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
-            @PathVariable String courseId, @RequestParam(defaultValue = "1") @Min(1) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size, HttpServletRequest servlet) {
-        return learning.studentLearning(LearningIdentity.teaching(userId, roles, permissions).userId(), courseId,
-                page, size, trace(servlet));
-    }
-
     @GetMapping("/api/v1/teacher/gradebook")
     /** 查询课程成绩册矩阵；服务层在每次请求验证 teaching 能力、课程 owner 和 Learning 数据范围。 */
     public LearningDtos.Gradebook gradebook(@RequestHeader("X-User-Id") String userId,

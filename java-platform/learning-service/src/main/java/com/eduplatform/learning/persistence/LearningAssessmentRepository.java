@@ -18,6 +18,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,6 +41,7 @@ import tools.jackson.databind.ObjectMapper;
 @Repository
 @ConditionalOnProperty(prefix = "spring.flyway", name = "enabled", havingValue = "true")
 public class LearningAssessmentRepository {
+    private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
 
@@ -206,6 +209,9 @@ public class LearningAssessmentRepository {
         Instant mergedEventAt = eventAt.isAfter(current.lastEventAt()) ? eventAt : current.lastEventAt();
         jdbc.update("UPDATE lesson_progress SET position_seconds=?,watched_seconds=?,completed=?,last_event_at=?,revision=revision+1,updated_at=? WHERE id=?",
                 mergedPosition, mergedWatched, mergedCompleted, ts(mergedEventAt), ts(now), current.id());
+        // 与进度行锁在同一事务内写实际增量；重复 eventId 不会再次进入此方法。
+        upsertLearningDay(current, day(eventAt), mergedWatched - current.watchedSeconds(),
+                current.revision() == 0, !current.completed() && mergedCompleted, eventAt);
     }
 
     /**
@@ -215,6 +221,15 @@ public class LearningAssessmentRepository {
     @Transactional
     public void applyBufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId, long position,
             long watched, boolean completed, Instant eventAt, long bufferVersion, Instant now) {
+        applyBufferedProgress(learnerId, courseId, lessonId, contentRevisionId, position, watched, completed,
+                eventAt, bufferVersion, now, Map.of(), null);
+    }
+
+    /** Worker 按 Redis 每日有效增量落库；版本检查和进度行锁使 ACK 丢失后的重试只读不重复累计。 */
+    @Transactional
+    public void applyBufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId, long position,
+            long watched, boolean completed, Instant eventAt, long bufferVersion, Instant now,
+            Map<LocalDate, Long> watchedByDay, LocalDate firstStartedDay) {
         ensureProgress(java.util.UUID.randomUUID().toString(), learnerId, courseId, lessonId,
                 contentRevisionId, eventAt, now);
         ProgressRow current = lockProgress(learnerId, courseId, contentRevisionId);
@@ -229,6 +244,55 @@ public class LearningAssessmentRepository {
         jdbc.update("UPDATE lesson_progress SET position_seconds=?,watched_seconds=?,completed=?,last_event_at=?,buffer_version=?,revision=revision+?,updated_at=? WHERE id=?",
                 mergedPosition, mergedWatched, mergedCompleted, ts(mergedEventAt), bufferVersion,
                 changed ? 1 : 0, ts(now), current.id());
+        long remaining = mergedWatched - current.watchedSeconds();
+        // 极端 Redis 故障下，较新的 MySQL 检查点可能先于旧快照落库；无法精确拆分重叠增量时
+        // 只保留 LIFETIME 累计，不猜测历史自然日。
+        Map<LocalDate, Long> attributableDays = current.lastEventAt().isAfter(eventAt) && current.revision() > 0
+                ? Map.of() : watchedByDay;
+        for (Map.Entry<LocalDate, Long> entry : new java.util.TreeMap<>(attributableDays).entrySet()) {
+            long accepted = Math.min(remaining, Math.max(0, entry.getValue()));
+            if (accepted > 0 || (current.revision() == 0 && entry.getKey().equals(firstStartedDay))) {
+                upsertLearningDay(current, entry.getKey(), accepted,
+                        current.revision() == 0 && entry.getKey().equals(firstStartedDay), false, eventAt);
+            }
+            remaining -= accepted;
+        }
+        // 升级前已有的 Redis 快照没有每日来源；差额保留在 LIFETIME，不伪造发生日。
+        if (current.revision() == 0 && firstStartedDay != null && watchedByDay.isEmpty()) {
+            upsertLearningDay(current, firstStartedDay, 0, true, false, eventAt);
+        }
+    }
+
+    /** 同一学习者、内容修订、上海自然日单行累加；调用者必须已持有 lesson_progress 行锁。 */
+    private void upsertLearningDay(ProgressRow current, LocalDate date, long seconds,
+            boolean started, boolean completed, Instant eventAt) {
+        if (seconds == 0 && !started && !completed) return;
+        jdbc.update("INSERT INTO lesson_learning_day(course_id,learner_id,lesson_id,content_revision_id,activity_date,watched_seconds,first_started,first_completed,last_activity_at) "
+                        + "VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE watched_seconds=watched_seconds+VALUES(watched_seconds),"
+                        + "first_started=first_started OR VALUES(first_started),first_completed=first_completed OR VALUES(first_completed),"
+                        + "last_activity_at=GREATEST(last_activity_at,VALUES(last_activity_at))",
+                current.courseId(), current.learnerId(), current.lessonId(), current.contentRevisionId(),
+                java.sql.Date.valueOf(date), seconds, started, completed, ts(eventAt));
+    }
+
+    private static LocalDate day(Instant at) { return at.atZone(SHANGHAI).toLocalDate(); }
+
+    /** 报名、草稿保存或错题重做成功后同事务标记上海自然日；重复同日活动不重复产生学生数。 */
+    public void markLearningActivity(String courseId, String learnerId, Instant at) {
+        if (courseId == null) return;
+        jdbc.update("INSERT INTO learning_activity_day(course_id,learner_id,activity_date,last_activity_at) "
+                        + "VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE last_activity_at=GREATEST(last_activity_at,VALUES(last_activity_at))",
+                courseId, learnerId, java.sql.Date.valueOf(day(at)), ts(at));
+    }
+
+    /** ARTICLE 第一次真实完成才写开始与完成日，不建立阅读时长。 */
+    public void recordArticleLearningDay(ProgressRow current, Instant at) {
+        upsertLearningDay(current, day(at), 0, current.revision() == 0, true, at);
+    }
+
+    /** 自动结算只在草稿真实提交成功后标记，用于趋势区分主动提交与关闭后代交。 */
+    public void markAutoSettled(String attemptId) {
+        jdbc.update("UPDATE assessment_attempt SET auto_settled=TRUE WHERE id=? AND status<>'DRAFT'", attemptId);
     }
     public List<ProgressRow> progress(String learnerId, String courseId) {
         return jdbc.query("SELECT * FROM lesson_progress WHERE learner_id=? AND course_id=? ORDER BY updated_at,id",
@@ -1011,8 +1075,9 @@ public class LearningAssessmentRepository {
     }
     public int submitAttempt(String id, long revision, String requestId, String fingerprint, AttemptStatus status,
             BigDecimal score, Instant now) {
-        return jdbc.update("UPDATE assessment_attempt SET status=?,revision=revision+1,submit_request_id=?,submission_fingerprint=?,score=?,submitted_at=?,graded_at=CASE WHEN ?='GRADED' THEN ? ELSE NULL END,updated_at=? WHERE id=? AND revision=? AND status='DRAFT'",
-                status.name(), requestId, fingerprint, score, ts(now), status.name(), ts(now), ts(now), id, revision);
+        return jdbc.update("UPDATE assessment_attempt SET status=?,revision=revision+1,submit_request_id=?,submission_fingerprint=?,score=?,submitted_at=?,submission_day=?,graded_at=CASE WHEN ?='GRADED' THEN ? ELSE NULL END,updated_at=? WHERE id=? AND revision=? AND status='DRAFT'",
+                status.name(), requestId, fingerprint, score, ts(now), java.sql.Date.valueOf(day(now)),
+                status.name(), ts(now), ts(now), id, revision);
     }
     /** 汇总首次或重新批改后的最新总分；保留首次完成时间，并推进对学生可见的最后更新时间。 */
     public void updateAttemptGrade(String id, AttemptStatus status, BigDecimal score, Instant gradedAt, Instant now) {
