@@ -117,6 +117,7 @@
 - 自动化：Java 全仓 `clean verify` 的 9 个 Reactor 模块全部成功；Learning 全量 126 项、0 失败、24 项显式真实开关跳过。最后收口 ASSESSMENT 趋势过滤、目录次序及大页码后，T12C.1 H2 与 Course HTTP 定向回归共 15 项全过，覆盖旧/新修订、退课、owner、Course 503、空态、日/月、门禁、并列排名、PRACTICE、分页。前端生成客户端、workspace typecheck、54 文件 355 项测试和三端 build 通过；Prism 对新增课程概览带 Bearer 的 mock 请求返回 200。
 - 真实环境：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 明确校验 `LEARNING_MYSQL_DATABASE=edu_platform_learning_dev` 和 Redis DB 4，MySQL 8 按 Flyway V17→V18 正常前进。`T12C1MysqlAcceptanceTest` 3 项通过：随机当前/旧课时修订、真实 Redis Lua 日增量与重复 Worker 落库，以及 1,000 人 ACTIVE 分页查询约 194 ms。临时 Learning 行和 Redis Key/dirty 成员按随机课程/学生 ID 精确清理并断言为零；未创建数据库、账号、课程或永久 Seed，未改用户手工《线性代数》课程。
 - 文档与限制：启动、接口、迁移、统计公式、演示和清理见 [T12C.1 交付文档](../delivery/T12C.1-teacher-learning-analytics-contract.md)。上线前日历史不回填；极端 Redis 故障导致日期无法安全归属时只保留 LIFETIME，宽泛昵称关键词需批量 IAM 查询。T12C.2 待本分支 Ready PR 合并、生成客户端进入 main 后再开始。
+- 交付：实现提交 `8e06858` 已按规则推送；[Ready PR #74](https://github.com/chengchen-ccnu/ccnu-edulion/pull/74) 为 Open、非 Draft、可合并状态。本任务不自行合并，CI 与评审结果仍待 GitHub 完成。
 
 ## 2026-09-13 T13.5.2 组题标准 Skill 迁移
 
