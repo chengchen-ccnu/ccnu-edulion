@@ -47,6 +47,11 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             local candidateWatched = oldWatched + tonumber(ARGV[4])
             local watchedLimit = math.max(300, newPosition * 2 + 300)
             local newWatched = math.min(candidateWatched, watchedLimit)
+            local effectiveDelta = newWatched - oldWatched
+            if effectiveDelta > 0 then redis.call('HINCRBY', KEYS[1], 'day:' .. ARGV[14], effectiveDelta) end
+            if exists == 0 and tonumber(ARGV[15]) == 0 then
+              redis.call('HSET', KEYS[1], 'firstStartedDay', ARGV[14])
+            end
             local oldCompleted = redis.call('HGET', KEYS[1], 'completed') == '1'
             local newCompleted = oldCompleted or ARGV[5] == '1'
             local version = (tonumber(redis.call('HGET', KEYS[1], 'bufferVersion')) or 0) + 1
@@ -107,7 +112,9 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
                 input.completed() ? "1" : "0", String.valueOf(base == null ? 0 : base.positionSeconds()),
                 String.valueOf(base == null ? 0 : base.watchedSeconds()), base != null && base.completed() ? "1" : "0",
                 String.valueOf(base == null ? 0 : base.lastEventAt().toEpochMilli()), String.valueOf(now.toEpochMilli()), key,
-                String.valueOf(base == null ? 0 : base.bufferVersion()), lessonId);
+                String.valueOf(base == null ? 0 : base.bufferVersion()), lessonId,
+                input.occurredAt().atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDate().toString(),
+                String.valueOf(base == null ? 0 : base.revision()));
         try {
             Long result = redis.execute(new DefaultRedisScript<>(SCRIPT_BUFFER, Long.class), List.of(key, DIRTY_KEY),
                     args.toArray());
@@ -248,10 +255,19 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
         String[] ids = ids(key);
         Object lessonId = values.get("lessonId");
         if (lessonId == null) throw new IllegalStateException("missing progress buffer lessonId");
+        Map<java.time.LocalDate, Long> watchedByDay = new java.util.TreeMap<>();
+        values.forEach((field, raw) -> {
+            String name = String.valueOf(field);
+            if (name.startsWith("day:")) watchedByDay.put(java.time.LocalDate.parse(name.substring(4)),
+                    Long.parseLong(String.valueOf(raw)));
+        });
+        Object firstStartedDay = values.get("firstStartedDay");
         return Optional.of(new BufferedProgress(ids[0], ids[1], String.valueOf(lessonId), ids[2],
                 number(values, "positionSeconds"),
                 number(values, "watchedSeconds"), "1".equals(String.valueOf(values.get("completed"))),
-                Instant.ofEpochMilli(number(values, "lastEventAt")), number(values, "bufferVersion")));
+                Instant.ofEpochMilli(number(values, "lastEventAt")), number(values, "bufferVersion"),
+                Map.copyOf(watchedByDay), firstStartedDay == null ? null
+                        : java.time.LocalDate.parse(String.valueOf(firstStartedDay))));
     }
 
     private static long number(Map<Object, Object> values, String name) {

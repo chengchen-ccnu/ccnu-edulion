@@ -13,6 +13,11 @@ public interface CourseFactsClient {
     /** @return 当前教师拥有且仍有公开发布版本的课程事实；他人课程按 404 隐藏。 */
     CourseFact requireOwnedPublished(String courseId, String teacherId, String traceId);
 
+    /** 教师分析先校验 owner；本人草稿且尚无发布版本返回空，其他 owner 仍安全 404。 */
+    default CourseFact ownedPublishedOrEmpty(String courseId, String teacherId, String traceId) {
+        return requireOwnedPublished(courseId, teacherId, traceId);
+    }
+
     /** 精确校验当前或历史已发布课时身份；供旧播放器继续写原修订，禁止枚举历史目录。 */
     LessonContentIdentity requireContentIdentity(String courseId, String lessonId,
             String contentRevisionId, String traceId);

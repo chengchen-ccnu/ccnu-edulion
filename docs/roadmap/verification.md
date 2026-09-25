@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-22 PR #73 合并与 T12C.1 前置审计
+
+- 合并与清理：[PR #73](https://github.com/chengchen-ccnu/ccnu-edulion/pull/73) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@1c981d5f32f559d0f246f06035b4fffb57847c36`；本地 `main` 已快进同步。GitHub 已删除远端 T12C.0 分支，本地功能分支也已清理。
+- T12C.0 状态：OpenAPI 0.25.0、Course V6、Learning V17、发布内容修订身份、Course Outbox/RabbitMQ 事件、内部精确校验、Redis/Worker/强制检查点/MySQL 隔离和生成客户端均已进入主线。真实 MySQL/Redis/RabbitMQ 长链通过，随机验收事实清零，固定最小 Seed 幂等保留；《线性代数》课程结构、发布版本与媒体绑定未改变。
+- T12C.1 事实前置：当前发布课时映射和内容修订隔离已由 T12C.0 提供；T11C 已提供 HOMEWORK/EXAM 最后有效 attempt、批改门禁、课程学生编号和成绩册聚合基础；现有 Learning 也具备课程 PRACTICE、报名与 IAM 批量昵称降级。教师统计可只读 MySQL 当前修订持久事实，不需要读取 Redis、跨服务查表或重新实现内容身份。
+- T12C.1 自有范围：先向前冻结 OpenAPI，再实现仅 ACTIVE 学生、当前内容进度/观看时长、任务成绩/竞赛排名及 `rankingPercent`、课程/课时/任务聚合、7/30/ALL 趋势和幂等日聚合。IAM 故障保留编号和统计，Course 故障返回 503，Redis 故障不影响已落库报表。不得加入 WITHDRAWN 页面、风险/薄弱知识点/转化/AI 总结/提醒/导出、Vue 或第二套成绩册。
+- 准备结论：T12C.1 的外部依赖和产品口径均已冻结，前置条件满足。已从干净 `main@1c981d5` 创建 `codex/t12c1-teacher-learning-analytics-contract`；本次只更新合并状态和前置审计，没有修改 OpenAPI、事件、Java、Vue、数据库、Redis 或业务逻辑。
+- 数据：本轮合并、同步、分支清理和只读审计未连接或修改 MySQL、Redis、RabbitMQ、OSS，未创建或清理数据库、表、迁移、伪数据或媒体对象。
+
 ## 2026-09-22 T12C.0 课时内容身份与进度继承实现及真实验收
 
 - Git 与范围：在指定分支 `codex/t12c0-lesson-content-progress-identity` 开始，基线 `main/origin/main@135e03d`，工作区初始干净且仅含两笔已审计的 T12C 规划提交。本任务没有实施 T12C.1 教师统计接口、T12C.2 页面、第二套学习路由、Redis Stream 或 RabbitMQ 进度队列。
@@ -100,6 +109,15 @@
 - 路由边界：T15C 只在既有两个 AI 承载区增加建议/结果卡片，并让 `/practice/:assessmentId` 根据服务端归属事实进入本人自主练习或迁移课程旧链接。不得信任 URL 猜归属、强制跳转、复制答题器、修改全局导航，或进入课程播放器、HOMEWORK/EXAM。
 - 准备结论：T13.5.2、T14.3、T15A、T15B、T10C.2 和 T12B 均已合并，所需契约、生成客户端、页面承载区和作答器完整，T15C 前置条件满足。已从干净 `main@f01035c` 创建 `codex/t15c-practice-generation-web`；当前只更新状态和前置审计，没有实现 Vue 或修改 OpenAPI、Java、Python。
 - 数据：本次合并、只读审计、文档更新和分支准备未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未调用模型，也未创建数据库、表、迁移、伪数据、消息、索引点、练习或媒体对象。
+
+## 2026-09-25 T12C.1 教师学情与分析后端契约验收
+
+- 基线：从干净的 `codex/t12c1-teacher-learning-analytics-contract@61ee199` 实施，`main@1c981d5` 已合并 T12C.0。OpenAPI 先升级到 0.26.0，再实现 Learning V18、按需教师 API 和生成客户端；未改 Vue、Course 课程结构、媒体或跨服务数据访问。
+- 口径：Course owner API 决定 404/无发布空态，当前发布 `contentRevisionId` 限定学习进度；仅 ACTIVE 报名进入列表和聚合。HOMEWORK/EXAM 沿用最后有效 attempt 与关闭/结算/全批改门禁，门禁前分数/排名为 null 且禁止分数排序；课程 PRACTICE 只统计 COURSE 归属真实提交的每人最高有效成绩。上海日/月趋势在 SQL 内按周期重新去重，旧累计只用于 LIFETIME。
+- 自动化：Java 全仓 `clean verify` 的 9 个 Reactor 模块全部成功；Learning 全量 126 项、0 失败、24 项显式真实开关跳过。最后收口 ASSESSMENT 趋势过滤、目录次序及大页码后，T12C.1 H2 与 Course HTTP 定向回归共 15 项全过，覆盖旧/新修订、退课、owner、Course 503、空态、日/月、门禁、并列排名、PRACTICE、分页。前端生成客户端、workspace typecheck、54 文件 355 项测试和三端 build 通过；Prism 对新增课程概览带 Bearer 的 mock 请求返回 200。
+- 真实环境：通过 `scripts/Invoke-WithLocalEnvironment.ps1` 明确校验 `LEARNING_MYSQL_DATABASE=edu_platform_learning_dev` 和 Redis DB 4，MySQL 8 按 Flyway V17→V18 正常前进。`T12C1MysqlAcceptanceTest` 3 项通过：随机当前/旧课时修订、真实 Redis Lua 日增量与重复 Worker 落库，以及 1,000 人 ACTIVE 分页查询约 194 ms。临时 Learning 行和 Redis Key/dirty 成员按随机课程/学生 ID 精确清理并断言为零；未创建数据库、账号、课程或永久 Seed，未改用户手工《线性代数》课程。
+- 文档与限制：启动、接口、迁移、统计公式、演示和清理见 [T12C.1 交付文档](../delivery/T12C.1-teacher-learning-analytics-contract.md)。上线前日历史不回填；极端 Redis 故障导致日期无法安全归属时只保留 LIFETIME，宽泛昵称关键词需批量 IAM 查询。T12C.2 待本分支 Ready PR 合并、生成客户端进入 main 后再开始。
+- 交付：实现提交 `8e06858` 已按规则推送；[Ready PR #74](https://github.com/chengchen-ccnu/ccnu-edulion/pull/74) 为 Open、非 Draft、可合并状态。本任务不自行合并，CI 与评审结果仍待 GitHub 完成。
 
 ## 2026-09-13 T13.5.2 组题标准 Skill 迁移
 

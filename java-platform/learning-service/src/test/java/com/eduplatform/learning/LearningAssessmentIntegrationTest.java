@@ -69,6 +69,8 @@ class LearningAssessmentIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM lesson_learning_day");
+        jdbc.update("DELETE FROM learning_activity_day");
         jdbc.update("DELETE FROM consumed_course_content_event");
         jdbc.update("DELETE FROM published_lesson_content_projection");
         jdbc.update("DELETE FROM published_course_content_projection");

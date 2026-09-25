@@ -129,6 +129,7 @@ public class LearningAssessmentService {
             ensureLearnerCourseProjection(learnerId, courseId, now);
             repository.insertOutbox(events.enrollmentChanged(current.id(), learnerId, courseId, "ACTIVE",
                     course.publishedVersion(), traceId, now));
+            repository.markLearningActivity(courseId, learnerId, now);
             return new EnrollmentCreation(enrollment(repository.enrollment(learnerId, courseId).orElseThrow()), false);
         }
         String id = UUID.randomUUID().toString();
@@ -142,6 +143,7 @@ public class LearningAssessmentService {
         ensureLearnerCourseProjection(learnerId, courseId, now);
         repository.insertOutbox(events.enrollmentChanged(id, learnerId, courseId, "ACTIVE",
                 course.publishedVersion(), traceId, now));
+        repository.markLearningActivity(courseId, learnerId, now);
         return new EnrollmentCreation(enrollment(created), true);
     }
 
@@ -233,6 +235,16 @@ public class LearningAssessmentService {
     private LearningDtos.LessonProgress persistCheckpoint(String learnerId, String courseId, String lessonId,
             String contentRevisionId,
             LearningDtos.ReportProgressRequest input, LearningDtos.ProgressEventType eventType, Instant now) {
+        // 强制检查点先合并可读取的 Redis 每日增量，再写自身事件；Worker 后续重试由 bufferVersion 吸收。
+        // Redis 故障时检查点仍以 MySQL 持久化，不能把 Redis 可用性变成教师统计读依赖。
+        var pending = progressBuffer.read(learnerId, courseId, contentRevisionId);
+        if (pending.available() && pending.value().isPresent()) {
+            var snapshot = pending.value().orElseThrow();
+            repository.applyBufferedProgress(learnerId, courseId, lessonId, contentRevisionId,
+                    snapshot.positionSeconds(), snapshot.watchedSeconds(), snapshot.completed(),
+                    snapshot.lastEventAt(), snapshot.version(), now, snapshot.watchedByDay(),
+                    snapshot.firstStartedDay());
+        }
         boolean inserted = repository.insertProgressEvent(input.clientEventId().toString(), learnerId, courseId,
                 lessonId, contentRevisionId, input.occurredAt(), input.positionSeconds(), input.watchedSeconds(), input.completed(),
                 eventType, now);
@@ -292,6 +304,8 @@ public class LearningAssessmentService {
         if (newFact) {
             repository.ensureProgress(UUID.randomUUID().toString(), learnerId, courseId, lessonId,
                     identity.contentRevisionId(), now, now);
+            repository.recordArticleLearningDay(repository.lockProgress(learnerId, courseId,
+                    identity.contentRevisionId()), now);
             repository.markArticleProgressCompleted(learnerId, courseId, identity.contentRevisionId(), now);
         }
         boolean inserted = repository.insertArticleCompletionRequest(requestId, learnerId, courseId,
@@ -1307,6 +1321,7 @@ public class LearningAssessmentService {
         var participant = repository.participant(assessment.id(), learnerId).orElseThrow(this::notFound);
         repository.updateParticipantOnDraft(assessment.id(), learnerId, participant.attemptsUsed(),
                 participant.finalAttemptId(), now);
+        repository.markLearningActivity(assessment.courseId(), learnerId, now);
         return draft(repository.ownedAttempt(attemptId, learnerId).orElseThrow(), Instant.now());
     }
 
@@ -1373,6 +1388,7 @@ public class LearningAssessmentService {
             String requestId = UUID.nameUUIDFromBytes(("assessment-settlement:" + attempt.id())
                     .getBytes(StandardCharsets.UTF_8)).toString();
             finalizeLockedDraft(attempt, requestId, fingerprint(complete), complete, items, now);
+            repository.markAutoSettled(attempt.id());
         }
         repository.markUnsubmittedParticipantsMissing(assessmentId, now);
         int remaining = repository.countDraftAttempts(assessmentId);
@@ -1579,6 +1595,7 @@ public class LearningAssessmentService {
                 grade == null ? null : grade.correct(), now);
         try {
             repository.insertWrongQuestionRedo(created, input.expectedRevision(), now);
+            repository.markLearningActivity(wrong.courseId(), learnerId, now);
         } catch (org.springframework.dao.OptimisticLockingFailureException | DuplicateKeyException conflict) {
             throw conflict("LEARNING.WRONG_QUESTION_REVISION_CONFLICT", "错题重做状态已变化");
         }

@@ -79,13 +79,28 @@ public class HttpCourseFactsClient implements CourseFactsClient {
 
     @Override
     public CourseFact requireOwnedPublished(String courseId, String teacherId, String traceId) {
+        CourseFact fact = ownedPublishedOrEmpty(courseId, teacherId, traceId);
+        if (fact == null) throw notFound();
+        return fact;
+    }
+
+    /** 教师 owner 的无发布课程允许分析返回空态；Course 5xx/超时依旧 503，非 owner 依旧 404。 */
+    @Override
+    public CourseFact ownedPublishedOrEmpty(String courseId, String teacherId, String traceId) {
         try {
             // owner 请求只用于不可枚举的所有权验证；公开投影随后提供当前发布版本和完整目录。
             course.get().uri("/api/v1/teacher/courses/{courseId}", courseId)
                     .header("X-User-Id", teacherId).header("X-User-Roles", "TEACHER")
                     .header("X-User-Permissions", "teaching:access").header("X-Trace-Id", traceId)
                     .retrieve().toBodilessEntity();
-            CourseFact fact = requirePublished(courseId, traceId);
+            CourseFact fact;
+            try {
+                // 教师统计每次必须确认当下发布身份；短 TTL 学生读取缓存不能掩盖 Course 故障。
+                fact = fetchPublished(courseId, traceId);
+            } catch (QuestionException missing) {
+                if (missing.status() == HttpStatus.NOT_FOUND) return null;
+                throw missing;
+            }
             if (!teacherId.equals(fact.ownerTeacherId())) throw notFound();
             return fact;
         } catch (RestClientResponseException exception) {
@@ -161,7 +176,8 @@ public class HttpCourseFactsClient implements CourseFactsClient {
             }
         }
         return new CourseFact(courseId, publishedVersion, accessType, ownerTeacherId,
-                value.publicationRevision().intValue(), Set.copyOf(lessonIds), Map.copyOf(lessonTypes),
+                value.publicationRevision().intValue(), java.util.Collections.unmodifiableSet(lessonIds),
+                Map.copyOf(lessonTypes),
                 Map.copyOf(contentRevisionIds));
     }
 
