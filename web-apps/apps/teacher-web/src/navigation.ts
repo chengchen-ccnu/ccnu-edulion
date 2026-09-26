@@ -6,7 +6,7 @@ import type { ShellNavigationItem } from "@edu/ui";
 
 /**
  * 根据当前路由和可空身份生成七个固定槽位。
- * 无教学能力时受保护入口保留原位但无 href；T10 只启用既有“题库”槽位，其他冻结槽位保持建设中。
+ * 无教学能力时受保护入口保留原位但无 href；学情分析启用既有第六槽位并覆盖两条既定路由。
  */
 export function buildTeacherNavigation(routeName: string | null | undefined, user: CurrentUser | null,
     urls?: PlatformUrls): ShellNavigationItem[] {
@@ -29,7 +29,9 @@ export function buildTeacherNavigation(routeName: string | null | undefined, use
     { id: "assessment-management", label: "测评管理", state: canTeach ? "enabled" : "permission-required",
       current: routeName === "teacher-assessments" || routeName === "teacher-gradebook", kind: canTeach ? "router" : undefined,
       href: canTeach ? "/teacher/assessments" : undefined },
-    { id: "student-analysis", label: "学情分析", state: "coming-soon", current: routeName === "teacher-students" },
+    { id: "student-analysis", label: "学情分析", state: canTeach ? "enabled" : "permission-required",
+      current: routeName === "teacher-students" || routeName === "teacher-analytics",
+      kind: canTeach ? "router" : undefined, href: canTeach ? "/teacher/students" : undefined },
     { id: "media-center", label: "媒体中心", state: "coming-soon", current: routeName === "teacher-media" }
   ];
 }

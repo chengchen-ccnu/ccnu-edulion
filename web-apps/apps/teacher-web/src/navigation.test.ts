@@ -17,7 +17,7 @@ describe("teacher navigation", () => {
 
     expect(items.map(item => item.label)).toEqual(labels);
     expect(items.filter(item => item.state === "enabled").map(item => item.label))
-      .toEqual(["课程中心", "课程管理", "题库", "测评管理"]);
+      .toEqual(["课程中心", "课程管理", "题库", "测评管理", "学情分析"]);
     expect(items.find(item => item.id === "course-center")?.href).toBe("https://learn.example.test/courses");
     expect(items.find(item => item.id === "course-management")?.href).toBe("/teacher/courses");
     expect(items.filter(item => item.current).map(item => item.label)).toEqual(["课程管理"]);
@@ -28,6 +28,12 @@ describe("teacher navigation", () => {
     expect(items.find(item => item.id === "assessment-management")).toMatchObject({
       state: "enabled", current: true, href: "/teacher/assessments", kind: "router"
     });
+  });
+
+  it.each(["teacher-students", "teacher-analytics"])("highlights the existing student-analysis slot for %s", routeName => {
+    const item = buildTeacherNavigation(routeName, user(["TEACHER"], ["teaching:access"]), urls)
+      .find(candidate => candidate.id === "student-analysis");
+    expect(item).toMatchObject({ state: "enabled", current: true, href: "/teacher/students", kind: "router" });
   });
 
   it.each([
