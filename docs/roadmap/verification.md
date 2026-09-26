@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-09-26 PR #76 合并与 T12C.1.2 契约偏差前置审计
+
+- 合并与清理：[PR #76](https://github.com/chengchen-ccnu/ccnu-edulion/pull/76) 在 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全绿后以普通 merge 合并为 `main@11502035fc40123f55d0aff8e90b438e24a5a0fb`；本地 `main` 已与 `origin/main` 快进一致。本地 T12C.2 分支已删除；经用户明确授权，GitHub 远端同名分支也已删除并 `fetch --prune` 复核。
+- T12C.2 结果：`/teacher/students`、`/teacher/analytics` 和固定第 6 槽导航已交付；真实 MySQL、Gateway/IAM/Course/Learning HTTP、教师浏览器的个人已批/全班待批门禁验收通过，临时 5 行验收事实和随机基准测试事实已按交付记录精确清理；没有改动手工《线性代数》课程。完整结果与未覆盖的生产故障演练见 [T12C.2 交付文档](../delivery/T12C.2-teacher-learning-analytics-web.md)。
+- 已确认偏差：Learning `application.yml` 配置全局 `spring.jackson.default-property-inclusion: non_null`，`TeacherAnalyticsDtos` 的响应 records 没有覆盖此规则；OpenAPI 0.26.1 却将 `homeworkAverage`、`examAverage` 及多个同组 nullable 字段列入 `required`。T12C.2 真实 HTTP 已观察到平均分为 null 时字段缺席。页面虽按不可用安全降级，外部接口仍违反已发布契约；生成客户端类型、Mock 与真实 JSON 的差异不能只靠前端容错消除。
+- 最小补口：T12C.1.2 先只读盘点九个学情响应 Schema 中“required 且 nullable”的字段与对应 records，保持当前字段名、含义和可见性；仅在学情 DTO 序列化边界显式保留 null，不改全局 Jackson 或放宽成绩权限。增加真实 HTTP 序列化回归，覆盖无分数、未批分数/排名、无昵称/活动时间、非视频课时和无数据时间等合法 null，并确保隐藏值只是 null 而非非授权数据。若发现实际不应 required 的字段，先给出具体契约证据再向前修订，不凭方便把所有字段改可选。禁止新增 hash、baseline、gate、数据库迁移、Vue 或第二套 DTO。
+- 准备结论：从干净 `main@1150203` 准备 `codex/t12c1.2-analytics-null-serialization`，只提交 T12C.2 合并记录与补口前置审计，不实施业务代码；完成该小修复后再审计 T16。T16 的 T06、T12D、T07 基础依赖已合并，但其互动/审核具体契约仍需单独冻结；T12H 继续等待与 T16 共同确定跨领域保留边界。
+- 数据：本轮 Git/PR、文档和只读审计未连接或修改 MySQL、Redis、RabbitMQ、Qdrant、Neo4j、OSS，未创建或清理数据库、表、迁移、伪数据、消息、索引点或媒体对象。
+
 ## 2026-09-26 T12C.2 教师学情与分析前端及 T12C.1.1 真实联调
 
 - 实现：既有 `/teacher/students`、`/teacher/analytics` 路由按 `teaching:access` 开通，教师固定第 6 槽“学情分析”指向学生学情。ACTIVE 学生列表、URL 筛选/分页与单生 `overview|lessons|tasks` 懒加载、课程/课时/任务统计、7/30/ALL 与课时过滤趋势均只消费 OpenAPI 0.26.1 生成客户端；请求切换与离页中止，错误独立显示。没有新增接口、DTO、数据库迁移、消息或前端统计公式。
