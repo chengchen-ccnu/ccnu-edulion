@@ -7,7 +7,7 @@
 - 可达性：当前 ACTIVE 学生的 `lastActivityAt` 有报名时间兜底，当前夹具不产生其 null 值；测试检查该键始终存在。课时 `lastActivityAt` 在无进度时确认显式 null。课程发布对齐会产生持久事实，因此已发布情形 `dataThrough` 只检查存在；无发布版本的五个可读取接口检查其为 null。
 - Java 全仓 `mvn --% -q -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 退出码 0，全部 Reactor 模块验证通过。未执行真实服务/浏览器复测，亦未修改前端，因此不声称新的浏览器验收。详见 [T12C.1.2 交付文档](../delivery/T12C.1.2-teacher-analytics-null-serialization.md)。
 - 数据：未创建持久数据库、表、迁移或伪数据。仅现有内存 H2 `t12c1_analytics_test` 在测试进程中建表并插入固定伪事实，`@Transactional` 回滚、进程结束释放；重新运行测试可重建。没有连接或修改本地 MySQL、Redis、RabbitMQ、OSS。
-- 交付：实现提交 `02a2946` 已推送；[PR #77](https://github.com/chengchen-ccnu/ccnu-edulion/pull/77) 已创建，保持待评审，不自行合并。
+- 合并复核：实现提交 `02a2946`；[PR #77](https://github.com/chengchen-ccnu/ccnu-edulion/pull/77) 的 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部通过。PR 无评审意见或合并冲突，变更复核与 `git diff --check origin/main...HEAD` 通过，以普通 merge 合并为 `main@26abdb473906cf56dc514e46125e03e0bdad8c2b`；本地 `main` 已快进同步。尚未开启 T16 功能任务。
 
 ## 2026-09-26 PR #76 合并与 T12C.1.2 契约偏差前置审计
 
