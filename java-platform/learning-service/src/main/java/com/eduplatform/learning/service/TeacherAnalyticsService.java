@@ -194,7 +194,7 @@ public class TeacherAnalyticsService {
         return new TeacherAnalyticsDtos.CourseTaskPage(items, page, size, data.taskCount(courseId), lifetime(courseId));
     }
 
-    /** 单生任务分页；正式成绩未就绪时不返回得分、排名或可推断班级分数的聚合。 */
+    /** 单生任务分页；整场关闭结算后仅已批最终 attempt 可见个人分数，全员批完前仍隐藏排名。 */
     public TeacherAnalyticsDtos.StudentTaskPage studentTasks(String teacherId, String courseId,
             String learnerId, int page, int size, String traceId) {
         requireStudent(teacherId, courseId, learnerId, traceId);
@@ -202,16 +202,19 @@ public class TeacherAnalyticsService {
             String id = string(row, "id");
             boolean practice = "PRACTICE".equals(string(row, "assessment_type"));
             Map<String, Object> counts = data.taskCounts(courseId, id, practice);
-            boolean ready = practice || ("CLOSED".equals(string(row, "close_status"))
-                    && "COMPLETED".equals(string(row, "settlement_status"))
-                    && integer(counts, "pending_count") == 0);
+            boolean closedAndSettled = "CLOSED".equals(string(row, "close_status"))
+                    && "COMPLETED".equals(string(row, "settlement_status"));
+            boolean ready = practice || (closedAndSettled && integer(counts, "pending_count") == 0);
             var own = data.studentTask(courseId, id, learnerId, practice);
             boolean submitted = practice ? integer(own, "submission_count") > 0
                     : "SUBMITTED".equals(string(own, "submission_status"));
-            BigDecimal pct = ready ? decimal(own, "score_percent") : null;
+            boolean personalScoreVisible = practice || (closedAndSettled && submitted
+                    && "GRADED".equals(string(own, "grading_status"))
+                    && "GRADED".equals(string(own, "attempt_status")));
+            BigDecimal pct = personalScoreVisible ? decimal(own, "score_percent") : null;
             Integer rank = null, rankedCount = null;
             BigDecimal rankPercent = null;
-            if (pct != null) {
+            if (ready && pct != null) {
                 var ranking = data.rank(courseId, id, learnerId, practice);
                 rankedCount = integer(ranking, "ranked_count");
                 rank = integer(ranking, "rank_value");
@@ -221,7 +224,8 @@ public class TeacherAnalyticsService {
                     string(row, "assessment_type"), string(row, "status"), submitted,
                     bool(own, "late_submission"), !practice && submitted
                     && !"GRADED".equals(string(own, "grading_status")), ready,
-                    ready ? decimal(own, "raw_score") : null, ready ? decimal(own, "total_points") : null,
+                    personalScoreVisible ? decimal(own, "raw_score") : null,
+                    personalScoreVisible ? decimal(own, "total_points") : null,
                     pct, rank, rankedCount, rankPercent);
         }).toList();
         return new TeacherAnalyticsDtos.StudentTaskPage(items, page, size, data.taskCount(courseId), lifetime(courseId));

@@ -12,6 +12,7 @@ import com.eduplatform.learning.persistence.LearningAssessmentRepository;
 import com.eduplatform.learning.persistence.TeacherAnalyticsRepository;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.service.TeacherAnalyticsService;
+import com.eduplatform.learning.web.TeacherAnalyticsController;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +51,7 @@ class T12C1TeacherAnalyticsIntegrationTest {
     @Autowired LearningAssessmentRepository learning;
     @Autowired TeacherAnalyticsRepository data;
     @Autowired TeacherAnalyticsService analytics;
+    @Autowired TeacherAnalyticsController controller;
     @MockitoBean CourseFactsClient courses;
     @MockitoBean LearnerDirectoryClient directory;
 
@@ -203,6 +206,82 @@ class T12C1TeacherAnalyticsIntegrationTest {
     }
 
     @Test
+    /** 旧 attempt 已批不代表最终 attempt 已批；关闭结算后的本人分数可见，但全班待批时统计和排名仍隐藏。 */
+    void gradedFinalAttemptIsVisibleBeforeClassFinishesWithoutOpeningClassGate() {
+        enroll(SECOND, 3);
+        assessment(HOMEWORK, "HOMEWORK", "OPEN", "NOT_STARTED");
+        scored(HOMEWORK, ACTIVE, 95, 1);
+        scored(HOMEWORK, SECOND, 60, 1);
+        String activeFinal = pendingFinalAttempt(ACTIVE, 40, 2);
+        String secondFinal = pendingFinalAttempt(SECOND, 30, 2);
+
+        jdbc.update("UPDATE assessment_attempt SET status='GRADED',score=80 WHERE id=?", activeFinal);
+        jdbc.update("UPDATE assessment_participant SET grading_status='GRADED' "
+                + "WHERE assessment_id=? AND learner_id=?", HOMEWORK, ACTIVE);
+        assertPersonalScoreHidden(ACTIVE);
+        jdbc.update("UPDATE assessment SET close_status='CLOSED',settlement_status='PROCESSING' WHERE id=?", HOMEWORK);
+        assertPersonalScoreHidden(ACTIVE);
+        jdbc.update("UPDATE assessment SET settlement_status='COMPLETED' WHERE id=?", HOMEWORK);
+
+        var graded = analytics.studentTasks(TEACHER, COURSE, ACTIVE, 1, 20, "trace-t12c1").items().get(0);
+        assertThat(graded.resultsReady()).isFalse();
+        assertThat(graded.rawScore()).isEqualByComparingTo("80");
+        assertThat(graded.totalPoints()).isEqualByComparingTo("100");
+        assertThat(graded.scorePercent()).isEqualByComparingTo("80");
+        assertThat(graded.rank()).isNull();
+        assertThat(graded.rankedStudentCount()).isNull();
+        assertThat(graded.rankingPercent()).isNull();
+        assertPersonalScoreHidden(SECOND);
+        var classTask = analytics.courseTasks(TEACHER, COURSE, 1, 20, "trace-t12c1").items().get(0);
+        assertThat(classTask.resultsReady()).isFalse();
+        assertThat(classTask.pendingCount()).isEqualTo(1);
+        assertThat(classTask.averageScorePercent()).isNull();
+        assertThat(classTask.highestScorePercent()).isNull();
+        assertThat(classTask.lowestScorePercent()).isNull();
+        assertThat(classTask.distribution()).isNull();
+        assertThatThrownBy(() -> analytics.students(TEACHER, COURSE, 1, 20, "HOMEWORK_AVERAGE",
+                true, null, null, null, false, false, "trace-t12c1"))
+                .isInstanceOf(QuestionException.class);
+        assertThatThrownBy(() -> analytics.studentTasks(OTHER, COURSE, ACTIVE, 1, 20, "trace-t12c1"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> analytics.studentTasks(TEACHER, COURSE, WITHDRAWN, 1, 20, "trace-t12c1"))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(404));
+
+        jdbc.update("UPDATE assessment_attempt SET status='GRADED',score=70 WHERE id=?", secondFinal);
+        jdbc.update("UPDATE assessment_participant SET grading_status='GRADED' "
+                + "WHERE assessment_id=? AND learner_id=?", HOMEWORK, SECOND);
+        var completed = analytics.studentTasks(TEACHER, COURSE, ACTIVE, 1, 20, "trace-t12c1").items().get(0);
+        assertThat(completed.resultsReady()).isTrue();
+        assertThat(completed.rank()).isEqualTo(1);
+        assertThat(completed.rankedStudentCount()).isEqualTo(2);
+        assertThat(analytics.courseTasks(TEACHER, COURSE, 1, 20, "trace-t12c1")
+                .items().get(0).averageScorePercent()).isEqualByComparingTo("75");
+    }
+
+    @Test
+    /** 单生分数投影仍要求 Gateway 教学能力；只有普通学习能力的身份必须在读取前被拒绝。 */
+    void studentTaskProjectionRequiresTeachingPermission() {
+        assessment(HOMEWORK, "HOMEWORK", "CLOSED", "COMPLETED");
+        scored(HOMEWORK, ACTIVE, 80, 1);
+        assertThatThrownBy(() -> controller.studentTasks(ACTIVE, "STUDENT", "learning:access",
+                COURSE, ACTIVE, 1, 20, new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(QuestionException.class,
+                        error -> assertThat(error.status().value()).isEqualTo(403));
+    }
+
+    private void assertPersonalScoreHidden(String learnerId) {
+        var task = analytics.studentTasks(TEACHER, COURSE, learnerId, 1, 20, "trace-t12c1").items().get(0);
+        assertThat(task.rawScore()).isNull();
+        assertThat(task.totalPoints()).isNull();
+        assertThat(task.scorePercent()).isNull();
+        assertThat(task.rank()).isNull();
+        assertThat(task.rankedStudentCount()).isNull();
+        assertThat(task.rankingPercent()).isNull();
+    }
+
+    @Test
     /** 课程 PRACTICE 每人使用最高有效百分制；不会改变正式作业平均。 */
     void practiceUsesBestValidSubmissionWithoutFormalAverage() {
         enroll(SECOND, 3);
@@ -265,6 +344,20 @@ class T12C1TeacherAnalyticsIntegrationTest {
                 + "created_at,updated_at) VALUES(?,?,?,'ACTIVE','SUBMITTED','GRADED',?,?,?,?)",
                 java.util.UUID.randomUUID().toString(), assessmentId, learner, attempt,
                 Timestamp.from(now), Timestamp.from(now), Timestamp.from(now));
+    }
+
+    /** 为已有参与者生成较新的待批最终 attempt，保留旧批成绩以验证最终指针隔离。 */
+    private String pendingFinalAttempt(String learner, int partialScore, int sequence) {
+        Instant now = Instant.now();
+        String attempt = java.util.UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO assessment_attempt(id,assessment_id,learner_id,status,revision,score,total_points,"
+                + "submitted_at,submission_day,attempt_sequence,created_at,updated_at) "
+                + "VALUES(?,?,?,'PARTIALLY_GRADED',1,?,100,?,?,?,?,?)", attempt, HOMEWORK, learner, partialScore,
+                Timestamp.from(now), java.sql.Date.valueOf(now.atZone(SHANGHAI).toLocalDate()), sequence,
+                Timestamp.from(now), Timestamp.from(now));
+        jdbc.update("UPDATE assessment_participant SET grading_status='PARTIALLY_GRADED',final_attempt_id=? "
+                + "WHERE assessment_id=? AND learner_id=?", attempt, HOMEWORK, learner);
+        return attempt;
     }
 
     private void progress(String learner, String revision, long watched, Instant at) {

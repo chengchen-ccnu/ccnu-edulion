@@ -1,5 +1,12 @@
 # Skeleton verification
 
+## 2026-09-25 T12C.1.1 教师已批个人成绩安全投影验收
+
+- 契约先行：OpenAPI 0.26.1 只澄清已有单生任务字段的可见条件，生成客户端同步更新；无新 API、DTO、迁移、页面或缓存。个人分数要求整场 `CLOSED`、结算 `COMPLETED`、本人最后有效 attempt 与 participant 均 `GRADED`；排名和班级聚合仍须全部 ACTIVE 提交者批完。成绩册、整场 results、PRACTICE 实现未改。
+- 安全与门禁：H2 回归覆盖旧已批 attempt 不替代待批最终 attempt、未关闭/未结算分数 null、本人已批且同学待批时三项个人分数可见而排名/人数/领先比例及班级均值/极值/分布继续 null、成绩排序被拒、全批完后正常恢复，以及非 owner/退课 404 和缺教学能力 403。
+- 自动化：定向 `T12C1TeacherAnalyticsIntegrationTest` 11 项通过；Java 全仓 `clean verify` 9 个 Reactor 模块成功；生成客户端、前端类型检查、54 文件 355 项测试和三端 build 成功；Prism 对目标接口带 Bearer 的请求返回 200。真实 MySQL、服务 HTTP 与浏览器人工联调本轮未执行，待 T12C.2 消费时进行。
+- 数据与文档：只用事务回滚的 H2 测试伪数据，没有创建或更改本地数据库、表、迁移、Seed、Redis Key 或媒体对象。实现、启动、演示、清理、注释检查及剩余限制见 [T12C.1.1 交付文档](../delivery/T12C.1.1-teacher-graded-score-projection.md)。
+
 ## 2026-09-25 PR #74 合并与 T12C.1.1 前置审计
 
 - 合并与清理：[PR #74](https://github.com/chengchen-ccnu/ccnu-edulion/pull/74) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全绿后，以普通 merge 合并为 `main@4ac84c2b92741605b7df9c1998e2328c68dc4d94`；本地 `main` 已快进同步，T12C.1 本地和 GitHub 远端功能分支均已清理。

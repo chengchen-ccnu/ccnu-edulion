@@ -24,7 +24,7 @@ public final class TeacherAnalyticsDtos {
     public record StudentLesson(String lessonId, String contentRevisionId, String lessonType,
             boolean started, boolean completed, Long watchedSeconds, Instant lastActivityAt) {}
     public record StudentLessonPage(List<StudentLesson> items, int page, int size, long total, Period period) {}
-    /** HOMEWORK/EXAM 未就绪时所有可反推班级分数的字段为 null。 */
+    /** HOMEWORK/EXAM 的本人已批分数可先显示；整场未就绪时排名及人数仍为 null。 */
     public record StudentTask(String assessmentId, String lessonId, String title, String type, String status,
             boolean submitted, boolean late, boolean gradingPending, boolean resultsReady,
             BigDecimal rawScore, BigDecimal totalPoints, BigDecimal scorePercent,
