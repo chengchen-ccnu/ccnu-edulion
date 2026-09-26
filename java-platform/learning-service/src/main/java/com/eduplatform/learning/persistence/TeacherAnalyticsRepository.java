@@ -221,7 +221,7 @@ public class TeacherAnalyticsRepository {
                 courseId, assessmentId);
     }
 
-    /** 读取单人正式最终 attempt 或 PRACTICE 最高有效 attempt；服务层按成绩门禁裁剪输出。 */
+    /** 读取单人正式最终 attempt 的提交与批改状态或 PRACTICE 最高有效成绩；服务层分别裁剪个人分数和班级排名。 */
     public Map<String, Object> studentTask(String courseId, String assessmentId, String learnerId, boolean practice) {
         if (practice) {
             List<Map<String, Object>> rows = jdbc.queryForList("SELECT t.score raw_score,t.total_points,"
@@ -237,6 +237,7 @@ public class TeacherAnalyticsRepository {
                     + "WHERE t.assessment_id=? AND t.learner_id=? AND t.status<>'DRAFT'", assessmentId, learnerId);
         }
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT p.submission_status,p.grading_status,p.late_submission,"
+                + "t.status attempt_status,"
                 + "t.score raw_score,t.total_points,t.score*100/NULLIF(t.total_points,0) score_percent "
                 + "FROM assessment_participant p LEFT JOIN assessment_attempt t ON t.id=p.final_attempt_id "
                 + "WHERE p.assessment_id=? AND p.learner_id=?", assessmentId, learnerId);

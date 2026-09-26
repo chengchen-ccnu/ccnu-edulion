@@ -5124,13 +5124,19 @@ export interface components {
             submitted: boolean;
             late: boolean;
             gradingPending: boolean;
+            /** @description For HOMEWORK and EXAM, true only after closure, settlement and all ACTIVE submitted students are graded; a false value does not hide this student's already graded score after closure and settlement. PRACTICE is always ready. */
             resultsReady: boolean;
+            /** @description Final valid formal attempt score only after closure and settlement when this student's attempt is GRADED; null for ungraded students. PRACTICE uses the highest valid score. */
             rawScore: number | null;
+            /** @description Total points paired with the visible rawScore; otherwise null. */
             totalPoints: number | null;
+            /** @description Percentage paired with the visible rawScore and totalPoints; otherwise null. */
             scorePercent: number | null;
+            /** @description Null for a formal task until resultsReady is true, even if this student's score is visible. */
             rank: number | null;
+            /** @description Null for a formal task until resultsReady is true. */
             rankedStudentCount: number | null;
-            /** @description Product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile. */
+            /** @description Null for a formal task until resultsReady is true. When available, product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile. */
             rankingPercent: number | null;
         };
         TeacherStudentTaskPage: {
@@ -9770,7 +9776,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Last valid formal attempt or highest valid PRACTICE score; closed grading gate controls score fields. */
+            /** @description Last valid formal attempt or highest valid PRACTICE score. A closed and settled formal task exposes this student's score once their final attempt is graded; class ranks still require all grading to finish. */
             200: {
                 headers: {
                     [name: string]: unknown;

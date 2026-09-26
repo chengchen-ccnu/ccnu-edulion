@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.26.0
-  description: T12C.1 adds owner-only, ACTIVE-only teacher learning analytics over current published content and persisted Learning facts. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods. Grade distributions and ranks are omitted until the T11C close, settlement and grading gate opens.
+  version: 0.26.1
+  description: T12C.1.1 allows an owner teacher to see one ACTIVE student's graded final formal attempt score after the assessment closes and settlement completes, even while classmates await grading. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -2673,7 +2673,7 @@ paths:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
       responses:
-        '200': {description: Last valid formal attempt or highest valid PRACTICE score; closed grading gate controls score fields., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentTaskPage'}}}}
+        '200': {description: Last valid formal attempt or highest valid PRACTICE score. A closed and settled formal task exposes this student's score once their final attempt is graded; class ranks still require all grading to finish., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentTaskPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
@@ -7450,13 +7450,13 @@ components:
         submitted: {type: boolean}
         late: {type: boolean}
         gradingPending: {type: boolean}
-        resultsReady: {type: boolean}
-        rawScore: {type: [number, 'null']}
-        totalPoints: {type: [number, 'null']}
-        scorePercent: {type: [number, 'null']}
-        rank: {type: [integer, 'null'], minimum: 1}
-        rankedStudentCount: {type: [integer, 'null'], minimum: 1}
-        rankingPercent: {type: [number, 'null'], description: Product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile.}
+        resultsReady: {type: boolean, description: "For HOMEWORK and EXAM, true only after closure, settlement and all ACTIVE submitted students are graded; a false value does not hide this student's already graded score after closure and settlement. PRACTICE is always ready."}
+        rawScore: {type: [number, 'null'], description: Final valid formal attempt score only after closure and settlement when this student's attempt is GRADED; null for ungraded students. PRACTICE uses the highest valid score.}
+        totalPoints: {type: [number, 'null'], description: Total points paired with the visible rawScore; otherwise null.}
+        scorePercent: {type: [number, 'null'], description: Percentage paired with the visible rawScore and totalPoints; otherwise null.}
+        rank: {type: [integer, 'null'], minimum: 1, description: "Null for a formal task until resultsReady is true, even if this student's score is visible."}
+        rankedStudentCount: {type: [integer, 'null'], minimum: 1, description: Null for a formal task until resultsReady is true.}
+        rankingPercent: {type: [number, 'null'], description: "Null for a formal task until resultsReady is true. When available, product leading proportion = (rankedStudentCount - rank + 1) / rankedStudentCount * 100; tied first ranks are 100. This is not a statistical percentile."}
     TeacherStudentTaskPage:
       type: object
       required: [items, page, size, total, period]

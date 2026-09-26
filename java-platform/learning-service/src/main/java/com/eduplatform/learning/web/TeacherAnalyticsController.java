@@ -78,7 +78,7 @@ public class TeacherAnalyticsController {
                 page, size, trace(request));
     }
 
-    /** 单个学生课程任务分页；正式成绩与排名门禁由服务层统一裁剪。 */
+    /** 单个学生课程任务分页；服务层分别校验本人最终已批分数和全班排名门禁。 */
     @GetMapping(ROOT + "/students/{learnerId}/tasks")
     public TeacherAnalyticsDtos.StudentTaskPage studentTasks(@RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
