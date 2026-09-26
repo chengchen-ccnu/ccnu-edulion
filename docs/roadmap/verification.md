@@ -7,6 +7,7 @@
 - 真实 HTTP/浏览器：Gateway、IAM、Course、Media、Learning 健康检查正常，匿名学情请求为 401，预检 200。已登录教师在固定演示课程看到 3 名 ACTIVE 学生，单生详情深链和刷新恢复；临时已批 HOMEWORK 的个人 80/100 可见，同班仍待批时排名、班级平均及极值不可见；既有完整作业的班级 75% 平均和 100%/50% 极值可见。课程、课时、任务、7/30/ALL、非 owner/不存在安全 404、窄屏和桌面布局已核对。7/30 在旧活动日期只显示已落库日事实，ALL 累计不作为日历史回填。
 - 数据：未创建数据库、表或迁移。`edu_platform_learning_dev` / Redis DB 4 的随机 MySQL 验收事实已由测试清理；临时夹具仅插入 `assessment` 1、`assessment_attempt` 2、`assessment_participant` 2，释放后输出 `T12C2_REAL_FIXTURE_REMAINING=0`，按精确 ID 清理。没有修改手工《线性代数》课程或跨服务业务事实。
 - 契约差异：真实 Learning JSON 在 nullable `homeworkAverage`、`examAverage` 为 null 时省略字段，和 OpenAPI 0.26.1 的 required nullable 有差异；页面按不可用值安全降级，已加回归。真实 IAM 宕机/Course 503 未人工破坏环境验证，保留 T18 系统级故障演练。详见 [T12C.2 交付文档](../delivery/T12C.2-teacher-learning-analytics-web.md)。
+- 交付：实现提交 `45405fb` 已推送；[Ready PR #76](https://github.com/chengchen-ccnu/ccnu-edulion/pull/76) 为 Open、待评审状态，本任务不自行合并。
 
 ## 2026-09-26 PR #75 合并与 T12C.2 前置审计
 
