@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-09-26 T12C.1.2 教师学情必需 nullable 字段序列化对齐
+
+- 范围：逐项核对 OpenAPI 0.26.1 九个教师学情响应及嵌套 Schema，`required` 且 nullable 的字段集中在 `Period`、`Student`、`StudentLesson`、`StudentTask`、`CourseLesson`、`CourseTask` 六个 record。仅在 `TeacherAnalyticsDtos` 局部指定 `JsonInclude.ALWAYS`；字段名/值、成绩门禁、权限、全局 Jackson、OpenAPI 和前端均未改变。
+- HTTP 回归：现有 H2 集成测试新增真实服务加 MockMvc 的九路径 JSON 检查，覆盖昵称/正式平均分、非视频课时观看指标、无课时任务 ID、未批分数/排名、班级统计/分布、无发布版本的 `dataThrough` 显式 null；另核对个人已批 80/100 仍可见、其他学生待批和全班聚合仍为 null。定向命令 `mvn --% -q -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml -pl learning-service -am -Dtest=T12C1TeacherAnalyticsIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test`：13/13 通过。
+- 可达性：当前 ACTIVE 学生的 `lastActivityAt` 有报名时间兜底，当前夹具不产生其 null 值；测试检查该键始终存在。课时 `lastActivityAt` 在无进度时确认显式 null。课程发布对齐会产生持久事实，因此已发布情形 `dataThrough` 只检查存在；无发布版本的五个可读取接口检查其为 null。
+- Java 全仓 `mvn --% -q -Dmaven.repo.local=.m2/repository -f java-platform/pom.xml clean verify` 退出码 0，全部 Reactor 模块验证通过。未执行真实服务/浏览器复测，亦未修改前端，因此不声称新的浏览器验收。详见 [T12C.1.2 交付文档](../delivery/T12C.1.2-teacher-analytics-null-serialization.md)。
+- 数据：未创建持久数据库、表、迁移或伪数据。仅现有内存 H2 `t12c1_analytics_test` 在测试进程中建表并插入固定伪事实，`@Transactional` 回滚、进程结束释放；重新运行测试可重建。没有连接或修改本地 MySQL、Redis、RabbitMQ、OSS。
+
 ## 2026-09-26 PR #76 合并与 T12C.1.2 契约偏差前置审计
 
 - 合并与清理：[PR #76](https://github.com/chengchen-ccnu/ccnu-edulion/pull/76) 在 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全绿后以普通 merge 合并为 `main@11502035fc40123f55d0aff8e90b438e24a5a0fb`；本地 `main` 已与 `origin/main` 快进一致。本地 T12C.2 分支已删除；经用户明确授权，GitHub 远端同名分支也已删除并 `fetch --prune` 复核。
