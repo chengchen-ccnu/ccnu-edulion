@@ -6,6 +6,7 @@
 - 安全与门禁：H2 回归覆盖旧已批 attempt 不替代待批最终 attempt、未关闭/未结算分数 null、本人已批且同学待批时三项个人分数可见而排名/人数/领先比例及班级均值/极值/分布继续 null、成绩排序被拒、全批完后正常恢复，以及非 owner/退课 404 和缺教学能力 403。
 - 自动化：定向 `T12C1TeacherAnalyticsIntegrationTest` 11 项通过；Java 全仓 `clean verify` 9 个 Reactor 模块成功；生成客户端、前端类型检查、54 文件 355 项测试和三端 build 成功；Prism 对目标接口带 Bearer 的请求返回 200。真实 MySQL、服务 HTTP 与浏览器人工联调本轮未执行，待 T12C.2 消费时进行。
 - 数据与文档：只用事务回滚的 H2 测试伪数据，没有创建或更改本地数据库、表、迁移、Seed、Redis Key 或媒体对象。实现、启动、演示、清理、注释检查及剩余限制见 [T12C.1.1 交付文档](../delivery/T12C.1.1-teacher-graded-score-projection.md)。
+- 交付：实现提交 `7b25dba` 已推送，生成客户端 `check:api` 通过；[PR #75](https://github.com/chengchen-ccnu/ccnu-edulion/pull/75) 已创建，CI 与评审待完成，本任务不自行合并。
 
 ## 2026-09-25 PR #74 合并与 T12C.1.1 前置审计
 
