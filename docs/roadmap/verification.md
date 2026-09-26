@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-09-26 T12C.2 教师学情与分析前端及 T12C.1.1 真实联调
+
+- 实现：既有 `/teacher/students`、`/teacher/analytics` 路由按 `teaching:access` 开通，教师固定第 6 槽“学情分析”指向学生学情。ACTIVE 学生列表、URL 筛选/分页与单生 `overview|lessons|tasks` 懒加载、课程/课时/任务统计、7/30/ALL 与课时过滤趋势均只消费 OpenAPI 0.26.1 生成客户端；请求切换与离页中止，错误独立显示。没有新增接口、DTO、数据库迁移、消息或前端统计公式。
+- 自动化：`pnpm.cmd --dir web-apps run typecheck` 8 个工作区成功，`pnpm.cmd --dir web-apps run test` 56 文件、374 项成功；覆盖路由权限、固定导航、深链、懒加载、个人分数/排名门禁、昵称降级、旧请求中止、缺失 nullable 字段和 HTTP 状态/离线文案。三端 build 成功。Java 定向 `T12C1MysqlAcceptanceTest` 真实 MySQL 3/3，1,000 ACTIVE 学生页查询约 354 ms；T12C.2 显式夹具真实 MySQL 1/1。
+- 真实 HTTP/浏览器：Gateway、IAM、Course、Media、Learning 健康检查正常，匿名学情请求为 401，预检 200。已登录教师在固定演示课程看到 3 名 ACTIVE 学生，单生详情深链和刷新恢复；临时已批 HOMEWORK 的个人 80/100 可见，同班仍待批时排名、班级平均及极值不可见；既有完整作业的班级 75% 平均和 100%/50% 极值可见。课程、课时、任务、7/30/ALL、非 owner/不存在安全 404、窄屏和桌面布局已核对。7/30 在旧活动日期只显示已落库日事实，ALL 累计不作为日历史回填。
+- 数据：未创建数据库、表或迁移。`edu_platform_learning_dev` / Redis DB 4 的随机 MySQL 验收事实已由测试清理；临时夹具仅插入 `assessment` 1、`assessment_attempt` 2、`assessment_participant` 2，释放后输出 `T12C2_REAL_FIXTURE_REMAINING=0`，按精确 ID 清理。没有修改手工《线性代数》课程或跨服务业务事实。
+- 契约差异：真实 Learning JSON 在 nullable `homeworkAverage`、`examAverage` 为 null 时省略字段，和 OpenAPI 0.26.1 的 required nullable 有差异；页面按不可用值安全降级，已加回归。真实 IAM 宕机/Course 503 未人工破坏环境验证，保留 T18 系统级故障演练。详见 [T12C.2 交付文档](../delivery/T12C.2-teacher-learning-analytics-web.md)。
+
 ## 2026-09-26 PR #75 合并与 T12C.2 前置审计
 
 - 合并与清理：[PR #75](https://github.com/chengchen-ccnu/ccnu-edulion/pull/75) 在 Ready、可合并且 Java、Python、Frontend、OpenAPI 两轮共 8 项 CI 全部成功后，以普通 merge 合并为 `main@db3f01398e7a007e9fe3c99b6c7b75872dc1d244`。本地 `main` 已快进至 `origin/main`，T12C.1.1 本地和远端分支均已删除。

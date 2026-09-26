@@ -43,3 +43,14 @@ describe("T11C.2 teacher gradebook route", () => {
     expect(block).toContain("TeacherGradebookPage.vue");
   });
 });
+
+describe("T12C.2 teacher learning routes", () => {
+  const source = readFileSync(fileURLToPath(new URL("./router.ts", import.meta.url)), "utf8");
+  it.each(["students", "analytics"])("protects /teacher/%s and loads its real page", segment => {
+    const start = source.indexOf(`path: "/teacher/${segment}"`);
+    const block = source.slice(start, source.indexOf("\n  { path:", start + 1));
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain('requiredPermission: "teaching:access"');
+    expect(block).toContain(`Teacher${segment === "students" ? "Students" : "Analytics"}Page.vue`);
+  });
+});
