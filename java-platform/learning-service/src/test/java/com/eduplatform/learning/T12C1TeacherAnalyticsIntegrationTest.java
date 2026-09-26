@@ -13,6 +13,8 @@ import com.eduplatform.learning.persistence.TeacherAnalyticsRepository;
 import com.eduplatform.learning.service.QuestionException;
 import com.eduplatform.learning.service.TeacherAnalyticsService;
 import com.eduplatform.learning.web.TeacherAnalyticsController;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,7 +29,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 import org.springframework.transaction.annotation.Transactional;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 /** 固定伪 UUID 在独立 H2 MySQL 模式验收 ACTIVE、当前修订、owner、幂等日事实和月度去重。 */
 @SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:t12c1_analytics_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
@@ -52,6 +58,9 @@ class T12C1TeacherAnalyticsIntegrationTest {
     @Autowired TeacherAnalyticsRepository data;
     @Autowired TeacherAnalyticsService analytics;
     @Autowired TeacherAnalyticsController controller;
+    @Autowired WebApplicationContext webContext;
+    MockMvc mvc;
+    @Autowired ObjectMapper json;
     @MockitoBean CourseFactsClient courses;
     @MockitoBean LearnerDirectoryClient directory;
 
@@ -76,6 +85,113 @@ class T12C1TeacherAnalyticsIntegrationTest {
                     learner.equals(ACTIVE) ? 1 : 2, Timestamp.from(now));
         }
         learning.reconcilePublishedContent(fact, now);
+    }
+
+    /**
+     * 九个 HTTP 端点使用真实服务和应用 Jackson 配置；无昵称/活动/成绩、非视频课时与空趋势
+     * 都必须按 OpenAPI 0.26.1 输出必需的 null 键，而不是把键省略。
+     */
+    @Test
+    void allTeacherAnalyticsHttpResponsesKeepRequiredNullableFields() throws Exception {
+        String article = "00000000-0000-4000-8000-0000000c1213";
+        String articleRevision = "00000000-0000-4000-8000-0000000c1214";
+        var fact = new CourseFactsClient.CourseFact(COURSE, "v2", "PUBLIC", TEACHER, 2,
+                Set.of(LESSON, article), Map.of(LESSON, "VIDEO", article, "ARTICLE"),
+                Map.of(LESSON, CURRENT, article, articleRevision));
+        when(courses.ownedPublishedOrEmpty(eq(COURSE), eq(TEACHER), anyString())).thenReturn(fact);
+        assessment(HOMEWORK, "HOMEWORK", "OPEN", "NOT_STARTED");
+
+        String root = "/api/v1/teacher/learning/courses/" + COURSE;
+        JsonNode students = response(root + "/students");
+        JsonNode student = students.path("items").get(0);
+        assertPresentFields(students.path("period"), "dataThrough");
+        assertPresentFields(student, "lastActivityAt");
+        assertNullFields(student, "nickname", "homeworkAverage", "examAverage");
+
+        JsonNode overview = response(root + "/students/" + ACTIVE + "/overview");
+        assertPresentFields(overview.path("period"), "dataThrough");
+        assertPresentFields(overview.path("student"), "lastActivityAt");
+        assertNullFields(overview.path("student"), "nickname", "homeworkAverage", "examAverage");
+
+        JsonNode lessons = response(root + "/students/" + ACTIVE + "/lessons");
+        JsonNode studentArticle = findById(lessons.path("items"), "lessonId", article);
+        assertPresentFields(lessons.path("period"), "dataThrough");
+        assertNullFields(studentArticle, "watchedSeconds", "lastActivityAt");
+
+        JsonNode tasks = response(root + "/students/" + ACTIVE + "/tasks");
+        assertPresentFields(tasks.path("period"), "dataThrough");
+        assertNullFields(tasks.path("items").get(0), "lessonId", "rawScore", "totalPoints",
+                "scorePercent", "rank", "rankedStudentCount", "rankingPercent");
+
+        assertPresentFields(response(root + "/students/" + ACTIVE + "/trend").path("period"), "dataThrough");
+        assertPresentFields(response(root + "/analytics/overview").path("period"), "dataThrough");
+
+        JsonNode courseLessons = response(root + "/analytics/lessons");
+        assertPresentFields(courseLessons.path("period"), "dataThrough");
+        assertNullFields(findById(courseLessons.path("items"), "lessonId", article),
+                "watchedSeconds", "actualViewerCount", "averageWatchedPerActiveStudent",
+                "averageWatchedPerViewer");
+
+        JsonNode courseTasks = response(root + "/analytics/tasks");
+        assertPresentFields(courseTasks.path("period"), "dataThrough");
+        assertNullFields(courseTasks.path("items").get(0), "lessonId", "averageScorePercent",
+                "highestScorePercent", "lowestScorePercent", "distribution");
+        assertThat(courseTasks.path("items").get(0).path("resultsReady").asBoolean()).isFalse();
+        assertPresentFields(response(root + "/analytics/trend").path("period"), "dataThrough");
+
+        when(courses.ownedPublishedOrEmpty(eq(COURSE), eq(TEACHER), anyString())).thenReturn(null);
+        for (String path : new String[]{"/students", "/analytics/overview", "/analytics/lessons",
+                "/analytics/tasks", "/analytics/trend"})
+            assertNullFields(response(root + path).path("period"), "dataThrough");
+    }
+
+    /** HTTP 层保持本人已批分数可见、班级未批完时排名和聚合成绩隐藏的既有门禁。 */
+    @Test
+    void httpSerializationDoesNotChangePersonalAndClassScoreVisibility() throws Exception {
+        enroll(SECOND, 3);
+        assessment(HOMEWORK, "HOMEWORK", "CLOSED", "COMPLETED");
+        scored(HOMEWORK, ACTIVE, 80, 1);
+        scored(HOMEWORK, SECOND, 60, 1);
+        pendingFinalAttempt(SECOND, 30, 2);
+
+        String root = "/api/v1/teacher/learning/courses/" + COURSE;
+        JsonNode own = response(root + "/students/" + ACTIVE + "/tasks").path("items").get(0);
+        assertThat(own.path("rawScore").decimalValue()).isEqualByComparingTo("80");
+        assertThat(own.path("totalPoints").decimalValue()).isEqualByComparingTo("100");
+        assertThat(own.path("scorePercent").decimalValue()).isEqualByComparingTo("80");
+        assertNullFields(own, "rank", "rankedStudentCount", "rankingPercent");
+        JsonNode pending = response(root + "/students/" + SECOND + "/tasks").path("items").get(0);
+        assertNullFields(pending, "rawScore", "totalPoints", "scorePercent", "rank",
+                "rankedStudentCount", "rankingPercent");
+        JsonNode courseTask = response(root + "/analytics/tasks").path("items").get(0);
+        assertThat(courseTask.path("resultsReady").asBoolean()).isFalse();
+        assertNullFields(courseTask, "averageScorePercent", "highestScorePercent",
+                "lowestScorePercent", "distribution");
+    }
+
+    private JsonNode response(String path) throws Exception {
+        if (mvc == null) mvc = MockMvcBuilders.webAppContextSetup(webContext).build();
+        String body = mvc.perform(get(path).header("X-User-Id", TEACHER)
+                .header("X-User-Permissions", "teaching:access"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(body);
+    }
+
+    private static JsonNode findById(JsonNode items, String field, String id) {
+        for (JsonNode item : items) if (id.equals(item.path(field).asText())) return item;
+        throw new AssertionError("Missing analytics item: " + id);
+    }
+
+    private static void assertNullFields(JsonNode item, String... fields) {
+        for (String field : fields) {
+            assertThat(item.has(field)).as(field + " must be present").isTrue();
+            assertThat(item.get(field).isNull()).as(field + " must be null").isTrue();
+        }
+    }
+
+    private static void assertPresentFields(JsonNode item, String... fields) {
+        for (String field : fields) assertThat(item.has(field)).as(field + " must be present").isTrue();
     }
 
     @Test
