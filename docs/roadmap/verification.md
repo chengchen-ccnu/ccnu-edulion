@@ -1,5 +1,27 @@
 # Skeleton verification
 
+## 2026-09-30 T16 规划提交与 T16.1 开工前置准备
+
+- 起点 `codex/t16-contract-audit@fcecfd0`；六份 T16 文档为既有未提交规划，先保护再复核。`git fetch origin main` 后 HEAD 与 origin/main 差异为 `0 0`。本轮完整规格复核并将公告/消息和管理审核工作流补入 page-specs，管理端首期固定教师审核、账号权限两个真实入口。
+- T16.1 基础依赖已合并，新增契约/迁移属于本任务交付；只读复核 Course 当前 V6、Learning V18、HTTP 课程事实适配、不可逆关闭/草稿 deadline、Redis Worker 和内容发布事件。见 [T16.1 前置审计](T16.1-prerequisite-audit.md)。T16.3 的 IAM 正式撤权命令不提前实施，也不把尚未编写的暂停契约虚报为已完成。
+- 本地 JDK 17/Maven 3.9.4/Node 20.19.5/pnpm 10.22.0 可用；通过共享加载脚本检查凭据配置布尔值及本机 3306/6379/5672 TCP，可加载、可连接。未执行真实领域服务 HTTP 或数据库/MQ 认证验收；实际功能验收由 T16.1 实施任务完成。
+- 本轮只更新文档，未实施业务代码、API/事件或迁移，未创建数据库、表、伪数据、Redis Key、RabbitMQ 队列/消息、OSS 对象；无数据清理步骤。文档验证与 PR/CI/合并记录在本条后续补齐。
+- 提交前 `git diff --check`、七份规划文档逐行尾随空格检查、三份 T16 规划/审计文档的本地链接存在性检查均通过。本轮不重复运行本地业务测试；仓库既有 CI 将在文档 PR 中验证现有基线。
+
+## 2026-09-29 T16 首期产品范围确认与总控规划
+
+- 用户确认范围：教师资格审核与账号权限管理、课程暂停及作业/考试暂停时钟顺延、课程公告与四类站内消息、Redis 首页热点；收藏/评价/评论/举报、课程审核、人工运营位和报表导出退出首期。特别确认：仅被驳回或替换的资质文件按各自起算点 7 天清理，普通站内消息**没有**统一 7 天清理；撤权恢复仅恢复系统暂停课程，并给未结束任务及未提交草稿顺延实际暂停时长。
+- 文档落盘：[T16 已确认范围](T16-confirmed-scope.md) 明确产品规则、服务归属、T16.1～T16.4/T16A、T17A/B/C 依赖及旧代码缺口；[历史前置审计](T16-precontract-audit.md) 加了“候选已失效”提示；同步 `backlog.md`、完整阅读并更新 `page-specs.md` 与总体架构文档。独立通知槽位收口为头像菜单“消息”，公告正文不进入公开课程详情响应；管理端首期不保留课程审核/治理/运营/报表空入口。
+- 本次只改总控文档，未修改 OpenAPI/事件 Schema、生产代码、生成客户端或既有迁移；任务契约与真实环境尚未验收，不能据此声称 T16 已实施。文档检查记录以最终工作区验证结果为准。未连接或创建 MySQL 数据库/表/伪数据，也未操作 Redis、RabbitMQ、OSS 或模型，因此没有数据清理或重建步骤。
+
+## 2026-09-26 T16 前置契约审计
+
+- 起点：先运行 `git status --short --branch`，干净 `main...origin/main`；`git fetch origin main` 后 `git rev-list --left-right --count main...origin/main` 为 `0 0`，基线 `main@fcecfd0`。从该基线建立 `codex/t16-contract-audit`，保护既有工作。
+- 对照范围：完整阅读 `docs/frontend/page-specs.md`，核对 backlog、verification、OpenAPI 教师申请/课程发布/媒体用途及缺失路径、`docs/events/` 现有 Schema/README、ADR-0003/0004/0005、T06/T07/T12D 交付；并只读检查 IAM 教师申请与 V2 表、Course 发布、Media 用途策略、Operation 服务文件。结论与待确认决策、候选拆分见 [T16 前置审计](T16-precontract-audit.md)。
+- 已满足：T06、T12D/T12D.1 和 T07 合并证据成立；T12E 已提供申请人页面。未满足：Operation 只有骨架，教师申请仅提交/本人查询且无媒体引用 Outbox，Course 直接发布，`BANNER_IMAGE`/`TOPIC_COVER`/`REPORT_EXPORT` 虽在枚举却未启用上传；OpenAPI 与事件 Schema 无 T16 业务闭环。T12H 保留/匿名化与教师和课程审核决定仍待产品确认，故首个 T16 实施任务暂阻断。
+- 范围与数据：本次仅新增前置审计并更新 backlog/verification；没有冻结新 API/事件、改生产代码、创建迁移或生成客户端。未连接或创建任何数据库、表、伪数据、OSS 对象、Redis Key 或 RabbitMQ 消息；因此无清理/重建对象。文档检查结果以本条后续记录为准，不把此前功能测试当成本次执行结果。
+- 文档验证：`git diff --check` 通过；新增审计文件逐行尾随空格检查为零；`git status --short` 仅显示本次三份路线图文档。未运行 Java/Python/前端构建或功能测试，不能将本次只读审计视为 T16 功能验收。
+
 ## 2026-09-26 T12C.1.2 教师学情必需 nullable 字段序列化对齐
 
 - 范围：逐项核对 OpenAPI 0.26.1 九个教师学情响应及嵌套 Schema，`required` 且 nullable 的字段集中在 `Period`、`Student`、`StudentLesson`、`StudentTask`、`CourseLesson`、`CourseTask` 六个 record。仅在 `TeacherAnalyticsDtos` 局部指定 `JsonInclude.ALWAYS`；字段名/值、成绩门禁、权限、全局 Jackson、OpenAPI 和前端均未改变。
