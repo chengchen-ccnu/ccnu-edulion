@@ -14,6 +14,10 @@ management:
         include: health,info
 platform:
   media:
+    # 教学文件 owner 预览不得绕过 Course 撤权暂停；只请求内部 HTTP，不读取 Course 数据库。
+    course:
+      base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
+      request-timeout: ${MEDIA_COURSE_REQUEST_TIMEOUT:3s}
     service-authorization:
       issuer: ${COURSE_MEDIA_AUTH_ISSUER:edu-platform-course-service}
       assessment-issuer: ${LEARNING_MEDIA_AUTH_ISSUER:edu-platform-learning-service}

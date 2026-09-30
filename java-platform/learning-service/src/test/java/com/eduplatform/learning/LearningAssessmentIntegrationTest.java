@@ -59,6 +59,7 @@ class LearningAssessmentIntegrationTest {
 
     @Autowired LearningAssessmentService service;
     @Autowired AgentAccessFactService agentFacts;
+    @Autowired com.eduplatform.learning.course.CourseTaskClock taskClock;
     @Autowired LearningAssessmentRepository repository;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper mapper;
@@ -69,6 +70,12 @@ class LearningAssessmentIntegrationTest {
 
     @BeforeEach
     void reset() {
+        jdbc.update("DELETE FROM course_availability_consumed_event");
+        jdbc.update("DELETE FROM learning_course_clock_interval");
+        jdbc.update("DELETE FROM learning_course_clock");
+        when(courses.availability(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString()))
+                .thenAnswer(call -> new com.eduplatform.learning.course.CourseAvailability(call.getArgument(0),
+                        TEACHER_AS_LEARNER, 0, false, "support@example.invalid", java.util.List.of(), false));
         jdbc.update("DELETE FROM lesson_learning_day");
         jdbc.update("DELETE FROM learning_activity_day");
         jdbc.update("DELETE FROM consumed_course_content_event");
@@ -1250,6 +1257,137 @@ class LearningAssessmentIntegrationTest {
         service.streamGradebook(teacherId, courseId, assessmentId, type, submissionStatus, gradingStatus, late,
                 keyword, requestId, traceId, output);
         return output.toByteArray();
+    }
+
+    /** 暂停同时拦截旧 assessment/attempt 深链、保存、提交、媒体和自动关闭；恢复不改变已有答案。 */
+    @Test
+    void t161PauseStopsOldDeepLinksAndExamClockThenRestoresRemainingTime() {
+        service.enroll(LEARNER, COURSE, "t161-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.EXAM, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.MANUAL_AFTER_CLOSE);
+        Instant pause = Instant.now().minusSeconds(5).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        jdbc.update("UPDATE assessment SET published_at=?,closes_at=?,time_limit_seconds=120 WHERE id=?",
+                java.sql.Timestamp.from(pause.minusSeconds(20)), java.sql.Timestamp.from(pause.plusSeconds(3600)), ASSESSMENT);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        Instant originalDeadline=jdbc.queryForObject("SELECT deadline_at FROM assessment_attempt WHERE id=?", java.sql.Timestamp.class,draft.id()).toInstant();
+        mockAvailability(true, 1, List.of(new com.eduplatform.learning.course.CourseAvailability.Interval(
+                1, "00000000-0000-4000-8000-000000016101", pause, null)));
+        List<Runnable> rejected = List.of(
+                () -> service.learnerAssessmentEntry(LEARNER, ASSESSMENT, "t161-entry"),
+                () -> service.getDraft(LEARNER, draft.id()),
+                () -> service.saveDraft(LEARNER, draft.id(), new LearningDtos.SaveDraftRequest(UUID.randomUUID(), draft.revision(), List.of())),
+                () -> service.submit(LEARNER, draft.id(), new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(), draft.revision(), completeFixtureAnswers())),
+                () -> service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID())),
+                () -> service.assessmentMediaAccess(LEARNER, ASSESSMENT, UUID.randomUUID().toString(),
+                        new LearningDtos.CreateAssessmentMediaAccessGrantRequest("ORIGINAL", LearningDtos.MediaDisposition.INLINE), "t161-media"));
+        rejected.forEach(call -> assertThatThrownBy(call::run).isInstanceOfSatisfying(QuestionException.class,
+                error -> assertThat(error.code()).isEqualTo("LEARNING.COURSE_SUSPENDED")));
+        assertThatThrownBy(() -> service.getDraft(OTHER, draft.id())).isInstanceOfSatisfying(QuestionException.class,
+                error -> assertThat(error.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> service.teacherAssessment(ASSESSMENT, OTHER)).isInstanceOfSatisfying(QuestionException.class,
+                error -> assertThat(error.status().value()).isEqualTo(404));
+        jdbc.update("UPDATE assessment SET closes_at=? WHERE id=?", java.sql.Timestamp.from(pause.plusSeconds(2)), ASSESSMENT);
+        service.autoCloseAssessment(ASSESSMENT);
+        assertThat(service.processSettlementBatch(ASSESSMENT, 100)).isZero();
+        assertThat(jdbc.queryForObject("SELECT close_status FROM assessment WHERE id=?", String.class, ASSESSMENT)).isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject("SELECT submission_status FROM assessment_participant WHERE assessment_id=? AND learner_id=?", String.class, ASSESSMENT, LEARNER)).isEqualTo("IN_PROGRESS");
+        Instant resumed = pause.plusSeconds(10);
+        mockAvailability(false, 2, List.of(new com.eduplatform.learning.course.CourseAvailability.Interval(
+                1, "00000000-0000-4000-8000-000000016101", pause, resumed)));
+        // 此用例把关闭时间恢复到晚于考试草稿截止，避免人为改动影响剩余时长断言。
+        jdbc.update("UPDATE assessment SET closes_at=? WHERE id=?", java.sql.Timestamp.from(pause.plusSeconds(3600)), ASSESSMENT);
+        var restored = service.getDraft(LEARNER, draft.id());
+        assertThat(restored.deadlineAt()).isEqualTo(originalDeadline.plusSeconds(10));
+        assertThat(restored.revision()).isEqualTo(draft.revision()+1);
+        assertThat(service.getDraft(LEARNER, draft.id()).deadlineAt()).isEqualTo(restored.deadlineAt());
+    }
+
+    /** 两个暂停区间准确累计；旧/重复事件只追平权威事实，迟交窗口和有效草稿各顺延一次。 */
+    @Test
+    void t161MultipleIntervalsExtendLateWindowOnceAndKeepClosedFacts() {
+        service.enroll(LEARNER, COURSE, "t161-late-enroll");
+        seedHomeworkAssessment(2, QuestionModels.Type.SINGLE_CHOICE);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        Instant originalDeadline=jdbc.queryForObject("SELECT deadline_at FROM assessment_attempt WHERE id=?", java.sql.Timestamp.class,draft.id()).toInstant();
+        Instant start = Instant.now().minusSeconds(40).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant closes = start.minusSeconds(1), late = start.plusSeconds(3600);
+        jdbc.update("UPDATE assessment SET opens_at=NULL,published_at=?,closes_at=?,late_policy='ALLOW_UNTIL',late_until=? WHERE id=?",
+                java.sql.Timestamp.from(start.minusSeconds(30)), java.sql.Timestamp.from(closes), java.sql.Timestamp.from(late), ASSESSMENT);
+        var intervals = List.of(
+                new com.eduplatform.learning.course.CourseAvailability.Interval(1, "00000000-0000-4000-8000-000000016102", start, start.plusSeconds(10)),
+                new com.eduplatform.learning.course.CourseAvailability.Interval(3, "00000000-0000-4000-8000-000000016103", start.plusSeconds(20), start.plusSeconds(35)));
+        mockAvailability(false, 4, intervals);
+        String event=UUID.randomUUID().toString();
+        var concurrent = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var left = concurrent.submit(() -> taskClock.consume(event, COURSE, 4));
+            var right = concurrent.submit(() -> taskClock.consume(UUID.randomUUID().toString(), COURSE, 4));
+            left.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            right.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception failure) { throw new AssertionError("并发恢复必须只补时一次", failure); }
+        finally { concurrent.shutdownNow(); }
+        taskClock.consume(event, COURSE, 4);
+        taskClock.consume(UUID.randomUUID().toString(), COURSE, 1);
+        assertThat(jdbc.queryForObject("SELECT closes_at FROM assessment WHERE id=?", java.sql.Timestamp.class, ASSESSMENT).toInstant()).isEqualTo(closes.plusSeconds(25));
+        assertThat(jdbc.queryForObject("SELECT late_until FROM assessment WHERE id=?", java.sql.Timestamp.class, ASSESSMENT).toInstant()).isEqualTo(late.plusSeconds(25));
+        assertThat(service.getDraft(LEARNER, draft.id()).deadlineAt()).isEqualTo(originalDeadline.plusSeconds(25));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM learning_course_clock_interval WHERE course_id=?", Integer.class, COURSE)).isEqualTo(2);
+        // 关闭与已公布答案事实不会因为第三个暂停区间被重开或再顺延。
+        jdbc.update("UPDATE assessment SET close_status='CLOSED',answer_publication_status='PUBLISHED' WHERE id=?", ASSESSMENT);
+        mockAvailability(false, 6, List.of(new com.eduplatform.learning.course.CourseAvailability.Interval(
+                5, "00000000-0000-4000-8000-000000016104", start.plusSeconds(36), start.plusSeconds(39))));
+        taskClock.consume(UUID.randomUUID().toString(), COURSE, 6);
+        assertThat(jdbc.queryForObject("SELECT late_until FROM assessment WHERE id=?", java.sql.Timestamp.class, ASSESSMENT).toInstant()).isEqualTo(late.plusSeconds(25));
+        assertThatThrownBy(() -> service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID())))
+                .isInstanceOfSatisfying(QuestionException.class, e -> assertThat(e.status().value()).isEqualTo(409));
+    }
+
+    /** Course 依赖故障不放行草稿写入；课程普通练习暂停后拒绝作答，不给 PRACTICE 添加任务截止。 */
+    @Test
+    void t161PracticeAndDependencyFailureCannotBypassClock() {
+        service.enroll(LEARNER, COURSE, "t161-practice-enroll");
+        seedPublishedAssessment(LearningDtos.AssessmentType.PRACTICE, LearningDtos.GradePublicationPolicy.MANUAL,
+                LearningDtos.AnswerPublicationPolicy.NEVER);
+        var draft = service.startAttempt(LEARNER, ASSESSMENT, new LearningDtos.StartAttemptRequest(UUID.randomUUID()));
+        when(courses.availability(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString()))
+                .thenThrow(new QuestionException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "LEARNING.COURSE_DEPENDENCY_UNAVAILABLE", "课程依赖故障"));
+        assertThatThrownBy(() -> service.saveDraft(LEARNER,draft.id(),new LearningDtos.SaveDraftRequest(UUID.randomUUID(),0,List.of())))
+                .isInstanceOfSatisfying(QuestionException.class,e->assertThat(e.status().value()).isEqualTo(503));
+        Instant start=Instant.now().minusSeconds(10);
+        mockAvailability(true,1,List.of(new com.eduplatform.learning.course.CourseAvailability.Interval(1,
+                "00000000-0000-4000-8000-000000016105", start,null)));
+        assertThatThrownBy(() -> service.submit(LEARNER,draft.id(),new LearningDtos.SubmitAttemptRequest(UUID.randomUUID(),0,completeFixtureAnswers())))
+                .isInstanceOfSatisfying(QuestionException.class,e->assertThat(e.code()).isEqualTo("LEARNING.COURSE_SUSPENDED"));
+        mockAvailability(false,2,List.of(new com.eduplatform.learning.course.CourseAvailability.Interval(1,
+                "00000000-0000-4000-8000-000000016105", start,start.plusSeconds(5))));
+        assertThat(service.getDraft(LEARNER,draft.id()).deadlineAt()).isNull();
+        assertThat(jdbc.queryForObject("SELECT revision FROM assessment WHERE id=?",Long.class,ASSESSMENT)).isEqualTo(1L);
+    }
+
+    /** 一次追平 101 个实际区间跨过 HTTP 页边界，第二次请求不再顺延；不创建第二套任务事实。 */
+    @Test void t161ClockCatchesUpAcrossBoundedPagesExactlyOnce() {
+        service.enroll(LEARNER,COURSE,"t161-page-enroll");
+        seedHomeworkAssessment(1,QuestionModels.Type.SINGLE_CHOICE);
+        Instant base=Instant.now().minusSeconds(1000).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        jdbc.update("UPDATE assessment SET published_at=? WHERE id=?",java.sql.Timestamp.from(base.minusSeconds(1)),ASSESSMENT);
+        Instant original=jdbc.queryForObject("SELECT closes_at FROM assessment WHERE id=?",java.sql.Timestamp.class,ASSESSMENT).toInstant();
+        var intervals=new java.util.ArrayList<com.eduplatform.learning.course.CourseAvailability.Interval>();
+        for(int n=0;n<101;n++) intervals.add(new com.eduplatform.learning.course.CourseAvailability.Interval(2L*n+1,
+                UUID.randomUUID().toString(),base.plusSeconds(2L*n),base.plusSeconds(2L*n+1)));
+        mockAvailability(false,202,intervals);
+        taskClock.consume(UUID.randomUUID().toString(),COURSE,202);
+        taskClock.consume(UUID.randomUUID().toString(),COURSE,1);
+        assertThat(jdbc.queryForObject("SELECT closes_at FROM assessment WHERE id=?",java.sql.Timestamp.class,ASSESSMENT).toInstant()).isEqualTo(original.plusSeconds(101));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM learning_course_clock_interval WHERE course_id=?",Integer.class,COURSE)).isEqualTo(101);
+    }
+
+    /** 测试替身按完成区间游标分页，重复调用不会再次返回已应用区间。 */
+    private void mockAvailability(boolean paused,long revision,List<com.eduplatform.learning.course.CourseAvailability.Interval> intervals) {
+        org.mockito.Mockito.doAnswer(call -> {
+            var remaining=intervals.stream().filter(i->i.sequence()>(long)call.getArgument(1)).toList();
+            return new com.eduplatform.learning.course.CourseAvailability(call.getArgument(0),TEACHER_AS_LEARNER,revision,paused,
+                    "support@example.invalid",remaining.subList(0,Math.min(100,remaining.size())),remaining.size()>100);
+        }).when(courses).availability(anyString(),org.mockito.ArgumentMatchers.anyLong(),anyString());
     }
 
     private CourseFactsClient.CourseFact courseFact(int publicationRevision, String lessonType,

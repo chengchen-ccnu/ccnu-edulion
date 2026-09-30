@@ -18,6 +18,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /** 将业务、Bean Validation 和未预期错误统一适配为含 Trace ID 的平台错误信封。 */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    /** 暂停授权只显示通用说明与配置邮箱；不回显 Course 原始错误或文件定位信息。 */
+    @ExceptionHandler(com.eduplatform.media.service.MediaCourseSuspendedException.class)
+    ResponseEntity<java.util.Map<String,Object>> handleCourseSuspended(
+            com.eduplatform.media.service.MediaCourseSuspendedException exception, HttpServletRequest request) {
+        return ResponseEntity.status(exception.status()).body(java.util.Map.of("code",exception.code(),
+                "message",exception.getMessage(),"traceId",request.getAttribute(TraceFilter.ATTRIBUTE),
+                "timestamp",Instant.now(),"path",request.getRequestURI(),"fieldErrors",List.of(),
+                "supportEmail",exception.supportEmail()));
+    }
+
     @ExceptionHandler(MediaException.class)
     ResponseEntity<ApiError> handleMedia(MediaException exception, HttpServletRequest request) {
         return ResponseEntity.status(exception.status())

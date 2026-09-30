@@ -1,0 +1,41 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: CourseAvailabilityChanged v1
+description: |
+  Course 暂停/恢复事实与 Outbox 同事务。交换机 edu.course.availability.events.v1，routing key course.availability.changed.v1。
+  Learning 使用 eventId 幂等，availabilityRevision 防乱序；事件是追平提示，消费者通过受保护 Course API 补齐丢失区间。
+  发布复用 Course 的 confirm、有限重试和 FAILED；消费三次总尝试后进入 edu.learning.availability.dlq.v1，不自动回流。
+  不携带审核/撤权原因、个人资料或媒体 URL。T16.4 可依此触发安全状态通知，不能以消息替代实时授权。
+type: object
+additionalProperties: false
+required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+properties:
+  eventId: {type: string, format: uuid}
+  eventType: {const: CourseAvailabilityChanged}
+  eventVersion: {const: 1}
+  aggregateId: {type: string, format: uuid}
+  occurredAt: {type: string, format: date-time}
+  traceId: {type: string, minLength: 8, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}
+  payload:
+    type: object
+    additionalProperties: false
+    required: [courseId, suspensionId, availabilityRevision, paused, suspendedAt, resumedAt]
+    properties:
+      courseId: {type: string, format: uuid}
+      suspensionId: {type: string, format: uuid}
+      availabilityRevision: {type: integer, minimum: 1}
+      paused: {type: boolean}
+      suspendedAt: {type: string, format: date-time}
+      resumedAt: {type: [string, 'null'], format: date-time}
+allOf:
+  - if:
+      properties:
+        payload:
+          properties: {paused: {const: true}}
+    then:
+      properties:
+        payload:
+          properties: {resumedAt: {type: 'null'}}
+    else:
+      properties:
+        payload:
+          properties: {resumedAt: {type: string, format: date-time}}

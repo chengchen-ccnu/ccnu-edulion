@@ -67,6 +67,11 @@ public class MediaAssetService {
     private final MediaEventFactory events;
     private final TransactionTemplate transactions;
     private final HlsAccessGrantService hlsAccess;
+    @org.springframework.beans.factory.annotation.Autowired private CourseOwnerMediaClient courseOwner;
+    private static final Set<MediaPurpose> TEACHING_FILE_PURPOSES = java.util.EnumSet.of(
+            MediaPurpose.COURSE_COVER, MediaPurpose.LESSON_VIDEO, MediaPurpose.VIDEO_POSTER, MediaPurpose.SUBTITLE,
+            MediaPurpose.COURSEWARE, MediaPurpose.ARTICLE_ATTACHMENT, MediaPurpose.ARTICLE_IMAGE,
+            MediaPurpose.QUESTION_IMAGE, MediaPurpose.QUESTION_AUDIO, MediaPurpose.QUESTION_ATTACHMENT, MediaPurpose.QUESTION_IMPORT_SOURCE);
 
     public MediaAssetService(MediaRepository repository, MediaPurposePolicy policy, ObjectStorage storage,
             ObjectKeyFactory keyFactory, MediaProperties properties, MediaEventFactory events,
@@ -286,13 +291,20 @@ public class MediaAssetService {
 
     /**
      * 为当前上传者的 READY 资产签发短期读授权并写入审计。
-     * <p>T07 不接受客户端声明课程可见性；后续领域访问必须通过服务端授权链路扩展。</p>
+     * 教学用途先检查 Gateway 当前教学能力并由 Course HTTP 验证 owner 暂停水位；失败不调用 OSS、不写签发审计。
+     * 输入是已认证 owner、角色/能力、稳定 mediaId 与变体；成功输出短期授权并写审计，其他作用域沿用原规则。
      */
-    public MediaDtos.AccessGrant access(String mediaId, String ownerId,
+    public MediaDtos.AccessGrant access(String mediaId, String ownerId, Set<String> roles, Set<String> permissions,
             MediaDtos.CreateAccessGrantRequest request, String traceId) {
         // 通用授权始终只认 uploader；公共题和测评的其他访问者必须经过 Learning 领域裁决。
         MediaAsset asset = repository.findAsset(mediaId).orElseThrow(this::notFound);
         if (!asset.ownerId().equals(ownerId)) throw notFound();
+        if (asset.scope() != MediaAssetScope.SYSTEM && TEACHING_FILE_PURPOSES.contains(asset.purpose())) {
+            if (!roles.contains("TEACHER") || !permissions.contains("teaching:access")) {
+                throw new MediaException(HttpStatus.FORBIDDEN, "MEDIA.FORBIDDEN", "当前账号没有教学文件访问权限");
+            }
+            courseOwner.requireAccess(ownerId, traceId);
+        }
         return issueAccess(asset, ownerId, request, traceId);
     }
 

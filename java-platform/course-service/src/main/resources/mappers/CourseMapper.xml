@@ -2,7 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.eduplatform.course.persistence.CourseMapper">
     <sql id="publishedFilters">
-        c.publication_status = 'PUBLISHED'
+        c.publication_status = 'PUBLISHED' AND c.system_suspended = FALSE
         <if test="keyword != null and keyword != ''">
             AND (LOCATE(#{keyword}, cv.title) &gt; 0
                  OR LOCATE(#{keyword}, cv.summary) &gt; 0)
@@ -51,7 +51,7 @@
         JOIN course_version cv ON cv.id = c.published_version_id
         JOIN category cat ON cat.id = cv.category_id
         WHERE c.id = #{courseId}
-          AND c.publication_status = 'PUBLISHED'
+          AND c.publication_status = 'PUBLISHED' AND c.system_suspended = FALSE
     </select>
 
     <select id="findVersion" resultType="com.eduplatform.course.domain.CourseVersionEntity">
@@ -90,7 +90,7 @@
         JOIN lesson l ON l.chapter_id = ch.id
         JOIN lesson_media_resource r ON r.lesson_id = l.id
         WHERE c.id = #{courseId}
-          AND c.publication_status = 'PUBLISHED'
+          AND c.publication_status = 'PUBLISHED' AND c.system_suspended = FALSE
           AND cv.lifecycle_status = 'PUBLISHED'
           AND l.id = #{lessonId}
           AND r.id = #{resourceId}
@@ -142,7 +142,7 @@
         JOIN chapter ch ON ch.course_version_id = cv.id
         JOIN lesson l ON l.chapter_id = ch.id
         LEFT JOIN lesson_media_resource r ON r.lesson_id = l.id
-        WHERE c.id = #{courseId} AND c.publication_status = 'PUBLISHED'
+        WHERE c.id = #{courseId} AND c.publication_status = 'PUBLISHED' AND c.system_suspended = FALSE
           AND cv.lifecycle_status = 'PUBLISHED' AND l.id = #{lessonId}
         ORDER BY r.purpose, r.position, r.id
     </select>
@@ -184,13 +184,13 @@
     <select id="countOwnedCourses" resultType="long">
         SELECT COUNT(*)
         FROM course
-        WHERE owner_teacher_id = #{teacherId}
+        WHERE owner_teacher_id = #{teacherId} AND system_suspended = FALSE
     </select>
 
     <select id="listOwnedCourses" resultType="com.eduplatform.course.domain.CourseEntity">
         SELECT <include refid="courseColumns"/>
         FROM course
-        WHERE owner_teacher_id = #{teacherId}
+        WHERE owner_teacher_id = #{teacherId} AND system_suspended = FALSE
         ORDER BY updated_at DESC, id
         LIMIT #{limit} OFFSET #{offset}
     </select>
@@ -348,7 +348,7 @@
         JOIN course_version cv ON cv.course_id=c.id AND cv.lifecycle_status IN ('PUBLISHED','ARCHIVED')
         JOIN chapter ch ON ch.course_version_id=cv.id
         JOIN lesson l ON l.chapter_id=ch.id
-        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED'
+        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED' AND c.system_suspended=FALSE
           AND l.id=#{lessonId} AND l.content_revision_id=#{contentRevisionId}
         LIMIT 1
     </select>
@@ -357,7 +357,7 @@
         SELECT COUNT(*) FROM course c
         JOIN chapter ch ON ch.course_version_id=c.published_version_id
         JOIN lesson l ON l.chapter_id=ch.id
-        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED'
+        WHERE c.id=#{courseId} AND c.publication_status='PUBLISHED' AND c.system_suspended=FALSE
           AND l.id=#{lessonId} AND l.content_revision_id=#{contentRevisionId}
     </select>
 

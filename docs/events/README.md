@@ -53,3 +53,14 @@ T12C.0 冻结 [`course-lesson-content-events.v1.yaml`](./course-lesson-content-e
 | Learning 当前内容死信 Queue | `edu.learning.lesson-content.dlq.v1` | durable classic；绑定 `learning.lesson-content.dead.v1` |
 
 Course 与发布事务一并写 Outbox；Learning 总计最多尝试 3 次，按 `eventId` 持久化幂等并以 `publicationRevision` 拒绝乱序旧事件。完整课时映射原子替换当前投影，消息不含 mediaId、正文、学习事实或存储信息。Outbox 未及时送达时，Learning 只可通过受控 Course HTTP 事实有限补齐，不得跨 Schema 查询。
+
+T16.1 新增 [`course-availability-events.v1.yaml`](./course-availability-events.v1.yaml)，由 Course 系统暂停/恢复事务发布 `CourseAvailabilityChanged`：
+
+| 资源 | 名称 | 类型/绑定 |
+|---|---|---|
+| 可用性 Exchange | `edu.course.availability.events.v1` | durable topic |
+| Learning 可用性 Queue | `edu.learning.availability.v1` | durable classic；绑定 `course.availability.changed.v1` |
+| 可用性死信 Exchange | `edu.learning.availability.dlx.v1` | durable direct |
+| 可用性死信 Queue | `edu.learning.availability.dlq.v1` | durable classic；绑定 `learning.availability.dead.v1` |
+
+事件只含课程/周期 ID、revision、paused 和区间起止，不含撤权原因、课程正文或媒体信息；暂停时 resumedAt 必须显式为 null。复用 Course 既有有确认 Outbox，Learning 最多 3 次尝试后 DLQ，以 eventId 持久化幂等。消费者读取受保护 Course 当前事实并在本域课程锁下追平区间，不以迟到 payload 覆盖恢复状态或重复顺延。Course 故障保留重试/死信；访问入口实时校验，不依赖事件及时送达。人工修复后以原 eventId 重放，不自动回流。

@@ -53,7 +53,7 @@ class HttpCourseFactsClientTest {
     }
 
     @Test
-    void configuredShortCacheCoalescesPublishedFactReads() {
+    void publishedAuthorizationNeverUsesStaleCache() {
         client = new HttpCourseFactsClient(new LearningProperties(
                 new LearningProperties.Media("http://media", Duration.ofSeconds(1), "edu-learning-service",
                         "edu-media-service", Duration.ofSeconds(30), "test-assessment-media-secret-32-bytes-minimum"),
@@ -65,7 +65,7 @@ class HttpCourseFactsClientTest {
         client.requirePublished("ok", "trace-cache-1");
         client.requirePublished("ok", "trace-cache-2");
 
-        assertThat(publishedRequests).hasValue(1);
+        assertThat(publishedRequests).hasValue(2);
     }
 
     @Test
@@ -112,6 +112,38 @@ class HttpCourseFactsClientTest {
         client = newClient(Duration.ofMillis(50), Duration.ZERO);
         assertThatThrownBy(() -> client.requirePublished("timeout", "trace-timeout"))
                 .isInstanceOfSatisfying(QuestionException.class, error -> assertThat(error.status().value()).isEqualTo(503));
+    }
+
+    /** 暂停标量不能因 Jackson 强制转换变为 ACTIVE；空分页、区间与布尔缺失均失败关闭。 */
+    @Test
+    void availabilityRequiresExplicitBooleanAndCompleteIntervals() {
+        var mapper = new tools.jackson.databind.ObjectMapper();
+        var response = new java.util.concurrent.atomic.AtomicReference<>("{}");
+        server.createContext("/internal/v1/courses/" + COURSE_ID + "/availability", exchange -> write(exchange, response.get()));
+        var value = mapper.createObjectNode();
+        value.put("courseId", COURSE_ID).put("ownerTeacherId", TEACHER_ID).put("availabilityRevision", 0)
+                .put("supportEmail", "support@example.invalid").put("hasMore", false).putArray("intervals");
+        response.set(value.toString());
+        assertUnavailable(() -> client.availability(COURSE_ID, 0, "t161-missing-flag"));
+        value.put("paused", "false"); response.set(value.toString());
+        assertUnavailable(() -> client.availability(COURSE_ID, 0, "t161-wrong-flag"));
+        value.put("paused", false); response.set(value.toString());
+        assertThat(client.availability(COURSE_ID, 0, "t161-active").paused()).isFalse();
+        value.put("hasMore", true); response.set(value.toString());
+        assertUnavailable(() -> client.availability(COURSE_ID, 0, "t161-empty-page"));
+        value.put("hasMore", false).put("paused", true).put("availabilityRevision", 1);
+        var interval=value.withArray("intervals").addObject();
+        interval.put("sequence", 1).put("suspensionId", "00000000-0000-4000-8000-000000016199")
+                .put("suspendedAt", "2026-09-30T00:00:00Z");
+        response.set(value.toString());
+        assertUnavailable(() -> client.availability(COURSE_ID, 0, "t161-missing-end"));
+        interval.putNull("resumedAt"); response.set(value.toString());
+        assertThat(client.availability(COURSE_ID, 0, "t161-paused").paused()).isTrue();
+    }
+
+    private void assertUnavailable(Runnable call) {
+        assertThatThrownBy(call::run).isInstanceOfSatisfying(QuestionException.class,
+                error -> assertThat(error.status().value()).isEqualTo(503));
     }
 
     private void handle(HttpExchange exchange) throws java.io.IOException {

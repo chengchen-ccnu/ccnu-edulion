@@ -17,20 +17,23 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
+$courseSuspensionCredentialPath = Join-Path $ConfigDirectory "course-suspension-iam.credential.clixml"
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
 $agentAccessCredentialPath = Join-Path $ConfigDirectory "agent-access-internal.credential.clixml"
 
+# 为指定服务对生成随机授权密钥，仅通过 DPAPI 加密落盘，不写入 local.env。
 function New-ServiceAuthorizationCredential {
+    param([string]$ServiceName = "course-media-service")
     $bytes = New-Object byte[] 32
     $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try {
         $generator.GetBytes($bytes)
         $secret = [Convert]::ToBase64String($bytes)
         return [PSCredential]::new(
-            "course-media-service",
+            $ServiceName,
             (ConvertTo-SecureString $secret -AsPlainText -Force)
         )
     }
@@ -216,6 +219,7 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
             $existingAgentAccessCredential = $null
         }
     }
+    $courseSuspensionCredentialValid = Test-Path -LiteralPath $courseSuspensionCredentialPath -PathType Leaf
     $existingLocalLines = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
         @(Get-Content -LiteralPath $configPath)
     } else { @() }
@@ -225,9 +229,13 @@ if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -Liter
         -and ($existingLocalLines -match '^AGENT_REDIS_DATABASE=').Count -gt 0
     if ($existingBaseConfiguration -and (-not $serviceCredentialValid -or -not $iamSecurityCredentialValid `
             -or -not $learningIamCredentialValid -or -not $agentIndexCredentialValid `
-            -or -not $agentAccessCredentialValid `
+            -or -not $agentAccessCredentialValid -or -not $courseSuspensionCredentialValid `
             -or -not $agentConfigurationValid)) {
         New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
+        if (-not $courseSuspensionCredentialValid) {
+            New-ServiceAuthorizationCredential -ServiceName "iam-course-suspension" | Export-Clixml -LiteralPath $courseSuspensionCredentialPath
+            Write-Host "Added the DPAPI-encrypted IAM-to-Course suspension secret."
+        }
         if (-not $serviceCredentialValid) {
             New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
             Write-Host "Added the DPAPI-encrypted course/media service authorization secret."
@@ -372,6 +380,7 @@ if ($null -eq $credential) {
 New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
 
 $credential | Export-Clixml -LiteralPath $credentialPath -Force
+New-ServiceAuthorizationCredential -ServiceName "iam-course-suspension" | Export-Clixml -LiteralPath $courseSuspensionCredentialPath -Force
 New-ServiceAuthorizationCredential | Export-Clixml -LiteralPath $serviceCredentialPath -Force
 New-IamSecurityCredential | Export-Clixml -LiteralPath $iamSecurityCredentialPath -Force
 New-LearningIamServiceCredential | Export-Clixml -LiteralPath $learningIamCredentialPath -Force

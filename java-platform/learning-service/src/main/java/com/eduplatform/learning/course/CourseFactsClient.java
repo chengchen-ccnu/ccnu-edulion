@@ -7,7 +7,9 @@ import java.util.Map;
  * 读取 course-service 当前发布课程、课时和 owner 事实；实现只走版本化 HTTP，不查询课程 Schema。
  */
 public interface CourseFactsClient {
-    /** @return 当前公开发布版本及全部课时稳定 ID；课程不可见时抛 404，依赖失败时抛 503。 */
+    /** 实时读取权威系统可用性和有界暂停区间；不能使用公开课程展示缓存替代。 */
+    CourseAvailability availability(String courseId, long afterSequence, String traceId);
+    /** @return 当前公开发布版本及全部课时稳定 ID；课程不可见时抛 404，系统暂停抛安全 409，依赖失败时抛 503。 */
     CourseFact requirePublished(String courseId, String traceId);
 
     /** @return 当前教师拥有且仍有公开发布版本的课程事实；他人课程按 404 隐藏。 */

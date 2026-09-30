@@ -33,6 +33,13 @@ public class CourseRabbitConfig {
     public static final String AGENT_INDEX_EVENTS_EXCHANGE = "edu.agent.index.events.v1";
     public static final String LESSON_CONTENT_EVENTS_EXCHANGE = "edu.course.lesson-content.events.v1";
 
+    /** 暂停事实复用已有 Outbox 的有限重试和发布确认。 */
+    @Bean
+    @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
+    TopicExchange courseAvailabilityExchange() {
+        return new TopicExchange(com.eduplatform.course.service.CourseSuspensionService.EXCHANGE, true, false);
+    }
+
     @Bean
     @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
     TopicExchange courseMediaEventsExchange() {

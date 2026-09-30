@@ -12,6 +12,9 @@ $ErrorActionPreference = "Stop"
 
 $configPath = Join-Path $ConfigDirectory "local.env"
 $credentialPath = Join-Path $ConfigDirectory "mysql.credential.clixml"
+$courseSuspensionCredentialPath = Join-Path $ConfigDirectory "course-suspension-iam.credential.clixml"
+$courseSuspensionCredential = $null
+$courseSuspensionNetworkCredential = $null
 $serviceCredentialPath = Join-Path $ConfigDirectory "course-media-auth.credential.clixml"
 $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential.clixml"
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
@@ -111,6 +114,16 @@ try {
     Set-ScopedEnvironmentVariable -Name "MYSQL_USERNAME" -Value $networkCredential.UserName
     Set-ScopedEnvironmentVariable -Name "MYSQL_PASSWORD" -Value $networkCredential.Password
 
+    # T16.1 内部写命令使用独立秘密；旧任务可继续执行，未初始化时 Course 写入口保持关闭。
+    if (Test-Path -LiteralPath $courseSuspensionCredentialPath -PathType Leaf) {
+        $courseSuspensionCredential = Import-Clixml -LiteralPath $courseSuspensionCredentialPath
+        if ($courseSuspensionCredential -isnot [PSCredential] -or $courseSuspensionCredential.UserName -ne "iam-course-suspension") {
+            throw "The encrypted IAM-to-Course suspension credential has an unexpected format."
+        }
+        $courseSuspensionNetworkCredential = $courseSuspensionCredential.GetNetworkCredential()
+        if ($courseSuspensionNetworkCredential.Password.Length -lt 32) { throw "The IAM-to-Course suspension secret is incomplete." }
+        Set-ScopedEnvironmentVariable -Name "COURSE_SUSPENSION_IAM_TOKEN" -Value $courseSuspensionNetworkCredential.Password
+    }
     $serviceCredential = Import-Clixml -LiteralPath $serviceCredentialPath
     if ($serviceCredential -isnot [PSCredential] -or $serviceCredential.UserName -ne "course-media-service") {
         throw "The encrypted course/media service authorization credential has an unexpected format."
@@ -225,6 +238,8 @@ finally {
     $networkCredential = $null
     $credential = $null
     $serviceNetworkCredential = $null
+    $courseSuspensionCredential = $null
+    $courseSuspensionNetworkCredential = $null
     $serviceCredential = $null
     $iamSecurityPayload = $null
     $iamSecurityNetworkCredential = $null

@@ -716,6 +716,32 @@ T12C.0 没有新增本地秘密。Course 的 Learning 专用精确身份校验�
 
 ## 全量验证
 
+## T16.1 课程暂停与任务时钟
+
+Course V7 在 `edu_platform_course_dev` 增加两列及 teacher_course_availability/course_suspension_interval；Learning V19 在 `edu_platform_learning_dev` 增加时钟、区间审计和事件幂等三表。均为向前迁移，不新建数据库，不改旧迁移或人工课程。
+
+`Initialize-LocalEnvironment.ps1` 对已有环境仅补齐缺失的 `course-suspension-iam.credential.clixml`，Windows DPAPI 加密；`Invoke-WithLocalEnvironment.ps1` 注入子进程 `COURSE_SUSPENSION_IAM_TOKEN`。禁止把秘密写入 local.env/参数/日志。IAM/Course 部署用 Secret Manager 配同一写秘密；Learning/Media 只读适配复用现有 COURSE_MEDIA_AUTH_SECRET。
+
+| 配置 | 默认及作用 |
+|---|---|
+| COURSE_SUPPORT_EMAIL | support@example.invalid；部署替换管理员实际联系邮箱，公开错误不含撤权原因 |
+| LEARNING_SUSPENSION_MESSAGING_ENABLED | local 继承 RABBITMQ_ENABLED；开启暂停事件队列/有限重试/DLQ |
+| COURSE_SERVICE_BASE_URL | Learning/Media 都调用当前 Course，默认 8082 |
+| MEDIA_COURSE_REQUEST_TIMEOUT | 3s；教学文件 owner 预览的 Course 授权超时，失败 503 |
+| LEARNING_COURSE_FACT_CACHE_TTL | T16.1 已不用于权限判断，可删除旧配置 |
+
+Course 既有 Outbox 和 Learning 暂停消费需启用 RabbitMQ。关闭消费时访问仍实时检查，恢复区间可由后续访问补齐。Media 的教学文件 owner 入口需要可信 TEACHER/teaching:access 和 Course 当前水位；部署相关三个服务的新版本，旧 Course 将导致安全 503。
+
+真实验收命令（脚本内部统一凭据包装，禁止手工读凭据）：
+
+```powershell
+& scripts/Invoke-T16.1CourseSuspensionRealAcceptance.ps1
+```
+
+脚本校验两个开发 Schema 和 Redis DB 4，启动两个独立 JVM，仅用随机最小课程/报名/任务/草稿验证 HTTP、MySQL、Redis 和 RabbitMQ。dirty/DLQ 原有积压不为空则停止；finally 按精确 ID 清理本轮行、键和毒消息，不 purge。保留正式新表/队列；不修改《线性代数》，不创建或删除 OSS 对象。详见 [交付文档](../delivery/T16.1-course-suspension-contract.md)。
+
+本次未改个人 local.env，无需删除新增秘密；若以前手工写入密码/Token/AccessKey，删除后迁入 DPAPI/Secret Manager。旧缓存调优项可删除，非敏感本地连接/开关保留；正式部署使用环境配置提供邮箱、地址、超时和消息开关。
+
 ## T15D 会话命令与浏览器验收
 
 T15D 将 Agent Access 的专用开发 Schema 向前迁移到 V8，新增 `ai_conversation_command`。现有 `ai_conversation.create_request_id` 只能恢复“创建会话”，无法安全恢复改名/归档的稳定 requestId，也无法拒绝同 requestId 不同载荷，因此不能复用；V8 表只保存命令类型、请求指纹和安全响应，不保存消息、提示词、Token 或模型内容。迁移继续由 `AgentMemoryMysqlAcceptanceTest` 经安全包装器验证，不需要新增环境变量，也不得修改旧迁移。

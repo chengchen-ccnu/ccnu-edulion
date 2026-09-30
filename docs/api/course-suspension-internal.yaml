@@ -1,0 +1,167 @@
+openapi: 3.0.3
+info:
+  title: Course 系统暂停内部协议
+  version: 1.0.0
+  description: |
+    T16.1 的受保护服务协议；不由 Gateway 暴露给浏览器。IAM 正式撤权命令在 T16.3 接入。
+    Course 保留原 publication_status，只有命令接收时 PUBLISHED 的课程进入独立暂停区间。
+    每次暂停的 suspensionId 唯一；同一账号的 accessRevision 单调递增，恢复必须引用原 suspensionId。
+    较旧命令不产生副作用；同 revision 不同内容返回 409；恢复先于旧暂停到达时记录恢复水位，旧暂停不再生效。
+    授权检查是访问边界：暂停提交前已经通过检查的并发请求允许完成；提交后新检查必须拒绝。
+    Learning 每个课程事务先锁本域课程时钟再读取此协议，事件延迟不放行；Course 故障返回安全 503。
+    Redis 未持久化缓冲在首次观察暂停时或恢复后按 availabilityRevision 舍弃，不回算暂停观看秒数。
+paths:
+  /internal/v1/teachers/{teacherId}/course-availability:
+    put:
+      summary: IAM 更新本教师课程的系统可用性
+      description: 仅 iam-service 与独立配置的内部 Token 可调用；无浏览器任意暂停能力。响应成功表示 Course 事实及 Outbox 已提交，Learning 由实时检查和事件追平。
+      parameters:
+        - {name: teacherId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Caller'}
+        - {$ref: '#/components/parameters/Token'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeacherAvailabilityCommand'
+      responses:
+        '200':
+          description: 本次状态或重复请求的已保存结果；不包含撤权原因
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherAvailabilityResult'
+        '401':
+          description: 调用方或秘密无效
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '409':
+          description: revision 被另一内容使用或暂停 ID 不匹配
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '422':
+          description: 非法输入
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+  /internal/v1/teachers/{teacherId}/course-media-access:
+    get:
+      summary: Media 上传者预览的 Course 权威授权
+      description: |
+        仅 media-service 和 Course/Media 读取秘密可调用，不使用 IAM 写秘密。
+        Media 先验证资产 owner 和 Gateway 可信教学能力；Course 判断该 owner 是否处于撤权暂停周期。
+        暂停时拒绝通用课程/教师题目文件预览，防止在保留学习身份后以旧 mediaId 绕过领域暂停。
+        没有撤权水位的 owner 为活动；该接口不返回账号资料、不读取媒体表、不替代逐课程可见性判断。
+      parameters:
+        - {name: teacherId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Caller'}
+        - {$ref: '#/components/parameters/Token'}
+      responses:
+        '204': {description: Course 允许当前 owner 的教学文件预览，Media 才可继续 READY/变体与 OSS 检查}
+        '401':
+          description: 内部身份无效
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '409':
+          description: 系统暂停，统一错误信封含 supportEmail
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '422':
+          description: UUID 非法
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '500':
+          description: 依赖故障，Media 必须映射安全 503
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+  /internal/v1/courses/{courseId}/availability:
+    get:
+      summary: Learning 读取课程权威暂停状态和增量区间
+      description: |
+        仅 learning-service 可调用；返回 owner 供领域权限检查，绝不包含理由。
+        每页最多 100 区间，以开始时 availabilityRevision 为 sequence；afterSequence 是 Learning 已完成顺延的闭合区间水位。
+        正在暂停的区间始终返回但不推进已完成水位；恢复后同一区间补 resumedAt，实际时长精确到微秒。
+        多页读取时 availabilityRevision 变化应重试；未知课程 404，不能把故障当 ACTIVE。
+      parameters:
+        - {name: courseId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: afterSequence, in: query, schema: {type: integer, format: int64, minimum: 0, default: 0}}
+        - {$ref: '#/components/parameters/Caller'}
+        - {$ref: '#/components/parameters/Token'}
+      responses:
+        '200':
+          description: 当前状态和按 sequence 排序的暂停区间
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseAvailability'
+        '401':
+          description: 调用方或秘密无效
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '404':
+          description: 未知课程
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '422':
+          description: UUID 或游标非法
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+        '500':
+          description: Course 内部故障，调用方安全映射为 503
+          content:
+            application/json:
+              schema: {$ref: 'openapi.yaml#/components/schemas/ApiError'}
+components:
+  parameters:
+    Caller: {name: X-Internal-Caller, in: header, required: true, schema: {type: string}}
+    Token: {name: X-Internal-Service-Token, in: header, required: true, schema: {type: string}, description: 加密配置注入的服务身份秘密，不记录到日志}
+  schemas:
+    TeacherAvailabilityCommand:
+      type: object
+      additionalProperties: false
+      required: [suspensionId, accessRevision, paused]
+      properties:
+        suspensionId: {type: string, format: uuid, description: 本次撤权周期 ID；恢复必须沿用，不是任意课程 ID}
+        accessRevision: {type: integer, format: int64, minimum: 1, description: IAM 持久化的该账号能力命令单调序号}
+        paused: {type: boolean, description: true 为撤权或封禁暂停；false 为本次恢复}
+    TeacherAvailabilityResult:
+      type: object
+      required: [teacherId, suspensionId, accessRevision, paused, affectedCourses]
+      properties:
+        teacherId: {type: string, format: uuid}
+        suspensionId: {type: string, format: uuid}
+        accessRevision: {type: integer, format: int64}
+        paused: {type: boolean}
+        affectedCourses: {type: integer, minimum: 0, description: 本次命令改变的课程数；重复返回保存的原结果}
+    CourseAvailability:
+      type: object
+      required: [courseId, ownerTeacherId, availabilityRevision, paused, supportEmail, intervals, hasMore]
+      properties:
+        courseId: {type: string, format: uuid}
+        ownerTeacherId: {type: string, format: uuid}
+        availabilityRevision: {type: integer, format: int64, minimum: 0, description: 每次暂停和恢复增加一次；Redis 缓冲必须绑定此水位}
+        paused: {type: boolean}
+        supportEmail: {type: string, format: email, description: 部署配置的公开管理员联系邮箱}
+        hasMore: {type: boolean}
+        intervals:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/SuspensionInterval'}
+    SuspensionInterval:
+      type: object
+      required: [sequence, suspensionId, suspendedAt, resumedAt]
+      properties:
+        sequence: {type: integer, format: int64, minimum: 1}
+        suspensionId: {type: string, format: uuid}
+        suspendedAt: {type: string, format: date-time, description: Course 事务接收暂停的服务端 UTC 时间}
+        resumedAt: {type: string, format: date-time, nullable: true, description: 空表示仍暂停；恢复事务时间不能早于 suspendedAt}

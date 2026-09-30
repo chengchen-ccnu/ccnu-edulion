@@ -133,6 +133,13 @@ class LearningCourseFactsHttpAcceptanceTest {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/api/v1/courses/", LearningCourseFactsHttpAcceptanceTest::courseResponse);
+            server.createContext("/internal/v1/courses/", exchange -> {
+                byte[] body = ("{\"courseId\":\"" + COURSE_ID + "\",\"ownerTeacherId\":\"" + TEACHER_ID
+                        + "\",\"availabilityRevision\":0,\"paused\":false,\"supportEmail\":\"support@example.invalid\","
+                        + "\"intervals\":[],\"hasMore\":false}").getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+            });
             server.start();
             return server;
         } catch (IOException exception) {

@@ -51,6 +51,9 @@ management:
 
 platform:
   learning:
+    suspension-messaging:
+      # 与既有本地 RabbitMQ 开关一致；关闭消费时访问仍由实时 Course HTTP 拒绝暂停。
+      enabled: ${LEARNING_SUSPENSION_MESSAGING_ENABLED:${RABBITMQ_ENABLED:false}}
     course-content-messaging:
       enabled: ${LEARNING_COURSE_CONTENT_MESSAGING_ENABLED:${RABBITMQ_ENABLED:false}}
     progress-buffer:

@@ -66,6 +66,8 @@ class T12C1TeacherAnalyticsIntegrationTest {
 
     @BeforeEach
     void facts() {
+        when(courses.availability(anyString(),org.mockito.ArgumentMatchers.anyLong(),anyString()))
+                .thenAnswer(call -> new com.eduplatform.learning.course.CourseAvailability(call.getArgument(0),TEACHER,0,false,"support@example.invalid",java.util.List.of(),false));
         var fact = new CourseFactsClient.CourseFact(COURSE, "v2", "PUBLIC", TEACHER, 2,
                 Set.of(LESSON), Map.of(LESSON, "VIDEO"), Map.of(LESSON, CURRENT));
         when(courses.ownedPublishedOrEmpty(eq(COURSE), eq(TEACHER), anyString())).thenReturn(fact);

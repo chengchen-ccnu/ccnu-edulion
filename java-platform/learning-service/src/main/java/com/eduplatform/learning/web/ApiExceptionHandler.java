@@ -25,6 +25,17 @@ import tools.jackson.databind.exc.UnrecognizedPropertyException;
 @RestControllerAdvice
 public class ApiExceptionHandler {
     private static final Pattern SAFE_FIELD = Pattern.compile("[A-Za-z][A-Za-z0-9_]*");
+    /** 学习暂停响应提示逻辑舍弃未落库缓冲；只返回通用状态和配置邮箱。 */
+    @ExceptionHandler(com.eduplatform.learning.course.CoursePausedException.class)
+    ResponseEntity<java.util.Map<String, Object>> handlePaused(
+            com.eduplatform.learning.course.CoursePausedException exception, HttpServletRequest request) {
+        return ResponseEntity.status(exception.status()).body(java.util.Map.of(
+                "code", exception.code(), "message", exception.getMessage(),
+                "traceId", request.getAttribute(TraceFilter.ATTRIBUTE), "timestamp", Instant.now(),
+                "path", request.getRequestURI(), "fieldErrors", List.of(), "supportEmail", exception.supportEmail(),
+                "progressBufferDiscarded", true));
+    }
+
     @ExceptionHandler(QuestionException.class)
     ResponseEntity<ApiError> handleQuestion(QuestionException exception, HttpServletRequest request) {
         return ResponseEntity.status(exception.status()).body(error(exception.code(), exception.getMessage(), request,

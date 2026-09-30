@@ -71,6 +71,7 @@ class MediaHttpIntegrationTest {
     @Autowired FakeFfmpegCommandRunner ffmpeg;
     @Autowired FakeExternalImageDownloader externalImages;
     @Autowired MediaProperties mediaProperties;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean com.eduplatform.media.service.CourseOwnerMediaClient courseOwner;
     private final HttpClient client = HttpClient.newHttpClient();
 
     @BeforeEach
@@ -648,6 +649,20 @@ class MediaHttpIntegrationTest {
                 Integer.class, completed.mediaId())).isEqualTo(1);
     }
 
+    /** 旧 mediaId 的上传者入口不能以保留的学生身份或暂停 owner 绕过 Course；拒绝不写签发审计。 */
+    @Test void t161OwnerPreviewCannotBypassSuspensionOrTeachingCapability() throws Exception {
+        var asset=createReadyCover(UUID.randomUUID().toString(),"t161-test-cover");
+        String path="/api/v1/media/"+asset.mediaId()+"/access-grants";
+        String body="{\"variant\":\"ORIGINAL\",\"disposition\":\"INLINE\"}";
+        assertThat(sendAs("POST",path,body,"STUDENT",TEACHER).statusCode()).isEqualTo(403);
+        org.mockito.Mockito.doThrow(new com.eduplatform.media.service.MediaCourseSuspendedException("support@example.invalid"))
+                .when(courseOwner).requireAccess(org.mockito.ArgumentMatchers.eq(TEACHER),org.mockito.ArgumentMatchers.anyString());
+        var suspended=send("POST",path,body,"TEACHER");
+        assertThat(suspended.statusCode()).isEqualTo(409);
+        assertThat(mapper.readTree(suspended.body()).path("supportEmail").asText()).isEqualTo("support@example.invalid");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM access_grant_audit WHERE media_id=?",Integer.class,asset.mediaId())).isZero();
+    }
+
     private CompletedTestAsset createReadyCover(String clientRequestId, String content) throws Exception {
         CompletedTestAsset completed = createUploadedAsset(clientRequestId, "COURSE_COVER",
                 "cover.png", "image/png", content.getBytes(StandardCharsets.UTF_8));
@@ -678,7 +693,7 @@ class MediaHttpIntegrationTest {
 
     private HttpResponse<String> sendAs(String method, String path, String body, String role, String userId)
             throws Exception {
-        return sendAsWithPermissions(method, path, body, role, null, userId);
+        return sendAsWithPermissions(method, path, body, role, "TEACHER".equals(role) ? "teaching:access" : null, userId);
     }
 
     private HttpResponse<String> sendAsWithPermissions(String method, String path, String body, String role,

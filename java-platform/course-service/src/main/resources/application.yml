@@ -18,6 +18,10 @@ management:
         include: health,info
 platform:
   course:
+    # 邮箱为安全公开投影；IAM 命令秘密与 Learning 读取秘密分离，空值拒绝调用。
+    suspension:
+      support-email: ${COURSE_SUPPORT_EMAIL:support@example.invalid}
+      iam-token: ${COURSE_SUSPENSION_IAM_TOKEN:}
     agent-index:
       enabled: ${AGENT_INDEX_API_ENABLED:false}
       service-token: ${AGENT_INDEX_SERVICE_TOKEN:}

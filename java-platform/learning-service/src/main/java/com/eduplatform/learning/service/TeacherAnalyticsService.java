@@ -1,6 +1,7 @@
 package com.eduplatform.learning.service;
 
 import com.eduplatform.learning.course.CourseFactsClient;
+import com.eduplatform.learning.course.CourseClock;
 import com.eduplatform.learning.course.CourseFactsClient.CourseFact;
 import com.eduplatform.learning.identity.LearnerDirectoryClient;
 import com.eduplatform.learning.persistence.LearningAssessmentRepository;
@@ -50,6 +51,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 课程 ACTIVE 学生分页；关键词昵称在 IAM 限量批量解析，排序始终由 MySQL 完成。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.StudentPage students(String teacherId, String courseId, int page, int size,
             String sort, boolean descending, String keyword, BigDecimal minProgress, BigDecimal maxProgress,
             boolean missingOnly, boolean pendingOnly, String traceId) {
@@ -98,6 +100,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 输入 owner、课程与学生 ID，返回本人 ACTIVE 学生概览；昵称依赖失败仅标记降级。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.StudentOverview studentOverview(String teacherId, String courseId,
             String learnerId, String traceId) {
         CourseFact fact = requireStudent(teacherId, courseId, learnerId, traceId);
@@ -111,6 +114,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 按 Course 当前目录顺序分页单生课时；ARTICLE 无阅读秒数，ASSESSMENT 作答另查任务。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.StudentLessonPage studentLessons(String teacherId, String courseId,
             String learnerId, int page, int size, String traceId) {
         CourseFact fact = requireStudent(teacherId, courseId, learnerId, traceId);
@@ -131,6 +135,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 课程快照聚合 ACTIVE 当前进度；本人草稿返回空态，其他 owner 隐藏为 404。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.CourseOverview courseOverview(String teacherId, String courseId, String traceId) {
         CourseFact fact = course(teacherId, courseId, traceId);
         if (fact == null) return new TeacherAnalyticsDtos.CourseOverview("NO_PUBLISHED_VERSION", 0, 0,
@@ -146,6 +151,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 按当前发布目录分页课程课时统计，VIDEO 同时返回全员与实际观看者人均秒数。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.CourseLessonPage courseLessons(String teacherId, String courseId,
             int page, int size, String traceId) {
         CourseFact fact = course(teacherId, courseId, traceId);
@@ -172,6 +178,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 分页课程任务；正式成绩在 T11C 关闭、结算和全员批改门禁满足后才做统计查询。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.CourseTaskPage courseTasks(String teacherId, String courseId,
             int page, int size, String traceId) {
         CourseFact fact = course(teacherId, courseId, traceId);
@@ -195,6 +202,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 单生任务分页；整场关闭结算后仅已批最终 attempt 可见个人分数，全员批完前仍隐藏排名。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.StudentTaskPage studentTasks(String teacherId, String courseId,
             String learnerId, int page, int size, String traceId) {
         requireStudent(teacherId, courseId, learnerId, traceId);
@@ -232,6 +240,7 @@ public class TeacherAnalyticsService {
     }
 
     /** 日/月趋势只返回有限周期聚合；月度去重在 SQL 内按月重新 COUNT DISTINCT。 */
+    @CourseClock(actor=CourseClock.Actor.TEACHER)
     public TeacherAnalyticsDtos.Trend trend(String teacherId, String courseId, String learnerId,
             String lessonId, String window, String traceId) {
         CourseFact fact = learnerId == null ? course(teacherId, courseId, traceId)

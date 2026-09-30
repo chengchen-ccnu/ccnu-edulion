@@ -29,6 +29,12 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
     private static final String DIRTY_KEY = "edu:learning:progress:dirty";
     private static final String SCRIPT_BUFFER = """
             local exists = redis.call('EXISTS', KEYS[1])
+            -- 暂停/恢复改变水位；旧暂存及 dirty 原子舍弃，从 MySQL 基线重新开始。
+            if exists == 1 and (tonumber(redis.call('HGET', KEYS[1], 'availabilityRevision')) or 0) ~= tonumber(ARGV[16]) then
+              redis.call('DEL', KEYS[1])
+              redis.call('ZREM', KEYS[2], ARGV[11])
+              exists = 0
+            end
             local currentAt = 0
             if exists == 1 then currentAt = tonumber(redis.call('HGET', KEYS[1], 'lastEventAt')) or 0 end
             local eventAt = tonumber(ARGV[2])
@@ -38,7 +44,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             if exists == 0 then
               redis.call('HSET', KEYS[1], 'positionSeconds', ARGV[6], 'watchedSeconds', ARGV[7],
                 'completed', ARGV[8], 'lastEventAt', ARGV[9], 'lastClientEventId', '',
-                'bufferVersion', ARGV[12], 'lessonId', ARGV[13])
+                'bufferVersion', ARGV[12], 'lessonId', ARGV[13], 'availabilityRevision', ARGV[16])
               currentAt = tonumber(ARGV[9])
             end
             local oldPosition = tonumber(redis.call('HGET', KEYS[1], 'positionSeconds')) or 0
@@ -57,7 +63,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             local version = (tonumber(redis.call('HGET', KEYS[1], 'bufferVersion')) or 0) + 1
             redis.call('HSET', KEYS[1], 'positionSeconds', newPosition, 'watchedSeconds', newWatched,
                 'completed', newCompleted and '1' or '0', 'lastEventAt', eventAt,
-                'lastClientEventId', ARGV[1], 'bufferVersion', version, 'lessonId', ARGV[13])
+                'lastClientEventId', ARGV[1], 'bufferVersion', version, 'lessonId', ARGV[13], 'availabilityRevision', ARGV[16])
             redis.call('ZADD', KEYS[2], ARGV[10], ARGV[11])
             return 2
             """;
@@ -71,6 +77,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
             return 1
             """;
     private static final String SCRIPT_ACK = """
+            if (redis.call('HGET', KEYS[1], 'availabilityRevision') or '0') ~= ARGV[4] then return 0 end
             if redis.call('HGET', KEYS[1], 'bufferVersion') ~= ARGV[1] then return 0 end
             if redis.call('HGET', KEYS[1], 'leaseOwner') ~= ARGV[2] then return 0 end
             redis.call('DEL', KEYS[1])
@@ -105,6 +112,13 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
     public BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
             ProgressRow persisted,
             LearningDtos.ReportProgressRequest input, Instant now) {
+        return buffer(learnerId, courseId, lessonId, contentRevisionId, persisted, input, now, 0);
+    }
+
+    /** 同一 Lua 把旧暂停代际舍弃并合并当前心跳，不能跨恢复重复物化。 */
+    @Override
+    public BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
+            ProgressRow persisted, LearningDtos.ReportProgressRequest input, Instant now, long availabilityRevision) {
         String key = key(learnerId, courseId, contentRevisionId);
         ProgressRow base = persisted;
         List<String> args = List.of(input.clientEventId().toString(), String.valueOf(input.occurredAt().toEpochMilli()),
@@ -114,7 +128,7 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
                 String.valueOf(base == null ? 0 : base.lastEventAt().toEpochMilli()), String.valueOf(now.toEpochMilli()), key,
                 String.valueOf(base == null ? 0 : base.bufferVersion()), lessonId,
                 input.occurredAt().atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDate().toString(),
-                String.valueOf(base == null ? 0 : base.revision()));
+                String.valueOf(base == null ? 0 : base.revision()), String.valueOf(availabilityRevision));
         try {
             Long result = redis.execute(new DefaultRedisScript<>(SCRIPT_BUFFER, Long.class), List.of(key, DIRTY_KEY),
                     args.toArray());
@@ -212,11 +226,11 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
         catch (Exception exception) { throw new ProgressBufferUnavailableException("进度缓冲暂时不可用", exception); }
     }
 
-    /** 仅在 MySQL 事务成功且 Redis 版本未变化时清理 Hash 与 dirty 成员。 */
+    /** 落库成功或权威暂停边界明确舍弃后，仅代际、版本和租约匹配才清理 Hash 与 dirty 成员。 */
     public boolean acknowledge(String key, BufferedProgress snapshot) {
         try {
             Long result = redis.execute(new DefaultRedisScript<>(SCRIPT_ACK, Long.class), List.of(key, DIRTY_KEY),
-                    String.valueOf(snapshot.version()), instanceId, key);
+                    String.valueOf(snapshot.version()), instanceId, key, String.valueOf(snapshot.availabilityRevision()));
             return Long.valueOf(1).equals(result);
         } catch (Exception exception) {
             throw new ProgressBufferUnavailableException("进度缓冲暂时不可用", exception);
@@ -267,7 +281,8 @@ public class RedisProgressBufferStore implements ProgressBufferStore {
                 number(values, "watchedSeconds"), "1".equals(String.valueOf(values.get("completed"))),
                 Instant.ofEpochMilli(number(values, "lastEventAt")), number(values, "bufferVersion"),
                 Map.copyOf(watchedByDay), firstStartedDay == null ? null
-                        : java.time.LocalDate.parse(String.valueOf(firstStartedDay))));
+                        : java.time.LocalDate.parse(String.valueOf(firstStartedDay)),
+                Long.parseLong(String.valueOf(values.getOrDefault("availabilityRevision", "0")))));
     }
 
     private static long number(Map<Object, Object> values, String name) {

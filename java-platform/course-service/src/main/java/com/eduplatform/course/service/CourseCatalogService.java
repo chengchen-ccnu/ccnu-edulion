@@ -45,6 +45,8 @@ import tools.jackson.databind.ObjectMapper;
  */
 public class CourseCatalogService {
     private static final String PUBLIC_COVER_VIEWER_ID = "00000000-0000-0000-0000-000000000000";
+    @org.springframework.beans.factory.annotation.Autowired
+    private CourseSuspensionService suspension;
     private final CourseMapper mapper;
     private final ObjectMapper objectMapper;
     private final MediaBindingClient mediaBindingClient;
@@ -96,6 +98,7 @@ public class CourseCatalogService {
      * @throws CourseException 课程不存在、未发布或已下架时统一按不可见处理
      */
     public CourseDtos.CourseDetail getPublished(String courseId) {
+        suspension.requireActive(courseId);
         CourseVersionEntity version = mapper.findPublicVersion(courseId);
         if (version == null) {
             throw notFound();
@@ -134,6 +137,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.CourseMediaPlaybackGrant createPublishedPlaybackGrant(
             String courseId, String lessonId, String resourceId, String visitorId, String traceId) {
+        suspension.requireActive(courseId);
         CourseMediaAccessRow access = mapper.findPublishedMediaAccess(courseId, lessonId, resourceId);
         requireVideoResource(access);
         if (!"PUBLIC".equals(access.getAccessType()) && !access.isPreviewable()
@@ -159,6 +163,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.CourseMediaPlaybackGrant createTeacherPlaybackGrant(
             String courseId, String lessonId, String resourceId, String teacherId, String traceId) {
+        requireOwnedCourse(courseId, teacherId, false);
         CourseMediaAccessRow access = mapper.findOwnedEditableMediaAccess(
                 courseId, lessonId, resourceId, teacherId);
         requireVideoResource(access);
@@ -173,6 +178,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.LessonContent getPublishedLessonContent(
             String courseId, String lessonId, String visitorId, String traceId) {
+        suspension.requireActive(courseId);
         List<CourseMediaAccessRow> rows = mapper.listPublishedLessonContentRows(courseId, lessonId);
         if (rows.isEmpty()) {
             throw notFound();
@@ -219,6 +225,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.TeacherArticleContent getTeacherArticleContent(
             String courseId, String lessonId, String teacherId, String traceId) {
+        requireOwnedCourse(courseId, teacherId, false);
         List<CourseMediaAccessRow> rows = mapper.listOwnedEditableLessonContentRows(
                 courseId, lessonId, teacherId);
         if (rows.isEmpty() || !"ARTICLE".equals(rows.get(0).getLessonType())) {
@@ -271,6 +278,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.CourseMediaAccessGrant createPublishedResourceGrant(String courseId, String lessonId,
             String resourceId, CourseDtos.CourseResourceAction action, String visitorId, String traceId) {
+        suspension.requireActive(courseId);
         CourseMediaAccessRow row = mapper.findPublishedMediaAccess(courseId, lessonId, resourceId);
         if (row == null) throw notFound();
         requirePublishedLessonAccess(row, visitorId);
@@ -281,6 +289,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.CourseMediaAccessGrant createTeacherResourceGrant(String courseId, String lessonId,
             String resourceId, CourseDtos.CourseResourceAction action, String teacherId, String traceId) {
+        requireOwnedCourse(courseId, teacherId, false);
         CourseMediaAccessRow row = mapper.findOwnedEditableMediaAccess(courseId, lessonId, resourceId, teacherId);
         if (row == null) throw notFound();
         return issueResourceAction(row, action, teacherId, traceId);
@@ -506,6 +515,7 @@ public class CourseCatalogService {
     public CourseDtos.CoursePublication updatePublication(String courseId, String teacherId,
             CourseDtos.UpdatePublicationRequest request) {
         CourseEntity course = requireOwnedCourse(courseId, teacherId, true);
+        if (suspension.lockTeacher(teacherId).paused()) throw new CourseSuspendedException(suspension.availability(courseId, 0).supportEmail());
         String editableVersionId = course.getCurrentDraftVersionId() != null
                 ? course.getCurrentDraftVersionId() : course.getPublishedVersionId();
         if (editableVersionId == null) {
@@ -783,6 +793,7 @@ public class CourseCatalogService {
     @Transactional(readOnly = true)
     public CourseDtos.LessonContentIdentity verifyLessonContentIdentity(String courseId,
             String lessonId, String contentRevisionId) {
+        suspension.requireActive(courseId);
         LessonEntity lesson = mapper.findPublishedContentIdentity(courseId, lessonId, contentRevisionId);
         if (lesson == null) throw notFound();
         return new CourseDtos.LessonContentIdentity(courseId, lessonId, contentRevisionId,
@@ -824,6 +835,7 @@ public class CourseCatalogService {
 
     /** 将稳定封面 ID 投影为本次响应使用的短期 URL；签名结果不回写课程实体。 */
     private CourseDtos.TeacherCourse toTeacherCourse(CourseEntity course, String traceId) {
+        suspension.requireActive(course.getId());
         String versionId = course.getCurrentDraftVersionId() != null
                 ? course.getCurrentDraftVersionId() : course.getPublishedVersionId();
         if (versionId == null) {
@@ -909,12 +921,14 @@ public class CourseCatalogService {
     }
 
     private CourseEntity requireOwnedCourse(String courseId, String teacherId, boolean lock) {
+        if (lock) suspension.lockTeacher(teacherId);
         CourseEntity course = lock
                 ? mapper.lockOwnedCourse(courseId, teacherId)
                 : mapper.findOwnedCourse(courseId, teacherId);
         if (course == null) {
             throw notFound();
         }
+        suspension.requireActive(courseId);
         return course;
     }
 

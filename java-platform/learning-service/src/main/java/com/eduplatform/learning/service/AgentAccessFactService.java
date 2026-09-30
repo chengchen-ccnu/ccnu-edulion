@@ -1,6 +1,7 @@
 package com.eduplatform.learning.service;
 
 import com.eduplatform.learning.web.AgentAccessDtos;
+import com.eduplatform.learning.course.CourseFactsClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +27,9 @@ public class AgentAccessFactService {
                     + "(?:[=:]\\s*|\\s+)(?:bearer\\s+)?[^\\s,;]+");
     private final JdbcTemplate jdbc;
 
-    public AgentAccessFactService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    private final CourseFactsClient courses;
+
+    public AgentAccessFactService(JdbcTemplate jdbc, CourseFactsClient courses) { this.jdbc = jdbc; this.courses = courses; }
 
     @Transactional(readOnly = true)
     public AgentAccessDtos.QueryResponse query(AgentAccessDtos.QueryRequest request) {
@@ -51,7 +54,7 @@ public class AgentAccessFactService {
 
     private List<AgentAccessDtos.SafeFact> submissions(AgentAccessDtos.QueryRequest request) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT t.id,a.title,t.status,t.attempt_sequence,t.submitted_at,t.revision
+                SELECT t.id,a.course_id,a.title,t.status,t.attempt_sequence,t.submitted_at,t.revision
                 FROM assessment_participant p JOIN assessment_attempt t ON t.id=p.final_attempt_id
                 JOIN assessment a ON a.id=p.assessment_id
                 WHERE p.learner_id=? AND p.final_attempt_id=t.id
@@ -69,7 +72,7 @@ public class AgentAccessFactService {
 
     private List<AgentAccessDtos.SafeFact> publishedGrades(AgentAccessDtos.QueryRequest request) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT t.id,a.title,t.score,t.total_points,t.revision,t.grade_updated_at
+                SELECT t.id,a.course_id,a.title,t.score,t.total_points,t.revision,t.grade_updated_at
                 FROM assessment_participant p JOIN assessment_attempt t ON t.id=p.final_attempt_id
                 JOIN assessment a ON a.id=p.assessment_id
                 WHERE p.learner_id=? AND p.final_attempt_id=t.id
@@ -99,9 +102,13 @@ public class AgentAccessFactService {
             java.util.function.Function<Map<String, Object>, String> summary) {
         Set<UUID> requested = request.resourceIds() == null ? Set.of() : Set.copyOf(request.resourceIds());
         List<AgentAccessDtos.SafeFact> result = new ArrayList<>();
+        Map<String, Boolean> availability = new java.util.HashMap<>();
         for (Map<String, Object> row : rows) {
             UUID id = UUID.fromString(row.get("id").toString());
             if (!requested.isEmpty() && !requested.contains(id)) continue;
+            // Agent 内部事实同样不能让旧资源 ID 绕过暂停；依赖故障向上传播，不伪造可用。
+            if (row.get("course_id") != null && !availability.computeIfAbsent(row.get("course_id").toString(),
+                    idValue -> !courses.availability(idValue, 0, UUID.randomUUID().toString()).paused())) continue;
             long revision = row.get("revision") instanceof Number number ? number.longValue() : 0L;
             result.add(new AgentAccessDtos.SafeFact(id, title, sanitize(summary.apply(row)), revision));
             if (result.size() >= request.limit()) break;
