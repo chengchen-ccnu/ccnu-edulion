@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-10-01 总控验收合并 T16.1 与 T16.2 开工准备
+
+- 独立复核 Course 系统暂停/内部认证/Outbox、Learning 课程锁/旧 ID/区间补时/Redis 代际与 Worker、Media owner 门禁、向前迁移及验收夹具。未修改业务代码、接口、事件、迁移或既有安全规则。
+- 本地重新执行 `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 成功：80 套、325 项，282 项执行通过、43 条件跳过、失败/错误均 0。`pnpm.cmd --dir web-apps run check:api`、`run typecheck`、`run test` 通过，前端 56 文件/374 项通过；`git diff --check main...HEAD` 通过。本轮未单独重跑三端生产构建/Python，PR 和合并后 CI 均实际运行通过。
+- PowerShell 7.6.5 重新运行 `Invoke-T16.1CourseSuspensionRealAcceptance.ps1`：Course/Learning 独立 JVM 各 1 项真实测试，均 0 失败/0 跳过，覆盖 HTTP/MySQL/Redis/RabbitMQ。Course/Learning cleanup complete，手工《线性代数》course 行前后相同。随机课程/三类任务/两份草稿/报名/进度及本轮 Redis/毒消息按精确 ID 清理；没有新建数据库/OSS 对象，既有正式迁移表与 MQ 拓扑保留。日志仅在未跟踪 `.m2/t16-1-control-*.log` 和 `.m2/t16-1-learning-real.log`。
+- 兼容限制：Windows PowerShell 5.1 的 `-File` 读取该无 BOM UTF-8 中文脚本产生解析错误，本轮未修改脚本，改用当前 PowerShell 7 成功复验。真实 Gateway 登录/浏览器、实际 OSS、容量专项和正式 IAM 撤权仍未执行，不虚报端到端全部完成。
+- [PR #80](https://github.com/chengchen-ccnu/ccnu-edulion/pull/80) 精确 head `4a92394749339e629d35283a971b47b22614193f`、八项 PR/push CI 全通过，普通 merge 为 `d1f463f0be36444739cc5238608b2c0122a5d5de`。合并后 [CI #36826665570](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36826665570) 四项全部成功。main 快进与 origin/main 一致；按本次授权删除 T16.1 本地和远端分支，没有清理其他分支/worktree。
+- T16.2 前置通过：IAM V3 的提交/重提、能力/刷新基础，Media V6 的资质用途/引用台账已存在；审核历史、Outbox、管理员精确材料授权和新 API 属于 T16.2 交付。共享包装器只检查配置存在及端口可达，没有输出秘密，未以此宣称 IAM/Media/OSS 功能通过。见 [T16.2 前置审计](T16.2-prerequisite-audit.md)。
+- 从最新 main 创建 `codex/t16.2-teacher-qualification-review-contract`，仅提交本条、backlog、T16.1 合并交付状态和 T16.2 前置审计；不推送准备提交，不实现 T16.2 业务，不改变 IAM 账号/申请/权限。可以新开任务先设计契约再实施。
+
 ## 2026-09-30 T16.1 课程暂停与任务时钟后端契约
 
 - 前置：开工工作区干净，指定分支 `codex/t16.1-course-suspension-contract`；`main/origin/main@856786a` 含规划 PR #79，准备提交 `1128927`。按确认范围先修改契约，没有修改总控范围/page-specs 或 Vue。
@@ -8,7 +18,7 @@
 - 真实链路：统一 DPAPI 包装器启动独立 Course/Learning JVM，开发 MySQL、Redis DB 4、RabbitMQ 确认发布/消费通过。两次暂停、重复/旧恢复、错周期、旧 attempt 并发保存/提交及自动关闭/Worker、迟交窗口/考试草稿精确补时、旧 Redis 舍弃/恢复新进度、重复迟到事件和三次尝试后 DLQ 均验证。仅 ACK 本轮毒事件，不清空队列。
 - 数据：没有创建数据库；在 Course/Learning 开发库应用迁移，新建 2+3 张本域表，Course 增加两列。随机最小课程、三类任务、两份草稿、报名/进度和审计 Fixture 均 finally 按精确 ID 清理，Redis 临时键与本轮毒消息清理。手工《线性代数》course 行前后相同，没有修改其课程/目录/媒体或人工学习事实，未调用真实 OSS。
 - 边界/未执行：跨服务以 Course 实时事实读取作准入边界，已经准入的在途事务可完成，既有 OSS URL 按原 TTL 失效；正式 IAM 撤权/封禁/恢复及旧令牌失效留 T16.3。真实 Gateway 登录、浏览器、实际 OSS 签发/播放和容量专项未执行，不能视为通过。Media 负向 HTTP 用假存储；不清理资格材料，T16.2 使用自有审核契约。
-- 文档/交付：中文注释人工检查、环境/事件文档更新，详见 [T16.1 交付文档](../delivery/T16.1-course-suspension-contract.md)。实现 `dd11068` 已推送，提交后生成客户端 check:api 通过；2026-10-01 创建 [Ready PR #80](https://github.com/chengchen-ccnu/ccnu-edulion/pull/80)，等待总控验收，未自行合并。CI 状态以 GitHub 当前结果为准。
+- 文档/交付：中文注释人工检查、环境/事件文档更新，详见 [T16.1 交付文档](../delivery/T16.1-course-suspension-contract.md)。实现 `dd11068` 已推送，提交后生成客户端 check:api 通过；2026-10-01 创建 [PR #80](https://github.com/chengchen-ccnu/ccnu-edulion/pull/80)，后由总控验收合并，结果见上条，不再处于待合并。
 
 ## 2026-09-30 T16 规划提交与 T16.1 开工前置准备
 
