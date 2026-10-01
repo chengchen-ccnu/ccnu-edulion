@@ -4,6 +4,7 @@ import com.eduplatform.iam.domain.TeacherApplication;
 import com.eduplatform.iam.domain.UserAccount;
 import com.eduplatform.iam.media.TeacherQualificationMediaClient;
 import com.eduplatform.iam.persistence.IamMapper;
+import com.eduplatform.iam.persistence.TeacherReviewRepository;
 import com.eduplatform.iam.web.AccountLifecycleDtos;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,14 +16,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 保存教师申请提交事实；不包含 T16 审核决定或教学能力授予。 */
+/** 保存教师申请提交和重提事实，并在同一事务建立每轮资质媒体引用。 */
 @Service
 public class TeacherApplicationService {
     private final IamMapper mapper;
     private final TeacherQualificationMediaClient media;
+    private final TeacherReviewRepository reviews;
 
-    public TeacherApplicationService(IamMapper mapper, TeacherQualificationMediaClient media) {
-        this.mapper = mapper; this.media = media;
+    public TeacherApplicationService(IamMapper mapper, TeacherQualificationMediaClient media,
+            TeacherReviewRepository reviews) {
+        this.mapper = mapper; this.media = media; this.reviews = reviews;
     }
 
     /** 先跨服务验证稳定 mediaId，再提交/重提本域事实；同一 clientRequestId 可安全重放。 */
@@ -35,6 +38,7 @@ public class TeacherApplicationService {
         if (replay != null) return new Result(response(replay), false);
         media.requireBindable(request.qualificationMediaId().toString(), userId, traceId);
         TeacherApplication current = mapper.findTeacherApplicationByUser(userId);
+        TeacherReviewRepository.Round previous = current == null ? null : reviews.latestRound(current.getId());
         Instant now = Instant.now();
         boolean created;
         try {
@@ -53,6 +57,14 @@ public class TeacherApplicationService {
                 created = false;
             }
             mapper.insertTeacherApplicationCommand(request.clientRequestId().toString(), current.getId(), fingerprint, now);
+            TeacherReviewRepository.Round round = reviews.insertRound(current.getId(),
+                    request.qualificationMediaId().toString(), request.statement().trim(), now);
+            reviews.outbox("MediaReferenceBound", "edu.media.events.v1", "media.reference.bound.v1",
+                    round.mediaId(), java.util.Map.of("mediaId", round.mediaId(), "ownerService", "iam-service",
+                            "referenceType", "TEACHER_APPLICATION_ROUND", "referenceId", round.id()),
+                    traceId == null || traceId.isBlank() ? "unknown-trace" : traceId, now);
+            reviews.markBoundEnqueued(round.id(), now);
+            if (previous != null) reviews.replaceRetention(previous.id(), now);
             mapper.insertSecurityAudit(UUID.randomUUID().toString(), userId, userId,
                     created ? "TEACHER_APPLICATION_SUBMITTED" : "TEACHER_APPLICATION_RESUBMITTED",
                     "用户提交教师申请", safe(remoteAddress), safe(traceId), now);

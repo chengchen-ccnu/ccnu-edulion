@@ -760,3 +760,23 @@ T15D 将 Agent Access 的专用开发 Schema 向前迁移到 V8，新增 `ai_con
 脚本在启动前拒绝已占用端口，只停止其记录的进程，并把忽略的日志放在 `.m2/t15d-browser`。题图成功直传仍依赖既有 OSS/MinIO 可达；对象存储未启动时页面应显示失败并取消上传会话，不能伪装成功。T15D 没有向 `local.env` 写入新字段，任务结束无需删除或迁移任何本地配置；秘密仍只放 DPAPI/部署 Secret。
 
 仓库的 Java、Python、Frontend 和契约一致性命令统一记录在 [`docs/roadmap/verification.md`](../roadmap/verification.md)。默认 `clean verify` 不激活 `local` profile，因此 CI 不依赖开发机数据库、Redis、OSS 或 RabbitMQ。
+
+## T16.2 教师资格审核
+
+IAM V4 只在用途明确的 `edu_platform_iam_dev` 或专用测试 Schema 向前建立申请轮次、不可变决定/命令和 IAM Outbox；Media 继续使用现有 V6 引用台账及对象回收，不新增数据库。IAM 审核和材料授权复用 `COURSE_MEDIA_AUTH_SECRET` 的本机 DPAPI 注入，令牌来源固定为 `IAM_MEDIA_AUTH_ISSUER=edu-platform-iam-service`，Media 仅接受 `TEACHER_QUALIFICATION` 原件的 PREVIEW/INLINE 或 DOWNLOAD/ATTACHMENT 一次性组合。秘密不得写入 `local.env`、命令参数或日志；正式部署由 Secret Manager 注入。
+
+| 配置 | 作用 |
+|---|---|
+| `IAM_REVIEW_MESSAGING_ENABLED` | 默认 `true`；IAM Outbox 发布媒体引用和最小审核决定，依赖 RabbitMQ publisher confirm/return。测试 profile 关闭。 |
+| `IAM_REVIEW_RETENTION_ENABLED` | 默认 `true`；每批最多 50 条到期轮次写入引用释放 Outbox，测试 profile 关闭。 |
+| `IAM_REVIEW_MAX_PUBLISH_ATTEMPTS`、`IAM_REVIEW_CONFIRM_TIMEOUT` | 默认 20 次、10 秒；耗尽留 `FAILED` 供人工排查和受控重放。 |
+| `IAM_REVIEW_OUTBOX_POLL_DELAY`、`IAM_REVIEW_RETENTION_POLL_DELAY` | 默认 2 秒、1 分钟；本地可调，正式环境监控 `FAILED` 与积压。 |
+| `IAM_MEDIA_REQUEST_TIMEOUT`、`MEDIA_SERVICE_BASE_URL` | IAM 到 Media 的绑定校验/内部一次性原件授权与首字节可读性检查。 |
+
+PowerShell 7 验收脚本明确要求两个开发 Schema、RabbitMQ、真实阿里云 OSS 与本机 DPAPI 凭据。它占用 18080/18081/18083，启动独立 Gateway/IAM JVM 和真实 Media 测试上下文，使用随机合成账号与本轮专用 OSS 前缀；`finally` 按精确 ID 和 Object Key 清理，不触碰《线性代数》。脚本为 UTF-8，声明 `#requires -Version 7.0`，不承诺 Windows PowerShell 5.1 解析兼容：
+
+```powershell
+pwsh -NoProfile -File scripts/Invoke-T16.2TeacherReviewRealAcceptance.ps1
+```
+
+本任务不需在个人 `local.env` 中添加秘密。若有人曾手工写入 MySQL/RabbitMQ/OSS 密码或 `COURSE_MEDIA_AUTH_SECRET`，结束后应从 `local.env` 删除，改用当前用户 DPAPI 初始化或正式部署 Secret Manager；`IAM_MEDIA_AUTH_ISSUER`、服务地址和轮询时间是非敏感配置，可按运行环境保留。

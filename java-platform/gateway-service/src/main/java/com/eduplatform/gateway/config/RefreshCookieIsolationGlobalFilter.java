@@ -40,7 +40,8 @@ public class RefreshCookieIsolationGlobalFilter implements GlobalFilter, Ordered
     static boolean isIamPath(String path) {
         return path.startsWith("/api/v1/auth/") || path.startsWith("/api/v1/users/")
                 || path.startsWith("/api/v1/protocols/") || path.startsWith("/api/v1/teacher-applications")
-                || path.startsWith("/api/v1/admin/users");
+                || path.startsWith("/api/v1/admin/users")
+                || path.startsWith("/api/v1/admin/teacher-applications");
     }
 
     @Override public int getOrder() { return -5; }

@@ -53,6 +53,10 @@ class AccountLifecycleIntegrationTest {
 
     @BeforeEach
     void resetData() {
+        jdbc.update("DELETE FROM iam_outbox_event");
+        jdbc.update("DELETE FROM teacher_review_command");
+        jdbc.update("DELETE FROM teacher_review_decision");
+        jdbc.update("DELETE FROM teacher_application_round");
         jdbc.update("DELETE FROM teacher_application_command");
         jdbc.update("DELETE FROM teacher_application");
         jdbc.update("DELETE FROM admin_account_command");

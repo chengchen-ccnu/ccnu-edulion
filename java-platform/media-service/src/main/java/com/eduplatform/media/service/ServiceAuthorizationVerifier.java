@@ -19,7 +19,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Component;
 
 /**
- * 校验并一次性消费 course-service 或 learning-service 媒体授权令牌。
+ * 校验并一次性消费 Course、Learning 或 IAM 领域已批准的媒体授权令牌。
  *
  * <p>验证签名、issuer、audience、时间窗、访问者、mediaId、用途、访问类型、变体、处置方式和 jti。
  * 任一失败都返回同一拒绝语义，不泄露具体是哪项错误；成功 jti 由数据库唯一键防重放。</p>
@@ -40,6 +40,7 @@ public class ServiceAuthorizationVerifier {
         }
         if (this.properties.issuer() == null || this.properties.issuer().isBlank()
                 || this.properties.assessmentIssuer() == null || this.properties.assessmentIssuer().isBlank()
+                || this.properties.iamIssuer() == null || this.properties.iamIssuer().isBlank()
                 || this.properties.audience() == null || this.properties.audience().isBlank()
                 || this.properties.maxTokenTtl() == null || this.properties.maxTokenTtl().isZero()
                 || this.properties.maxTokenTtl().isNegative()
@@ -76,7 +77,8 @@ public class ServiceAuthorizationVerifier {
             requireTimeWindow(jwt, now);
             // 现有 issuer 是稳定服务标识而非 URL，不能调用 Jwt#getIssuer() 的 URL 强制转换。
             String issuer = jwt.getClaimAsString("iss");
-            if (!properties.issuer().equals(issuer) && !properties.assessmentIssuer().equals(issuer)) {
+            if (!properties.issuer().equals(issuer) && !properties.assessmentIssuer().equals(issuer)
+                    && !properties.iamIssuer().equals(issuer)) {
                 throw rejected();
             }
             requireEqual(mediaId, jwt.getClaimAsString("mediaId"));
@@ -87,6 +89,7 @@ public class ServiceAuthorizationVerifier {
             requireEqual(request.disposition().name(), jwt.getClaimAsString("disposition"));
             boolean courseIssuer = properties.issuer().equals(issuer);
             boolean learningIssuer = properties.assessmentIssuer().equals(issuer);
+            boolean iamIssuer = properties.iamIssuer().equals(issuer);
             boolean playback = courseIssuer && "COURSE_PLAYBACK".equals(request.accessType())
                     && request.purpose() == com.eduplatform.media.domain.MediaPurpose.LESSON_VIDEO
                     && (MediaAssetService.PRESET_VERSION.equals(request.variant())
@@ -125,8 +128,16 @@ public class ServiceAuthorizationVerifier {
                             && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.ATTACHMENT)
                         || (request.purpose() != com.eduplatform.media.domain.MediaPurpose.QUESTION_ATTACHMENT
                             && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE));
+            // IAM 已核对管理员与具体申请轮次；Media 仍限制来源、用途、动作、原件和一次性 jti。
+            boolean qualificationMedia = iamIssuer
+                    && request.purpose() == com.eduplatform.media.domain.MediaPurpose.TEACHER_QUALIFICATION
+                    && "ORIGINAL".equals(request.variant())
+                    && (("TEACHER_QUALIFICATION_PREVIEW".equals(request.accessType())
+                            && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.INLINE)
+                        || ("TEACHER_QUALIFICATION_DOWNLOAD".equals(request.accessType())
+                            && request.disposition() == com.eduplatform.media.web.MediaDtos.Disposition.ATTACHMENT));
             if (!playback && !coverDisplay && !articleImage && !poster
-                    && !resourcePreview && !resourceDownload && !assessmentMedia) {
+                    && !resourcePreview && !resourceDownload && !assessmentMedia && !qualificationMedia) {
                 throw rejected();
             }
             if (!repository.consumeServiceAuthorization(jwt.getId(), issuer,

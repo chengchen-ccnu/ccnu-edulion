@@ -64,3 +64,7 @@ T16.1 新增 [`course-availability-events.v1.yaml`](./course-availability-events
 | 可用性死信 Queue | `edu.learning.availability.dlq.v1` | durable classic；绑定 `learning.availability.dead.v1` |
 
 事件只含课程/周期 ID、revision、paused 和区间起止，不含撤权原因、课程正文或媒体信息；暂停时 resumedAt 必须显式为 null。复用 Course 既有有确认 Outbox，Learning 最多 3 次尝试后 DLQ，以 eventId 持久化幂等。消费者读取受保护 Course 当前事实并在本域课程锁下追平区间，不以迟到 payload 覆盖恢复状态或重复顺延。Course 故障保留重试/死信；访问入口实时校验，不依赖事件及时送达。人工修复后以原 eventId 重放，不自动回流。
+
+T16.2 新增 [`iam-teacher-review-events.v1.yaml`](./iam-teacher-review-events.v1.yaml)，IAM 决定事务同时写不可变决定、安全审计、教师能力和最小 `TeacherQualificationDecided` Outbox。事件只含申请/轮次/用户 ID 与批准或驳回状态，不含资质、联系方式或理由。`edu.iam.events.v1` durable topic 将其投递到 `edu.iam.teacher-review.decisions.v1` durable queue，配置 DLQ；T16.4 才增加消息消费者，须以 `eventId` 持久化幂等。IAM 发布使用 mandatory return、publisher confirm 与有限退避；耗尽 `FAILED` 保留受控重放证据。
+
+同任务复用本文件开头的 [`media-events.v1.yaml`](./media-events.v1.yaml) 和 `edu.media.references.v1`：申请轮次提交写 `MediaReferenceBound`，到期释放写 `MediaReferenceReleased`，均使用 `ownerService=iam-service`、`referenceType=TEACHER_APPLICATION_ROUND` 和不可变轮次 ID。相同媒体的后续事件等待前序 Outbox 发布确认，Media 继续按 `eventId` 幂等消费。释放事件已发布只表示请求已送达；物理删除仍取决于 Media 有效引用和回收宽限期。

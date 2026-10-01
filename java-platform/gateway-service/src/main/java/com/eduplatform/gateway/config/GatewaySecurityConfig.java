@@ -109,6 +109,8 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/ai/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/admin/users", "/api/v1/admin/users/**").hasAuthority("administration:access")
+                        .pathMatchers("/api/v1/admin/teacher-applications",
+                                "/api/v1/admin/teacher-applications/**").hasAuthority("administration:access")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
