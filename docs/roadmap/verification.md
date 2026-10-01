@@ -7,7 +7,7 @@
 - `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 最终修订后通过：83 套、333 项，44 条件跳过，失败/错误 0；请求必填校验另以 IAM `-pl iam-service -am test` 复验。IAM H2 覆盖权限、多人查看、revision/幂等、事务回滚、会话刷新、驳回重提和七天释放；Outbox 单测覆盖故障耗尽和引用发布顺序，Media H2/Fake OSS 验证 IAM 服务令牌来源、用途和重放拒绝。`pnpm.cmd --dir web-apps run generate:api/typecheck/test/build` 均通过，前端测试 56 文件、374 项；Prism 新列表 Mock 200 并含分页字段。
 - PowerShell 7 `Invoke-T16.2TeacherReviewRealAcceptance.ps1` 以当前用户 DPAPI 包装器运行，真实测试 1 项通过、0 失败/错误/跳过。独立 Gateway/IAM JVM 与真实 Media 上下文打通开发 MySQL、RabbitMQ 和 OSS：合成图片短期直传、READY、引用 Bound、管理员审核及原件预览 GET、同事务批准、既有学生会话刷新成教学能力、IAM 决定 Outbox 发布确认与本轮队列消息消费。未把 H2/Fake OSS 结果冒充真实链路。
 - 真实夹具仅为随机 `t162-*` 合成账号、单像素 PNG 与 `t16-2-acceptance/<UUID>` 对象前缀；测试 `finally` 按本轮 ID/Key 清理，并复查媒体资产前缀与账号身份残留均为 0。未操作《线性代数》、其他领域表或生产库。没有常驻演示数据；重复执行脚本可重建并精确清理场景。日志留在忽略的 `.m2/t16-2-acceptance/`。脚本要求 PowerShell 7，UTF-8 中文脚本不承诺 Windows PowerShell 5.1 兼容。
-- 前端生成文件提交后复验 `check:api`；PR、关键提交和 CI 状态以交付文档最终记录为准。T16.4 消息消费者、T16.3 撤权、T17C 页面均未在本任务实现。
+- 生成客户端提交后 `pnpm.cmd --dir web-apps run check:api` 通过；实现提交 `335bee7` 已普通推送至指定分支，Ready [PR #81](https://github.com/chengchen-ccnu/ccnu-edulion/pull/81) 等待总控验收，PR CI 状态以 GitHub 实时结果为准。T16.4 消息消费者、T16.3 撤权、T17C 页面均未在本任务实现。
 
 ## 2026-10-01 总控验收合并 T16.1 与 T16.2 开工准备
 
