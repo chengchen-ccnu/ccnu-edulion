@@ -26,6 +26,8 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(prefix = "platform.learning.progress-buffer", name = "enabled", havingValue = "true",
         matchIfMissing = true)
 public class ProgressBufferWorker {
+    @Autowired
+    private com.eduplatform.learning.course.CourseTaskClock courseClock;
     private final RedisProgressBufferStore store;
     private final LearningAssessmentRepository repository;
     private final MeterRegistry meterRegistry;
@@ -83,11 +85,16 @@ public class ProgressBufferWorker {
             snapshot = store.leasedSnapshot(key).orElse(null);
             if (snapshot == null) return;
             String[] ids = RedisProgressBufferStore.ids(key);
+            boolean persisted = true;
+            if (courseClock != null) {
+                persisted = courseClock.persistBuffered(snapshot, repository, now);
+            } else { // 手工构造的旧 Worker 仅用于已有隔离测试，生产注入必须经过课程时钟。
             repository.applyBufferedProgress(ids[0], ids[1], snapshot.lessonId(), ids[2], snapshot.positionSeconds(),
                     snapshot.watchedSeconds(), snapshot.completed(), snapshot.lastEventAt(), snapshot.version(), now,
                     snapshot.watchedByDay(), snapshot.firstStartedDay());
+            }
             if (store.acknowledge(key, snapshot)) {
-                meterRegistry.counter("learning.progress.worker.persisted").increment();
+                meterRegistry.counter(persisted ? "learning.progress.worker.persisted" : "learning.progress.worker.suspension-discarded").increment();
             } else {
                 meterRegistry.counter("learning.progress.worker.conflicts").increment();
             }

@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * Get a published course detail
-         * @description Returns the immutable public version and ordered curriculum, including each server-issued current contentRevisionId and the monotonic publicationRevision used by Learning to reject stale publication events. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
+         * @description 系统暂停返回 409 COURSE.SUSPENDED，仅包含课程暂不可用与 supportEmail，不返回目录或封面授权。Returns the immutable public version and ordered curriculum, including each server-issued current contentRevisionId and the monotonic publicationRevision used by Learning to reject stale publication events. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
          */
         get: operations["getCourse"];
         put?: never;
@@ -2334,7 +2334,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a short-lived, object-level read grant
-         * @description Version 0.22.0 security correction. Direct grants require asset ownership, including for SYSTEM assets. Other users use the Learning public-question or assessment domain grant, which validates current content and answer publication. Existing short-lived URLs expire at their original TTL; no asset or course practice data is deleted.
+         * @description Direct grants require asset ownership, including for SYSTEM assets. Other users use the Learning public-question or assessment domain grant, which validates current content and answer publication. T16.1 教学用途文件的上传者预览须有当前教学能力并通过 Course 实时授权；系统暂停返回 409 MEDIA.COURSE_SUSPENDED 和 supportEmail，Course 故障返回 503。通用 owner 入口不得绕过课程暂停，已有短期 URL 按原有效期失效；不删除资产或课程练习事实。
          */
         post: operations["createMediaAccessGrant"];
         delete?: never;
@@ -5628,6 +5628,13 @@ export interface components {
             timestamp: string;
             path: string;
             fieldErrors: components["schemas"]["FieldError"][];
+            /**
+             * Format: email
+             * @description 系统暂停时配置的管理员联系邮箱，不返回内部原因。
+             */
+            supportEmail?: string;
+            /** @description Learning 暂停错误为 true，未持久化观看缓冲已逻辑舍弃。 */
+            progressBufferDiscarded?: boolean;
         };
         FieldError: {
             /** @description Safe dotted request-field path when the server can locate the failure (for example, version.type); request is the fallback for malformed bodies without a reliable field path. */
@@ -5636,6 +5643,15 @@ export interface components {
         };
     };
     responses: {
+        /** @description 系统暂停返回 COURSE.SUSPENDED、LEARNING.COURSE_SUSPENDED 或 MEDIA.COURSE_SUSPENDED，仅通用说明与管理员邮箱；Learning 提示未保存进度舍弃。已有 409 响应同样使用 ApiError 承载此状态。 */
+        CourseSuspended: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description Authentication is missing or invalid. */
         Unauthorized: {
             headers: {
@@ -7088,6 +7104,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            409: components["responses"]["CourseSuspended"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };
@@ -7258,6 +7275,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
@@ -7287,6 +7305,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["CourseSuspended"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };
@@ -8510,6 +8529,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -8607,6 +8627,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     createLessonNote: {
@@ -8638,7 +8660,9 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     updateLearningNote: {
@@ -8670,6 +8694,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     deleteLearningNote: {
@@ -8693,6 +8718,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     listLearnerAssessments: {
@@ -8720,6 +8747,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["LearningDependencyUnavailable"];
@@ -8820,6 +8848,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     saveAttemptDraft: {
@@ -8852,6 +8881,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     submitAttempt: {
@@ -8884,6 +8914,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     getAttemptResult: {
@@ -8909,7 +8940,9 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     listWrongQuestions: {
@@ -8937,8 +8970,10 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     getWrongQuestion: {
@@ -8964,7 +8999,9 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     updateWrongQuestionMastery: {
@@ -8997,6 +9034,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     redoWrongQuestion: {
@@ -9038,6 +9076,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     createAssessmentMediaAccessGrant: {
@@ -9097,6 +9136,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
@@ -9131,6 +9171,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["LearningDependencyUnavailable"];
@@ -9207,6 +9248,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     getLearnerCourseTaskResult: {
@@ -9235,6 +9277,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     listTeacherAssessments: {
@@ -9263,7 +9306,9 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["CourseSuspended"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     createTeacherAssessment: {
@@ -9328,6 +9373,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     updateTeacherAssessment: {
@@ -9359,6 +9406,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     deleteTeacherAssessment: {
@@ -9383,6 +9431,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     replaceAssessmentQuestions: {
@@ -9414,6 +9463,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     updateAssessmentPublication: {
@@ -9445,6 +9495,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     closeTeacherAssessment: {
@@ -9477,6 +9528,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     publishAssessmentGrades: {
@@ -9509,6 +9561,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     updateTeacherAssessmentDeadline: {
@@ -9574,6 +9627,7 @@ export interface operations {
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     listAssessmentResults: {
@@ -9603,6 +9657,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     getTeacherAttemptResult: {
@@ -9629,6 +9685,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     gradeAttemptAnswers: {
@@ -9660,6 +9717,7 @@ export interface operations {
             404: components["responses"]["LearningNotFound"];
             409: components["responses"]["LearningConflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
     listCourseStudentLearning: {
@@ -9726,6 +9784,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9757,6 +9816,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9788,6 +9848,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9818,6 +9879,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9844,6 +9906,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9874,6 +9937,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9904,6 +9968,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };
@@ -9935,6 +10000,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LearningNotFound"];
+            409: components["responses"]["CourseSuspended"];
             503: components["responses"]["LearningDependencyUnavailable"];
         };
     };

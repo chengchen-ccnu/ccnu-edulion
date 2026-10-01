@@ -634,6 +634,7 @@ class MediaRealEnvironmentAcceptanceTest {
     private HttpResponse<String> send(int port, String method, String path, String body) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .header("X-User-Id", OWNER).header("X-User-Roles", "TEACHER")
+                .header("X-User-Permissions", "teaching:access")
                 .header("X-Trace-Id", "trace-t07-acceptance");
         if (body != null) request.header("Content-Type", "application/json");
         request.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));

@@ -134,9 +134,11 @@ public class MediaController {
     ResponseEntity<MediaDtos.AccessGrant> access(@PathVariable String mediaId,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = "X-User-Permissions", required = false) String permissions,
             @Valid @RequestBody MediaDtos.CreateAccessGrantRequest request,
             HttpServletRequest servletRequest) {
-        MediaDtos.AccessGrant grant = service.access(mediaId, MediaIdentity.require(userId, roles).userId(),
+        MediaIdentity identity = MediaIdentity.require(userId, roles, permissions);
+        MediaDtos.AccessGrant grant = service.access(mediaId, identity.userId(), identity.roles(), identity.permissions(),
                 request, trace(servletRequest));
         return ResponseEntity.status(201).body(grant);
     }

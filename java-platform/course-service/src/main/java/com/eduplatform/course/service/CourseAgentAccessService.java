@@ -35,7 +35,7 @@ public class CourseAgentAccessService {
                     JOIN chapter ch ON ch.course_version_id=cv.id
                     JOIN lesson l ON l.chapter_id=ch.id
                     LEFT JOIN course_text_index_revision ir ON ir.lesson_id=l.id
-                    WHERE c.id=? AND c.publication_status='PUBLISHED' AND cv.lifecycle_status='PUBLISHED'
+                    WHERE c.id=? AND c.publication_status='PUBLISHED' AND c.system_suspended=FALSE AND cv.lifecycle_status='PUBLISHED'
                       AND cv.id=? AND l.id=? AND l.id=? AND l.lesson_type='ARTICLE'
                       AND l.article_markdown IS NOT NULL AND l.article_markdown<>''
                       AND COALESCE(ir.revision,1)=?

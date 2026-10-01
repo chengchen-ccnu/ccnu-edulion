@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.26.1
-  description: T12C.1.1 allows an owner teacher to see one ACTIVE student's graded final formal attempt score after the assessment closes and settlement completes, even while classmates await grading. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
+  version: 0.27.0
+  description: T16.1 adds independent course suspension, protected task clocks, safe support-email errors and progress-buffer discard semantics. Published course content and old assessment/attempt links fail closed while suspended. T12C.1.1 allows an owner teacher to see one ACTIVE student's graded final formal attempt score after the assessment closes and settlement completes, even while classmates await grading. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -664,7 +664,7 @@ paths:
       tags: [Courses]
       operationId: getCourse
       summary: Get a published course detail
-      description: Returns the immutable public version and ordered curriculum, including each server-issued current contentRevisionId and the monotonic publicationRevision used by Learning to reject stale publication events. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
+      description: 系统暂停返回 409 COURSE.SUSPENDED，仅包含课程暂不可用与 supportEmail，不返回目录或封面授权。Returns the immutable public version and ordered curriculum, including each server-issued current contentRevisionId and the monotonic publicationRevision used by Learning to reject stale publication events. Missing, draft and unpublished courses share the same not-found response to avoid leaking private course existence.
       security: []
       parameters:
         - $ref: '#/components/parameters/CourseId'
@@ -706,6 +706,8 @@ paths:
                             type: VIDEO
                             sequence: 1
                             previewable: true
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -891,6 +893,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '422':
           $ref: '#/components/responses/ValidationFailed'
         '429':
@@ -918,6 +922,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -1965,6 +1971,8 @@ paths:
         '200': {description: Course progress., content: {application/json: {schema: {$ref: '#/components/schemas/CourseProgress'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/learning/courses/{courseId}/lessons/{lessonId}/progress-events:
@@ -2020,7 +2028,11 @@ paths:
         '200': {description: Notes ordered by updatedAt descending., content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/LearningNote'}}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     post:
       tags: [Learning]
       operationId: createLessonNote
@@ -2035,8 +2047,12 @@ paths:
         '201': {description: Note created., content: {application/json: {schema: {$ref: '#/components/schemas/LearningNote'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/notes/{noteId}:
     put:
       tags: [Learning]
@@ -2057,6 +2073,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     delete:
       tags: [Learning]
       operationId: deleteLearningNote
@@ -2070,7 +2088,11 @@ paths:
         '204': {description: Note deleted.}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/assessments:
     get:
       tags: [Assessments]
@@ -2089,6 +2111,8 @@ paths:
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
   /api/v1/learning/assessments/{assessmentId}:
     get:
       tags: [Assessments]
@@ -2140,6 +2164,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     put:
       tags: [Assessments]
       operationId: saveAttemptDraft
@@ -2157,6 +2183,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/attempts/{attemptId}/submission:
     post:
       tags: [Assessments]
@@ -2176,6 +2204,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/attempts/{attemptId}/result:
     get:
       tags: [Assessments]
@@ -2187,8 +2217,12 @@ paths:
         '200': {description: Self-contained immutable result that remains readable after assessment archival. Question content is always safe; correctAnswer and analysis are null until the publication policy permits disclosure., content: {application/json: {schema: {$ref: '#/components/schemas/AttemptResult'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/wrong-questions:
     get:
       tags: [Assessments]
@@ -2206,6 +2240,10 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/wrong-questions/{wrongQuestionId}:
     get:
       tags: [Assessments]
@@ -2217,8 +2255,12 @@ paths:
         '200': {description: Owned wrong-question detail., content: {application/json: {schema: {$ref: '#/components/schemas/WrongQuestion'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/wrong-questions/{wrongQuestionId}/mastery:
     put:
       tags: [Assessments]
@@ -2237,6 +2279,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/wrong-questions/{wrongQuestionId}/redos:
     post:
       tags: [Assessments]
@@ -2257,6 +2301,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/assessments/{assessmentId}/media/{mediaId}/access-grants:
     post:
       tags: [Assessments]
@@ -2290,6 +2336,8 @@ paths:
         '200': {description: Authorized course and task metadata; no question or answer content., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerCourseTaskSummary'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
@@ -2314,6 +2362,8 @@ paths:
         '200': {description: Safe learner task summaries with server time., content: {application/json: {schema: {$ref: '#/components/schemas/LearnerCourseTaskPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -2358,6 +2408,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/learning/courses/{courseId}/tasks/{assessmentId}/result:
     get:
       tags: [Learning]
@@ -2374,6 +2426,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments:
     get:
       tags: [Teacher Assessments]
@@ -2393,6 +2447,10 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     post:
       tags: [Teacher Assessments]
       operationId: createTeacherAssessment
@@ -2420,7 +2478,11 @@ paths:
         '200': {description: Full teacher projection., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherAssessment'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     put:
       tags: [Teacher Assessments]
       operationId: updateTeacherAssessment
@@ -2437,6 +2499,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
     delete:
       tags: [Teacher Assessments]
       operationId: deleteTeacherAssessment
@@ -2450,6 +2514,8 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/questions:
     put:
       tags: [Teacher Assessments]
@@ -2468,6 +2534,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/publication:
     put:
       tags: [Teacher Assessments]
@@ -2485,6 +2553,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/closure:
     post:
       tags: [Teacher Assessments]
@@ -2504,6 +2574,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/grade-publication:
     post:
       tags: [Teacher Assessments]
@@ -2523,6 +2595,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/deadline:
     put:
       tags: [Teacher Assessments]
@@ -2562,6 +2636,8 @@ paths:
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/assessments/{assessmentId}/results:
     get:
       tags: [Teacher Assessments]
@@ -2575,7 +2651,11 @@ paths:
         '200': {description: Attempt results., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherAttemptResultPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/attempts/{attemptId}:
     get:
       tags: [Teacher Assessments]
@@ -2590,6 +2670,8 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/attempts/{attemptId}/grades:
     post:
       tags: [Teacher Assessments]
@@ -2607,6 +2689,8 @@ paths:
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '409': {$ref: '#/components/responses/LearningConflict'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503':
+          $ref: '#/components/responses/LearningDependencyUnavailable'
   /api/v1/teacher/learning/courses/{courseId}/students:
     get:
       tags: [Teacher Learning Analytics]
@@ -2644,6 +2728,8 @@ paths:
         '200': {description: Student summary., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentOverview'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/lessons:
@@ -2660,6 +2746,8 @@ paths:
         '200': {description: Current lessons only., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentLessonPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/tasks:
@@ -2676,6 +2764,8 @@ paths:
         '200': {description: Last valid formal attempt or highest valid PRACTICE score. A closed and settled formal task exposes this student's score once their final attempt is graded; class ranks still require all grading to finish., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherStudentTaskPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/students/{learnerId}/trend:
@@ -2691,6 +2781,8 @@ paths:
         '200': {description: Current revision trend., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherLearningTrend'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/analytics/overview:
@@ -2703,6 +2795,8 @@ paths:
         '200': {description: Course snapshot., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseAnalytics'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/analytics/lessons:
@@ -2718,6 +2812,8 @@ paths:
         '200': {description: Lesson aggregates., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseLessonPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/analytics/tasks:
@@ -2733,6 +2829,8 @@ paths:
         '200': {description: Task aggregates., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherCourseTaskPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/learning/courses/{courseId}/analytics/trend:
@@ -2748,6 +2846,8 @@ paths:
         '200': {description: Course or lesson trend., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherLearningTrend'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          $ref: '#/components/responses/CourseSuspended'
         '404': {$ref: '#/components/responses/LearningNotFound'}
         '503': {$ref: '#/components/responses/LearningDependencyUnavailable'}
   /api/v1/teacher/gradebook:
@@ -3100,7 +3200,9 @@ paths:
     post:
       tags: [Media]
       operationId: createMediaAccessGrant
-      description: Version 0.22.0 security correction. Direct grants require asset ownership, including for SYSTEM assets. Other users use the Learning public-question or assessment domain grant, which validates current content and answer publication. Existing short-lived URLs expire at their original TTL; no asset or course practice data is deleted.
+      description: >-
+        Direct grants require asset ownership, including for SYSTEM assets. Other users use the Learning public-question or assessment domain grant, which validates current content and answer publication.
+        T16.1 教学用途文件的上传者预览须有当前教学能力并通过 Course 实时授权；系统暂停返回 409 MEDIA.COURSE_SUSPENDED 和 supportEmail，Course 故障返回 503。通用 owner 入口不得绕过课程暂停，已有短期 URL 按原有效期失效；不删除资产或课程练习事实。
       summary: Issue a short-lived, object-level read grant
       parameters:
         - $ref: '#/components/parameters/MediaId'
@@ -3673,6 +3775,12 @@ components:
       description: Verified identity type to replace or remove.
       schema: {$ref: '#/components/schemas/IdentityType'}
   responses:
+    CourseSuspended:
+      description: 系统暂停返回 COURSE.SUSPENDED、LEARNING.COURSE_SUSPENDED 或 MEDIA.COURSE_SUSPENDED，仅通用说明与管理员邮箱；Learning 提示未保存进度舍弃。已有 409 响应同样使用 ApiError 承载此状态。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
     Unauthorized:
       description: Authentication is missing or invalid.
       content:
@@ -8126,6 +8234,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FieldError'
+        supportEmail:
+          type: string
+          format: email
+          description: 系统暂停时配置的管理员联系邮箱，不返回内部原因。
+        progressBufferDiscarded:
+          type: boolean
+          description: Learning 暂停错误为 true，未持久化观看缓冲已逻辑舍弃。
     FieldError:
       type: object
       additionalProperties: false

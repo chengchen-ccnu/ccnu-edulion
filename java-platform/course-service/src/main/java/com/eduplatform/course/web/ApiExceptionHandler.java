@@ -21,6 +21,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 他人课程与不存在资源沿用相同业务错误，未知异常不会泄露 SQL 或内部实现。
  */
 public class ApiExceptionHandler {
+    /** 暂停响应只包含统一信封和配置邮箱，不包含课程正文或内部撤权原因。 */
+    @ExceptionHandler(com.eduplatform.course.service.CourseSuspendedException.class)
+    ResponseEntity<java.util.Map<String, Object>> handleSuspended(
+            com.eduplatform.course.service.CourseSuspendedException exception, HttpServletRequest request) {
+        return ResponseEntity.status(exception.status()).body(java.util.Map.of(
+                "code", exception.code(), "message", exception.getMessage(),
+                "traceId", request.getAttribute(TraceFilter.ATTRIBUTE), "timestamp", Instant.now(),
+                "path", request.getRequestURI(), "fieldErrors", List.of(), "supportEmail", exception.supportEmail()));
+    }
+
     @ExceptionHandler(CourseException.class)
     ResponseEntity<ApiError> handleCourse(CourseException exception, HttpServletRequest request) {
         return ResponseEntity.status(exception.status())
@@ -46,6 +56,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException exception, HttpServletRequest request) {
         return unprocessable(request, List.of(new FieldError("request", "请求体格式或枚举值不合法")));
+    }
+
+    /** 内部 UUID/游标无法转换时仍按契约返回 422，不泄露框架异常。 */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    ResponseEntity<ApiError> handleTypeMismatch(HttpServletRequest request) {
+        return unprocessable(request, List.of(new FieldError("request", "资源 ID 或游标格式不合法")));
     }
 
     @ExceptionHandler(Exception.class)

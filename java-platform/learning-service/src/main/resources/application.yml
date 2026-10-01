@@ -18,6 +18,9 @@ management:
         include: health,info
 platform:
   learning:
+    # 事件主动追平；即使关闭或 MQ 故障，课程访问仍读取实时 HTTP 暂停事实。
+    suspension-messaging:
+      enabled: false
     agent-index:
       enabled: ${AGENT_INDEX_API_ENABLED:false}
       service-token: ${AGENT_INDEX_SERVICE_TOKEN:}
@@ -45,8 +48,8 @@ platform:
     course:
       base-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
       request-timeout: ${LEARNING_COURSE_REQUEST_TIMEOUT:3s}
-      # 进度心跳只需短时复用已发布课程事实，减少高频请求对 course-service 的同步放大；发布变化最多滞后该 TTL。
-      fact-cache-ttl: ${LEARNING_COURSE_FACT_CACHE_TTL:1s}
+      # T16.1 授权事实不再缓存；旧 TTL 配置保留兼容但不参与 Course 授权读取。
+      fact-cache-ttl: ${LEARNING_COURSE_FACT_CACHE_TTL:0s}
     iam:
       base-url: ${IAM_SERVICE_BASE_URL:http://127.0.0.1:8081}
       request-timeout: ${LEARNING_IAM_REQUEST_TIMEOUT:1s}

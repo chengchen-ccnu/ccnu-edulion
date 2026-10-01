@@ -128,6 +128,8 @@ class T11C1GradebookCapacityAcceptanceTest {
     @Test
     void gradebookAndWideCsvMeetFiveThousandByHundredBoundary() {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo(DATABASE);
+        when(courses.availability(anyString(),org.mockito.ArgumentMatchers.anyLong(),anyString()))
+                .thenAnswer(call -> new com.eduplatform.learning.course.CourseAvailability(call.getArgument(0),TEACHER,0,false,"support@example.invalid",java.util.List.of(),false));
         CourseFactsClient.CourseFact ownedCourse = new CourseFactsClient.CourseFact(COURSE, COURSE_VERSION,
                 "ENROLLMENT_REQUIRED", TEACHER, java.util.Set.of());
         when(courses.requireOwnedPublished(eq(COURSE), eq(TEACHER), anyString())).thenReturn(ownedCourse);

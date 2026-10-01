@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.time.Duration;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Instant;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -21,44 +21,84 @@ import tools.jackson.databind.JsonNode;
 /** 通过 course-service JSON API 取得发布/owner 事实；超时与 5xx 统一为可安全重试的 503。 */
 @Component
 public class HttpCourseFactsClient implements CourseFactsClient {
-    private static final int MAX_CACHED_COURSES = 256;
     private final RestClient course;
-    private final Duration factCacheTtl;
     private final String serviceToken;
-    private final ConcurrentHashMap<String, CachedFact> publishedFacts = new ConcurrentHashMap<>();
-    private final Object cacheLock = new Object();
 
     public HttpCourseFactsClient(LearningProperties properties) {
         HttpClient client = HttpClient.newBuilder().connectTimeout(properties.course().requestTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
         factory.setReadTimeout(properties.course().requestTimeout());
         this.course = RestClient.builder().baseUrl(properties.course().baseUrl()).requestFactory(factory).build();
-        this.factCacheTtl = properties.course().factCacheTtl();
         this.serviceToken = properties.media().authorizationSecret();
     }
 
     @Override
     public CourseFact requirePublished(String courseId, String traceId) {
-        CachedFact cached = publishedFacts.get(courseId);
-        if (cached != null && cached.expiresAt().isAfter(java.time.Instant.now())) return cached.value();
-        if (!factCacheTtl.isZero() && !factCacheTtl.isNegative()) {
-            synchronized (cacheLock) {
-                cached = publishedFacts.get(courseId);
-                if (cached != null && cached.expiresAt().isAfter(java.time.Instant.now())) return cached.value();
-                CourseFact fact = fetchPublished(courseId, traceId);
-                if (publishedFacts.size() >= MAX_CACHED_COURSES) {
-                    java.time.Instant now = java.time.Instant.now();
-                    publishedFacts.entrySet().removeIf(entry -> !entry.getValue().expiresAt().isAfter(now));
-                    if (publishedFacts.size() >= MAX_CACHED_COURSES) {
-                        publishedFacts.keySet().stream().findFirst().ifPresent(publishedFacts::remove);
-                    }
-                }
-                publishedFacts.put(courseId, new CachedFact(fact,
-                        java.time.Instant.now().plus(factCacheTtl)));
-                return fact;
-            }
-        }
+        // 系统暂停是即时授权事实；旧展示缓存不能成为暂停后读取内容的依据。
         return fetchPublished(courseId, traceId);
+    }
+
+    /** Learning 课程事务每次请求当前暂停事实；未知资源与依赖故障不伪造 ACTIVE。 */
+    @Override
+    public CourseAvailability availability(String courseId, long afterSequence, String traceId) {
+        try {
+            JsonNode value = course.get()
+                    .uri("/internal/v1/courses/{courseId}/availability?afterSequence={after}", courseId, afterSequence)
+                    .header("X-Trace-Id", traceId).header("X-Internal-Caller", "learning-service")
+                    .header("X-Internal-Service-Token", serviceToken == null ? "" : serviceToken)
+                    .retrieve().body(JsonNode.class);
+            return availabilityFact(value, courseId, afterSequence);
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 404) throw notFound();
+            if (exception.getStatusCode().value() == 409) throw suspended(exception);
+            throw unavailable();
+        } catch (QuestionException exception) { throw exception; }
+        catch (RuntimeException exception) { throw unavailable(); }
+    }
+
+    /** 必需标量必须保持契约类型；缺少 paused/hasMore 或区间字段时拒绝，不能默认成活动课程。 */
+    private static CourseAvailability availabilityFact(JsonNode value, String courseId, long after) {
+        if (value == null || !value.isObject() || !courseId.equals(strictText(value.path("courseId")))
+                || isBlank(strictText(value.path("ownerTeacherId"))) || isBlank(strictText(value.path("supportEmail")))
+                || !value.path("paused").isBoolean() || !value.path("hasMore").isBoolean()
+                || !value.path("availabilityRevision").isIntegralNumber() || !value.path("availabilityRevision").canConvertToLong()
+                || value.path("availabilityRevision").longValue() < 0 || !value.path("intervals").isArray()
+                || value.path("intervals").size() > 100) throw unavailable();
+        java.util.UUID.fromString(value.path("ownerTeacherId").asText());
+        long revision = value.path("availabilityRevision").longValue();
+        long previous = after;
+        Instant previousEnd = null;
+        boolean openIntervalSeen = false;
+        List<CourseAvailability.Interval> intervals = new java.util.ArrayList<>();
+        for (JsonNode interval : value.path("intervals")) {
+            if (!interval.path("sequence").isIntegralNumber() || !interval.path("sequence").canConvertToLong()
+                    || interval.path("sequence").longValue() <= previous || interval.path("sequence").longValue() > revision
+                    || isBlank(strictText(interval.path("suspensionId"))) || isBlank(strictText(interval.path("suspendedAt")))
+                    || !interval.has("resumedAt") || (!interval.path("resumedAt").isNull() && !interval.path("resumedAt").isTextual())) throw unavailable();
+            java.util.UUID.fromString(interval.path("suspensionId").asText());
+            Instant start = Instant.parse(interval.path("suspendedAt").asText());
+            Instant end = interval.path("resumedAt").isNull() ? null : Instant.parse(interval.path("resumedAt").asText());
+            if ((end != null && end.isBefore(start)) || openIntervalSeen
+                    || (previousEnd != null && start.isBefore(previousEnd))
+                    || (end == null && !value.path("paused").booleanValue())) throw unavailable();
+            previousEnd = end; openIntervalSeen = end == null;
+            previous = interval.path("sequence").longValue();
+            intervals.add(new CourseAvailability.Interval(previous, interval.path("suspensionId").asText(), start, end));
+        }
+        boolean more = value.path("hasMore").booleanValue();
+        if (more && (intervals.isEmpty() || intervals.get(intervals.size()-1).resumedAt() == null)) throw unavailable();
+        return new CourseAvailability(courseId, value.path("ownerTeacherId").asText(), revision,
+                value.path("paused").booleanValue(), value.path("supportEmail").asText(), List.copyOf(intervals), more);
+    }
+
+    /** 仅识别 Course 的安全暂停错误；其他 409 或畸形错误仍作依赖异常处理。 */
+    private static QuestionException suspended(RestClientResponseException exception) {
+        try {
+            JsonNode body = new ObjectMapper().readTree(exception.getResponseBodyAsString());
+            if ("COURSE.SUSPENDED".equals(strictText(body.path("code")))
+                    && !isBlank(strictText(body.path("supportEmail")))) return new CoursePausedException(body.path("supportEmail").asText());
+        } catch (RuntimeException ignored) { /* 不回显依赖的原始错误或 URL。 */ }
+        return unavailable();
     }
 
     private CourseFact fetchPublished(String courseId, String traceId) {
@@ -69,6 +109,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
             return fact(response);
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 404) throw notFound();
+            if (exception.getStatusCode().value() == 409) throw suspended(exception);
             throw unavailable();
         } catch (QuestionException exception) {
             throw exception;
@@ -95,7 +136,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
                     .retrieve().toBodilessEntity();
             CourseFact fact;
             try {
-                // 教师统计每次必须确认当下发布身份；短 TTL 学生读取缓存不能掩盖 Course 故障。
+                // 教师统计每次确认当前发布身份与可用性，实时读取不能由旧允许状态替代。
                 fact = fetchPublished(courseId, traceId);
             } catch (QuestionException missing) {
                 if (missing.status() == HttpStatus.NOT_FOUND) return null;
@@ -105,6 +146,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
             return fact;
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 404 || exception.getStatusCode().value() == 403) throw notFound();
+            if (exception.getStatusCode().value() == 409) throw suspended(exception);
             throw unavailable();
         } catch (QuestionException exception) {
             throw exception;
@@ -132,6 +174,7 @@ public class HttpCourseFactsClient implements CourseFactsClient {
                     response.lessonType(), response.currentPublished());
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 404) throw notFound();
+            if (exception.getStatusCode().value() == 409) throw suspended(exception);
             throw unavailable();
         } catch (QuestionException exception) {
             throw exception;
@@ -226,5 +269,4 @@ public class HttpCourseFactsClient implements CourseFactsClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record Identity(String courseId, String lessonId, String contentRevisionId,
             String lessonType, boolean currentPublished) {}
-    private record CachedFact(CourseFact value, java.time.Instant expiresAt) {}
 }

@@ -7,6 +7,8 @@ import java.io.OutputStreamWriter;
 import java.io.UncheckedIOException;
 
 import com.eduplatform.learning.course.CourseFactsClient;
+import com.eduplatform.learning.course.CourseClock;
+import com.eduplatform.learning.course.CourseTaskClock;
 import com.eduplatform.learning.course.CourseFactsClient.CourseFact;
 import com.eduplatform.learning.identity.LearnerDirectoryClient;
 import com.eduplatform.learning.domain.QuestionModels;
@@ -76,6 +78,8 @@ public class LearningAssessmentService {
     private static final Duration MAX_OFFLINE_AGE = Duration.ofDays(30);
     private static final Duration MAX_CLOCK_SKEW = Duration.ofMinutes(5);
 
+    @Autowired
+    private CourseTaskClock courseClock;
     private final LearningAssessmentRepository repository;
     private final CourseFactsClient courses;
     private final LearningEvents events;
@@ -114,6 +118,7 @@ public class LearningAssessmentService {
 
     /** 报名已发布课程；重复 ACTIVE 请求返回原记录，取消后重报会恢复原业务 ID 并发出新访问事件。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public EnrollmentCreation enroll(String learnerId, String courseId, String traceId) {
         CourseFact course = courses.requirePublished(courseId, traceId);
         Instant now = Instant.now();
@@ -181,6 +186,7 @@ public class LearningAssessmentService {
      * PAUSE/LESSON_SWITCH/LEAVE/ENDED 直接形成 MySQL 可恢复事实。完成标志只有 ENDED 可以由新契约设置。
      */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LessonProgress reportProgress(String learnerId, String courseId, String lessonId,
             LearningDtos.ReportProgressRequest input, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
@@ -190,6 +196,11 @@ public class LearningAssessmentService {
         if (input.occurredAt().isAfter(now.plus(MAX_CLOCK_SKEW))
                 || input.occurredAt().isBefore(now.minus(MAX_OFFLINE_AGE))) {
             throw invalid("LEARNING.PROGRESS_TIME_INVALID", "进度事件时间超出允许范围");
+        }
+        if (courseClock != null) {
+            long watched = courseClock.acceptedWatchedSeconds(courseId, input.occurredAt(), input.watchedSeconds(), now);
+            input = new LearningDtos.ReportProgressRequest(input.clientEventId(), input.contentRevisionId(), input.occurredAt(),
+                    input.positionSeconds(), (int) watched, input.completed(), input.eventType());
         }
         LearningDtos.ProgressEventType eventType = input.eventType();
         if (eventType == LearningDtos.ProgressEventType.HEARTBEAT) {
@@ -210,7 +221,8 @@ public class LearningAssessmentService {
             ProgressRow persisted = repository.findProgress(learnerId, courseId, identity.contentRevisionId()).orElse(null);
             try {
                 var buffered = progressBuffer.buffer(learnerId, courseId, lessonId,
-                        identity.contentRevisionId(), persisted, input, now);
+                        identity.contentRevisionId(), persisted, input, now,
+                        courseClock == null ? 0 : courseClock.revision(courseId));
                 return progress(buffered.value(), buffered.replayed(), LearningDtos.ProgressPersistenceStatus.BUFFERED);
             } catch (ProgressBufferUnavailableException unavailable) {
                 throw new QuestionException(HttpStatus.SERVICE_UNAVAILABLE,
@@ -238,7 +250,8 @@ public class LearningAssessmentService {
         // 强制检查点先合并可读取的 Redis 每日增量，再写自身事件；Worker 后续重试由 bufferVersion 吸收。
         // Redis 故障时检查点仍以 MySQL 持久化，不能把 Redis 可用性变成教师统计读依赖。
         var pending = progressBuffer.read(learnerId, courseId, contentRevisionId);
-        if (pending.available() && pending.value().isPresent()) {
+        if (pending.available() && pending.value().isPresent()
+                && (courseClock == null || courseClock.accepts(pending.value().orElseThrow()))) {
             var snapshot = pending.value().orElseThrow();
             repository.applyBufferedProgress(learnerId, courseId, lessonId, contentRevisionId,
                     snapshot.positionSeconds(), snapshot.watchedSeconds(), snapshot.completed(),
@@ -273,6 +286,7 @@ public class LearningAssessmentService {
      * 不生成视频 positionSeconds/watchedSeconds 事件；PUBLIC 或有效报名用户才可首次记录。
      */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.ArticleLessonCompletion completeArticle(String learnerId, String courseId, String lessonId,
             LearningDtos.CompleteArticleLessonRequest input, String traceId) {
         String requestId = input.clientRequestId().toString();
@@ -322,6 +336,7 @@ public class LearningAssessmentService {
     }
 
     /** 校验课程访问权后返回本人课时进度和按当前发布目录计算的完成率。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.CourseProgress progress(String learnerId, String courseId, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
         List<ProgressRow> rows = repository.progress(learnerId, courseId);
@@ -332,6 +347,9 @@ public class LearningAssessmentService {
             String contentRevisionId = course.contentRevisionId(lessonId);
             ProgressRow row = currentRows.get(contentRevisionId);
             var read = progressBuffer.read(learnerId, courseId, contentRevisionId);
+            if (courseClock != null && read.value().isPresent() && !courseClock.accepts(read.value().orElseThrow())) {
+                read = new ProgressBufferStore.ReadResult(read.available(), java.util.Optional.empty());
+            }
             if (!read.available()) meterRegistry.counter("learning.progress.read.degraded").increment();
             if (row != null) {
                 views.add(read.available() && read.value().isPresent()
@@ -353,6 +371,7 @@ public class LearningAssessmentService {
     }
 
     /** 返回学习者本人在指定当前课时的笔记；无访问权时拒绝。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public List<LearningDtos.LearningNote> notes(String learnerId, String courseId, String lessonId, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
         requireLesson(course, lessonId);
@@ -361,6 +380,7 @@ public class LearningAssessmentService {
 
     /** 在确认课时归属和学习权限后创建本人笔记，返回新记录。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearningNote createNote(String learnerId, String courseId, String lessonId,
             LearningDtos.CreateNoteRequest input, String traceId) {
         CourseFact course = requireLearningAccess(learnerId, courseId, traceId);
@@ -374,6 +394,7 @@ public class LearningAssessmentService {
 
     /** 使用 expectedRevision 修改本人笔记；他人资源 404，并发修改 409。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.NOTE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearningNote updateNote(String learnerId, String noteId,
             LearningDtos.UpdateNoteRequest input) {
         repository.note(noteId, learnerId).orElseThrow(this::notFound);
@@ -386,12 +407,14 @@ public class LearningAssessmentService {
 
     /** 按 noteId 删除本人笔记；记录不存在或不属于当前用户时统一 404。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.NOTE, actor=CourseClock.Actor.LEARNER, id=1)
     public void deleteNote(String learnerId, String noteId) {
         if (repository.deleteNote(noteId, learnerId) == 0) throw notFound();
     }
 
     /** 创建草稿测评；course-service 不可用时返回 503，绝不在本地猜测所有权。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.REQUEST, actor=CourseClock.Actor.TEACHER, id=1)
     public AssessmentCreation createAssessment(String teacherId,
             LearningDtos.CreateAssessmentRequest input, String traceId) {
         validateAnswerPublicationPolicy(input.type(), input.answerPublicationPolicy());
@@ -420,6 +443,7 @@ public class LearningAssessmentService {
 
     /** 仅对本人未发布草稿使用 revision 修改元数据，返回完整教师投影。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.TeacherAssessment updateAssessment(String teacherId, String assessmentId,
             LearningDtos.UpdateAssessmentRequest input) {
         validateAnswerPublicationPolicy(input.type(), input.answerPublicationPolicy());
@@ -437,6 +461,7 @@ public class LearningAssessmentService {
 
     /** 发布后只允许 owner 调整截止节点；新最终截止至少距离服务端当前时间一小时并写入审计。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.TeacherAssessment updateAssessmentDeadline(String teacherId, String assessmentId,
             LearningDtos.UpdateAssessmentDeadlineRequest input, String traceId) {
         AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
@@ -472,6 +497,7 @@ public class LearningAssessmentService {
 
     /** 只删除本人未发布草稿；发布历史必须归档，以保留学生作答和成绩。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public void deleteAssessment(String teacherId, String assessmentId) {
         AssessmentRow current = repository.lockOwnedAssessment(assessmentId, teacherId);
         if (current == null) throw notFound();
@@ -483,6 +509,7 @@ public class LearningAssessmentService {
 
     /** 发布前冻结完整题目版本快照；只接受 ACTIVE 的 SYSTEM 题或当前教师自己的 TEACHER 题。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.TeacherAssessment replaceQuestions(String teacherId, String assessmentId,
             LearningDtos.ReplaceQuestionsRequest input) {
         AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
@@ -513,6 +540,7 @@ public class LearningAssessmentService {
 
     /** 校验当前课程 owner、revision 和题目可用性后发布，或将已发布测评归档。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.TeacherAssessment publication(String teacherId, String assessmentId,
             LearningDtos.UpdatePublicationRequest input, String traceId) {
         AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
@@ -560,6 +588,7 @@ public class LearningAssessmentService {
      * 草稿只由后续固定批量处理器按服务端最后成功保存内容结算。
      */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.CloseAssessmentResult closeAssessment(String teacherId, String assessmentId,
             LearningDtos.CloseAssessmentRequest input) {
         AssessmentRow assessment = repository.lockOwnedAssessment(assessmentId, teacherId);
@@ -599,6 +628,7 @@ public class LearningAssessmentService {
 
     /** 手动公布成绩；只接受配置为 MANUAL 且已关闭、已结算、无待批内容的测评。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.AssessmentPublicationCommandResult publishGrades(String teacherId, String assessmentId,
             LearningDtos.PublishAssessmentResultRequest input) {
         return publishResultFact(teacherId, assessmentId, input, true);
@@ -606,6 +636,7 @@ public class LearningAssessmentService {
 
     /** 手动公布参考答案/解析；必须已关闭并完成草稿结算，但不要求主观题批改完成。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.AssessmentPublicationCommandResult publishAnswers(String teacherId, String assessmentId,
             LearningDtos.PublishAssessmentResultRequest input) {
         return publishResultFact(teacherId, assessmentId, input, false);
@@ -669,11 +700,13 @@ public class LearningAssessmentService {
             AssessmentStatus status, int page, int size, String traceId) {
         if (courseId != null) courses.requireOwnedPublished(courseId, teacherId, traceId);
         return new LearningDtos.AssessmentPage(repository.listTeacherAssessments(teacherId, courseId, status, page, size)
-                .stream().map(this::summary).toList(), page, size,
+                .stream().map(row -> courseClock.within(row.courseId(), teacherId, false,
+                        () -> summary(repository.assessment(row.id()).orElseThrow(this::notFound)))).toList(), page, size,
                 repository.countTeacherAssessments(teacherId, courseId, status));
     }
 
     /** 返回教师本人测评和含答案的冻结题目快照，他人资源按 404 隐藏。 */
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=0, subject=1)
     public LearningDtos.TeacherAssessment teacherAssessment(String id, String teacherId) {
         AssessmentRow row = repository.ownedAssessment(id, teacherId).orElseThrow(this::notFound);
         List<AssessmentQuestionRow> items = repository.assessmentQuestions(id);
@@ -696,16 +729,20 @@ public class LearningAssessmentService {
 
     /** 返回刷新可恢复的参与状态；attempt ID/状态只投影当前学习者自己的唯一作答。 */
     public LearningDtos.LearnerAssessmentPage learnerAssessments(String learnerId, String courseId, int page, int size) {
+        if (courseId != null) courseClock.within(courseId, null, false, () -> null);
         Instant now = Instant.now();
         List<LearningDtos.LearnerAssessmentSummary> values = repository
                 .listLearnerAssessments(learnerId, courseId, page, size).stream()
-                .map(row -> learnerSummary(row, repository.attemptForLearner(row.id(), learnerId).orElse(null), now))
+                .map(row -> courseClock.within(row.courseId(), null, false, () -> learnerSummary(
+                        repository.assessment(row.id()).orElseThrow(this::notFound),
+                        repository.attemptForLearner(row.id(), learnerId).orElse(null), now)))
                 .toList();
         return new LearningDtos.LearnerAssessmentPage(values, page, size,
                 repository.countLearnerAssessments(learnerId, courseId), now);
     }
 
     /** 学生模型从类型上移除了答案、解析和评分规则，发布策略尚未满足时无法序列化泄漏。 */
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearnerAssessment learnerAssessment(String learnerId, String assessmentId) {
         AssessmentRow row = publishedForLearner(learnerId, assessmentId);
         Instant now = Instant.now();
@@ -730,12 +767,14 @@ public class LearningAssessmentService {
     }
 
     /** 为 T11C.2 返回课程级任务清单；未开放课时任务只有在显式当前课时匹配时才可见。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearnerCourseTaskPage learnerCourseTasks(String learnerId, String courseId,
             String currentLessonId, int page, int size, String traceId) {
         return learnerCourseTasks(learnerId, courseId, currentLessonId, null, page, size, traceId);
     }
 
     /** 按明确课程和可选类型返回安全任务；空类型兼容旧 HOMEWORK/EXAM，读取不创建名单或 attempt。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearnerCourseTaskPage learnerCourseTasks(String learnerId, String courseId,
             String currentLessonId, LearningDtos.AssessmentType type, int page, int size, String traceId) {
         CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
@@ -751,6 +790,7 @@ public class LearningAssessmentService {
     }
 
     /** 返回单场任务安全投影；未开放时不返回题目快照，错课时/错课程/非应交人统一隐藏。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearnerCourseTask learnerCourseTask(String learnerId, String courseId,
             String assessmentId, String currentLessonId, String traceId) {
         CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
@@ -770,6 +810,7 @@ public class LearningAssessmentService {
     }
 
     /** 旧练习深链只取得经报名、当前课程 owner 和发布分配复核的安全归属；关闭不等于重新开放。 */
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.LearnerCourseTaskSummary learnerAssessmentEntry(String learnerId, String assessmentId,
             String traceId) {
         AssessmentRow stored = repository.assessment(assessmentId).orElseThrow(this::notFound);
@@ -784,6 +825,7 @@ public class LearningAssessmentService {
 
     /** T11C.2 的稳定开始入口只绑定 courseId/assessmentId，实际写入仍复用既有 attempt 状态机。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptDraft startCourseTaskAttempt(String learnerId, String courseId, String assessmentId,
             LearningDtos.StartAttemptRequest input, String traceId) {
         CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
@@ -792,6 +834,7 @@ public class LearningAssessmentService {
     }
 
     /** 只解析 participant.finalAttemptId，避免客户端通过旧 attemptId 切换历史提交。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptResult learnerCourseTaskResult(String learnerId, String courseId, String assessmentId,
             String traceId) {
         CourseFact course = requireEnrolledCourse(learnerId, courseId, traceId);
@@ -888,6 +931,7 @@ public class LearningAssessmentService {
 
     /** 查询教师成绩册矩阵；未统一完成的测评只返回安全状态和提交事实，不返回任何分数。 */
     @Transactional(readOnly = true)
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.Gradebook teacherGradebook(String teacherId, String courseId, String assessmentId,
         LearningDtos.AssessmentType type, LearningDtos.AssessmentSubmissionStatus submissionStatus,
             LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword, int page, int size,
@@ -899,6 +943,7 @@ public class LearningAssessmentService {
 
     /** 按学生批次流式生成成绩册宽表 CSV；输出端由 HTTP 层持有，服务端不构造完整 byte[]。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.TEACHER, id=1)
     public void streamGradebook(String teacherId, String courseId, String assessmentId,
             LearningDtos.AssessmentType type, LearningDtos.AssessmentSubmissionStatus submissionStatus,
             LearningDtos.AssessmentGradingStatus gradingStatus, Boolean late, String keyword,
@@ -1236,6 +1281,7 @@ public class LearningAssessmentService {
 
     /** 为本人开始一次已分配的测评作答；HOMEWORK 每次正式提交后才允许创建下一次不可变 attempt。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptDraft startAttempt(String learnerId, String assessmentId,
             LearningDtos.StartAttemptRequest input) {
         publishedForLearner(learnerId, assessmentId);
@@ -1280,6 +1326,7 @@ public class LearningAssessmentService {
     }
 
     /** 按 owner 恢复可写草稿；超时或已提交时不会伪造可继续编辑状态。 */
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptDraft getDraft(String learnerId, String attemptId) {
         AttemptRow attempt = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
         if (attempt.status() != AttemptStatus.DRAFT) {
@@ -1294,6 +1341,7 @@ public class LearningAssessmentService {
 
     /** 使用 clientRequestId 和 expectedRevision 覆盖保存本人草稿，冲突时不覆盖新数据。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptDraft saveDraft(String learnerId, String attemptId,
             LearningDtos.SaveDraftRequest input) {
         AttemptRow visible = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
@@ -1327,6 +1375,7 @@ public class LearningAssessmentService {
 
     /** 提交只允许成功一次；事务内先写 SUBMITTED，再完成自动判分、错题累计和最终状态汇总。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptResult submit(String learnerId, String attemptId,
             LearningDtos.SubmitAttemptRequest input) {
         AttemptRow visible = repository.ownedAttempt(attemptId, learnerId).orElseThrow(this::notFound);
@@ -1365,6 +1414,7 @@ public class LearningAssessmentService {
      * 整批事务失败会整体回滚，外层处理器记录有限重试；不会出现半份试卷结算。
      */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.NONE, id=0, background=true)
     public int processSettlementBatch(String assessmentId, int batchSize) {
         AssessmentRow assessment = repository.lockAssessment(assessmentId);
         if (assessment == null || assessment.closeStatus() != AssessmentCloseStatus.CLOSED
@@ -1412,6 +1462,7 @@ public class LearningAssessmentService {
 
     /** 自动关闭单场测评并冻结当前草稿数量；竞争实例只有一个能更新 OPEN 行。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.NONE, id=0, background=true)
     public void autoCloseAssessment(String assessmentId) {
         AssessmentRow assessment = repository.lockAssessment(assessmentId);
         if (assessment == null || assessment.status() != AssessmentStatus.PUBLISHED
@@ -1432,6 +1483,7 @@ public class LearningAssessmentService {
 
     /** 独立事务记录一次安全失败摘要和有限退避；第五次失败后保留 FAILED 供人工诊断。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.NONE, id=0, background=true)
     public void recordSettlementFailure(String assessmentId, RuntimeException failure) {
         AssessmentRow assessment = repository.lockAssessment(assessmentId);
         if (assessment == null || assessment.settlementStatus() == AssessmentSettlementStatus.COMPLETED
@@ -1523,6 +1575,7 @@ public class LearningAssessmentService {
 
     /** 返回本人已提交成绩，正确答案/解析是否存在由公布策略决定。 */
     @Transactional(readOnly = true)
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptResult learnerResult(String learnerId, String attemptId) {
         return result(attemptId, learnerId, false);
     }
@@ -1535,12 +1588,14 @@ public class LearningAssessmentService {
     }
 
     /** 返回本人单条错题；他人记录和不存在记录使用相同 404。 */
+    @CourseClock(value=CourseClock.Kind.WRONG, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.WrongQuestion wrongQuestion(String learnerId, String wrongQuestionId) {
         return wrongQuestion(repository.wrongQuestion(wrongQuestionId, learnerId).orElseThrow(this::notFound));
     }
 
     /** 以 revision 更新本人掌握状态，相同目标为幂等成功，不影响原 attempt。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.WRONG, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.WrongQuestion updateWrongQuestionMastery(String learnerId, String wrongQuestionId,
             LearningDtos.UpdateWrongQuestionMasteryRequest input) {
         String requestId = input.clientRequestId().toString();
@@ -1568,6 +1623,7 @@ public class LearningAssessmentService {
      * 主观题无法可靠自动判分时 correct/score 为 null，但仍消耗一次有限配额。
      */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.WRONG, actor=CourseClock.Actor.LEARNER, id=1)
     public RedoCreation redoWrongQuestion(String learnerId, String wrongQuestionId,
             LearningDtos.RedoWrongQuestionRequest input) {
         String requestId = input.clientRequestId().toString();
@@ -1606,6 +1662,7 @@ public class LearningAssessmentService {
      * 校验当前学习者的发布测评访问或历史 attempt owner 事实，再请求媒体短期授权。
      * 媒体用途必须从冻结快照导出，浏览器不能声明 owner/可见性或访问类型。
      */
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.MediaAccessGrant assessmentMediaAccess(String learnerId, String assessmentId,
             String mediaId, LearningDtos.CreateAssessmentMediaAccessGrantRequest input, String traceId) {
         if (!"ORIGINAL".equals(input.variant())) {
@@ -1641,6 +1698,7 @@ public class LearningAssessmentService {
 
     /** 人工批改按 attempt revision 做乐观并发控制，并为每道题记录 grader、时间、分数和答案 revision。 */
     @Transactional
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.AttemptResult manualGrade(String teacherId, String attemptId,
             LearningDtos.ManualGradeRequest input) {
         String requestId = input.clientRequestId().toString();
@@ -1699,6 +1757,7 @@ public class LearningAssessmentService {
 
     /** 校验测评 owner 后分页返回已作答学生的评分结果。 */
     @Transactional(readOnly = true)
+    @CourseClock(value=CourseClock.Kind.ASSESSMENT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.AttemptResultPage teacherResults(String teacherId, String assessmentId, int page, int size) {
         AssessmentRow assessment = repository.ownedAssessment(assessmentId, teacherId).orElseThrow(this::notFound);
         if (requiresClosedGrading(assessment)
@@ -1714,6 +1773,7 @@ public class LearningAssessmentService {
     }
 
     /** 返回教师本人测评中的单次完整结果，包含评分所需答案与解析。 */
+    @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.AttemptResult teacherResult(String teacherId, String attemptId) {
         AttemptRow attempt = repository.attempt(attemptId).orElseThrow(this::notFound);
         AssessmentRow assessment = repository.ownedAssessment(attempt.assessmentId(), teacherId).orElseThrow(this::notFound);
@@ -1728,6 +1788,7 @@ public class LearningAssessmentService {
     }
 
     /** 验证课程 owner 后返回该课程学习者的报名、进度和成绩汇总投影。 */
+    @CourseClock(value=CourseClock.Kind.COURSE, actor=CourseClock.Actor.TEACHER, id=1)
     public LearningDtos.StudentLearningPage studentLearning(String teacherId, String courseId,
             int page, int size, String traceId) {
         CourseFact course = courses.requireOwnedPublished(courseId, teacherId, traceId);
@@ -1787,6 +1848,10 @@ public class LearningAssessmentService {
                         .filter(value -> value.status() == EnrollmentStatus.ACTIVE).isPresent();
         if (row.status() != AssessmentStatus.PUBLISHED || (!autonomousOwner && !courseOwner)) {
             throw notFound();
+        }
+        if (row.courseId() != null) {
+            CourseFact fact = courses.requirePublished(row.courseId(), UUID.randomUUID().toString());
+            if (!fact.ownerTeacherId().equals(row.ownerTeacherId())) throw notFound();
         }
         return row;
     }
@@ -2109,6 +2174,7 @@ public class LearningAssessmentService {
     }
 
     private LearningDtos.WrongQuestion wrongQuestion(WrongRow row) {
+        if (row.courseId() != null && courseClock != null) courseClock.within(row.courseId(), null, false, () -> null);
         AssessmentQuestionRow item = assessmentQuestionByVersion(row.assessmentId(), row.questionVersionId());
         List<LearningDtos.WrongQuestionRedoResult> history = repository.wrongQuestionRedos(row.id()).stream()
                 .map(value -> redo(value, false)).toList();

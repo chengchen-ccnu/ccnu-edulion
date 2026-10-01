@@ -1,12 +1,24 @@
 # Skeleton verification
 
+## 2026-09-30 T16.1 课程暂停与任务时钟后端契约
+
+- 前置：开工工作区干净，指定分支 `codex/t16.1-course-suspension-contract`；`main/origin/main@856786a` 含规划 PR #79，准备提交 `1128927`。按确认范围先修改契约，没有修改总控范围/page-specs 或 Vue。
+- 契约/实现：外部 OpenAPI 0.27.0、内部可用性 1.0.0、CourseAvailabilityChanged v1 和生成客户端；Course V7/Learning V19 向前新增。受保护 IAM 命令按 revision/周期幂等；只暂停已发布课程。Learning 旧 ID、保存/提交/关闭/结算、学情和 Worker 实时读取 Course，在课程行锁下追平区间并顺延有效 HOMEWORK/EXAM/草稿；关闭/公布事实不重开。通用 Media owner 教学预览也检查教学能力和受保护 Course 水位。
+- 自动化：Java 九模块 `clean verify` 成功，325 项中 282 执行通过、43 条件跳过；客户端生成、类型检查、56 文件 374 项前端测试及三端构建通过。Prism 验证课程 409/Media 503 统一错误，事件 Draft 2020-12 与合法/非法样本检查通过。已有 >500 kB 包提示保留。
+- 真实链路：统一 DPAPI 包装器启动独立 Course/Learning JVM，开发 MySQL、Redis DB 4、RabbitMQ 确认发布/消费通过。两次暂停、重复/旧恢复、错周期、旧 attempt 并发保存/提交及自动关闭/Worker、迟交窗口/考试草稿精确补时、旧 Redis 舍弃/恢复新进度、重复迟到事件和三次尝试后 DLQ 均验证。仅 ACK 本轮毒事件，不清空队列。
+- 数据：没有创建数据库；在 Course/Learning 开发库应用迁移，新建 2+3 张本域表，Course 增加两列。随机最小课程、三类任务、两份草稿、报名/进度和审计 Fixture 均 finally 按精确 ID 清理，Redis 临时键与本轮毒消息清理。手工《线性代数》course 行前后相同，没有修改其课程/目录/媒体或人工学习事实，未调用真实 OSS。
+- 边界/未执行：跨服务以 Course 实时事实读取作准入边界，已经准入的在途事务可完成，既有 OSS URL 按原 TTL 失效；正式 IAM 撤权/封禁/恢复及旧令牌失效留 T16.3。真实 Gateway 登录、浏览器、实际 OSS 签发/播放和容量专项未执行，不能视为通过。Media 负向 HTTP 用假存储；不清理资格材料，T16.2 使用自有审核契约。
+- 文档/交付：中文注释人工检查、环境/事件文档更新，详见 [T16.1 交付文档](../delivery/T16.1-course-suspension-contract.md)。实现 `dd11068` 已推送，提交后生成客户端 check:api 通过；2026-10-01 创建 [Ready PR #80](https://github.com/chengchen-ccnu/ccnu-edulion/pull/80)，等待总控验收，未自行合并。CI 状态以 GitHub 当前结果为准。
+
 ## 2026-09-30 T16 规划提交与 T16.1 开工前置准备
 
 - 起点 `codex/t16-contract-audit@fcecfd0`；六份 T16 文档为既有未提交规划，先保护再复核。`git fetch origin main` 后 HEAD 与 origin/main 差异为 `0 0`。本轮完整规格复核并将公告/消息和管理审核工作流补入 page-specs，管理端首期固定教师审核、账号权限两个真实入口。
 - T16.1 基础依赖已合并，新增契约/迁移属于本任务交付；只读复核 Course 当前 V6、Learning V18、HTTP 课程事实适配、不可逆关闭/草稿 deadline、Redis Worker 和内容发布事件。见 [T16.1 前置审计](T16.1-prerequisite-audit.md)。T16.3 的 IAM 正式撤权命令不提前实施，也不把尚未编写的暂停契约虚报为已完成。
 - 本地 JDK 17/Maven 3.9.4/Node 20.19.5/pnpm 10.22.0 可用；通过共享加载脚本检查凭据配置布尔值及本机 3306/6379/5672 TCP，可加载、可连接。未执行真实领域服务 HTTP 或数据库/MQ 认证验收；实际功能验收由 T16.1 实施任务完成。
-- 本轮只更新文档，未实施业务代码、API/事件或迁移，未创建数据库、表、伪数据、Redis Key、RabbitMQ 队列/消息、OSS 对象；无数据清理步骤。文档验证与 PR/CI/合并记录在本条后续补齐。
+- 本轮只更新文档，未实施业务代码、API/事件或迁移，未创建数据库、表、伪数据、Redis Key、RabbitMQ 队列/消息、OSS 对象；无数据清理步骤。
 - 提交前 `git diff --check`、七份规划文档逐行尾随空格检查、三份 T16 规划/审计文档的本地链接存在性检查均通过。本轮不重复运行本地业务测试；仓库既有 CI 将在文档 PR 中验证现有基线。
+- 规划提交 `4e54a71`，独立 [PR #79](https://github.com/chengchen-ccnu/ccnu-edulion/pull/79) 仅七份 Markdown 文档；Java/Python/Frontend/OpenAPI 的 push/PR 两轮共八项 CI 全部成功，无评审意见或合并冲突。按精确 head 以普通 merge 合并为 `856786a18467ba7e160fb6ba78f70dee78666792`；本地 main 已 `pull --ff-only` 与 origin/main 同步。已删除本地完成的规划分支，远端文档分支保留，不影响开工。
+- 从该 main 准备 `codex/t16.1-course-suspension-contract`，只补充规划合并与开工状态的文档记录；新功能未开始实施。T16.1 可以新开任务按已确认规则先设计契约，再实现后端与真实验收。
 
 ## 2026-09-29 T16 首期产品范围确认与总控规划
 

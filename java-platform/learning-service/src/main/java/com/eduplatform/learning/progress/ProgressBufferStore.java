@@ -15,6 +15,12 @@ public interface ProgressBufferStore {
     BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
             ProgressRow persisted, LearningDtos.ReportProgressRequest input, Instant now);
 
+    /** 新暂停水位使旧暂存整体失效；默认实现只用于禁用缓冲的既有适配器。 */
+    default BufferResult buffer(String learnerId, String courseId, String lessonId, String contentRevisionId,
+            ProgressRow persisted, LearningDtos.ReportProgressRequest input, Instant now, long availabilityRevision) {
+        return buffer(learnerId, courseId, lessonId, contentRevisionId, persisted, input, now);
+    }
+
     /** 读取一个学习者课时的缓冲投影；available=false 只表示 Redis 读失败，不表示没有缓冲记录。 */
     ReadResult read(String learnerId, String courseId, String contentRevisionId);
 
@@ -28,7 +34,14 @@ public interface ProgressBufferStore {
     record BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
             long positionSeconds,
             long watchedSeconds, boolean completed, Instant lastEventAt, long version,
-            Map<LocalDate, Long> watchedByDay, LocalDate firstStartedDay) {
+            Map<LocalDate, Long> watchedByDay, LocalDate firstStartedDay, long availabilityRevision) {
+        /** 旧测试快照的初始代际为零；正式 Redis 读取总是带 Course 水位。 */
+        public BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
+                long positionSeconds, long watchedSeconds, boolean completed, Instant lastEventAt, long version,
+                Map<LocalDate, Long> watchedByDay, LocalDate firstStartedDay) {
+            this(learnerId, courseId, lessonId, contentRevisionId, positionSeconds, watchedSeconds, completed,
+                    lastEventAt, version, watchedByDay, firstStartedDay, 0);
+        }
         /** 兼容既有缓冲测试构造；旧快照没有可靠的每日明细，不伪造回填。 */
         public BufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId,
                 long positionSeconds, long watchedSeconds, boolean completed, Instant lastEventAt, long version) {
