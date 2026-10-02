@@ -31,4 +31,4 @@ envelope:
 events:
   TeacherQualificationDecided:
     routingKey: iam.teacher-qualification.decided.v1
-    payload: '#/envelope/properties/payload'
+    payload: {$ref: '#/envelope/properties/payload'}

@@ -19,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 /**
  * IAM 教师资格审核的唯一业务入口。管理员权限在 Gateway/IAM HTTP 层及这里双重检查；
@@ -42,7 +43,7 @@ public class TeacherReviewService {
         requireAdmin(actor);
         if (page < 1 || size < 1 || size > 100 || ((long) page - 1) * size > 1_000_000) invalid();
         String normalized = exact == null || exact.isBlank() ? null : exact.trim().toLowerCase(Locale.ROOT);
-        if (normalized != null && normalized.length() > 128) invalid();
+        if (normalized != null && normalized.length() > 254) invalid();
         boolean newest = order == null || order == TeacherReviewDtos.Order.NEWEST;
         String state = status == null ? null : status.name();
         List<TeacherReviewDtos.Summary> items = reviews.list(state, normalized, newest, ((long) page - 1) * size, size)
@@ -51,7 +52,7 @@ public class TeacherReviewService {
     }
 
     /** 主动打开详情首次转审核中并记录查看者；后续管理员可继续查看或决定，不取得独占权。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public TeacherReviewDtos.Detail open(String actor, String applicationId,
             String remoteAddress, String traceId) {
         requireAdmin(actor);
@@ -72,8 +73,9 @@ public class TeacherReviewService {
     /**
      * 按 revision 决定当前轮次；批准前验证当前资质可真实读取。
      * 决定、教师能力、审计和最小事件要么全部提交、要么全部回滚；同请求 ID 精确重放。
+     * READ_COMMITTED 保证等待申请行锁后可读到前一事务刚提交的幂等结果及当前轮次。
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public TeacherReviewDtos.Detail decide(String actor, String applicationId,
             TeacherReviewDtos.DecisionRequest request, String remoteAddress, String traceId) {
         requireAdmin(actor);
@@ -123,7 +125,8 @@ public class TeacherReviewService {
             }
         }
         mapper.insertSecurityAudit(UUID.randomUUID().toString(), application.getUserId(), actor,
-                "TEACHER_APPLICATION_" + decision, reason == null ? "管理员批准当前材料" : reason,
+                // 完整理由只保存于决定历史；安全审计的既有 500 字字段记录可追溯决定标识。
+                "TEACHER_APPLICATION_" + decision, "资格审核决定 " + decisionId,
                 remoteAddress == null ? "unknown" : remoteAddress,
                 traceId == null ? "unknown-trace" : traceId, now);
         reviews.outbox("TeacherQualificationDecided", "edu.iam.events.v1",

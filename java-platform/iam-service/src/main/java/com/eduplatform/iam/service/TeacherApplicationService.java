@@ -35,7 +35,11 @@ public class TeacherApplicationService {
         UserAccount user = requireOrdinary(userId);
         String fingerprint = fingerprint(request);
         TeacherApplication replay = mapper.findTeacherApplicationReplay(request.clientRequestId().toString(), fingerprint);
-        if (replay != null) return new Result(response(replay), false);
+        if (replay != null) {
+            // 请求 ID 是全局唯一的；同载荷重放仍必须属于当前账号，不能提前泄露别人的申请投影。
+            if (!userId.equals(replay.getUserId())) conflict();
+            return new Result(response(replay), false);
+        }
         media.requireBindable(request.qualificationMediaId().toString(), userId, traceId);
         TeacherApplication current = mapper.findTeacherApplicationByUser(userId);
         TeacherReviewRepository.Round previous = current == null ? null : reviews.latestRound(current.getId());
@@ -84,7 +88,7 @@ public class TeacherApplicationService {
         UserAccount user = mapper.findUserById(userId);
         if (user == null || !"ACTIVE".equals(user.getStatus())) throw new AuthException(HttpStatus.UNAUTHORIZED,
                 "IAM.UNAUTHORIZED", "请先登录或重新登录");
-        if (!mapper.findRoles(userId).contains("STUDENT")) throw new AuthException(HttpStatus.FORBIDDEN,
+        if (!mapper.findRoles(userId).contains("STUDENT") || mapper.findRoles(userId).contains("ADMIN")) throw new AuthException(HttpStatus.FORBIDDEN,
                 "IAM.STUDENT_ACCOUNT_REQUIRED", "只有普通学习账号可提交教师申请");
         if (mapper.findPermissions(userId).contains("teaching:access")) throw new AuthException(HttpStatus.FORBIDDEN,
                 "IAM.TEACHER_ALREADY_GRANTED", "当前账号已具备教学能力");

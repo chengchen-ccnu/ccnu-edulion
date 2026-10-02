@@ -7034,6 +7034,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
                 status?: components["schemas"]["TeacherApplicationStatus"];
+                /** @description 精确查找规范化邮箱、手机号、内部账号或申请编号；长度覆盖既有身份字段。 */
                 exact?: string;
                 order?: "NEWEST" | "OLDEST";
             };

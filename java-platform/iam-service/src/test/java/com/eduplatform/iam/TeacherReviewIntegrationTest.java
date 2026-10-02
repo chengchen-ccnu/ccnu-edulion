@@ -151,6 +151,68 @@ class TeacherReviewIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM teacher_review_decision", Long.class)).isEqualTo(1);
     }
 
+    /** 两名管理员持同 revision 同时决定，只能一人成功，另一人收到 409，历史仅一条。 */
+    @Test
+    void concurrentAdministratorsCannotOverwriteDecision() throws Exception {
+        review.open(ADMIN_A, APPLICATION, "127.0.0.1", TRACE);
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            java.util.List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+            for (String actor : List.of(ADMIN_A, ADMIN_B)) results.add(executor.submit(() -> {
+                ready.countDown();
+                start.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                try {
+                    review.decide(actor, APPLICATION, new TeacherReviewDtos.DecisionRequest(UUID.randomUUID(), 1L,
+                            TeacherReviewDtos.Decision.REJECTED, false, "请补充清晰完整的教师资格证明"), "127.0.0.1", TRACE);
+                    return 200;
+                } catch (com.eduplatform.iam.service.AuthException failure) { return failure.status().value(); }
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(List.of(results.get(0).get(10, java.util.concurrent.TimeUnit.SECONDS),
+                    results.get(1).get(10, java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(200, 409);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM teacher_review_decision", Long.class)).isEqualTo(1);
+        } finally { executor.shutdownNow(); }
+    }
+
+    /** 1000 字合法理由完整保存，复用的安全审计字段不溢出也不复制全文。 */
+    @Test
+    void maximumRejectionReasonDoesNotOverflowExistingSecurityAudit() {
+        review.open(ADMIN_A, APPLICATION, "127.0.0.1", TRACE);
+        String reason = "请补充清晰完整的教师资格证明".repeat(100).substring(0, 1000);
+        TeacherReviewDtos.Detail result = review.decide(ADMIN_A, APPLICATION,
+                new TeacherReviewDtos.DecisionRequest(UUID.randomUUID(), 1L,
+                        TeacherReviewDtos.Decision.REJECTED, false, reason), "127.0.0.1", TRACE);
+        assertThat(result.rounds().get(0).rejectionReason()).isEqualTo(reason);
+        assertThat(jdbc.queryForObject("SELECT reason FROM account_security_audit WHERE action='TEACHER_APPLICATION_REJECTED'",
+                String.class)).startsWith("资格审核决定 ").hasSizeLessThan(500);
+    }
+
+    /** 在授能、审计与 Outbox 写入后强制造成命令保存失败，必须全部回滚，不能留下半个批准。 */
+    @Test
+    void latePersistenceFailureRollsBackDecisionRoleAuditAndOutbox() {
+        review.open(ADMIN_A, APPLICATION, "127.0.0.1", TRACE);
+        when(media.grant(MEDIA, ADMIN_A, false, TRACE)).thenReturn(
+                new TeacherQualificationMediaClient.Grant(MEDIA, "application/pdf", 32, "GET",
+                        "https://example.invalid/test.pdf", Map.of(), Instant.now().plusSeconds(60)));
+        UUID requestId = UUID.randomUUID();
+        jdbc.execute("ALTER TABLE teacher_review_command ADD CONSTRAINT test_reject_command CHECK (client_request_id<>'"
+                + requestId + "')");
+        try {
+            assertThatThrownBy(() -> review.decide(ADMIN_A, APPLICATION,
+                    new TeacherReviewDtos.DecisionRequest(requestId, 1L,
+                            TeacherReviewDtos.Decision.APPROVED, true, null), "127.0.0.1", TRACE))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThat(mapper.findTeacherApplicationByUser(STUDENT).getStatus()).isEqualTo("UNDER_REVIEW");
+            assertThat(mapper.findRoles(STUDENT)).doesNotContain("TEACHER");
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM teacher_review_decision", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM account_security_audit WHERE action='TEACHER_APPLICATION_APPROVED'", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM iam_outbox_event", Long.class)).isZero();
+        } finally { jdbc.execute("ALTER TABLE teacher_review_command DROP CONSTRAINT test_reject_command"); }
+    }
+
     /** 七天截止后仅排队释放旧引用，决定事实仍在；重复执行不能再发一次释放。 */
     @Test
     void retentionReleasesExactRoundOnce() {
@@ -164,6 +226,28 @@ class TeacherReviewIntegrationTest {
         release.one(roundId);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM iam_outbox_event WHERE event_type='MediaReferenceReleased'", Long.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM teacher_review_decision", Long.class)).isEqualTo(1);
+    }
+
+    /** 身份精确查找覆盖既有邮箱字段长度，合法长邮箱不能被旧 128 字限制拒绝。 */
+    @Test
+    void exactSearchAcceptsExistingIdentityLength() {
+        String identity = "a@" + ("a".repeat(60) + ".").repeat(3) + "example.invalid";
+        jdbc.update("UPDATE user_identity SET normalized_value=? WHERE user_id=?", identity, STUDENT);
+        assertThat(review.list(ADMIN_A, null, identity, null, 1, 20).items()).hasSize(1);
+    }
+
+    /** 其他普通账号不能通过复用全局请求 ID 绕过本人申请投影的权限。 */
+    @Test
+    void submissionReplayCannotReadAnotherStudentsProjection() {
+        jdbc.update("DELETE FROM user_role WHERE user_id=?", ADMIN_B);
+        mapper.assignRole(ADMIN_B, "STUDENT");
+        jdbc.update("UPDATE teacher_application SET status='REJECTED' WHERE id=?", APPLICATION);
+        AccountLifecycleDtos.SubmitTeacherApplicationRequest request = new AccountLifecycleDtos.SubmitTeacherApplicationRequest(
+                UUID.randomUUID(), 0L, UUID.fromString(NEW_MEDIA), "合成测试：补充清晰完整的教师资格证明");
+        applications.submit(STUDENT, request, "127.0.0.1", TRACE);
+        assertThatThrownBy(() -> applications.submit(ADMIN_B, request, "127.0.0.1", TRACE))
+                .hasMessageContaining("状态已变化");
+        assertThat(mapper.findTeacherApplicationByUser(ADMIN_B)).isNull();
     }
 
     /** 学生不能列管理数据，管理员不能用别的申请或过期轮次换取材料 URL。 */

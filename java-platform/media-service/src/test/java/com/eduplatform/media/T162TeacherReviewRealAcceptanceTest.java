@@ -6,6 +6,8 @@ import com.eduplatform.media.domain.MediaAsset;
 import com.eduplatform.media.messaging.MediaRabbitTopology;
 import com.eduplatform.media.persistence.MediaRepository;
 import com.eduplatform.media.storage.ObjectStorage;
+import com.eduplatform.iam.persistence.TeacherReviewRepository;
+import com.eduplatform.iam.service.TeacherQualificationRetentionWorker;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -28,6 +30,8 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -150,13 +154,64 @@ class T162TeacherReviewRealAcceptanceTest {
             assertThat(downloaded.statusCode()).isEqualTo(200);
             assertThat(downloaded.body()).isEqualTo(image);
 
+            // 同时提交相同驳回请求；合法 1000 字理由须落地，不能溢出原有安全审计列。
+            String decisionPath = "/api/v1/admin/teacher-applications/" + applicationId + "/decision";
+            assertThat(gateway("GET", "/api/v1/admin/teacher-applications", null, null, null).statusCode()).isEqualTo(401);
+            assertThat(gateway("GET", "/api/v1/admin/teacher-applications", null, studentToken, null).statusCode()).isEqualTo(403);
+            assertThat(gateway("POST", decisionPath, json.writeValueAsString(Map.of(
+                    "clientRequestId", UUID.randomUUID().toString(), "expectedRevision", detail.get("revision").asLong(),
+                    "decision", "APPROVED", "materialConfirmed", false)), adminToken, null).statusCode()).isEqualTo(422);
+            assertThat(gateway("POST", decisionPath, json.writeValueAsString(Map.of(
+                    "clientRequestId", UUID.randomUUID().toString(), "decision", "APPROVED", "materialConfirmed", true)),
+                    adminToken, null).statusCode()).isEqualTo(422);
+            String reason = "请补充清晰完整的教师资格证明".repeat(100).substring(0, 1000);
+            String rejectionBody = json.writeValueAsString(Map.of("clientRequestId", UUID.randomUUID().toString(),
+                    "expectedRevision", detail.get("revision").asLong(), "decision", "REJECTED",
+                    "materialConfirmed", false, "rejectionReason", reason));
+            JsonNode rejected = concurrentReplay(iam, applicationId, decisionPath, rejectionBody, adminToken);
+            assertThat(rejected.get("rounds").get(0).get("rejectionReason").asString()).isEqualTo(reason);
+            awaitOutbox(iam, applicationId, 1);
+            consumeOwnDecision(rabbit, applicationId);
+
+            // 同资产的下一轮建立独立引用，真实验证旧轮释放不会删掉仍被新轮使用的文件。
+            submission.put("clientRequestId", UUID.randomUUID().toString());
+            submission.put("expectedRevision", rejected.get("revision").asLong());
+            body(gateway("POST", "/api/v1/teacher-applications", json.writeValueAsString(submission), studentToken, null), 200);
+            awaitReferenceCount(media, mediaId, 2);
+            assertThat(iam.queryForObject("SELECT retention_until FROM teacher_application_round WHERE id=?",
+                    java.sql.Timestamp.class, roundId).toInstant()).isAfter(Instant.now().plusSeconds(6 * 86400L));
+            iam.update("UPDATE teacher_application_round SET retention_until=? WHERE id=? AND application_id=?",
+                    java.sql.Timestamp.from(Instant.now().minusSeconds(1)), roundId, applicationId);
+            // 只推进本轮精确 ID；不启用会扫描其他开发数据的定时任务。
+            TeacherQualificationRetentionWorker.ReleaseTransaction release =
+                    new TeacherQualificationRetentionWorker.ReleaseTransaction(new TeacherReviewRepository(iam, json));
+            new TransactionTemplate(new DataSourceTransactionManager(iam.getDataSource()))
+                    .executeWithoutResult(status -> release.one(roundId));
+            awaitReferenceCount(media, mediaId, 1);
+            assertThat(media.queryForObject("SELECT status FROM media_reference WHERE reference_id=?", String.class, roundId))
+                    .isEqualTo("RELEASED");
+            assertThat(mediaRepository.findAsset(mediaId).orElseThrow().unboundExpiresAt()).isNull();
+            storage.head(mediaRepository.findAsset(mediaId).orElseThrow().objectKey());
+            assertThat(gateway("POST", accessPath, accessBody, adminToken, null).statusCode()).isEqualTo(409);
+            detail = body(gateway("GET", "/api/v1/admin/teacher-applications/" + applicationId, null, adminToken, null), 200);
+            assertThat(detail.get("rounds").size()).isEqualTo(2);
+            JsonNode downloadGrant = body(gateway("POST", accessPath, json.writeValueAsString(Map.of(
+                    "roundId", detail.get("rounds").get(0).get("id").asString(), "action", "DOWNLOAD")), adminToken, null), 201);
+            HttpResponse<Void> downloadResult = http.send(HttpRequest.newBuilder(URI.create(downloadGrant.get("url").asString()))
+                    .GET().build(), HttpResponse.BodyHandlers.discarding());
+            assertThat(downloadResult.statusCode()).isEqualTo(200);
+            assertThat(downloadResult.headers().firstValue("Content-Disposition").orElse("")).containsIgnoringCase("attachment");
+
             String decisionId = UUID.randomUUID().toString();
             String decisionBody = json.writeValueAsString(Map.of("clientRequestId", decisionId,
                     "expectedRevision", detail.get("revision").asLong(), "decision", "APPROVED",
                     "materialConfirmed", true));
-            JsonNode approved = body(gateway("POST", "/api/v1/admin/teacher-applications/" + applicationId + "/decision",
-                    decisionBody, adminToken, null), 200);
+            JsonNode approved = concurrentReplay(iam, applicationId, decisionPath, decisionBody, adminToken);
             assertThat(approved.get("status").asString()).isEqualTo("APPROVED");
+            assertThat(gateway("POST", decisionPath, json.writeValueAsString(Map.of(
+                    "clientRequestId", UUID.randomUUID().toString(), "expectedRevision", detail.get("revision").asLong(),
+                    "decision", "REJECTED", "materialConfirmed", false, "rejectionReason", "请补充清晰完整的教师资格证明")),
+                    adminToken, null).statusCode()).isEqualTo(409);
             assertThat(body(gateway("POST", "/api/v1/admin/teacher-applications/" + applicationId + "/decision",
                     decisionBody, adminToken, null), 200).get("revision").asLong())
                     .isEqualTo(approved.get("revision").asLong());
@@ -164,7 +219,7 @@ class T162TeacherReviewRealAcceptanceTest {
             String freshToken = body(refreshed, 200).get("accessToken").asString();
             JsonNode learner = body(gateway("GET", "/api/v1/users/me", null, freshToken, null), 200);
             assertThat(learner.get("permissions").toString()).contains("learning:access", "teaching:access");
-            awaitOutbox(iam, applicationId);
+            awaitOutbox(iam, applicationId, 2);
             consumeOwnDecision(rabbit, applicationId);
             assertThat(media.queryForObject("SELECT COUNT(*) FROM media_reference WHERE media_id=? AND owner_service='iam-service' AND reference_type='TEACHER_APPLICATION_ROUND' AND status='BOUND'",
                     Integer.class, mediaId)).isEqualTo(1);
@@ -231,23 +286,53 @@ class T162TeacherReviewRealAcceptanceTest {
     }
 
     private void awaitReference(JdbcTemplate media, String mediaId) throws InterruptedException {
+        awaitReferenceCount(media, mediaId, 1);
+    }
+
+    private void awaitReferenceCount(JdbcTemplate media, String mediaId, int expected) throws InterruptedException {
         for (int i = 0; i < 120; i++) {
             Integer count = media.queryForObject("SELECT COUNT(*) FROM media_reference WHERE media_id=? AND owner_service='iam-service' AND status='BOUND'",
                     Integer.class, mediaId);
-            if (count != null && count == 1) return;
+            if (count != null && count == expected) return;
             TimeUnit.MILLISECONDS.sleep(250);
         }
         throw new AssertionError("IAM qualification reference was not consumed by Media");
     }
 
-    private void awaitOutbox(JdbcTemplate iam, String applicationId) throws InterruptedException {
+    private void awaitOutbox(JdbcTemplate iam, String applicationId, int expected) throws InterruptedException {
         for (int i = 0; i < 120; i++) {
             Integer count = iam.queryForObject("SELECT COUNT(*) FROM iam_outbox_event WHERE aggregate_id=? AND event_type='TeacherQualificationDecided' AND status='PUBLISHED'",
                     Integer.class, applicationId);
-            if (count != null && count == 1) return;
+            if (count != null && count == expected) return;
             TimeUnit.MILLISECONDS.sleep(250);
         }
         throw new AssertionError("IAM decision Outbox not confirmed");
+    }
+
+    /** 先持有精确申请行锁，再同时发两次相同 HTTP 命令，验证真实 MySQL 等锁后的幂等重读。 */
+    private JsonNode concurrentReplay(JdbcTemplate iam, String applicationId, String path,
+            String command, String adminToken) throws Exception {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try (java.sql.Connection lock = iam.getDataSource().getConnection()) {
+            lock.setAutoCommit(false);
+            try (java.sql.PreparedStatement statement = lock.prepareStatement("SELECT id FROM teacher_application WHERE id=? FOR UPDATE")) {
+                statement.setString(1, applicationId);
+                try (java.sql.ResultSet rows = statement.executeQuery()) { assertThat(rows.next()).isTrue(); }
+            }
+            java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(2);
+            java.util.concurrent.Callable<HttpResponse<String>> call = () -> {
+                started.countDown();
+                return gateway("POST", path, command, adminToken, null);
+            };
+            var first = executor.submit(call);
+            var second = executor.submit(call);
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            TimeUnit.SECONDS.sleep(1);
+            lock.commit();
+            JsonNode result = body(first.get(30, TimeUnit.SECONDS), 200);
+            assertThat(body(second.get(30, TimeUnit.SECONDS), 200)).isEqualTo(result);
+            return result;
+        } finally { executor.shutdownNow(); }
     }
 
     /** 仅 ACK 本轮决定消息；若队列混有别的消息则 requeue 并中止，不清空共享队列。 */
@@ -297,6 +382,11 @@ class T162TeacherReviewRealAcceptanceTest {
         if (asset != null) {
             assertThat(asset.objectKey()).startsWith(prefix + "/");
             storage.delete(asset.objectKey());
+            // 只对刚删除的精确 Key 执行 HEAD，真实确认对象已清理；连接失败不能当作不存在。
+            boolean absent = false;
+            try { storage.head(asset.objectKey()); }
+            catch (com.aliyun.oss.OSSException missing) { absent = "NoSuchKey".equals(missing.getErrorCode()); }
+            assertThat(absent).as("exact synthetic OSS object must be deleted").isTrue();
         }
         media.update("DELETE FROM consumed_event WHERE event_id IN (SELECT event_id FROM outbox_event WHERE aggregate_id=?)", mediaId);
         media.update("DELETE FROM consumed_event WHERE event_id IN (SELECT bound_event_id FROM media_reference WHERE media_id=?)", mediaId);
@@ -313,6 +403,7 @@ class T162TeacherReviewRealAcceptanceTest {
         media.update("DELETE FROM media_asset WHERE media_id=?", mediaId);
         media.update("DELETE FROM upload_part WHERE upload_id=?", uploadId);
         media.update("DELETE FROM upload_session WHERE upload_id=? AND owner_id=?", uploadId, student);
+        assertThat(media.queryForObject("SELECT COUNT(*) FROM media_asset WHERE media_id=?", Long.class, mediaId)).isZero();
     }
 
     private void cleanupIam(JdbcTemplate iam, String student, String admin, String applicationId, String mediaId) {
@@ -338,6 +429,7 @@ class T162TeacherReviewRealAcceptanceTest {
         iam.update("DELETE FROM user_identity WHERE user_id IN (?,?)", student, admin);
         iam.update("DELETE FROM user_role WHERE user_id IN (?,?)", student, admin);
         iam.update("DELETE FROM `user` WHERE id IN (?,?)", student, admin);
+        assertThat(iam.queryForObject("SELECT COUNT(*) FROM `user` WHERE id IN (?,?)", Long.class, student, admin)).isZero();
     }
 
 }

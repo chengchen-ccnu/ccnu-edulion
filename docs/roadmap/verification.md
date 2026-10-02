@@ -1,5 +1,14 @@
 # Skeleton verification
 
+## 2026-10-02 T16.2 验收与补口
+
+- 用户补充授权本任务验收并合并 T16.2，再由总控安排下一步。开工 `git status` 干净，PR #81 的 `fd323a6` 有 8 项 CI 成功；本轮审查生产权限、事务、幂等、材料授权、引用保留与验收脚本，发现问题后先补口再验收。
+- 修复 1000 字驳回理由溢出安全审计 500 字列（审计留决定 ID，全文留决定历史）；审核写事务改为 READ_COMMITTED，确保真实 MySQL 等锁后重读刚提交的幂等结果；提交重放先检查当前用户归属，混合管理员角色拒绝申请。精确查找对齐既有身份的 254 字范围，并重新生成客户端；新事件 payload 使用规范 `$ref`。V1～V4 迁移均未改变。
+- 包装器下全仓 `clean verify` 83 套、339 项，44 条条件跳过，0 失败/错误；随后新增 long-email/mandatory-return 两条边界用例，以 IAM `-pl iam-service -am test` 复验通过，其中审核集成 9 项、Outbox 专项 5 项均 0 失败/错误/跳过。专项包含同 revision 双管理员竞争、最终持久化失败后决定/授能/审计/Outbox 回滚、长理由/跨主体重放、发布 NACK/超时/return 和有限耗尽。前端重新生成与 typecheck 通过；Prism Mock 实际返回列表 200 和 `items/page/size/total`，Vue 无改动，完整前端测试/构建沿用此前结果及最新 PR CI。
+- PowerShell 7 真实验收最终复跑 1 项通过，无失败/错误/跳过。Gateway→IAM→Media→OSS/RabbitMQ 覆盖 401/403/409/422、相同命令同时等 MySQL 行锁的重放、1000 字驳回、再次提交的两轮历史、IAM 生产释放事务及 RabbitMQ 引用消费、旧轮 RELEASED 与新轮 BOUND 的同媒体保护、真实预览/附件下载、批准和既有会话刷新。只对本轮旧轮次推进时间，不扫描或调整其他开发数据。
+- 没有新建数据库/业务表或修改迁移；本轮两个随机合成账号、一个单像素 PNG、两轮申请/决定及对应消息已按精确 ID/Key 清理。OSS 精确 HEAD 以 NoSuchKey 确认删除，Media 前缀资产与 IAM 测试身份残留复查均 0；未操作《线性代数》。测试依赖 IAM 仅限 Media 的 test scope，没有跨库生产调用。没有常驻演示 Seed，没有写入个人 local.env；现有非敏感服务地址可保留，秘密继续放 DPAPI/部署 Secret。
+- PR #81 最终验收补口和 CI 通过后按用户授权普通 merge；合并结果以 GitHub 为准。只完成 T16.2 交接，不实施 T16.3 或自行准备下一功能分支。
+
 ## 2026-10-01 T16.2 教师资格审核后端契约
 
 - 开工检查 `git status` 为指定分支干净工作区，保留总控准备提交 `955bcc8`；先核对 AGENTS、前置审计、已确认范围、页面规格、路线图、OpenAPI、媒体事件和 ADR-0004。契约先行演进为 OpenAPI 0.28.0、Media 引用事件说明和新的 `TeacherQualificationDecided` v1，随后实现 IAM/Gateway/Media。
