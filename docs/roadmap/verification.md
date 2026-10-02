@@ -7,6 +7,7 @@
 - 真实生产publishPending批量专项最终1项通过、失败/错误/跳过0。五条合法随机事件验证同批隔离、ACK、mandatory return恢复及三次耗尽、真实队列reject-publish NACK、2/4秒退避、FAILED下次时间真正到期后仍不自动重放、未来事件不领取；实际Broker三次运输两种eventId，经生产容器/消费者/MySQL只新增两条消费事实。终态任务只测幂等分支，不声称媒体导入通过。首轮临时队列被Rabbit拒绝，改为随机durable拓扑后通过；失败轮未算成功。
 - 最后再与备份逐列比较全部历史事件差异0，保留FAILED6896/PUBLISHED5734及异常旧attempts318824；随机事件/任务/消费/两个队列/exchange/恢复表精确清理，最终恢复表0、测试任务0、测试Outbox0、双索引PENDING0。本轮无新数据库/业务迁移、无其他域/Redis/OSS/SMTP写入、未动手工课程、未改个人local.env。备份只在用户受保护目录，Git不含事件正文或凭据。
 - 最终Java全仓clean verify BUILD SUCCESS：90套380项、326执行通过、54环境条件跳过、失败/错误0；真实专项另行显式1项通过、0跳过。四个PowerShell语法、git diff --check及准备提交263b37b祖先检查通过；本机未额外运行未修改的前端/Python专项。
+- 实现提交136c285保留准备祖先263b37b，独立普通git push origin HEAD已执行；[Ready PR #83](https://github.com/chengchen-ccnu/ccnu-edulion/pull/83)创建并附加，OPEN/非Draft。该head push/PR两轮Java/Python/Frontend/OpenAPI共八项CI全部成功；交接记录/注释提交后最终状态以PR最新HEAD为准。维护窗口结束，无本轮常驻进程，未启动用户常规服务，不自行合并或开始T16.4。
 
 ## 2026-10-02 T16.4.0 只读诊断与主键页风险停止
 

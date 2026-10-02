@@ -246,6 +246,7 @@ class T1640LearningOutboxRealAcceptanceTest {
         });
     }
 
+    /** 比较按主键排序的两组原始字段字节（包含null）；只返回一致性布尔值，避免断言日志泄露历史正文。 */
     private static boolean sameRows(List<List<byte[]>> before, List<List<byte[]>> after) {
         if (before.size() != after.size()) return false;
         for (int row = 0; row < before.size(); row++) {
