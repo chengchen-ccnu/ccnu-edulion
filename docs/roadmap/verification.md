@@ -1,5 +1,12 @@
 # Skeleton verification
 
+## 2026-10-02 PR #81 授权验收与合并
+
+- 用户在交接澄清后明确要求“直接开始下一步，一直到合并结束”；本次据此复核并合并 T16.2，不启动后续功能任务。
+- 开工 `git status` 干净，Ready PR #81 的最终 head `d7100fe12c12c1fdd76ef630f34338b546672164`，基线仍为 `main@d1f463f`，Java/Python/Frontend/OpenAPI 两轮共 8 项 CI 均成功。`git diff --check d1f463f...HEAD` 通过；复核 IAM 审核/保留/Outbox 逻辑和现有实测记录，审核集成 9 项、Outbox 专项 5 项均通过，真实链路最终日志 1 项无失败、错误或跳过，未重跑已验证且未改变的业务代码。
+- 使用带精确 head 检查的普通 merge 合并 [PR #81](https://github.com/chengchen-ccnu/ccnu-edulion/pull/81)，合并提交 `2838cfcb4d741ff254ac9de9ed6f8cd7adfc1350`；本地 main 已 `--ff-only` 同步。合并后 [CI #36945797928](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36945797928) 状态以 GitHub 为准。
+- 本轮没有连接或写入开发数据库、Redis、RabbitMQ、OSS，没有创建数据库、表、伪数据或新迁移；此前真实验收临时数据已精确清理。本轮没有修改个人 local.env，无新增配置需要删除或迁移。保留任务分支，下一功能任务由总控另行安排。
+
 ## 2026-10-02 T16.2 自检与补口
 
 - 本任务负责实施、自检和 Ready PR 交付，总控负责验收、合并并安排下一步。此前误将用户问题解释为自行合并授权，现更正，PR #81 保持 Open 且未合并。开工 `git status` 干净，PR #81 的 `fd323a6` 有 8 项 CI 成功；本轮审查生产权限、事务、幂等、材料授权、引用保留与验收脚本，发现问题后补口并复验。
