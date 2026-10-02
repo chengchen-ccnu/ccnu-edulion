@@ -10,6 +10,7 @@
 - 本轮精确UUID/eventId/Redis键清理账号、三课程/两报名/两任务草稿/协调/邀请/消息/OSS，手工《线性代数》完整事实前后相同。无新数据库，新增V5五表及user三个字段保留。未改个人local.env，临时环境恢复。
 - Learning旧Outbox索引与PRIMARY状态不一致记录未修复/删除；关闭全量发布器，仅用既有生产发布器精确发布本轮报名消息，真实暂停消费者运行，不宣称存量健康。失败轮类路径/回调/SMTP窗口问题修复复验；Vue/消息消费等后续未实施。见[交付文档](../delivery/T16.3-account-permissions-admin-invitation-contract.md)及[契约评审](../api/T16.3-contract-review.md)。
 - 最终DPAPI只读回查临时账号/命令/邀请/课程/任务均0，手工课程保留1，旧异常记录PRIMARY仍FAILED；18080～18084/4010无本轮监听。git diff --check及准备提交祖先检查通过。
+- 实现提交c78542b保留adf8221，已独立git push origin HEAD并创建/附加[Ready PR #82](https://github.com/chengchen-ccnu/ccnu-edulion/pull/82)，未合并；提交后check:api通过。CI状态以该PR最新HEAD实时检查为准，默认CI条件跳过不能代替已执行真实专项。
 
 ## 2026-10-02 T16.2 分支清理与 T16.3 前置准备
 
