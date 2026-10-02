@@ -1,5 +1,13 @@
 # Local development environment
 
+## T16.4 公告/站内消息
+
+已有环境先执行 `pwsh -NoProfile -File scripts/Initialize-LocalEnvironment.ps1 -NotificationsOnly`，补独立DPAPI文件 `operation-readonly.credential.clixml`，四域经统一包装器注入 `OPERATION_INTERNAL_SERVICE_TOKEN`，不复用IAM写秘密或放入local.env。随后显式 `pwsh -NoProfile -File scripts/Initialize-OperationLocalDatabase.ps1 -Profile local` 创建唯一Operation dev Schema，再由local首个V1建表；test只允许对应_test。Learning正常向前V20，不改Course V7/IAM V5。
+
+真实验收 `pwsh -NoProfile -File scripts/Invoke-T16.4NotificationsRealAcceptance.ps1` 使用18080/18081/18082/18084/18085，要求专用四域dev Schema与既有Redis/RabbitMQ加密环境、无历史PENDING和无公共队列预存消息/消费者。本轮随机独立队列，关闭无关消费者但实际运行生产发布器；按UUID/eventId清理、保留历史/人工课程，不purge。`-Cleanup`只恢复忽略目录中最后一轮UUID Fixture，不算业务验收通过。
+
+Operation local消息开关继承RABBITMQ_ENABLED，默认独立通知队列；Outbox默认20次/确认3000ms，消费总尝试3次后独立DLQ，fan-out每页100/最多5次，FAILED不自动重放。配置与初始化、启动、伪数据/清理、真实故障及重启记录见 [交付文档](../delivery/T16.4-course-announcements-notifications-contract.md)。个人local.env本轮未改，临时进程配置finally恢复；非敏感地址/Schema可保留，正式秘密需迁Secret Manager，既有明文秘密迁移后删除。
+
 ## T16.3 权限协调与管理员邀请
 
 使用 `pwsh -NoProfile -File scripts/Invoke-T16.3SessionRaceRealAcceptance.ps1`；脚本从 `Invoke-WithLocalEnvironment.ps1` 加载 DPAPI 凭据，要求现有 `edu_platform_iam_dev`、Redis 和空闲 18080/18081。不创建数据库，不需要新增秘密或修改个人 local.env。

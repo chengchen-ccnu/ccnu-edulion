@@ -1,5 +1,22 @@
 # Skeleton verification
 
+## 2026-10-02 T16.4 公告与站内消息后端
+
+- 保留当前分支/cdbabdd，初始git status干净；先阅读仓库/前置/范围/页面职责与协议事件，完成契约自评审再实施。OpenAPI0.30.0、新内部只读1.0.0、公告/任务事件v1及生成客户端落地，不改既有事件版本/已合并迁移。
+- 显式创建edu_platform_operation_dev并执行首个V1（9业务表+Flyway历史），Learning向前V20报名区间/真正开放工作，Course V7/IAM V5；独立DPAPI秘密经统一包装器，不改个人local.env。不做Vue/热点/课程审核/营销，无跨服务业务SQL/第二套消息系统。
+- 实际Gateway→Operation→Course/Learning/IAM、MySQL/Rabbit长链及Learning JVM停止/重启恢复：1项0失败/0跳过。覆盖103人多页、后报名/退课重报、能力/owner/非owner/游客/内部权限及101上限、中文正文、并发编辑/旧确认409/同消息/撤回旧链接、重复乱序、真实到时/暂停原规则顺延、截止/立即结束/结束后OPENED抑制、审核隐私、目标/read/read-all跳公告、真实HTTP503、五次fan-out FAILED、真实mandatory return三次FAILED、毒消息独立DLQ。
+- 随机账号/课程/报名/任务/申请/Operation事实/已知Redis键/随机队列按精确UUID清理。公共队列仅ACK本轮eventId，外来消息requeue，绝不purge/抢现有消费/重放历史FAILED。早期失败清理表名、第二页等待、一小时时间边界、Windows进程核对与构建目录冲突均修复后重跑；4个早期Fixture课程活动残留已精确清理。Learning历史PUBLISHED5734/FAILED6896不变，Course/IAM历史逐行比较及人工《线性代数》不变。
+- 三端类型/构建通过，56文件374项前端测试通过；实际同OpenAPI Prism13新操作通过并停止。完整Java clean verify通过（392项/337执行/55环境跳过、0失败/0错误），Operation领域11项通过，提交后check:api通过；见独立 [交付文档](../delivery/T16.4-course-announcements-notifications-contract.md)。
+- 实现 `c0d69498eb96d1045724b803c4dc11511a3b3c29` 经 `git push origin HEAD` 推送，创建并附加 [Ready PR #84](https://github.com/chengchen-ccnu/ccnu-edulion/pull/84)；[push](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36998662110) 与 [pull_request](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36998679561) 共8项CI全部SUCCESS。交接文档提交后继续等待最新HEAD的8项CI全绿，最终结果以PR检查记录为准；保持Ready/Open，不开始后续任务、不自行合并。
+
+## 2026-10-02 总控验收合并 T16.4.0 与 T16.4 开工准备
+
+- 开工指定分支干净，Ready PR #83 head `0196e5ab9dda0780c34b513d220a67306d7b0c5a` 八项CI成功；独立阅读四维护脚本/真实回归、核对备份恢复验收记录和已执行维护记录。未重复执行CHECK TABLE、备份或索引重建，未修改历史状态/尝试数；`git diff --check main...HEAD`通过，生产代码/API/Flyway未改变。
+- 总控实际运行只读诊断：PRIMARY/二级均PUBLISHED5734/FAILED6896、PENDING0、键值差异0，PRIMARY indexId600和新二级3394一致，原DDL与计划保留。维护窗口静默：其他Learning连接0、无Learning JVM。独立真实批量脚本1项、0失败/错误/跳过，生产publishPending ACK/return/NACK/2/4秒有限退避/真正到期FAILED不重放/真实幂等消费通过；最新Fixture清理标记verified，恢复表/临时Outbox均0，历史全字段内存比较一致。
+- 以精确head普通merge合并 [PR #83](https://github.com/chengchen-ccnu/ccnu-edulion/pull/83) 为 `2cc9e5c1b104faaea2d69eb71dbac33382e2cac6`，main快进一致；本地完成分支删除，远端按用户要求保留。合并后 [CI #36984717462](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36984717462) 四项全部成功。
+- T16.4开工前置通过，Operation仍骨架，外部OpenAPI0.29.0；既有资格/可用性/报名事件与Learning生产发布基础可复用。只读查Operation Schema/表均0，首个初始化/迁移、安全适配/AMQP/只读授权/有界收件人/真实开放事件属于T16.4交付。MySQL认证/Rabbit真实发布及Redis端口通过；不冒称公告/消息已经可用。见 [T16.4前置审计](T16.4-prerequisite-audit.md)。
+- 从最新main创建 `codex/t16.4-course-announcements-notifications-contract`，只提交状态和审计，不推送，不实现业务代码/API/事件/迁移/Vue或热点。总控复验创建五条随机事件/一个终态导入任务/消费事实与本轮MQ拓扑，finally精确清理，无新增数据库/表或Operation数据；未改local.env、未动手工《线性代数》、未写Redis/OSS/SMTP，维护备份继续保留。
+
 ## 2026-10-02 T16.4.0 恢复验证、最小索引重建与真实批量回归
 
 - 用户确认维护窗口并授权继续恢复调查后，仅Learning开发库完成受保护逻辑备份；随机隔离表实际恢复12630条，15列BINARY比较和双向ID集合差异0，隔离CHECK TABLE OK。本表FOR EXPORT锁下复制ibd/cfg，离线副本innochecksum退出0；没有全局FLUSH或停服务器。当前源CHECK只报二级12631/应12630，未报当前主键错误，因此解除“尚不能限定当前损坏范围”的修复阻断。历史LSN/redo风险和物理起因仍未证明，不把备份可恢复性当作历史完整性证据。

@@ -1,6 +1,13 @@
 spring:
   application:
     name: operation-service
+  flyway:
+    enabled: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      fail-on-missing-creator-properties: true
+      fail-on-null-for-primitives: true
 server:
   port: ${SERVER_PORT:8085}
 management:
@@ -13,7 +20,7 @@ management:
 spring:
   config:
     activate:
-      on-profile: "!local"
+      on-profile: "!local & !test"
   autoconfigure:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration

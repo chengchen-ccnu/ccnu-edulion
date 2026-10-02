@@ -80,6 +80,8 @@ public class LearningAssessmentService {
 
     @Autowired
     private CourseTaskClock courseClock;
+    @Autowired
+    private NotificationTaskService taskNotifications;
     private final LearningAssessmentRepository repository;
     private final CourseFactsClient courses;
     private final LearningEvents events;
@@ -492,6 +494,8 @@ public class LearningAssessmentService {
         repository.insertDeadlineAudit(UUID.randomUUID().toString(), assessmentId, teacherId,
                 input.expectedRevision(), assessment.closesAt(), input.closesAt(), assessment.lateUntil(),
                 input.lateUntil(), input.reason(), traceId, now);
+        // 截止事实与通知同事务；不携带教师修改理由，后报名者不进入本次提醒。
+        if (taskNotifications != null) taskNotifications.changed(assessmentId, "DEADLINE_CHANGED", now, traceId);
         return teacherAssessment(assessmentId, teacherId);
     }
 
@@ -579,6 +583,7 @@ public class LearningAssessmentService {
                     || assessment.type() == LearningDtos.AssessmentType.EXAM) {
                 ensureAssessmentParticipants(assessment.courseId(), assessmentId, Instant.now());
             }
+            if (taskNotifications != null) taskNotifications.schedule(assessmentId);
         }
         return teacherAssessment(assessmentId, teacherId);
     }
@@ -619,6 +624,8 @@ public class LearningAssessmentService {
             throw conflict("LEARNING.ASSESSMENT_REVISION_CONFLICT", "测评状态或 revision 已变化");
         }
         repository.insertIdempotency(teacherId, requestId, fingerprint, "ASSESSMENT_CLOSE", assessmentId, now);
+        // 教师立即结束通知与关闭同事务；自动到期不重复制造立即结束提醒。
+        if (taskNotifications != null) taskNotifications.changed(assessmentId, "ENDED", now, UUID.randomUUID().toString());
         if (affected == 0) {
             repository.markUnsubmittedParticipantsMissing(assessmentId, now);
             evaluateAutomaticPublications(assessmentId, now);

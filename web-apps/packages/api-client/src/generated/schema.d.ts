@@ -4,6 +4,250 @@
  */
 
 export interface paths {
+    "/api/v1/teacher/courses/{courseId}/announcements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 本人公告与撤回历史
+         * @description 仅当前具teaching:access的owner。写入只允许已发布且未系统暂停课程；管理员、非owner安全拒绝。命令按actor/clientRequestId精确幂等，异载荷复用409；公告/审计/Outbox同事务。
+         */
+        get: operations["listTeacherCourseAnnouncements"];
+        put?: never;
+        /**
+         * 发布纯文本课程公告
+         * @description 仅当前具teaching:access的owner。写入只允许已发布且未系统暂停课程；管理员、非owner安全拒绝。命令按actor/clientRequestId精确幂等，异载荷复用409；公告/审计/Outbox同事务。
+         */
+        post: operations["publishCourseAnnouncement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/announcements/{announcementId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 改版并重置同一消息的未读与确认
+         * @description 仅当前具teaching:access的owner。写入只允许已发布且未系统暂停课程；管理员、非owner安全拒绝。命令按actor/clientRequestId精确幂等，异载荷复用409；公告/审计/Outbox同事务。
+         */
+        put: operations["updateCourseAnnouncement"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/announcements/{announcementId}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 撤回公告并保留审计
+         * @description 仅当前具teaching:access的owner。写入只允许已发布且未系统暂停课程；管理员、非owner安全拒绝。命令按actor/clientRequestId精确幂等，异载荷复用409；公告/审计/Outbox同事务。
+         */
+        post: operations["withdrawCourseAnnouncement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teacher/courses/{courseId}/announcements/{announcementId}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 本人不可变审计版本
+         * @description 仅当前具teaching:access的owner。写入只允许已发布且未系统暂停课程；管理员、非owner安全拒绝。命令按actor/clientRequestId精确幂等，异载荷复用409；公告/审计/Outbox同事务。
+         */
+        get: operations["listCourseAnnouncementRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{courseId}/announcements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 有效公告与有界未确认摘要
+         * @description 必须当前learning:access和ACTIVE报名，Course仍授权已发布或归档且未暂停课程。游客、试看、退课、撤回或未知安全404。独立受保护响应，公共课程详情不返回公告。
+         */
+        get: operations["listCourseAnnouncements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{courseId}/announcements/{announcementId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取有效最新版公告
+         * @description 必须当前learning:access和ACTIVE报名，Course仍授权已发布或归档且未暂停课程。游客、试看、退课、撤回或未知安全404。独立受保护响应，公共课程详情不返回公告。
+         */
+        get: operations["getCourseAnnouncement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{courseId}/announcements/{announcementId}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 我知道了：确认精确版本并清未读
+         * @description 必须当前learning:access和ACTIVE报名，Course仍授权已发布或归档且未暂停课程。游客、试看、退课、撤回或未知安全404。独立受保护响应，公共课程详情不返回公告。 旧revision409，不静默确认新版。
+         */
+        post: operations["confirmCourseAnnouncement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 本人当前可授权消息分页
+         * @description 四类消息按occurredAt/id降序。读取、计数、目标、已读共用当前访问裁决；依赖故障503，不能假零。无删除或统一TTL。数据库候选快照和领域授权每批最多100条，不设累计消息数量上限。
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 本人当前可授权未读数
+         * @description 与列表相同当前授权口径；按100条分页/领域批量查询，有界候选超限503。
+         */
+        get: operations["getNotificationUnreadCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 全部已读，跳过待确认公告
+         * @description 只更新成功重新授权的普通消息；公告确认事实不改变。返回剩余未读和未确认数量；依赖失败整体回滚。
+         */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{notificationId}/target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 进入前重新授权固定目标
+         * @description 返回安全页面目标，不自动标已读；暂停/恢复消息只可读取通用状态和支持邮箱，不授权课程正文。
+         */
+        get: operations["getNotificationTarget"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{notificationId}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 目标成功加载后标普通消息已读
+         * @description 重新验权，旧revision409；公告必须明确我知道了，不通过本命令清未读。
+         */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{userId}/permission-previews": {
         parameters: {
             query?: never;
@@ -2877,6 +3121,112 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 标题与纯文本；保留换行，链接仅作文本，不支持富文本、附件或定时发布。 */
+        AnnouncementWriteRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            title: string;
+            body: string;
+        };
+        AnnouncementUpdateRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            expectedRevision: number;
+            title: string;
+            body: string;
+        };
+        /** @description 旧 revision 返回409；确认只针对明确看到的版本，幂等重放不确认后来版本。 */
+        AnnouncementRevisionRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            expectedRevision: number;
+        };
+        /** @description 学生只看有效最新版；后报名者可读但没有旧提醒与置顶。撤回后学生404，教师可见审计。 */
+        CourseAnnouncement: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            courseId: string;
+            revision: number;
+            /** @enum {string} */
+            status: "ACTIVE" | "WITHDRAWN";
+            title: string;
+            body: string;
+            /** Format: date-time */
+            publishedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            confirmationRequired: boolean;
+            confirmed: boolean;
+        };
+        AnnouncementRevision: {
+            revision: number;
+            /** @enum {string} */
+            status: "ACTIVE" | "WITHDRAWN";
+            title: string;
+            body: string;
+            /** Format: date-time */
+            changedAt: string;
+        };
+        AnnouncementPage: {
+            items: components["schemas"]["CourseAnnouncement"][];
+            page: number;
+            size: number;
+            total: number;
+            latestUnconfirmed: components["schemas"]["CourseAnnouncement"] | null;
+            unconfirmedCount: number;
+        };
+        AnnouncementRevisionPage: {
+            items: components["schemas"]["AnnouncementRevision"][];
+            page: number;
+            size: number;
+            total: number;
+        };
+        NotificationPage: {
+            items: components["schemas"]["Notification"][];
+            page: number;
+            size: number;
+            total: number;
+        };
+        /** @description 只含安全标题与稳定目标ID；不含公告正文、资质、理由或短期URL。 */
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "COURSE_ANNOUNCEMENT" | "COURSE_TASK" | "TEACHER_REVIEW" | "COURSE_AVAILABILITY";
+            /** @enum {string} */
+            action: "ANNOUNCEMENT" | "OPENED" | "DEADLINE_CHANGED" | "ENDED" | "APPROVED" | "REJECTED" | "PAUSED" | "RESUMED";
+            title: string;
+            /** Format: uuid */
+            targetId: string;
+            /** Format: uuid */
+            courseId: string | null;
+            revision: number;
+            unread: boolean;
+            confirmationRequired: boolean;
+            /** Format: date-time */
+            occurredAt: string;
+        };
+        NotificationCounts: {
+            unreadCount: number;
+            unconfirmedAnnouncementCount: number;
+        };
+        /** @description 固定页面目标：公告课程详情、任务课程任务页、审核/apply-teacher、课程状态课程详情。服务端重新验权，不接受前端URL；本接口不标已读。 */
+        NotificationTarget: {
+            /** @enum {string} */
+            targetType: "COURSE_ANNOUNCEMENT" | "COURSE_TASK" | "TEACHER_REVIEW" | "COURSE_STATUS";
+            /** Format: uuid */
+            targetId: string;
+            /** Format: uuid */
+            courseId: string | null;
+            revision: number;
+            paused: boolean;
+            supportEmail: string | null;
+        };
+        /** @description 目标页面成功加载后提交；仍重新验权并检验revision。公告须走明确确认，返回409。 */
+        NotificationReadRequest: {
+            expectedRevision: number;
+        };
         /**
          * @description 普通账号不可创建管理员；ADMIN 只允许 BAN/UNBAN，普通解封仅学生
          * @enum {string}
@@ -6708,6 +7058,414 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listTeacherCourseAnnouncements: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                courseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnouncementPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    publishCourseAnnouncement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseAnnouncement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateCourseAnnouncement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                announcementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseAnnouncement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    withdrawCourseAnnouncement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                announcementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementRevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseAnnouncement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listCourseAnnouncementRevisions: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                courseId: string;
+                announcementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnouncementRevisionPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listCourseAnnouncements: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                courseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnouncementPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getCourseAnnouncement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                announcementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseAnnouncement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    confirmCourseAnnouncement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                announcementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementRevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseAnnouncement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getNotificationUnreadCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationCounts"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationCounts"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getNotificationTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notificationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notificationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationReadRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交事实或已授权读取；异步投递不代表立即送达 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationCounts"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     previewAccountPermissionChange: {
         parameters: {
             query?: never;

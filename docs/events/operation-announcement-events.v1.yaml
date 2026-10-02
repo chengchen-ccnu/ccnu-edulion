@@ -1,0 +1,26 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: CourseAnnouncementChanged v1
+description: |
+  Operation公告/不可变版本/已有消息重置与Outbox同事务；发布确认后独立通知消费者创建有界投递工作。
+  exchange=edu.operation.events.v1，routingKey=operation.announcement.changed.v1。
+  triggeredAt为发布或改版时点；同公告/学生一条消息，旧revision不得覆盖新版本。撤回保留审计不发新提醒。
+type: object
+additionalProperties: false
+required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+properties:
+  eventId: {type: string, format: uuid}
+  eventType: {const: CourseAnnouncementChanged}
+  eventVersion: {const: 1}
+  aggregateId: {type: string, format: uuid}
+  occurredAt: {type: string, format: date-time}
+  traceId: {type: string, minLength: 8, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}
+  payload:
+    type: object
+    additionalProperties: false
+    required: [announcementId, courseId, revision, action, triggeredAt]
+    properties:
+      announcementId: {type: string, format: uuid}
+      courseId: {type: string, format: uuid}
+      revision: {type: integer, minimum: 1}
+      action: {enum: [ANNOUNCEMENT, WITHDRAWN]}
+      triggeredAt: {type: string, format: date-time}

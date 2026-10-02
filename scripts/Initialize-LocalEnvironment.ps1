@@ -5,6 +5,7 @@ param(
     ),
     [string]$DefaultMySqlUsername = "root",
     [switch]$ConsolePrompt,
+    [switch]$NotificationsOnly,
     [switch]$Force
 )
 
@@ -23,6 +24,7 @@ $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
 $agentAccessCredentialPath = Join-Path $ConfigDirectory "agent-access-internal.credential.clixml"
+$operationCredentialPath = Join-Path $ConfigDirectory "operation-readonly.credential.clixml"
 
 # 为指定服务对生成随机授权密钥，仅通过 DPAPI 加密落盘，不写入 local.env。
 function New-ServiceAuthorizationCredential {
@@ -124,6 +126,22 @@ function New-AgentAccessInternalCredential {
         [Array]::Clear($domainBytes, 0, $domainBytes.Length)
         $payload = $null
     }
+}
+
+# T16.4只读通知服务对使用独立秘密；既有凭据不覆盖，不写local.env，不授IAM暂停写能力。
+if ($NotificationsOnly -and (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $credentialPath -PathType Leaf))) {
+    throw "NotificationsOnly requires the existing initialized local environment."
+}
+if (-not (Test-Path -LiteralPath $operationCredentialPath -PathType Leaf)) {
+    New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
+    $operationCredential = New-ServiceAuthorizationCredential -ServiceName "operation-readonly"
+    try { $operationCredential | Export-Clixml -LiteralPath $operationCredentialPath }
+    finally { $operationCredential = $null }
+}
+if ($NotificationsOnly) {
+    Write-Host "Operation readonly DPAPI credential is ready; existing configuration was preserved."
+    return
 }
 
 if (-not $Force -and ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $credentialPath))) {

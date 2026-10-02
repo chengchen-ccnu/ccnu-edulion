@@ -97,6 +97,7 @@ public class SecurityConfig {
                                 "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
                                 "/api/v1/auth/admin-invitations/accept",
                                 "/internal/v1/users/nicknames",
+                                "/internal/v1/notification-review-access",
                                 "/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/api/v1/admin/users", "/api/v1/admin/users/**")
                                 .hasAuthority("administration:access")
