@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.27.0
-  description: T16.1 adds independent course suspension, protected task clocks, safe support-email errors and progress-buffer discard semantics. Published course content and old assessment/attempt links fail closed while suspended. T12C.1.1 allows an owner teacher to see one ACTIVE student's graded final formal attempt score after the assessment closes and settlement completes, even while classmates await grading. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
+  version: 0.28.0
+  description: T16.2 adds administrator teacher-qualification review, immutable rounds and decisions, revision/idempotency protection, and IAM-authorized short-lived Media grants. T16.1 added independent course suspension and protected task clocks. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -13,6 +13,7 @@ tags:
   - name: Users
   - name: Protocols
   - name: Teacher Applications
+  - name: Admin Teacher Review
   - name: Admin Users
   - name: Courses
   - name: Teacher Courses
@@ -465,7 +466,7 @@ paths:
       tags: [Teacher Applications]
       operationId: submitTeacherApplication
       summary: Submit or resubmit the current ordinary account's teacher application
-      description: Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application fact. A rejected application may be resubmitted with expectedRevision; T12D never approves, rejects, grants TEACHER, or adds teaching:access.
+      description: Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application round and MediaReferenceBound Outbox. A rejected application may be resubmitted with expectedRevision; each round and decision remains in administrator history.
       requestBody:
         required: true
         content:
@@ -485,12 +486,72 @@ paths:
       tags: [Teacher Applications]
       operationId: getMyTeacherApplication
       summary: Get the current account's teacher-application status fact
-      description: Returns only the caller's own submission and current T16-owned review status. Qualification content requires a separate future domain-authorized media grant and is never projected here.
+      description: Returns only the caller's latest application status, current material ID and necessary rejection reason. Earlier rounds, reviewer identities and authorization URLs are never projected here.
       responses:
         '200': {description: Current application., content: {application/json: {schema: {$ref: '#/components/schemas/TeacherApplication'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/AccountNotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/admin/teacher-applications:
+    get:
+      tags: [Admin Teacher Review]
+      operationId: listTeacherApplicationsForReview
+      summary: List teacher applications without material or contact details
+      description: Requires administration:access. Reading the list never starts a review. Exact query is either an application UUID or a normalized account identity. Sorted by submittedAt and id for stable pagination; size is bounded to 100 and offset to one million rows.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/TeacherApplicationStatus'}}
+        - {name: exact, in: query, schema: {type: string, minLength: 1, maxLength: 254}, description: 精确查找规范化邮箱、手机号、内部账号或申请编号；长度覆盖既有身份字段。}
+        - {name: order, in: query, schema: {type: string, enum: [NEWEST, OLDEST], default: NEWEST}}
+      responses:
+        '200': {description: Safe application page., content: {application/json: {schema: {$ref: '#/components/schemas/AdminTeacherApplicationPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/admin/teacher-applications/{applicationId}:
+    get:
+      tags: [Admin Teacher Review]
+      operationId: openTeacherApplicationReview
+      summary: Open detail and start review once
+      description: Requires administration:access. First open changes SUBMITTED to UNDER_REVIEW, records first viewer and time and increments revision. Later opens do not lock or change the application. Returns all immutable rounds and decisions, including expired media identifiers without a read grant.
+      parameters: [{name: applicationId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: Review detail., content: {application/json: {schema: {$ref: '#/components/schemas/AdminTeacherApplicationDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+  /api/v1/admin/teacher-applications/{applicationId}/decision:
+    post:
+      tags: [Admin Teacher Review]
+      operationId: decideTeacherApplication
+      summary: Approve or reject the current round
+      description: Requires administration:access. A matching clientRequestId and payload replays the original result. Stale revision, reused ID with different payload, or already decided round returns 409. Approval requires explicit current-material confirmation and a READY grantable asset. Rejection requires a comprehensible reason. Approval, TEACHER role and security audit commit in one IAM transaction.
+      parameters: [{name: applicationId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TeacherReviewDecisionRequest'}}}}
+      responses:
+        '200': {description: Immutable decision or exact replay., content: {application/json: {schema: {$ref: '#/components/schemas/AdminTeacherApplicationDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
+  /api/v1/admin/teacher-applications/{applicationId}/material-access:
+    post:
+      tags: [Admin Teacher Review]
+      operationId: createTeacherQualificationAccessGrant
+      summary: Grant short-lived preview or download for one retained application round
+      description: IAM verifies administrator, exact application round and retention before sending a one-use service authorization to Media. No caller-supplied mediaId is accepted. Only READY PDF/JPEG/PNG/WebP originals are grantable. Signed URLs must not be persisted.
+      parameters: [{name: applicationId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TeacherQualificationAccessRequest'}}}}
+      responses:
+        '201': {description: Short-lived private asset grant., content: {application/json: {schema: {$ref: '#/components/schemas/MediaAccessGrant'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/AccountNotFound'}
+        '409': {$ref: '#/components/responses/AccountConflict'}
+        '503': {$ref: '#/components/responses/MediaDependencyUnavailable'}
   /api/v1/admin/users:
     get:
       tags: [Admin Users]
@@ -4960,6 +5021,76 @@ components:
         revision: {type: integer, format: int64, minimum: 0}
         submittedAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
+    AdminTeacherApplicationSummary:
+      type: object
+      additionalProperties: false
+      description: Safe list row; no identity value, contact detail, statement or qualification media ID.
+      required: [id, userId, account, displayName, status, revision, submittedAt]
+      properties:
+        id: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        account: {type: string}
+        displayName: {type: string}
+        status: {$ref: '#/components/schemas/TeacherApplicationStatus'}
+        revision: {type: integer, format: int64, minimum: 0}
+        submittedAt: {type: string, format: date-time}
+    AdminTeacherApplicationPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AdminTeacherApplicationSummary'}}
+        page: {type: integer, minimum: 1}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, format: int64, minimum: 0}
+    TeacherReviewRound:
+      type: object
+      additionalProperties: false
+      description: Historical round remains after its file reference is released; materialAvailable tells whether a fresh grant may be requested.
+      required: [id, roundNumber, qualificationMediaId, statement, submittedAt, status, materialAvailable]
+      properties:
+        id: {type: string, format: uuid}
+        roundNumber: {type: integer, minimum: 1}
+        qualificationMediaId: {type: string, format: uuid}
+        statement: {type: string}
+        submittedAt: {type: string, format: date-time}
+        status: {$ref: '#/components/schemas/TeacherApplicationStatus'}
+        materialAvailable: {type: boolean}
+        firstViewedBy: {type: [string, 'null'], format: uuid}
+        firstViewedAt: {type: [string, 'null'], format: date-time}
+        decidedBy: {type: [string, 'null'], format: uuid}
+        decidedAt: {type: [string, 'null'], format: date-time}
+        rejectionReason: {type: [string, 'null'], maxLength: 1000}
+        retainUntil: {type: [string, 'null'], format: date-time, description: Null means indefinitely retained. File cleanup can occur later after reliable reference release and Media's own grace period.}
+    AdminTeacherApplicationDetail:
+      type: object
+      additionalProperties: false
+      required: [id, userId, account, displayName, status, revision, rounds]
+      properties:
+        id: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        account: {type: string}
+        displayName: {type: string}
+        status: {$ref: '#/components/schemas/TeacherApplicationStatus'}
+        revision: {type: integer, format: int64, minimum: 0}
+        rounds: {type: array, items: {$ref: '#/components/schemas/TeacherReviewRound'}}
+    TeacherReviewDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, decision, materialConfirmed]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        decision: {type: string, enum: [APPROVED, REJECTED]}
+        materialConfirmed: {type: boolean, description: Must be true for APPROVED; does not replace Media readiness and grantability checks.}
+        rejectionReason: {type: [string, 'null'], minLength: 10, maxLength: 1000, description: Required for REJECTED and forbidden for APPROVED.}
+    TeacherQualificationAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [roundId, action]
+      properties:
+        roundId: {type: string, format: uuid}
+        action: {type: string, enum: [PREVIEW, DOWNLOAD]}
     AccountStatus:
       type: string
       enum: [ACTIVE, DISABLED]

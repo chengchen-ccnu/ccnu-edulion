@@ -44,6 +44,10 @@ platform:
     media:
       base-url: http://127.0.0.1:9
       request-timeout: 100ms
+      authorization-secret: test-only-course-media-authorization-secret-32-bytes
     seed:
       enabled: false
       password: ""
+    review:
+      messaging-enabled: false
+      retention-enabled: false

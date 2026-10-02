@@ -454,6 +454,46 @@ class MediaHttpIntegrationTest {
                 .isEqualTo(2);
     }
 
+    /** IAM 精确资质服务令牌可读取学生上传的原件；错误来源、用途和重放均不能绕过 Media 技术边界。 */
+    @Test
+    void iamQualificationAuthorizationIsExactAndOneUse() throws Exception {
+        byte[] bytes = new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 1};
+        String sha = sha256(bytes);
+        String body = """
+                {"clientRequestId":"%s","purpose":"TEACHER_QUALIFICATION","fileName":"synthetic.png",
+                 "size":%d,"mimeType":"image/png","sha256":"%s"}
+                """.formatted(UUID.randomUUID(), bytes.length, sha);
+        JsonNode session = mapper.readTree(sendAs("POST", "/api/v1/media/uploads", body, "STUDENT", STUDENT).body());
+        storage.upload(session.get("uploadGrant").get("url").asString(), bytes, "image/png", sha);
+        JsonNode asset = mapper.readTree(sendAs("POST", "/api/v1/media/uploads/"
+                + session.get("uploadId").asString() + "/complete",
+                "{\"sha256\":\"" + sha + "\",\"parts\":[]}", "STUDENT", STUDENT).body());
+        String mediaId = asset.get("mediaId").asString();
+        MediaRepository.OutboxEvent uploaded = repository.pendingOutbox(Instant.now(), 20).stream()
+                .filter(event -> event.aggregateId().equals(mediaId) && event.eventType().equals("MediaUploaded"))
+                .findFirst().orElseThrow();
+        coordinator.process(parser.parse(uploaded.payloadJson()));
+        Instant now = Instant.now();
+        String request = internalAccessBody(TEACHER, "TEACHER_QUALIFICATION",
+                "TEACHER_QUALIFICATION_PREVIEW", "ORIGINAL");
+        String token = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, mediaId,
+                "TEACHER_QUALIFICATION", "TEACHER_QUALIFICATION_PREVIEW", "ORIGINAL",
+                "edu-platform-media-service-test", now, now.plusSeconds(30),
+                "edu-platform-iam-service", "INLINE");
+        assertThat(sendInternal(token, mediaId, request).statusCode()).isEqualTo(201);
+        assertThat(sendInternal(token, mediaId, request).statusCode()).isEqualTo(403);
+        String wrongIssuer = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, mediaId,
+                "TEACHER_QUALIFICATION", "TEACHER_QUALIFICATION_PREVIEW", "ORIGINAL",
+                "edu-platform-media-service-test", now, now.plusSeconds(30),
+                "edu-platform-course-service-test", "INLINE");
+        assertThat(sendInternal(wrongIssuer, mediaId, request).statusCode()).isEqualTo(403);
+        String wrongPurpose = serviceTokenForAccess(UUID.randomUUID().toString(), TEACHER, mediaId,
+                "COURSE_COVER", "TEACHER_QUALIFICATION_PREVIEW", "ORIGINAL",
+                "edu-platform-media-service-test", now, now.plusSeconds(30),
+                "edu-platform-iam-service", "INLINE");
+        assertThat(sendInternal(wrongPurpose, mediaId, request).statusCode()).isEqualTo(403);
+    }
+
     @Test
     /** Given Worker 首次失败，When 同事件重试后成功及另一消息耗尽，Then 状态可重试且 Recoverer 拒绝进 DLQ。 */
     void videoFailureRetriesAndExhaustionCreatesFailedEventForDlq() throws Exception {

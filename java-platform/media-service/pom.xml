@@ -20,6 +20,8 @@
         <dependency><groupId>com.eduplatform</groupId><artifactId>shared-kernel</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.eduplatform</groupId><artifactId>learning-service</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>com.eduplatform</groupId><artifactId>gateway-service</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <!-- 仅真实验收调用 IAM 到期释放事务，不进入 Media 生产依赖或跨库业务流程。 -->
+        <dependency><groupId>com.eduplatform</groupId><artifactId>iam-service</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.springframework.amqp</groupId><artifactId>spring-rabbit-test</artifactId><scope>test</scope></dependency>
@@ -35,6 +37,10 @@
             <testResource>
                 <directory>../gateway-service/target/classes</directory>
                 <includes><include>com/eduplatform/gateway/**/*.class</include></includes>
+            </testResource>
+            <testResource>
+                <directory>../iam-service/target/classes</directory>
+                <includes><include>com/eduplatform/iam/**/*.class</include></includes>
             </testResource>
         </testResources>
         <plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins>

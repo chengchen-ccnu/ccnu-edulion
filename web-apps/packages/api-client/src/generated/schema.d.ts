@@ -423,7 +423,7 @@ export interface paths {
         put?: never;
         /**
          * Submit or resubmit the current ordinary account's teacher application
-         * @description Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application fact. A rejected application may be resubmitted with expectedRevision; T12D never approves, rejects, grants TEACHER, or adds teaching:access.
+         * @description Validates that qualificationMediaId is the caller-owned READY TEACHER_QUALIFICATION asset before committing the application round and MediaReferenceBound Outbox. A rejected application may be resubmitted with expectedRevision; each round and decision remains in administrator history.
          */
         post: operations["submitTeacherApplication"];
         delete?: never;
@@ -441,11 +441,91 @@ export interface paths {
         };
         /**
          * Get the current account's teacher-application status fact
-         * @description Returns only the caller's own submission and current T16-owned review status. Qualification content requires a separate future domain-authorized media grant and is never projected here.
+         * @description Returns only the caller's latest application status, current material ID and necessary rejection reason. Earlier rounds, reviewer identities and authorization URLs are never projected here.
          */
         get: operations["getMyTeacherApplication"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/teacher-applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List teacher applications without material or contact details
+         * @description Requires administration:access. Reading the list never starts a review. Exact query is either an application UUID or a normalized account identity. Sorted by submittedAt and id for stable pagination; size is bounded to 100 and offset to one million rows.
+         */
+        get: operations["listTeacherApplicationsForReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/teacher-applications/{applicationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open detail and start review once
+         * @description Requires administration:access. First open changes SUBMITTED to UNDER_REVIEW, records first viewer and time and increments revision. Later opens do not lock or change the application. Returns all immutable rounds and decisions, including expired media identifiers without a read grant.
+         */
+        get: operations["openTeacherApplicationReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/teacher-applications/{applicationId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve or reject the current round
+         * @description Requires administration:access. A matching clientRequestId and payload replays the original result. Stale revision, reused ID with different payload, or already decided round returns 409. Approval requires explicit current-material confirmation and a READY grantable asset. Rejection requires a comprehensible reason. Approval, TEACHER role and security audit commit in one IAM transaction.
+         */
+        post: operations["decideTeacherApplication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/teacher-applications/{applicationId}/material-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant short-lived preview or download for one retained application round
+         * @description IAM verifies administrator, exact application round and retention before sending a one-use service authorization to Media. No caller-supplied mediaId is accepted. Only READY PDF/JPEG/PNG/WebP originals are grantable. Signed URLs must not be persisted.
+         */
+        post: operations["createTeacherQualificationAccessGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3314,6 +3394,84 @@ export interface components {
             submittedAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        /** @description Safe list row; no identity value, contact detail, statement or qualification media ID. */
+        AdminTeacherApplicationSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            account: string;
+            displayName: string;
+            status: components["schemas"]["TeacherApplicationStatus"];
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            submittedAt: string;
+        };
+        AdminTeacherApplicationPage: {
+            items: components["schemas"]["AdminTeacherApplicationSummary"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description Historical round remains after its file reference is released; materialAvailable tells whether a fresh grant may be requested. */
+        TeacherReviewRound: {
+            /** Format: uuid */
+            id: string;
+            roundNumber: number;
+            /** Format: uuid */
+            qualificationMediaId: string;
+            statement: string;
+            /** Format: date-time */
+            submittedAt: string;
+            status: components["schemas"]["TeacherApplicationStatus"];
+            materialAvailable: boolean;
+            /** Format: uuid */
+            firstViewedBy?: string | null;
+            /** Format: date-time */
+            firstViewedAt?: string | null;
+            /** Format: uuid */
+            decidedBy?: string | null;
+            /** Format: date-time */
+            decidedAt?: string | null;
+            rejectionReason?: string | null;
+            /**
+             * Format: date-time
+             * @description Null means indefinitely retained. File cleanup can occur later after reliable reference release and Media's own grace period.
+             */
+            retainUntil?: string | null;
+        };
+        AdminTeacherApplicationDetail: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            account: string;
+            displayName: string;
+            status: components["schemas"]["TeacherApplicationStatus"];
+            /** Format: int64 */
+            revision: number;
+            rounds: components["schemas"]["TeacherReviewRound"][];
+        };
+        TeacherReviewDecisionRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            /** @enum {string} */
+            decision: "APPROVED" | "REJECTED";
+            /** @description Must be true for APPROVED; does not replace Media readiness and grantability checks. */
+            materialConfirmed: boolean;
+            /** @description Required for REJECTED and forbidden for APPROVED. */
+            rejectionReason?: string | null;
+        };
+        TeacherQualificationAccessRequest: {
+            /** Format: uuid */
+            roundId: string;
+            /** @enum {string} */
+            action: "PREVIEW" | "DOWNLOAD";
         };
         /**
          * @description Short-term login lock is Redis security state and is projected separately as loginLocked.
@@ -6867,6 +7025,125 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["AccountNotFound"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listTeacherApplicationsForReview: {
+        parameters: {
+            query?: {
+                /** @description One-based page number. */
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+                status?: components["schemas"]["TeacherApplicationStatus"];
+                /** @description 精确查找规范化邮箱、手机号、内部账号或申请编号；长度覆盖既有身份字段。 */
+                exact?: string;
+                order?: "NEWEST" | "OLDEST";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe application page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTeacherApplicationPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    openTeacherApplicationReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                applicationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTeacherApplicationDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+        };
+    };
+    decideTeacherApplication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                applicationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherReviewDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Immutable decision or exact replay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTeacherApplicationDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+            409: components["responses"]["AccountConflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["MediaDependencyUnavailable"];
+        };
+    };
+    createTeacherQualificationAccessGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                applicationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherQualificationAccessRequest"];
+            };
+        };
+        responses: {
+            /** @description Short-lived private asset grant. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAccessGrant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["AccountNotFound"];
+            409: components["responses"]["AccountConflict"];
+            503: components["responses"]["MediaDependencyUnavailable"];
         };
     };
     listAdminUsers: {

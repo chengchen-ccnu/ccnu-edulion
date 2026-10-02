@@ -59,8 +59,16 @@ platform:
     media:
       base-url: ${MEDIA_SERVICE_BASE_URL:http://127.0.0.1:8083}
       request-timeout: ${IAM_MEDIA_REQUEST_TIMEOUT:5s}
+      authorization-secret: ${COURSE_MEDIA_AUTH_SECRET:}
+      authorization-issuer: ${IAM_MEDIA_AUTH_ISSUER:edu-platform-iam-service}
+      authorization-audience: ${COURSE_MEDIA_AUTH_AUDIENCE:edu-platform-media-service}
     internal:
       service-token: ${IAM_INTERNAL_SERVICE_TOKEN:}
+    review:
+      messaging-enabled: ${IAM_REVIEW_MESSAGING_ENABLED:true}
+      retention-enabled: ${IAM_REVIEW_RETENTION_ENABLED:true}
+      max-publish-attempts: ${IAM_REVIEW_MAX_PUBLISH_ATTEMPTS:20}
+      confirm-timeout: ${IAM_REVIEW_CONFIRM_TIMEOUT:10s}
 
 ---
 spring:

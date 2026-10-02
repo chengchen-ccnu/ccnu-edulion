@@ -142,3 +142,9 @@ T12F.1 已按上述决策向前落地 OpenAPI 0.19.0、Course V4、Media V5 与 
 ## T09A 历史图片转存补充
 
 历史题库中的 HTTPS 图片不是可长期保存的业务 URL。T09A 仅允许 `media-service` 通过显式主机白名单、DNS/重定向复核、图片 MIME 白名单、单图大小上限和请求超时执行服务端转存；转存结果走既有 `QUESTION_IMAGE` 资产、READY 状态和引用台账。`learning-service` 只提交临时外部地址并接收稳定 `mediaId`，不得保存该地址、接入 OSS SDK或记录短期签名结果。dry-run 只报告图片数量和风险，不发起网络请求。来源地址哈希与幂等键可用于重复转存去重，但外部 URL 明文不进入数据库、事件或日志。
+
+## T16.2 教师资质材料保留与授权
+
+IAM 每次提交保留不可变申请轮次，以轮次 UUID 作为 Media 引用 ID；提交事务中写 `MediaReferenceBound` Outbox，媒体服务按 `eventId` 幂等建立引用。待审、审核中和通过材料没有自动释放时间。驳回材料从决定生效起保留 7 天；驳回后替换旧材料时，旧材料至少从替换起再保留 7 天。IAM 定时任务在到期后写 `MediaReferenceReleased` Outbox，发布确认后由 Media 消费。IAM 的 `release_enqueued_at` 仅记录可靠释放请求已入队，不代表 Media 已解除引用，更不代表 OSS 文件已物理删除。Media 仍按全部有效引用和既有回收宽限期决定是否删除原件，决定记录和安全审计不随文件回收删除。
+
+管理员必须先经 IAM 当前权限和具体申请轮次授权，IAM 才能向 Media 签发 30 秒一次性服务 JWT；令牌绑定管理员、固定 `mediaId`、`TEACHER_QUALIFICATION`、预览或下载动作、`ORIGINAL` 和处置方式。Media 复核令牌来源、全部绑定字段、用途、READY 和 jti 后签发短期私有原件 URL。浏览器不能提交任意 `mediaId` 申请此授权，IAM 也不接 OSS SDK。T16.2 的真实开发环境验收已通过 Gateway、IAM、Media、OSS 和 RabbitMQ 引用链；T16.4 才消费最小审核决定事件发送站内消息。

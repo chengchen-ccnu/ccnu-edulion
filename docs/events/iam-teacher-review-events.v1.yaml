@@ -1,0 +1,34 @@
+contract: edu.iam.teacher-review.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.iam.events.v1
+compatibility: backward
+producer: iam-service
+deliverySemantics: at-least-once; consumers deduplicate by eventId
+description: |
+  T16.2 最小教师资格决定事件，供后续 T16.4 站内消息消费。本任务只可靠发布，不建立通知消费者。
+  IAM 决定、能力授予、安全审计和 Outbox 在同一个本地事务中提交；事件不含资质 ID、联系方式或驳回全文。
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId: {type: string, format: uuid}
+    eventType: {type: string, const: TeacherQualificationDecided}
+    eventVersion: {type: integer, const: 1}
+    aggregateId: {type: string, format: uuid, description: 教师申请 ID}
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, minLength: 8, maxLength: 64}
+    payload:
+      type: object
+      additionalProperties: false
+      required: [applicationId, roundId, userId, decision]
+      properties:
+        applicationId: {type: string, format: uuid}
+        roundId: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        decision: {type: string, enum: [APPROVED, REJECTED]}
+events:
+  TeacherQualificationDecided:
+    routingKey: iam.teacher-qualification.decided.v1
+    payload: {$ref: '#/envelope/properties/payload'}

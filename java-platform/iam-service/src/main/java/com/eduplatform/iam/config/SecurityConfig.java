@@ -98,6 +98,9 @@ public class SecurityConfig {
                                 "/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/api/v1/admin/users", "/api/v1/admin/users/**")
                                 .hasAuthority("administration:access")
+                        .requestMatchers("/api/v1/admin/teacher-applications",
+                                "/api/v1/admin/teacher-applications/**")
+                                .hasAuthority("administration:access")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
                         .authenticationEntryPoint((request, response, exception) -> {
