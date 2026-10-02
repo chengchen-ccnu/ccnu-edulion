@@ -1,5 +1,30 @@
 # Skeleton verification
 
+## 2026-10-02 T16.4.0 恢复验证、最小索引重建与真实批量回归
+
+- 用户确认维护窗口并授权继续恢复调查后，仅Learning开发库完成受保护逻辑备份；随机隔离表实际恢复12630条，15列BINARY比较和双向ID集合差异0，隔离CHECK TABLE OK。本表FOR EXPORT锁下复制ibd/cfg，离线副本innochecksum退出0；没有全局FLUSH或停服务器。当前源CHECK只报二级12631/应12630，未报当前主键错误，因此解除“尚不能限定当前损坏范围”的修复阻断。历史LSN/redo风险和物理起因仍未证明，不把备份可恢复性当作历史完整性证据。
+- CHECK把旧二级索引标记不可用；一次同语句同定义DROP/ADD未更换物理索引，未算成功。随后维护窗口内分两条INPLACE/EXCLUSIVE DROP和ADD原索引，名称/定义/SHOW CREATE TABLE保持；PRIMARY indexId600不变，二级601→3394。修复CHECK OK、两索引状态/数量/键值一致、PENDING均0，计划仍用原索引；未改生产Java、Flyway或契约。
+- 真实生产publishPending批量专项最终1项通过、失败/错误/跳过0。五条合法随机事件验证同批隔离、ACK、mandatory return恢复及三次耗尽、真实队列reject-publish NACK、2/4秒退避、FAILED下次时间真正到期后仍不自动重放、未来事件不领取；实际Broker三次运输两种eventId，经生产容器/消费者/MySQL只新增两条消费事实。终态任务只测幂等分支，不声称媒体导入通过。首轮临时队列被Rabbit拒绝，改为随机durable拓扑后通过；失败轮未算成功。
+- 最后再与备份逐列比较全部历史事件差异0，保留FAILED6896/PUBLISHED5734及异常旧attempts318824；随机事件/任务/消费/两个队列/exchange/恢复表精确清理，最终恢复表0、测试任务0、测试Outbox0、双索引PENDING0。本轮无新数据库/业务迁移、无其他域/Redis/OSS/SMTP写入、未动手工课程、未改个人local.env。备份只在用户受保护目录，Git不含事件正文或凭据。
+- 最终Java全仓clean verify BUILD SUCCESS：90套380项、326执行通过、54环境条件跳过、失败/错误0；真实专项另行显式1项通过、0跳过。四个PowerShell语法、git diff --check及准备提交263b37b祖先检查通过；本机未额外运行未修改的前端/Python专项。
+- 实现提交136c285保留准备祖先263b37b，独立普通git push origin HEAD已执行；[Ready PR #83](https://github.com/chengchen-ccnu/ccnu-edulion/pull/83)创建并附加，OPEN/非Draft。该head push/PR两轮Java/Python/Frontend/OpenAPI共八项CI全部成功；交接记录/注释提交后最终状态以PR最新HEAD为准。维护窗口结束，无本轮常驻进程，未启动用户常规服务，不自行合并或开始T16.4。
+
+## 2026-10-02 T16.4.0 只读诊断与主键页风险停止
+
+- 开工指定分支干净，保留准备提交263b37b；所有数据库命令通过DPAPI包装器，仅Learning开发Schema。READ ONLY同一一致快照确认PRIMARY PENDING0/二级1、总数12630/12631；主键FAILED6896/PUBLISHED5734。EXPLAIN核实访问路径；关闭ICP仍有覆盖索引差异，开启ICP非覆盖待发查询领取FAILED/attempts318824。
+- 引擎历史日志64条MY-011971指向本表空间250页LSN超过系统redo LSN；MY-012869指向待发索引更新找不到键。只读页头按当前indexId归属PRIMARY58/二级4/管理页2；不输出事件正文。不能证明仅二级索引异常或确定物理根因，按用户第4条停止修复。历史页归属可能变化，不能以此声称已证明当前数据丢失。
+- 最终 `Invoke-T16.4.0LearningOutboxDiagnosis.ps1 -InspectLocalPageHeaders` 实际成功复现；脚本仅诊断，未交付自动维护入口。维护窗口请求未取得答复，未备份/恢复演练/CHECK TABLE/DDL/写库/publishPending/重放/队列清理，真实发布回归未执行；6,896条FAILED及手工课程未动。无新增开发数据库、表、伪数据、消息或个人local.env修改。
+- 独立 [停止报告](../delivery/T16.4.0-learning-outbox-index-repair.md) 与backlog已更新。准备的维护/真实验收原型移出交付，只读诊断与常规构建不能作为索引修复或批量发布通过证据；未创建Ready PR或自行合并，恢复调查是继续实施前置。
+- 移出未运行真实原型后的最终Java全仓 `clean verify` BUILD SUCCESS：89套379项、326执行通过、53环境条件跳过、失败/错误0；PowerShell语法、变更文件尾随空白、`git diff --check`及准备提交祖先检查通过。没有修改生产Java或已合并迁移，不把常规构建通过视为数据库维护通过。
+
+## 2026-10-02 总控合并 T16.3 与 T16.4.0 维护前置
+
+- 开工 `git status` 干净，PR #82 Ready/Open，最终 head `d53b21f4519c70ab612e2bea22aee929d7534fae` 八项CI全部成功且无合并冲突。独立复核权限/邀请、管理员共同锁、当前会话校验、提交后缓存发布、课程协调及向前迁移；只有新 IAM V5，无旧迁移改写。`git diff --check main...HEAD` 通过。
+- 总控实际重跑 IAM focused 权限10/邀请10/审核9/Seed1共30项，均0失败/错误/跳过；`Invoke-T16.3SessionRaceRealAcceptance.ps1` 真实MySQL/Redis/Gateway/IAM八项并发0失败/错误/跳过，随机Fixture精确清理。`pnpm.cmd --dir web-apps run check:api` 通过、生成结果无差异。完整SMTP/OSS/课程长链沿用已核对的本机日志1项成功，不声称本轮重跑；全仓/前端构建沿用该head最新CI。
+- 按本次用户授权，以精确head普通merge合并 [PR #82](https://github.com/chengchen-ccnu/ccnu-edulion/pull/82) 为 `199c66ef95d310632ebb7f1ad1a1ed825966cc7d`，main `--ff-only`同步一致，本地T16.3分支删除；用户明确选择保留远端分支。合并后 [CI #36976932187](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36976932187) 四项全部成功。
+- 只读复查 Learning 开发 Outbox：PRIMARY为PUBLISHED5734/FAILED6896/PENDING0，二级索引PENDING1，关联PRIMARY状态不符1。没有执行CHECK TABLE/修复/重建/改状态/重发，原因尚未诊断。T16.4全量发布环境前置暂不满足；新增 T16.4.0 维护切片，准备 `codex/t16.4.0-learning-outbox-index-repair`，见 [审计](T16.4.0-prerequisite-audit.md)。不扩大T16.3或提前实现公告/消息。
+- 本轮只提交状态/前置文档，不修改业务代码、既有迁移、事件或个人local.env。真实专项创建最小随机IAM账号/会话/审计/命令/Redis测试状态且finally精确清理，未新建数据库/表；未操作课程/OSS、未发邮件、未删除或重放Learning旧事件，手工《线性代数》未操作。
+
 ## 2026-10-02 T16.3 账号权限与管理员邀请
 
 - 开工status干净，保留指定分支和准备提交adf8221；已读AGENTS、前置审计/已确认范围、页面规格、路线图、T16.1/T16.2交付及接口/内部暂停/事件。用户“全部按建议”确认四项选择，先设计评审后实现。
