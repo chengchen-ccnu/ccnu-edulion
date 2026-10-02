@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-02 T16.2 分支清理与 T16.3 前置准备
+
+- 开工 main 干净，与 origin/main 同为 `ec7da08dc032de90037851e0aefd0adee1174f80`；PR #81 已普通合并。确认 T16.2 分支是 main 祖先后，按用户本次授权删除其本地和远端分支，其余分支/worktree 保留。最新 main [CI #36945937936](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36945937936) 成功，前一次合并 CI #36945797928 已取消，未记为通过。
+- 只读核对 OpenAPI 0.28.0、课程暂停内部协议 1.0.0、IAM V4 审核/Outbox、权限命令、登录/刷新、Redis 会话版本过滤、Seed 和 SMTP。发现并记录：现有禁用未协调课程暂停、旧版本并发回填竞争、最后管理员并发保护/恢复/邀请接口缺失；这些均属于 T16.3 交付，不冒充已有功能。见 [T16.3 前置审计](T16.3-prerequisite-audit.md)。
+- 共享环境包装器下只检查配置存在与 TCP：MySQL/Redis/RabbitMQ/SMTP 可达，SMTP 配置和加密凭据已具备；正确的 `IAM_VERIFICATION_HMAC_SECRET`、JWT 和 Course IAM 写秘密长度满足要求。未打印秘密、未发送邮件，未把端口检查当业务/认证验收。JDK 17/Maven 3.9.4/Node 20.19.5/pnpm 10.22.0 可用。
+- 开工前置满足，从最新 main 创建 `codex/t16.3-account-permissions-admin-invitation-contract`。本次只提交审计、backlog 和本记录，不推送，不修改业务代码/API/迁移/生成客户端；仅执行文档 diff 检查，未重跑全仓构建与功能测试。
+- 本轮未创建或修改任何数据库、表、伪数据、缓存 Key、MQ 消息、OSS 对象或个人 local.env，无测试数据清理和新增配置迁移。手工《线性代数》未操作。
+
 ## 2026-10-02 PR #81 授权验收与合并
 
 - 用户在交接澄清后明确要求“直接开始下一步，一直到合并结束”；本次据此复核并合并 T16.2，不启动后续功能任务。
