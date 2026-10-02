@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-10-02 总控独立验收合并 T16.4 与 T16A 开工准备
+
+- 起始工作区干净，独立审阅公告/确认、消息实时授权、分页投递、真正开放、内部身份、Outbox/有限重试/DLQ、迁移及真实验收清理脚本。无业务代码修改，无既有迁移/事件版本改写。
+- 独立 `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 退出0；392项中337执行、55按环境条件跳过，0失败/错误。独立 `check:api`、`typecheck`、`test`、`build` 通过，前端56文件374项、三端构建成功；大chunk警告为已有非阻断事项。本轮未重复Prism13操作或浏览器验收，其原记录不冒充总控重跑。
+- 独立执行 `pwsh -NoProfile -File scripts/Invoke-T16.4NotificationsRealAcceptance.ps1`：五域真实HTTP/MySQL/RabbitMQ及Learning重启/故障长链1项、0失败/错误/跳过。历史Course/IAM/Learning Outbox逐行比较及手工《线性代数》比较通过；未重放历史FAILED。
+- 另行只读核对九张Operation业务表全部0；本轮IAM账号、Course课程、Learning报名/活动/任务全部0；Learning PUBLISHED5734/FAILED6896不变。Management API精确核对本轮队列与DLQ均404，验收端口无遗留进程。仅创建随机5个IAM账号、合成课程/103初始报名、测评/申请/通知/事件与隔离队列等Fixture，已finally精确清理；没有新增Schema/表（Operation V1和Learning V20已存在），没有OSS/SMTP资产或常驻Seed。
+- 最终PR head `1501dff0085912e26b4ff46e2b3f38b6355a9a0d` 八项CI成功，以精确head普通merge合并 [PR #84](https://github.com/chengchen-ccnu/ccnu-edulion/pull/84) 为 `679c2f45f70230418924a605f5c58654f5da24c9`。main与origin/main一致，T16.4本地分支删除、远端保留；合并后 [CI #37004370677](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37004370677) 四项全部SUCCESS。
+- T16A前置审计通过：MySQL认证/物理迁移Operation V1、Learning V20、Course V7、IAM V5；Rabbit认证由真实长链证明，Operation Redis按共享配置认证/选择DB/PING成功。现有学习活跃日含报名，不能直接作为真实学习人数；无热点专用公开卡片/源事实分页/学习事件/REST，这些是本任务契约交付，不谎称现成。详见 [T16A前置审计](T16A-prerequisite-audit.md)。
+- 从最新main准备 `codex/t16a-hot-course-cache`，仅更新状态/审计/交接文档并本地提交，不推送；没有提前实现热点API/事件/迁移/Redis榜单或Vue。个人local.env未改动；保留原维护备份及其他非本任务分支。
+
 ## 2026-10-02 T16.4 公告与站内消息后端
 
 - 保留当前分支/cdbabdd，初始git status干净；先阅读仓库/前置/范围/页面职责与协议事件，完成契约自评审再实施。OpenAPI0.30.0、新内部只读1.0.0、公告/任务事件v1及生成客户端落地，不改既有事件版本/已合并迁移。
