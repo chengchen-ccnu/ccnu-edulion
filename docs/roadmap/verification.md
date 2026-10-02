@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-02 总控验收合并 T16.4.0 与 T16.4 开工准备
+
+- 开工指定分支干净，Ready PR #83 head `0196e5ab9dda0780c34b513d220a67306d7b0c5a` 八项CI成功；独立阅读四维护脚本/真实回归、核对备份恢复验收记录和已执行维护记录。未重复执行CHECK TABLE、备份或索引重建，未修改历史状态/尝试数；`git diff --check main...HEAD`通过，生产代码/API/Flyway未改变。
+- 总控实际运行只读诊断：PRIMARY/二级均PUBLISHED5734/FAILED6896、PENDING0、键值差异0，PRIMARY indexId600和新二级3394一致，原DDL与计划保留。维护窗口静默：其他Learning连接0、无Learning JVM。独立真实批量脚本1项、0失败/错误/跳过，生产publishPending ACK/return/NACK/2/4秒有限退避/真正到期FAILED不重放/真实幂等消费通过；最新Fixture清理标记verified，恢复表/临时Outbox均0，历史全字段内存比较一致。
+- 以精确head普通merge合并 [PR #83](https://github.com/chengchen-ccnu/ccnu-edulion/pull/83) 为 `2cc9e5c1b104faaea2d69eb71dbac33382e2cac6`，main快进一致；本地完成分支删除，远端按用户要求保留。合并后 [CI #36984717462](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36984717462) 四项全部成功。
+- T16.4开工前置通过，Operation仍骨架，外部OpenAPI0.29.0；既有资格/可用性/报名事件与Learning生产发布基础可复用。只读查Operation Schema/表均0，首个初始化/迁移、安全适配/AMQP/只读授权/有界收件人/真实开放事件属于T16.4交付。MySQL认证/Rabbit真实发布及Redis端口通过；不冒称公告/消息已经可用。见 [T16.4前置审计](T16.4-prerequisite-audit.md)。
+- 从最新main创建 `codex/t16.4-course-announcements-notifications-contract`，只提交状态和审计，不推送，不实现业务代码/API/事件/迁移/Vue或热点。总控复验创建五条随机事件/一个终态导入任务/消费事实与本轮MQ拓扑，finally精确清理，无新增数据库/表或Operation数据；未改local.env、未动手工《线性代数》、未写Redis/OSS/SMTP，维护备份继续保留。
+
 ## 2026-10-02 T16.4.0 恢复验证、最小索引重建与真实批量回归
 
 - 用户确认维护窗口并授权继续恢复调查后，仅Learning开发库完成受保护逻辑备份；随机隔离表实际恢复12630条，15列BINARY比较和双向ID集合差异0，隔离CHECK TABLE OK。本表FOR EXPORT锁下复制ibd/cfg，离线副本innochecksum退出0；没有全局FLUSH或停服务器。当前源CHECK只报二级12631/应12630，未报当前主键错误，因此解除“尚不能限定当前损坏范围”的修复阻断。历史LSN/redo风险和物理起因仍未证明，不把备份可恢复性当作历史完整性证据。
