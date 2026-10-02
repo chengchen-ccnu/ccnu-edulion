@@ -4,6 +4,164 @@
  */
 
 export interface paths {
+    "/api/v1/admin/users/{userId}/permission-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 预览普通权限变化或管理员封禁的影响
+         * @description 仅当前有效管理员；普通账号只允许 STUDENT、STUDENT+TEACHER 或 DISABLED。首次教学授予不能走本接口。预览保存操作者、动作、revision 和五分钟有效期；课程范围来自 Course，受影响学生为 Learning 去重 ACTIVE 报名人数。依赖失败返回 503，绝不伪造零影响。统计为读取时事实，不承诺跨服务原子快照。
+         */
+        post: operations["previewAccountPermissionChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/permission-commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 明确确认预览后撤权、恢复、封禁或解封
+         * @description 客户端必须提交 confirmed=true、同操作者预览、expectedRevision、10至500字原因和稳定 clientRequestId。变化或异载荷复用返回409。
+         *     IAM 决定、审计、单调 accessRevision 和协调事实同事务持久化；202 不代表课程已联动。封禁保留领域数据并撤销全部会话。
+         *     普通解封只恢复 STUDENT；恢复教学必须有真实 APPROVED 历史，且只恢复原 suspensionId 的课程。课程确认前不授回 TEACHER。
+         *     ADMIN 独立同权，无学习、教学、申请能力；禁止自封禁，数据库串行化保护最后一名可用管理员。普通命令不能产生 ADMIN。
+         *     自动协调最多3次，显式补偿最多追加3次，总计6次；失败不回滚撤权。暂停停止 HOMEWORK/EXAM 计时，恢复按实际暂停时长顺延。
+         */
+        post: operations["changeAccountPermissions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/permission-commands/{commandId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询 IAM 决定及课程联动的实际状态 */
+        get: operations["getAccountPermissionCommand"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/permission-commands/{commandId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 对失败的原权限命令执行一次有界补偿
+         * @description 仅 FAILED 且 attempts 小于6；expectedAttempts 防并发，clientRequestId 幂等。同 accessRevision/suspensionId 重放；不创建新撤权周期，不无界重试。提交返回202 PENDING，不假称已应用。
+         */
+        post: operations["retryAccountPermissionCoordination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 当前管理员邀请邮箱所有者成为独立管理员
+         * @description 已绑定任何账号的邮箱409，绝不转换普通账号；邀请者不能设置密码。24小时凭证只在邮件正文，数据库仅HMAC摘要，管理响应只含脱敏邮箱。SMTP接受后状态SENT不等于已读或接受；发送失败FAILED可重发。相同clientRequestId精确重放不重复发信。
+         */
+        post: operations["inviteAdministrator"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invitations/{invitationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询单个邀请的脱敏投影，不返回邮箱凭证 */
+        get: operations["getAdministratorInvitation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invitations/{invitationId}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 有限重发并作废旧邮箱凭证
+         * @description 仅未接受邀请，60秒冷却，总发送最多6次；expectedRevision防并发。提交后旧凭证立即失效，新到期时间为24小时。进程中断或发送未知保持PENDING，可在冷却后显式重发，不自动无限发信。
+         */
+        post: operations["resendAdministratorInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/admin-invitations/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 邮箱所有者验证一次性邀请并自行设置密码
+         * @description 精确公开入口，无邀请不可注册管理员。invitationId、email和secret只在请求正文，禁止URL。无效、过期、未SENT、已消费或错邮箱统一422，不枚举账号。邮箱已绑定409；账号、已验证邮箱、仅ADMIN角色、消费与审计同事务，失败不创建账号。接受成功不自动登录，请正常密码登录。
+         */
+        post: operations["acceptAdministratorInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -596,8 +754,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Disable an account and invalidate every session
-         * @description The MySQL transaction changes status, increments sessionVersion, revokes Refresh Sessions and records the administrator reason. An administrator cannot disable the current account through this endpoint.
+         * 已废弃，必须使用权限预览及明确确认命令
+         * @deprecated
+         * @description 0.29.0行为收紧；有效管理员调用统一返回409 IAM.CONFIRMATION_REQUIRED，不再修改账号。迁移到permission-previews及permission-commands，旧客户端不能绕过影响确认或Course协调。
          */
         post: operations["disableAdminUser"];
         delete?: never;
@@ -2718,6 +2877,140 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description 普通账号不可创建管理员；ADMIN 只允许 BAN/UNBAN，普通解封仅学生
+         * @enum {string}
+         */
+        AccountPermissionAction: "REVOKE_TEACHING" | "RESTORE_TEACHING" | "BAN" | "UNBAN";
+        AccountPermissionPreviewRequest: {
+            action: components["schemas"]["AccountPermissionAction"];
+        };
+        AccountPermissionPreview: {
+            /** Format: uuid */
+            previewId: string;
+            /** Format: uuid */
+            userId: string;
+            action: components["schemas"]["AccountPermissionAction"];
+            /** Format: int64 */
+            expectedRevision: number;
+            affectedCourses: number;
+            /**
+             * Format: int64
+             * @description 预览课程范围内去重 ACTIVE 报名学生数，不是报名记录条数
+             */
+            affectedStudents: number;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        AccountPermissionCommandRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: uuid */
+            previewId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            action: components["schemas"]["AccountPermissionAction"];
+            /** @description 去首尾空白后10至500字，只在 IAM 本域审计保存 */
+            reason: string;
+            /**
+             * @description 明确确认预览和影响；false 返回422
+             * @constant
+             */
+            confirmed: true;
+        };
+        AccountPermissionCommand: {
+            /** Format: uuid */
+            commandId: string;
+            /** Format: uuid */
+            userId: string;
+            action: components["schemas"]["AccountPermissionAction"];
+            /**
+             * Format: int64
+             * @description 初次 IAM 决定的账号 revision；异步授回能力会再递增，编辑需重读用户详情
+             */
+            decidedRevision: number;
+            /**
+             * Format: int64
+             * @description IAM 持久化单调 Course 命令水位
+             */
+            accessRevision: number;
+            /**
+             * Format: uuid
+             * @description 有课程动作才提供；恢复引用原周期
+             */
+            suspensionId?: string;
+            /**
+             * @description APPLIED 仅表示 Course 事实及Outbox已确认，不表示所有异步消费者或通知已完成；RESTORE_TEACHING在此状态才授回能力
+             * @enum {string}
+             */
+            coordinationStatus: "NOT_REQUIRED" | "PENDING" | "FAILED" | "APPLIED";
+            attempts: number;
+            /** @constant */
+            maxAttempts: 6;
+            /** @description PENDING/FAILED为预览课程数；APPLIED为Course响应实际改变数 */
+            affectedCourses: number;
+            /** @description 只返回脱敏的固定错误分类，不含内部响应正文或秘密 */
+            lastErrorCode?: string;
+            /** @description 同请求精确重放；不重复账号变更，联动状态为读取时最新事实 */
+            replayed: boolean;
+        };
+        PermissionCoordinationRetryRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            expectedAttempts: number;
+        };
+        AdminInvitationCreateRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: email */
+            email: string;
+            reason: string;
+        };
+        AdminInvitationResendRequest: {
+            /** Format: uuid */
+            clientRequestId: string;
+            /** Format: int64 */
+            expectedRevision: number;
+            reason: string;
+        };
+        AdminInvitation: {
+            /** Format: uuid */
+            invitationId: string;
+            maskedEmail: string;
+            /**
+             * @description SMTP结果；SENT只证明SMTP服务接受，不证明收件箱送达
+             * @enum {string}
+             */
+            deliveryStatus: "PENDING" | "SENT" | "FAILED";
+            /** @enum {string} */
+            acceptanceStatus: "AWAITING" | "EXPIRED" | "ACCEPTED";
+            /** Format: int64 */
+            revision: number;
+            sendAttempts: number;
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            resendAfter: string;
+            replayed: boolean;
+        };
+        AdminInvitationAcceptRequest: {
+            /** Format: uuid */
+            invitationId: string;
+            /** Format: email */
+            email: string;
+            /** @description 邮件中的32字节随机凭证，不放URL或日志 */
+            secret: string;
+            /** @description 本人设置，BCrypt输入UTF-8字节数不得超过72 */
+            password: string;
+            displayName: string;
+        };
+        AdminInvitationAcceptance: {
+            /**
+             * Format: uuid
+             * @description 新建独立管理员，不自动签发JWT
+             */
+            userId: string;
+        };
         /** @enum {string} */
         AgentEntryPoint: "INDEPENDENT_CHAT" | "PRACTICE_FLOATING";
         /** @enum {string} */
@@ -5788,7 +6081,7 @@ export interface components {
             fieldErrors: components["schemas"]["FieldError"][];
             /**
              * Format: email
-             * @description 系统暂停时配置的管理员联系邮箱，不返回内部原因。
+             * @description 课程系统暂停或正确凭据登录封禁账号时配置的管理员联系邮箱，不返回内部原因。
              */
             supportEmail?: string;
             /** @description Learning 暂停错误为 true，未持久化观看缓冲已逻辑舍弃。 */
@@ -5801,6 +6094,33 @@ export interface components {
         };
     };
     responses: {
+        /** @description IAM.REVISION_CONFLICT、IAM.CONFIRMATION_REQUIRED、IAM.LAST_ADMIN_REQUIRED、IAM.SELF_DISABLE_FORBIDDEN、IAM.INVITATION_EMAIL_BOUND 或 IAM.COORDINATION_PENDING；刷新状态或遵循新确认流程 */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description 请求不合法或邀请凭证无效；无效邀请统一返回 IAM.INVITATION_INVALID，不枚举邮箱 */
+        ValidationError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description 安全状态或影响预览依赖不可用；安全拒绝，不假称成功 */
+        ServiceUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description 系统暂停返回 COURSE.SUSPENDED、LEARNING.COURSE_SUSPENDED 或 MEDIA.COURSE_SUSPENDED，仅通用说明与管理员邮箱；Learning 提示未保存进度舍弃。已有 409 响应同样使用 ApiError 承载此状态。 */
         CourseSuspended: {
             headers: {
@@ -6388,6 +6708,258 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    previewAccountPermissionChange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountPermissionPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPermissionPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    changeAccountPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountPermissionCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPermissionCommand"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountPermissionCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commandId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPermissionCommand"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    retryAccountPermissionCoordination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commandId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PermissionCoordinationRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPermissionCommand"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    inviteAdministrator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminInvitationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminInvitation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAdministratorInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminInvitation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    resendAdministratorInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminInvitationResendRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminInvitation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    acceptAdministratorInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminInvitationAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description 已提交本域事实；联动或邮件状态以响应为准 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminInvitationAcceptance"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -7252,15 +7824,6 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Disabled account projection. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminAccountCommandResult"];
-                };
-            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["AccountNotFound"];

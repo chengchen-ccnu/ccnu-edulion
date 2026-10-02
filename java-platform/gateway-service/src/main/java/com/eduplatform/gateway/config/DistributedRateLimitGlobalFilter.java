@@ -104,6 +104,9 @@ public class DistributedRateLimitGlobalFilter implements GlobalFilter, Ordered {
             return new Policy("verification-login", 10, 60_000);
         }
         if (path.equals("/api/v1/auth/register")) return new Policy("registration", 5, 60_000);
+        if (path.equals("/api/v1/auth/admin-invitations/accept")) return new Policy("admin-invitation-accept", 5, 60_000);
+        if (path.equals("/api/v1/admin/invitations") || path.matches("/api/v1/admin/invitations/[^/]+/resend"))
+            return new Policy("admin-invitation-send", 5, 60_000);
         if (path.equals("/api/v1/auth/password-reset")) return new Policy("password-reset", 5, 60_000);
         if (method == HttpMethod.POST && path.equals("/api/v1/users/me/identity-verification-challenges")) {
             return new Policy("identity-verification", 5, 60_000);

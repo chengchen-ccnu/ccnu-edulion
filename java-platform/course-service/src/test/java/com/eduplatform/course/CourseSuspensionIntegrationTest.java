@@ -40,6 +40,24 @@ class CourseSuspensionIntegrationTest {
                 id,UUID.randomUUID().toString(),owner,id.equals(published)?"PUBLISHED":id.equals(draft)?"DRAFT":"UNPUBLISHED");
     }
 
+    /** 影响预览只包含当前发布课程；恢复仅匹配原周期，缺周期/错误内部身份明确拒绝。 */
+    @Test void impactMatchesOnlyItsCycleAndAuthenticatesCaller()throws Exception {
+        assertThat(suspension.impact(owner,true,null).courseIds()).containsExactly(published);
+        String cycle=UUID.randomUUID().toString();suspension.change(owner,cycle,1,true,"t163-impact");
+        assertThat(suspension.impact(owner,false,cycle).courseIds()).containsExactly(published);
+        assertThat(suspension.impact(owner,false,UUID.randomUUID().toString()).courseIds()).isEmpty();
+        assertThat(request("GET","/internal/v1/teachers/"+owner+"/availability-impact?paused=false",null,"iam-service","t161-test-iam-command-secret-at-least-32").statusCode()).isEqualTo(422);
+        assertThat(request("GET","/internal/v1/teachers/"+owner+"/availability-impact?paused=true",null,"learning-service","t161-test-iam-command-secret-at-least-32").statusCode()).isEqualTo(401);
+    }
+
+    /** 超过1000门不能静默截断影响并误导管理员确认；独立H2里建立有界元数据夹具。 */
+    @Test void impactLimitFailsInsteadOfTruncating() {
+        for(int n=0;n<1000;n++)jdbc.update("INSERT INTO course(id,create_request_id,owner_teacher_id,publication_status) VALUES(?,?,?,'PUBLISHED')",
+                UUID.randomUUID().toString(),UUID.randomUUID().toString(),owner);
+        assertThatThrownBy(()->suspension.impact(owner,true,null)).isInstanceOfSatisfying(CourseException.class,
+                failure->assertThat(failure.status().value()).isEqualTo(503));
+    }
+
     /** 重放、旧恢复与不匹配周期不能复活课程；草稿和主动下架始终不变，Outbox 与状态同事务。 */
     @Test void commandsAreMonotonicAndRestoreOnlyTheirOwnCycle() {
         String first=UUID.randomUUID().toString(), second=UUID.randomUUID().toString();

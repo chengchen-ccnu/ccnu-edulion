@@ -236,17 +236,17 @@ public class AccountLifecycleController {
 
     /** 按管理权限分页查询账号脱敏投影。 */
     @GetMapping("/admin/users")
-    public AccountLifecycleDtos.AdminUserPage listUsers(@RequestParam(required = false) String keyword,
+    public AccountLifecycleDtos.AdminUserPage listUsers(JwtAuthenticationToken token, @RequestParam(required = false) String keyword,
             @RequestParam(required = false) AccountLifecycleDtos.AccountStatus status,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        return admins.list(keyword, status, page, size);
+        return admins.list(token.getToken().getSubject(), keyword, status, page, size);
     }
 
     /** 按稳定 userId 查询单个管理投影。 */
     @GetMapping("/admin/users/{userId}")
-    public AccountLifecycleDtos.AdminUserResponse getUser(@PathVariable UUID userId) {
-        return admins.get(userId.toString());
+    public AccountLifecycleDtos.AdminUserResponse getUser(JwtAuthenticationToken token, @PathVariable UUID userId) {
+        return admins.get(token.getToken().getSubject(), userId.toString());
     }
 
     /** 管理员按 revision 幂等解除目标账号短期登录锁。 */
@@ -257,7 +257,7 @@ public class AccountLifecycleController {
                 servlet.getRemoteAddr(), trace(servlet));
     }
 
-    /** 管理员按 revision 禁用账号并撤销全部会话；禁止自我禁用。 */
+    /** 旧入口废弃，返回409要求先预览并明确确认；不能绕过新权限命令。 */
     @PostMapping("/admin/users/{userId}/disable")
     public AccountLifecycleDtos.AdminCommandResult disable(JwtAuthenticationToken token, @PathVariable UUID userId,
             @Valid @RequestBody AccountLifecycleDtos.AdminCommandRequest request, HttpServletRequest servlet) {

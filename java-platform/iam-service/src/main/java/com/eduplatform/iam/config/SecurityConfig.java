@@ -73,7 +73,8 @@ public class SecurityConfig {
 
     @Bean
     /** 构建无服务器 Session 的安全过滤链；状态只来自 JWT 和刷新 Cookie。 */
-    SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper,
+            com.eduplatform.iam.persistence.IamMapper users) throws Exception {
         JwtGrantedAuthoritiesConverter roles = new JwtGrantedAuthoritiesConverter();
         roles.setAuthoritiesClaimName("roles"); roles.setAuthorityPrefix("ROLE_");
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
@@ -94,10 +95,13 @@ public class SecurityConfig {
                                 "/api/v1/auth/channel-capabilities", "/api/v1/protocols/current",
                                 "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
                                 "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
+                                "/api/v1/auth/admin-invitations/accept",
                                 "/internal/v1/users/nicknames",
                                 "/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/api/v1/admin/users", "/api/v1/admin/users/**")
                                 .hasAuthority("administration:access")
+                        .requestMatchers("/api/v1/admin/invitations", "/api/v1/admin/invitations/**",
+                                "/api/v1/admin/permission-commands/**").hasAuthority("administration:access")
                         .requestMatchers("/api/v1/admin/teacher-applications",
                                 "/api/v1/admin/teacher-applications/**")
                                 .hasAuthority("administration:access")
@@ -119,6 +123,8 @@ public class SecurityConfig {
                             "IAM.FORBIDDEN", "无权访问该资源", traceId, Instant.now(),
                             request.getRequestURI(), List.of()));
                 }));
+        http.addFilterAfter(new CurrentAdminSessionFilter(users,objectMapper),
+                org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 }

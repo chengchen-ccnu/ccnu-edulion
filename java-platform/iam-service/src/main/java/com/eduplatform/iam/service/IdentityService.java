@@ -31,10 +31,12 @@ public class IdentityService {
     private final SecurityDigests digests;
     private final JwtTokenService jwtTokens;
     private final IamProperties properties;
+    private final SessionVersionPublication versionPublication;
 
     public IdentityService(IamMapper mapper, PasswordEncoder passwordEncoder,
             VerificationChallengeService challenges, IdentitySecurityStore securityStore,
-            SecurityDigests digests, JwtTokenService jwtTokens, IamProperties properties) {
+            SecurityDigests digests, JwtTokenService jwtTokens, IamProperties properties,
+            SessionVersionPublication versionPublication) {
         this.mapper = mapper;
         this.passwordEncoder = passwordEncoder;
         this.challenges = challenges;
@@ -42,6 +44,7 @@ public class IdentityService {
         this.digests = digests;
         this.jwtTokens = jwtTokens;
         this.properties = properties;
+        this.versionPublication = versionPublication;
     }
 
     /** @return 当前账号最多两个脱敏身份及写操作所需 revision。 */
@@ -80,8 +83,15 @@ public class IdentityService {
      * 新增缺失的第二身份。成功后 sessionVersion/revision 均加一，当前 Refresh Session 升级，
      * 其他 Refresh Session 撤销，并返回替换旧 JWT 的 15 分钟访问令牌。
      */
-    @Transactional
     public AccountLifecycleDtos.IdentityMutationResult bind(String userId, long tokenVersion,
+            AccountLifecycleDtos.BindIdentityRequest request, String refreshToken,
+            String remoteAddress, String traceId) {
+        return versionPublication.commitAndPublish(userId, () -> bindLocked(userId, tokenVersion,
+                request, refreshToken, remoteAddress, traceId));
+    }
+
+    /** 绑定在账号锁下更新身份和保留设备，返回已签发响应；外层在完整提交后发布会话版本。 */
+    private AccountLifecycleDtos.IdentityMutationResult bindLocked(String userId, long tokenVersion,
             AccountLifecycleDtos.BindIdentityRequest request, String refreshToken,
             String remoteAddress, String traceId) {
         String type = request.identityType().name();
@@ -116,7 +126,6 @@ public class IdentityService {
         audit(userId, "IDENTITY_BOUND", "用户新增第二个已验证身份", remoteAddress, traceId);
         mapper.insertIdentityCommand(request.clientRequestId().toString(), userId, "BIND", fingerprint,
                 changed.getRevision(), Instant.now());
-        cacheVersion(changed);
         LoginResponse session = new LoginResponse("Bearer", jwtTokens.issue(authenticated(changed)),
                 jwtTokens.expiresInSeconds());
         return result(changed, "OTHER_DEVICES", false, session);
@@ -257,11 +266,6 @@ public class IdentityService {
 
     private void invalidateVersion(String userId) {
         try { securityStore.invalidateSessionVersion(userId); }
-        catch (RuntimeException exception) { throw unavailable(); }
-    }
-
-    private void cacheVersion(UserAccount user) {
-        try { securityStore.cacheSessionVersion(user.getId(), user.getSessionVersion(), properties.sessionCache().ttl()); }
         catch (RuntimeException exception) { throw unavailable(); }
     }
 

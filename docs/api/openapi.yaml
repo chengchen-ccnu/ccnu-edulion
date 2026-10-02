@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.28.0
-  description: T16.2 adds administrator teacher-qualification review, immutable rounds and decisions, revision/idempotency protection, and IAM-authorized short-lived Media grants. T16.1 added independent course suspension and protected task clocks. Class statistics, ranks and score sorting remain gated on full grading. Snapshot metrics are lifetime; trends use Asia/Shanghai calendar periods.
+  version: 0.29.0
+  description: T16.3 adds legal independent account capabilities, confirmed impact previews, durable bounded IAM-to-Course coordination, and verified-email administrator invitations. Legacy disable is deprecated and now requires the new confirmation flow (409); migrate before deploying 0.29.0 clients. T16.2 qualification review remains the only first teaching grant. T16.1 suspension stops task clocks and resumes with actual-duration extensions. No Vue or notification consumer is delivered here.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -27,6 +27,204 @@ tags:
   - name: Teacher Assessments
   - name: Agent
 paths:
+  /api/v1/admin/users/{userId}/permission-previews:
+    post:
+      tags: [Admin Users]
+      operationId: previewAccountPermissionChange
+      summary: 预览普通权限变化或管理员封禁的影响
+      description: 仅当前有效管理员；普通账号只允许 STUDENT、STUDENT+TEACHER 或 DISABLED。首次教学授予不能走本接口。预览保存操作者、动作、revision 和五分钟有效期；课程范围来自 Course，受影响学生为 Learning 去重 ACTIVE 报名人数。依赖失败返回 503，绝不伪造零影响。统计为读取时事实，不承诺跨服务原子快照。
+      parameters:
+        - {name: userId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountPermissionPreviewRequest'}
+      responses:
+        '201':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountPermissionPreview'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/users/{userId}/permission-commands:
+    post:
+      tags: [Admin Users]
+      operationId: changeAccountPermissions
+      summary: 明确确认预览后撤权、恢复、封禁或解封
+      description: |
+        客户端必须提交 confirmed=true、同操作者预览、expectedRevision、10至500字原因和稳定 clientRequestId。变化或异载荷复用返回409。
+        IAM 决定、审计、单调 accessRevision 和协调事实同事务持久化；202 不代表课程已联动。封禁保留领域数据并撤销全部会话。
+        普通解封只恢复 STUDENT；恢复教学必须有真实 APPROVED 历史，且只恢复原 suspensionId 的课程。课程确认前不授回 TEACHER。
+        ADMIN 独立同权，无学习、教学、申请能力；禁止自封禁，数据库串行化保护最后一名可用管理员。普通命令不能产生 ADMIN。
+        自动协调最多3次，显式补偿最多追加3次，总计6次；失败不回滚撤权。暂停停止 HOMEWORK/EXAM 计时，恢复按实际暂停时长顺延。
+      parameters:
+        - {name: userId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountPermissionCommandRequest'}
+      responses:
+        '202':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountPermissionCommand'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/permission-commands/{commandId}:
+    get:
+      tags: [Admin Users]
+      operationId: getAccountPermissionCommand
+      summary: 查询 IAM 决定及课程联动的实际状态
+      parameters:
+        - {name: commandId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountPermissionCommand'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/permission-commands/{commandId}/retry:
+    post:
+      tags: [Admin Users]
+      operationId: retryAccountPermissionCoordination
+      summary: 对失败的原权限命令执行一次有界补偿
+      description: 仅 FAILED 且 attempts 小于6；expectedAttempts 防并发，clientRequestId 幂等。同 accessRevision/suspensionId 重放；不创建新撤权周期，不无界重试。提交返回202 PENDING，不假称已应用。
+      parameters:
+        - {name: commandId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PermissionCoordinationRetryRequest'}
+      responses:
+        '202':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountPermissionCommand'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/invitations:
+    post:
+      tags: [Admin Users]
+      operationId: inviteAdministrator
+      summary: 当前管理员邀请邮箱所有者成为独立管理员
+      description: 已绑定任何账号的邮箱409，绝不转换普通账号；邀请者不能设置密码。24小时凭证只在邮件正文，数据库仅HMAC摘要，管理响应只含脱敏邮箱。SMTP接受后状态SENT不等于已读或接受；发送失败FAILED可重发。相同clientRequestId精确重放不重复发信。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminInvitationCreateRequest'}
+      responses:
+        '202':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminInvitation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/invitations/{invitationId}:
+    get:
+      tags: [Admin Users]
+      operationId: getAdministratorInvitation
+      summary: 查询单个邀请的脱敏投影，不返回邮箱凭证
+      parameters:
+        - {name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminInvitation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/invitations/{invitationId}/resend:
+    post:
+      tags: [Admin Users]
+      operationId: resendAdministratorInvitation
+      summary: 有限重发并作废旧邮箱凭证
+      description: 仅未接受邀请，60秒冷却，总发送最多6次；expectedRevision防并发。提交后旧凭证立即失效，新到期时间为24小时。进程中断或发送未知保持PENDING，可在冷却后显式重发，不自动无限发信。
+      parameters:
+        - {name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminInvitationResendRequest'}
+      responses:
+        '202':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminInvitation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/auth/admin-invitations/accept:
+    post:
+      tags: [Authentication]
+      operationId: acceptAdministratorInvitation
+      summary: 邮箱所有者验证一次性邀请并自行设置密码
+      description: 精确公开入口，无邀请不可注册管理员。invitationId、email和secret只在请求正文，禁止URL。无效、过期、未SENT、已消费或错邮箱统一422，不枚举账号。邮箱已绑定409；账号、已验证邮箱、仅ADMIN角色、消费与审计同事务，失败不创建账号。接受成功不自动登录，请正常密码登录。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminInvitationAcceptRequest'}
+      responses:
+        '201':
+          description: 已提交本域事实；联动或邮件状态以响应为准
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminInvitationAcceptance'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/auth/login:
     post:
       tags: [Authentication]
@@ -600,12 +798,12 @@ paths:
     post:
       tags: [Admin Users]
       operationId: disableAdminUser
-      summary: Disable an account and invalidate every session
-      description: The MySQL transaction changes status, increments sessionVersion, revokes Refresh Sessions and records the administrator reason. An administrator cannot disable the current account through this endpoint.
+      summary: 已废弃，必须使用权限预览及明确确认命令
+      deprecated: true
+      description: 0.29.0行为收紧；有效管理员调用统一返回409 IAM.CONFIRMATION_REQUIRED，不再修改账号。迁移到permission-previews及permission-commands，旧客户端不能绕过影响确认或Course协调。
       parameters: [{$ref: '#/components/parameters/UserId'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandRequest'}}}}
       responses:
-        '200': {description: Disabled account projection., content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountCommandResult'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/AccountNotFound'}
@@ -3836,6 +4034,21 @@ components:
       description: Verified identity type to replace or remove.
       schema: {$ref: '#/components/schemas/IdentityType'}
   responses:
+    Conflict:
+      description: IAM.REVISION_CONFLICT、IAM.CONFIRMATION_REQUIRED、IAM.LAST_ADMIN_REQUIRED、IAM.SELF_DISABLE_FORBIDDEN、IAM.INVITATION_EMAIL_BOUND 或 IAM.COORDINATION_PENDING；刷新状态或遵循新确认流程
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    ValidationError:
+      description: 请求不合法或邀请凭证无效；无效邀请统一返回 IAM.INVITATION_INVALID，不枚举邮箱
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    ServiceUnavailable:
+      description: 安全状态或影响预览依赖不可用；安全拒绝，不假称成功
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
     CourseSuspended:
       description: 系统暂停返回 COURSE.SUSPENDED、LEARNING.COURSE_SUSPENDED 或 MEDIA.COURSE_SUSPENDED，仅通用说明与管理员邮箱；Learning 提示未保存进度舍弃。已有 409 响应同样使用 ApiError 承载此状态。
       content:
@@ -4213,6 +4426,105 @@ components:
             path: /api/v1/admin/users/0195d9c2-1c3f-7b6e-a9dd-7367730a6171/disable
             fieldErrors: []
   schemas:
+    AccountPermissionAction:
+      type: string
+      enum: [REVOKE_TEACHING, RESTORE_TEACHING, BAN, UNBAN]
+      description: 普通账号不可创建管理员；ADMIN 只允许 BAN/UNBAN，普通解封仅学生
+    AccountPermissionPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: {$ref: '#/components/schemas/AccountPermissionAction'}
+    AccountPermissionPreview:
+      type: object
+      required: [previewId, userId, action, expectedRevision, affectedCourses, affectedStudents, expiresAt]
+      properties:
+        previewId: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        action: {$ref: '#/components/schemas/AccountPermissionAction'}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        affectedCourses: {type: integer, minimum: 0}
+        affectedStudents: {type: integer, format: int64, minimum: 0, description: 预览课程范围内去重 ACTIVE 报名学生数，不是报名记录条数}
+        expiresAt: {type: string, format: date-time}
+    AccountPermissionCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, previewId, expectedRevision, action, reason, confirmed]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        previewId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        action: {$ref: '#/components/schemas/AccountPermissionAction'}
+        reason: {type: string, minLength: 10, maxLength: 500, description: 去首尾空白后10至500字，只在 IAM 本域审计保存}
+        confirmed: {type: boolean, const: true, description: 明确确认预览和影响；false 返回422}
+    AccountPermissionCommand:
+      type: object
+      required: [commandId, userId, action, decidedRevision, accessRevision, coordinationStatus, attempts, maxAttempts, affectedCourses, replayed]
+      properties:
+        commandId: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        action: {$ref: '#/components/schemas/AccountPermissionAction'}
+        decidedRevision: {type: integer, format: int64, minimum: 1, description: 初次 IAM 决定的账号 revision；异步授回能力会再递增，编辑需重读用户详情}
+        accessRevision: {type: integer, format: int64, minimum: 0, description: IAM 持久化单调 Course 命令水位}
+        suspensionId: {type: string, format: uuid, description: 有课程动作才提供；恢复引用原周期}
+        coordinationStatus: {type: string, enum: [NOT_REQUIRED, PENDING, FAILED, APPLIED], description: APPLIED 仅表示 Course 事实及Outbox已确认，不表示所有异步消费者或通知已完成；RESTORE_TEACHING在此状态才授回能力}
+        attempts: {type: integer, minimum: 0, maximum: 6}
+        maxAttempts: {type: integer, const: 6}
+        affectedCourses: {type: integer, minimum: 0, description: PENDING/FAILED为预览课程数；APPLIED为Course响应实际改变数}
+        lastErrorCode: {type: string, description: 只返回脱敏的固定错误分类，不含内部响应正文或秘密}
+        replayed: {type: boolean, description: 同请求精确重放；不重复账号变更，联动状态为读取时最新事实}
+    PermissionCoordinationRetryRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedAttempts]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedAttempts: {type: integer, minimum: 3, maximum: 5}
+    AdminInvitationCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, email, reason]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        email: {type: string, format: email, maxLength: 254}
+        reason: {type: string, minLength: 10, maxLength: 500}
+    AdminInvitationResendRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, expectedRevision, reason]
+      properties:
+        clientRequestId: {type: string, format: uuid}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        reason: {type: string, minLength: 10, maxLength: 500}
+    AdminInvitation:
+      type: object
+      required: [invitationId, maskedEmail, deliveryStatus, acceptanceStatus, revision, sendAttempts, expiresAt, resendAfter, replayed]
+      properties:
+        invitationId: {type: string, format: uuid}
+        maskedEmail: {type: string}
+        deliveryStatus: {type: string, enum: [PENDING, SENT, FAILED], description: SMTP结果；SENT只证明SMTP服务接受，不证明收件箱送达}
+        acceptanceStatus: {type: string, enum: [AWAITING, EXPIRED, ACCEPTED]}
+        revision: {type: integer, format: int64, minimum: 0}
+        sendAttempts: {type: integer, minimum: 1, maximum: 6}
+        expiresAt: {type: string, format: date-time}
+        resendAfter: {type: string, format: date-time}
+        replayed: {type: boolean}
+    AdminInvitationAcceptRequest:
+      type: object
+      additionalProperties: false
+      required: [invitationId, email, secret, password, displayName]
+      properties:
+        invitationId: {type: string, format: uuid}
+        email: {type: string, format: email, maxLength: 254}
+        secret: {type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', writeOnly: true, description: 邮件中的32字节随机凭证，不放URL或日志}
+        password: {type: string, minLength: 12, maxLength: 72, writeOnly: true, description: 本人设置，BCrypt输入UTF-8字节数不得超过72}
+        displayName: {type: string, minLength: 1, maxLength: 80}
+    AdminInvitationAcceptance:
+      type: object
+      required: [userId]
+      properties:
+        userId: {type: string, format: uuid, description: 新建独立管理员，不自动签发JWT}
     AgentEntryPoint:
       type: string
       enum: [INDEPENDENT_CHAT, PRACTICE_FLOATING]
@@ -8368,7 +8680,7 @@ components:
         supportEmail:
           type: string
           format: email
-          description: 系统暂停时配置的管理员联系邮箱，不返回内部原因。
+          description: 课程系统暂停或正确凭据登录封禁账号时配置的管理员联系邮箱，不返回内部原因。
         progressBufferDiscarded:
           type: boolean
           description: Learning 暂停错误为 true，未持久化观看缓冲已逻辑舍弃。

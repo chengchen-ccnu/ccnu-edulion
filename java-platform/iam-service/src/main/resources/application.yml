@@ -29,6 +29,20 @@ management:
         include: health,info
 platform:
   iam:
+    support-email: ${PLATFORM_SUPPORT_EMAIL:support@example.invalid}
+    first-administrator:
+      # 正式环境运维显式启用并传CLI参数；不设密码，首次邮箱验证仍经SMTP邀请。
+      enabled: ${IAM_FIRST_ADMINISTRATOR_ENABLED:false}
+      email: ${IAM_FIRST_ADMINISTRATOR_EMAIL:}
+      request-id: ${IAM_FIRST_ADMINISTRATOR_REQUEST_ID:}
+    account-permissions:
+      # 有界协调，每次使用同一持久化水位/周期；关闭worker不等于联动成功。
+      worker-enabled: ${IAM_ACCOUNT_COORDINATION_ENABLED:true}
+      poll-delay: ${IAM_ACCOUNT_COORDINATION_POLL_DELAY:2s}
+      course-url: ${COURSE_SERVICE_BASE_URL:http://127.0.0.1:8082}
+      learning-url: ${LEARNING_SERVICE_BASE_URL:http://127.0.0.1:8084}
+      service-token: ${COURSE_SUSPENSION_IAM_TOKEN:}
+      request-timeout: ${IAM_ACCOUNT_COORDINATION_TIMEOUT:3s}
     jwt:
       issuer: ${IAM_JWT_ISSUER:edu-platform-iam}
       audience: ${IAM_JWT_AUDIENCE:edu-platform-gateway}

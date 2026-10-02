@@ -79,6 +79,7 @@ public class SessionVersionGlobalFilter implements GlobalFilter, Ordered {
                 && !path.equals("/api/v1/auth/logout")
                 && !path.equals("/api/v1/auth/registration-challenges")
                 && !path.equals("/api/v1/auth/register")
+                && !path.equals("/api/v1/auth/admin-invitations/accept")
                 && !path.equals("/api/v1/auth/password-reset-challenges")
                 && !path.equals("/api/v1/auth/password-reset")
                 && !path.equals("/api/v1/auth/verification-login-challenges")

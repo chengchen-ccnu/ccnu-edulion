@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * IAM 资质引用复用 Media Exchange；最小决定事件保存在持久队列供后续 T16.4 消费。
+ * IAM 资质引用复用 Media Exchange；最小审核决定和权限事实保存在持久队列供后续 T16.4 消费。
  * 本任务不投递站内消息。死信队列在后续消费者有限重试耗尽时保存失败原件。
  */
 @Configuration
@@ -22,6 +22,9 @@ public class TeacherReviewRabbitConfig {
     public static final String DECISION_QUEUE = "edu.iam.teacher-review.decisions.v1";
     public static final String DECISION_DLQ = "edu.iam.teacher-review.decisions.dlq.v1";
     public static final String DECISION_KEY = "iam.teacher-qualification.decided.v1";
+    public static final String PERMISSION_QUEUE = "edu.iam.account-permissions.v1";
+    public static final String PERMISSION_DLQ = "edu.iam.account-permissions.dlq.v1";
+    public static final String PERMISSION_KEY = "iam.account-permission.changed.v1";
 
     @Bean TopicExchange iamMediaExchange() { return new TopicExchange(MEDIA_EXCHANGE, true, false); }
     @Bean TopicExchange iamEventsExchange() { return new TopicExchange(IAM_EXCHANGE, true, false); }
@@ -36,5 +39,16 @@ public class TeacherReviewRabbitConfig {
     }
     @Bean Binding teacherDecisionDeadBinding(Queue teacherDecisionDeadQueue, TopicExchange iamDeadExchange) {
         return BindingBuilder.bind(teacherDecisionDeadQueue).to(iamDeadExchange).with("iam.teacher-review.dead.v1");
+    }
+    @Bean Queue accountPermissionQueue() {
+        return QueueBuilder.durable(PERMISSION_QUEUE).deadLetterExchange(IAM_DLX)
+                .deadLetterRoutingKey("iam.account-permission.dead.v1").build();
+    }
+    @Bean Queue accountPermissionDeadQueue() { return QueueBuilder.durable(PERMISSION_DLQ).build(); }
+    @Bean Binding accountPermissionBinding(Queue accountPermissionQueue,TopicExchange iamEventsExchange) {
+        return BindingBuilder.bind(accountPermissionQueue).to(iamEventsExchange).with(PERMISSION_KEY);
+    }
+    @Bean Binding accountPermissionDeadBinding(Queue accountPermissionDeadQueue,TopicExchange iamDeadExchange) {
+        return BindingBuilder.bind(accountPermissionDeadQueue).to(iamDeadExchange).with("iam.account-permission.dead.v1");
     }
 }

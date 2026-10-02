@@ -47,6 +47,14 @@ class T162TeacherReviewRealAcceptanceTest {
     private static final String DECISION_QUEUE = "edu.iam.teacher-review.decisions.v1";
     private final HttpClient http = HttpClient.newHttpClient();
     private final ObjectMapper json = new ObjectMapper();
+    private ApprovedScenario scenario;
+
+    /** T16.3复用真实Media资质批准Fixture；回调仅在真实批准完成后执行，禁止直接伪造批准历史。 */
+    void withApprovedScenario(ApprovedScenario scenario) { this.scenario=scenario; }
+    interface ApprovedScenario {
+        void run(JdbcTemplate iam,ConfigurableApplicationContext media,String student,String admin,
+                String email,String adminEmail,String password,String teacherToken,String adminToken)throws Exception;
+    }
 
     @Test
     void realQualificationReviewAndReferenceChain() throws Exception {
@@ -224,6 +232,7 @@ class T162TeacherReviewRealAcceptanceTest {
             assertThat(media.queryForObject("SELECT COUNT(*) FROM media_reference WHERE media_id=? AND owner_service='iam-service' AND reference_type='TEACHER_APPLICATION_ROUND' AND status='BOUND'",
                     Integer.class, mediaId)).isEqualTo(1);
             assertThat(mediaRepository.findAsset(mediaId).orElseThrow().status().name()).isEqualTo("READY");
+            if(scenario!=null)scenario.run(iam,context,studentId,adminId,email,adminEmail,password,freshToken,adminToken);
             // 仅本轮已记录的精确对象和行由 finally 清理；不查询课程库或枚举 OSS Bucket。
             cleanupMedia(media, mediaRepository, storage, mediaId, uploadId, studentId, adminId, prefix);
         } finally {
@@ -407,6 +416,12 @@ class T162TeacherReviewRealAcceptanceTest {
     }
 
     private void cleanupIam(JdbcTemplate iam, String student, String admin, String applicationId, String mediaId) {
+        for(String user:java.util.List.of(student,admin)) {
+            iam.update("DELETE FROM iam_outbox_event WHERE aggregate_id=?",user);
+            iam.update("DELETE FROM account_permission_retry WHERE command_id IN(SELECT id FROM account_permission_command WHERE user_id=?)",user);
+            iam.update("DELETE FROM account_permission_command WHERE user_id=?",user);
+            iam.update("DELETE FROM account_permission_preview WHERE user_id=? OR actor_id=?",user,user);
+        }
         if (mediaId != null) iam.update("DELETE FROM iam_outbox_event WHERE aggregate_id=?", mediaId);
         java.util.List<String> applications = iam.queryForList("SELECT id FROM teacher_application WHERE user_id=?", String.class, student);
         if (applicationId != null && !applications.contains(applicationId)) applications.add(applicationId);

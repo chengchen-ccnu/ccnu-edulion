@@ -38,11 +38,15 @@ public class AuthService {
     private final VerificationChallengeService challenges;
     private final SecureRandom secureRandom = new SecureRandom();
     private final String dummyHash;
+    private final SessionVersionPublication versionPublication;
+    private final String supportEmail;
 
     public AuthService(IamMapper mapper, PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService, IamProperties properties,
             IdentitySecurityStore securityStore, SecurityDigests digests,
-            ArithmeticCaptchaService captchaService, VerificationChallengeService challenges) {
+            ArithmeticCaptchaService captchaService, VerificationChallengeService challenges,
+            SessionVersionPublication versionPublication,
+            @org.springframework.beans.factory.annotation.Value("${platform.iam.support-email:support@example.invalid}") String supportEmail) {
         this.mapper = mapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
@@ -51,6 +55,8 @@ public class AuthService {
         this.digests = digests;
         this.captchaService = captchaService;
         this.challenges = challenges;
+        this.versionPublication = versionPublication;
+        this.supportEmail = supportEmail;
         this.dummyHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -64,13 +70,22 @@ public class AuthService {
      * @return 访问令牌、有效秒数和仅返回一次的刷新令牌
      * @throws AuthException 凭据错误、账号不可用或限流时抛出；失败审计仍提交
      */
-    @Transactional(noRollbackFor = AuthException.class)
     public TokenPair login(String identity, String password, String remoteAddress, String traceId,
             String deviceId, String deviceName, String captchaId, String captchaAnswer) {
+        return versionPublication.issue(() -> loginLocked(identity, password, remoteAddress, traceId,
+                deviceId, deviceName, captchaId, captchaAnswer));
+    }
+
+    /** 在账号锁下校验当前密码/状态并创建会话；返回账号及凭证，提交后才能发布缓存。 */
+    private SessionVersionPublication.Issued loginLocked(String identity, String password,
+            String remoteAddress, String traceId, String deviceId, String deviceName,
+            String captchaId, String captchaAnswer) {
         NormalizedIdentity loginIdentity = normalizeLoginIdentity(identity);
         String normalized = loginIdentity.value();
         Instant now = Instant.now();
         UserAccount user = mapper.findUserByIdentity(loginIdentity.type(), normalized);
+        // 与撤权共用 user 行锁；等待后读取当前密码/状态，不能用锁前快照回填旧版本。
+        if (user != null) user = mapper.findUserByIdForUpdate(user.getId());
         String accountDigest = user == null
                 ? digests.digest("login-unknown-identity", loginIdentity.type() + ":" + normalized)
                 : digests.digest("login-user", user.getId());
@@ -101,13 +116,15 @@ public class AuthService {
         }
         if (!"ACTIVE".equals(user.getStatus())) {
             audit(loginIdentity, user.getId(), user.getStatus(), remoteAddress, traceId, now);
+            // 只有正确身份及密码才给封禁说明；未知身份/错密码仍统一失败，不泄露审核原因。
+            if ("DISABLED".equals(user.getStatus())) throw new AccountDisabledException(supportEmail);
             throw new AuthException(HttpStatus.FORBIDDEN, "IAM.ACCOUNT_" + user.getStatus(), "账号当前不可用");
         }
 
         security(() -> { securityStore.clearLoginFailures(accountDigest, addressDigest); return null; });
         TokenPair tokens = issueSession(user, deviceId, deviceName, now);
         audit(loginIdentity, user.getId(), "SUCCESS", remoteAddress, traceId, now);
-        return tokens;
+        return new SessionVersionPublication.Issued(user.getId(), tokens);
     }
 
     /** 兼容既有调用方；未提供设备标签时使用安全默认值。 */
@@ -125,11 +142,19 @@ public class AuthService {
      * 一次消费验证码并只登录已有 ACTIVE 账号；未知身份、错误码和已消费挑战统一返回 422，
      * 绝不在登录路径创建账号。
      */
-    @Transactional(noRollbackFor = AuthException.class)
     public TokenPair loginWithVerificationCode(String challengeId, String identityType, String target,
             String verificationCode, String remoteAddress, String traceId, String deviceId, String deviceName) {
+        return versionPublication.issue(() -> verificationLoginLocked(challengeId, identityType, target,
+                verificationCode, remoteAddress, traceId, deviceId, deviceName));
+    }
+
+    /** 一次消费验证码后锁定既有账号，成功会话和审计同事务提交，不创建新身份。 */
+    private SessionVersionPublication.Issued verificationLoginLocked(String challengeId, String identityType,
+            String target, String verificationCode, String remoteAddress, String traceId,
+            String deviceId, String deviceName) {
         String normalized = challengesConsume(challengeId, identityType, target, verificationCode);
         UserAccount user = mapper.findUserByIdentity(identityType, normalized);
+        if (user != null) user = mapper.findUserByIdForUpdate(user.getId());
         NormalizedIdentity identity = new NormalizedIdentity(identityType, normalized);
         if (user == null || !"ACTIVE".equals(user.getStatus())) {
             audit(identity, user == null ? null : user.getId(), "VERIFICATION_FAILED",
@@ -138,7 +163,7 @@ public class AuthService {
         }
         TokenPair tokens = issueSession(user, deviceId, deviceName, Instant.now());
         audit(identity, user.getId(), "SUCCESS", remoteAddress, traceId, Instant.now());
-        return tokens;
+        return new SessionVersionPublication.Issued(user.getId(), tokens);
     }
 
     /**
@@ -148,8 +173,12 @@ public class AuthService {
      * @return 新访问令牌和替换后的刷新令牌
      * @throws AuthException 令牌缺失、过期或重放时抛出；可疑重放会撤销同族全部会话
      */
-    @Transactional(noRollbackFor = AuthException.class)
     public TokenPair refresh(String refreshToken) {
+        return versionPublication.issue(() -> refreshLocked(refreshToken));
+    }
+
+    /** 先锁账号再轮换刷新会话；失败时保留重放撤销，成功凭证在提交后才交给调用者。 */
+    private SessionVersionPublication.Issued refreshLocked(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw unauthorizedRefresh();
         }
@@ -157,6 +186,9 @@ public class AuthService {
         if (session == null) {
             throw unauthorizedRefresh();
         }
+        // 先 user 后 refresh：撤权也按此锁序，避免旋转持有 session 锁等待撤权的 user 锁。
+        UserAccount user = mapper.findUserByIdForUpdate(session.getUserId());
+        session = mapper.findRefreshSession(hash(refreshToken));
         if (!"ACTIVE".equals(session.getStatus())) {
             mapper.revokeFamily(session.getFamilyId());
             throw new AuthException(HttpStatus.CONFLICT, "IAM.REFRESH_REUSED", "登录会话已失效，请重新登录");
@@ -169,20 +201,18 @@ public class AuthService {
             mapper.revokeFamily(session.getFamilyId());
             throw new AuthException(HttpStatus.CONFLICT, "IAM.REFRESH_REUSED", "登录会话已失效，请重新登录");
         }
-        UserAccount user = mapper.findUserById(session.getUserId());
         if (user == null || !"ACTIVE".equals(user.getStatus())
                 || session.getSessionVersion() != user.getSessionVersion()) {
             mapper.revokeFamily(session.getFamilyId());
             throw unauthorizedRefresh();
         }
-        cacheVersion(user);
         String replacement = randomToken();
         Instant now = Instant.now();
         mapper.insertRefreshSession(UUID.randomUUID().toString(), session.getFamilyId(), user.getId(),
                 session.getId(), hash(replacement), now.plus(properties.refresh().ttl()),
                 user.getSessionVersion(), session.getDeviceId(), session.getDeviceName(), now);
-        return new TokenPair(jwtTokenService.issue(toAuthenticatedUser(user)),
-                jwtTokenService.expiresInSeconds(), replacement);
+        return new SessionVersionPublication.Issued(user.getId(), new TokenPair(
+                jwtTokenService.issue(toAuthenticatedUser(user)), jwtTokenService.expiresInSeconds(), replacement));
     }
 
     /**
@@ -215,9 +245,15 @@ public class AuthService {
         return currentUser(userId, user.getSessionVersion());
     }
 
+    /** 仅对合法能力组合投影/签发JWT；独立管理员不得携带学习或教学能力，历史仅教师账号不能继续登录。 */
     private AuthenticatedUser toAuthenticatedUser(UserAccount user) {
         List<String> roles = List.copyOf(mapper.findRoles(user.getId()));
         List<String> permissions = List.copyOf(mapper.findPermissions(user.getId()));
+        boolean admin = roles.equals(List.of("ADMIN"));
+        if ((!admin && !roles.equals(List.of("STUDENT")) && !roles.equals(List.of("STUDENT","TEACHER")))
+                || (admin && (permissions.contains("learning:access") || permissions.contains("teaching:access")))
+                || (!admin && permissions.contains("administration:access")))
+            throw new AuthException(HttpStatus.FORBIDDEN,"IAM.ILLEGAL_ACCOUNT_CAPABILITIES","账号能力组合不合法，请联系管理员");
         return new AuthenticatedUser(user.getId(), user.getDisplayName(), user.getAvatarUrl(), roles, permissions,
                 user.getSessionVersion());
     }
@@ -234,7 +270,7 @@ public class AuthService {
     @Transactional
     public void changePassword(String userId, long tokenVersion, String currentPassword, String newPassword,
             String remoteAddress, String traceId) {
-        UserAccount user = mapper.findUserById(userId);
+        UserAccount user = mapper.findUserByIdForUpdate(userId);
         if (user == null || !"ACTIVE".equals(user.getStatus()) || user.getSessionVersion() != tokenVersion
                 || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new AuthException(HttpStatus.UNPROCESSABLE_CONTENT, "IAM.CURRENT_PASSWORD_INVALID", "当前密码不正确");
@@ -249,7 +285,7 @@ public class AuthService {
     /** 全部设备退出；持久化版本递增和 Refresh 撤销处于同一事务。 */
     @Transactional
     public void logoutAll(String userId, long tokenVersion, String remoteAddress, String traceId) {
-        UserAccount user = mapper.findUserById(userId);
+        UserAccount user = mapper.findUserByIdForUpdate(userId);
         if (user == null || user.getSessionVersion() != tokenVersion) throw unauthorizedRefresh();
         invalidateVersion(userId);
         if (mapper.bumpSessionVersion(userId) != 1) throw unauthorizedRefresh();
@@ -269,7 +305,6 @@ public class AuthService {
     }
 
     private TokenPair issueSession(UserAccount user, String deviceId, String deviceName, Instant now) {
-        cacheVersion(user);
         AuthenticatedUser current = toAuthenticatedUser(user);
         String refreshToken = randomToken();
         mapper.insertRefreshSession(UUID.randomUUID().toString(), UUID.randomUUID().toString(), user.getId(), null,
@@ -326,11 +361,6 @@ public class AuthService {
 
     private static AuthException unauthorizedRefresh() {
         return new AuthException(HttpStatus.UNAUTHORIZED, "IAM.INVALID_REFRESH", "登录会话已失效，请重新登录");
-    }
-
-    private void cacheVersion(UserAccount user) {
-        security(() -> { securityStore.cacheSessionVersion(user.getId(), user.getSessionVersion(),
-                properties.sessionCache().ttl()); return null; });
     }
 
     private void invalidateVersion(String userId) {

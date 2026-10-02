@@ -1,0 +1,38 @@
+contract: edu.iam.account-permission.events
+contractVersion: 1
+contentType: application/json
+exchange: edu.iam.events.v1
+compatibility: backward
+producer: iam-service
+deliverySemantics: at-least-once; consumers deduplicate by eventId
+description: |
+  T16.3最小权限决定/课程应用事实，供T16.4后续消费，不实现通知消费者。
+  本地决定和Outbox同事务；课程确认后另一个事务发布APPLIED，不能提前假称联动成功。
+  不含原因、邮箱、资质、密码或邀请凭证；CourseAvailabilityChanged v1仍由Course可靠发布。
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId: {type: string, format: uuid}
+    eventType: {type: string, const: AccountPermissionChanged}
+    eventVersion: {type: integer, const: 1}
+    aggregateId: {type: string, format: uuid, description: IAM账号ID}
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, minLength: 8, maxLength: 64}
+    payload:
+      type: object
+      additionalProperties: false
+      required: [commandId, userId, action, decidedRevision, accessRevision, coordinationStatus]
+      properties:
+        commandId: {type: string, format: uuid}
+        userId: {type: string, format: uuid}
+        action: {type: string, enum: [REVOKE_TEACHING, RESTORE_TEACHING, BAN, UNBAN]}
+        decidedRevision: {type: integer, minimum: 1}
+        accessRevision: {type: integer, minimum: 0}
+        suspensionId: {type: string, format: uuid, description: 仅课程联动时存在，恢复必须沿用原周期}
+        coordinationStatus: {type: string, enum: [NOT_REQUIRED, PENDING, APPLIED], description: PENDING只是已提交决定，APPLIED只是Course确认，不能承诺通知已完成}
+events:
+  AccountPermissionChanged:
+    routingKey: iam.account-permission.changed.v1
+    payload: {$ref: '#/envelope/properties/payload'}

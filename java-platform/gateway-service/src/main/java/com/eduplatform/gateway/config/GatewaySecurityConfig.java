@@ -83,6 +83,7 @@ public class GatewaySecurityConfig {
                         .pathMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout",
                                 "/api/v1/auth/registration-challenges", "/api/v1/auth/register",
                                 "/api/v1/auth/password-reset-challenges", "/api/v1/auth/password-reset",
+                                "/api/v1/auth/admin-invitations/accept",
                                 "/api/v1/auth/verification-login-challenges", "/api/v1/auth/verification-login",
                                 "/api/v1/auth/captchas", "/api/v1/auth/captchas/*/refresh").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/auth/channel-capabilities",
@@ -109,6 +110,8 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/v1/learning/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/ai/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/admin/users", "/api/v1/admin/users/**").hasAuthority("administration:access")
+                        .pathMatchers("/api/v1/admin/invitations", "/api/v1/admin/invitations/**",
+                                "/api/v1/admin/permission-commands/**").hasAuthority("administration:access")
                         .pathMatchers("/api/v1/admin/teacher-applications",
                                 "/api/v1/admin/teacher-applications/**").hasAuthority("administration:access")
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()

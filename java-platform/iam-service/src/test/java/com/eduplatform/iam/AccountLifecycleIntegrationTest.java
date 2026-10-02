@@ -229,7 +229,7 @@ class AccountLifecycleIntegrationTest {
                     null, null, captchaId, captchaId == null ? null : "7"); }
             catch (AuthException ignored) { }
         }
-        assertThat(admins.get(registered.userId()).loginLocked()).isTrue();
+        assertThat(admins.get(ADMIN_ID, registered.userId()).loginLocked()).isTrue();
 
         var unlocked = admins.unlock(ADMIN_ID, registered.userId(), command(0L, "解锁自动化验收中的测试账号"),
                 "127.0.0.1", "trace-unlock");
@@ -241,16 +241,13 @@ class AccountLifecycleIntegrationTest {
         assertInvalidRefresh(active.refreshToken());
 
         var disableRequest = command(2L, "禁用自动化验收中的测试账号");
-        var disabled = admins.disable(ADMIN_ID, registered.userId(), disableRequest,
-                "127.0.0.1", "trace-disable");
-        var replayed = admins.disable(ADMIN_ID, registered.userId(), disableRequest,
-                "127.0.0.1", "trace-disable-replay");
-        assertThat(disabled.user().status()).isEqualTo("DISABLED");
-        assertThat(replayed.replayed()).isTrue();
-        assertThat(replayed.user().revision()).isEqualTo(3L);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_account_command", Integer.class)).isEqualTo(3);
+        assertThatThrownBy(() -> admins.disable(ADMIN_ID, registered.userId(), disableRequest,
+                "127.0.0.1", "trace-disable")).isInstanceOfSatisfying(AuthException.class,
+                        failure -> assertThat(failure.code()).isEqualTo("IAM.CONFIRMATION_REQUIRED"));
+        assertThat(jdbc.queryForObject("SELECT status FROM `user` WHERE id=?",String.class,registered.userId())).isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_account_command", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM account_security_audit WHERE actor_id = ?",
-                Integer.class, ADMIN_ID)).isEqualTo(3);
+                Integer.class, ADMIN_ID)).isEqualTo(2);
     }
 
     private Registered register(String account, String email) {

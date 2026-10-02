@@ -18,6 +18,9 @@ management:
         include: health,info
 platform:
   learning:
+    account-impact:
+      # 仅 IAM 的聚合读取，复用暂停写凭据；未配置时入口安全拒绝，不公开到 Gateway。
+      iam-token: ${COURSE_SUSPENSION_IAM_TOKEN:}
     # 事件主动追平；即使关闭或 MQ 故障，课程访问仍读取实时 HTTP 暂停事实。
     suspension-messaging:
       enabled: false

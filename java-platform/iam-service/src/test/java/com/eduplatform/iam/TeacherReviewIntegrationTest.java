@@ -1,5 +1,7 @@
 package com.eduplatform.iam;
 
+import com.eduplatform.iam.service.AuthException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -257,9 +259,9 @@ class TeacherReviewIntegrationTest {
         TeacherReviewDtos.AccessRequest request = new TeacherReviewDtos.AccessRequest(
                 UUID.fromString(roundId), TeacherReviewDtos.Action.PREVIEW);
         assertThatThrownBy(() -> review.list(STUDENT, null, null, null, 1, 20))
-                .hasMessageContaining("无权审核");
+                .isInstanceOfSatisfying(AuthException.class,e->assertThat(e.code()).isEqualTo("IAM.FORBIDDEN"));
         assertThatThrownBy(() -> review.grant(STUDENT, APPLICATION, request, TRACE))
-                .hasMessageContaining("无权审核");
+                .isInstanceOfSatisfying(AuthException.class,e->assertThat(e.code()).isEqualTo("IAM.FORBIDDEN"));
         assertThatThrownBy(() -> review.grant(ADMIN_A, UUID.randomUUID().toString(), request, TRACE))
                 .hasMessageContaining("申请不存在");
         assertThatThrownBy(() -> review.grant(ADMIN_A, APPLICATION,
