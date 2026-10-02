@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-02 总控合并 T16.3 与 T16.4.0 维护前置
+
+- 开工 `git status` 干净，PR #82 Ready/Open，最终 head `d53b21f4519c70ab612e2bea22aee929d7534fae` 八项CI全部成功且无合并冲突。独立复核权限/邀请、管理员共同锁、当前会话校验、提交后缓存发布、课程协调及向前迁移；只有新 IAM V5，无旧迁移改写。`git diff --check main...HEAD` 通过。
+- 总控实际重跑 IAM focused 权限10/邀请10/审核9/Seed1共30项，均0失败/错误/跳过；`Invoke-T16.3SessionRaceRealAcceptance.ps1` 真实MySQL/Redis/Gateway/IAM八项并发0失败/错误/跳过，随机Fixture精确清理。`pnpm.cmd --dir web-apps run check:api` 通过、生成结果无差异。完整SMTP/OSS/课程长链沿用已核对的本机日志1项成功，不声称本轮重跑；全仓/前端构建沿用该head最新CI。
+- 按本次用户授权，以精确head普通merge合并 [PR #82](https://github.com/chengchen-ccnu/ccnu-edulion/pull/82) 为 `199c66ef95d310632ebb7f1ad1a1ed825966cc7d`，main `--ff-only`同步一致，本地T16.3分支删除；用户明确选择保留远端分支。合并后 [CI #36976932187](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36976932187) 四项全部成功。
+- 只读复查 Learning 开发 Outbox：PRIMARY为PUBLISHED5734/FAILED6896/PENDING0，二级索引PENDING1，关联PRIMARY状态不符1。没有执行CHECK TABLE/修复/重建/改状态/重发，原因尚未诊断。T16.4全量发布环境前置暂不满足；新增 T16.4.0 维护切片，准备 `codex/t16.4.0-learning-outbox-index-repair`，见 [审计](T16.4.0-prerequisite-audit.md)。不扩大T16.3或提前实现公告/消息。
+- 本轮只提交状态/前置文档，不修改业务代码、既有迁移、事件或个人local.env。真实专项创建最小随机IAM账号/会话/审计/命令/Redis测试状态且finally精确清理，未新建数据库/表；未操作课程/OSS、未发邮件、未删除或重放Learning旧事件，手工《线性代数》未操作。
+
 ## 2026-10-02 T16.3 账号权限与管理员邀请
 
 - 开工status干净，保留指定分支和准备提交adf8221；已读AGENTS、前置审计/已确认范围、页面规格、路线图、T16.1/T16.2交付及接口/内部暂停/事件。用户“全部按建议”确认四项选择，先设计评审后实现。
