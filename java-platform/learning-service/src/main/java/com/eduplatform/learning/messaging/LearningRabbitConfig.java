@@ -21,6 +21,8 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(prefix = "platform.learning.import", name = "messaging-enabled", havingValue = "true")
 public class LearningRabbitConfig {
     /** 任务通知生产者自己声明版本化交换机，Operation独立队列后续绑定；不依赖消费者先启动。 */
+    /** 热点日资格复用现有有限Outbox发布，生产者独立声明交换机。 */
+    @Bean TopicExchange hotLearningExchange() { return new TopicExchange("edu.learning.hot-course.events.v1",true,false); }
     @Bean TopicExchange taskNotificationExchange() { return new TopicExchange("edu.learning.task-notifications.events.v1",true,false); }
     @Bean
     SimpleRabbitListenerContainerFactory learningImportContainerFactory(ConnectionFactory connectionFactory,

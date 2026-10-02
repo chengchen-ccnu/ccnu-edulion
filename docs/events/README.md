@@ -1,5 +1,7 @@
 # Domain event contracts
 
+T16A 新增 [hot-course-events.v1.yaml](hot-course-events.v1.yaml)：CoursePortalChanged 与 CourseLearningDayQualified 只携带稳定课程ID的失效信号，分别复用Course发布/下架事务及Learning首次可靠学习日事务的Outbox。Operation独立热点队列默认 `edu.operation.hot-courses.v1` 同时订阅这两类事件、既有报名及课程暂停事件；durable主队列、同名`.dlq`/`.dlx`，总计三次消费尝试。eventId收件箱与dirty同事务，旧信号重查最新领域API，不加减事件人数。重建与增量共用派生协调锁，故障可由后续巡检补齐，不自动重放历史FAILED。
+
 本目录是领域事件 Schema 的唯一事实来源。每个事件文件必须版本化，并包含统一信封：`eventId`、`eventType`、`eventVersion`、`aggregateId`、`occurredAt`、`traceId`、`payload`。生产者使用本地事务 + Outbox；消费者按 `eventId` 持久化幂等，禁止通过事件共享整表快照。
 
 T07 首次冻结 [`media-events.v1.yaml`](./media-events.v1.yaml)。RabbitMQ 资源如下：

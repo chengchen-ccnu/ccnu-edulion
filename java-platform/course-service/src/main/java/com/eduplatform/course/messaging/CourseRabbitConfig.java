@@ -33,6 +33,11 @@ public class CourseRabbitConfig {
     public static final String AGENT_INDEX_EVENTS_EXCHANGE = "edu.agent.index.events.v1";
     public static final String LESSON_CONTENT_EVENTS_EXCHANGE = "edu.course.lesson-content.events.v1";
 
+    /** 公开卡片变更只发布ID失效信号，复用Course Outbox。 */
+    @Bean
+    @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")
+    TopicExchange coursePortalExchange() { return new TopicExchange("edu.course.portal.events.v1",true,false); }
+
     /** 暂停事实复用已有 Outbox 的有限重试和发布确认。 */
     @Bean
     @ConditionalOnProperty(prefix = "platform.course.media.messaging", name = "enabled", havingValue = "true")

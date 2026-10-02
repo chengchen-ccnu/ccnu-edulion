@@ -97,6 +97,7 @@ public class GatewaySecurityConfig {
                         // 公告响应独立受保护，必须在公共Course GET通配规则前校验。
                         .pathMatchers("/api/v1/courses/*/announcements", "/api/v1/courses/*/announcements/**").hasAuthority("learning:access")
                         .pathMatchers("/api/v1/teacher/courses/*/announcements", "/api/v1/teacher/courses/*/announcements/**").hasAuthority("teaching:access")
+                        .pathMatchers(HttpMethod.GET, "/api/v1/operations/hot-courses").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/courses", "/api/v1/courses/**").permitAll()
                         .pathMatchers("/api/v1/teacher/courses", "/api/v1/teacher/courses/**").hasRole("TEACHER")
                         .pathMatchers("/api/v1/admin/knowledge-points", "/api/v1/admin/knowledge-points/**").hasAuthority("administration:access")

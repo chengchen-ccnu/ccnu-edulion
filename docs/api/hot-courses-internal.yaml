@@ -1,0 +1,109 @@
+openapi: 3.1.0
+info:
+  title: 热点可信事实内部协议
+  version: 1.0.0
+  description: 固定operation-service和已有独立OPERATION_INTERNAL_SERVICE_TOKEN，只读、不得经Gateway。每批最多100，非公开卡片只含ID，不包含正文或存储地址。
+security:
+  - caller: []
+    token: []
+paths:
+  /internal/v1/hot-course-source:
+    get:
+      operationId: hotCourseSourcePage
+      description: Course所有课程的稳定ID keyset分页，用非公开tombstone删除旧卡片；after为空从头开始，最多100项。并发新课程由事件及下一轮重建追平。
+      parameters:
+        - {name: after, in: query, schema: {type: string, format: uuid}}
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 100}, description: Operation每轮分配50源卡片与50失效项预算，持续消息不会挤占重建}
+      responses:
+        '200':
+          description: items和hasMore；以最后一个courseId继续
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Card'}}
+                  hasMore: {type: boolean}
+        '401': {description: 内部身份不合法}
+        '400': {description: 请求参数类型不合法}
+        '422': {description: 游标不是UUID或size不在1至100}
+        '500': {description: 数据库等内部失败，不返回假空页}
+  /internal/v1/hot-course-source/{courseId}:
+    get:
+      operationId: hotCourseSource
+      parameters: [{name: courseId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200':
+          description: 非公开或不存在时visible=false，不能用旧卡片恢复
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Card'}
+        '401': {description: 内部身份不合法}
+        '400': {description: courseId不是UUID}
+        '500': {description: 数据库等内部失败}
+  /internal/v1/hot-course-cover/{courseId}:
+    post:
+      operationId: hotCourseCover
+      description: Course重新检查当前公开且非暂停，并通过Media短期授权；无legacy URL回退，失败独立缺图
+      parameters: [{name: courseId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200':
+          description: 仅短期URL及真实过期时点，禁止存数据库/事件/日志
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mediaId, url, expiresAt]
+                properties:
+                  mediaId: {type: string, format: uuid}
+                  url: {type: string, format: uri}
+                  expiresAt: {type: string, format: date-time}
+        '401': {description: 内部身份不合法}
+        '404': {description: 当前不可公开或无封面}
+        '409': {description: Media当前未READY，热点单卡缺图降级}
+        '400': {description: courseId不是UUID}
+        '500': {description: 数据库等内部失败}
+        '503': {description: 授权依赖暂不可用}
+  /internal/v1/hot-learning-source/{courseId}:
+    get:
+      operationId: hotLearningSource
+      description: Learning在本域只读一致快照返回最近7个上海自然日COUNT DISTINCT learnerId及当前ACTIVE报名。hot_learning_day是可靠落库资格日，跨内容修订也同人只计一次；不读取含报名的learning_activity_day。
+      parameters: [{name: courseId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200':
+          description: windowStart是今天减6天，windowEnd是今天，零事实返回0
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [courseId, learners7d, activeEnrollments, windowStart, windowEnd]
+                properties:
+                  courseId: {type: string, format: uuid}
+                  learners7d: {type: integer, minimum: 0}
+                  activeEnrollments: {type: integer, minimum: 0}
+                  windowStart: {type: string, format: date}
+                  windowEnd: {type: string, format: date}
+        '401': {description: 内部身份不合法}
+        '400': {description: courseId不是UUID}
+        '500': {description: 数据库等内部失败}
+components:
+  securitySchemes:
+    caller: {type: apiKey, in: header, name: X-Internal-Caller}
+    token: {type: apiKey, in: header, name: X-Internal-Service-Token}
+  schemas:
+    Card:
+      type: object
+      required: [courseId, visible]
+      description: visible=true时其余字段必需（coverMediaId可空），基于当前PUBLISHED版本且课程非暂停；其他状态不公开元数据。
+      properties:
+        courseId: {type: string, format: uuid}
+        visible: {type: boolean}
+        title: {type: [string, 'null']}
+        summary: {type: [string, 'null']}
+        instructorDisplayName: {type: [string, 'null']}
+        categoryId: {type: [string, 'null'], format: uuid}
+        level: {type: [string, 'null'], enum: [BEGINNER, INTERMEDIATE, ADVANCED, null]}
+        accessType: {type: [string, 'null'], enum: [PUBLIC, ENROLLMENT_REQUIRED, null]}
+        publishedAt: {type: [string, 'null'], format: date-time}
+        coverMediaId: {type: [string, 'null'], format: uuid}

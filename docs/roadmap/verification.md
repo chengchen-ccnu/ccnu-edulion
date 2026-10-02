@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-10-02 T16A Redis热点与门户派生缓存实施
+
+- 起始status干净，在指定`codex/t16a-hot-course-cache`继续，准备提交`30000d5`仍为祖先；完整阅读AGENTS、前置审计/已确认范围、page specs、路线图及架构热点/Redis章节。先补OpenAPI0.31.0、内部1.0.0和热点事件v1并记录自评审，再实现。
+- Operation拥有榜单派生；Course提供当前公开/暂停tombstone和Course→Media真实封面期限，Learning提供本域一致快照七日稳定学生去重/当前ACTIVE报名。Learning V21及Operation V2只向前迁移；不使用含报名的活跃日，不相加每日人数，不跨域查表。
+- 最多六项、HOT主辅字典序排名/30日NEW补位、Redis单原子结果/75～90秒抖动、上海日窗口/源新鲜度/短期封面截止、独立热点可靠队列/Inbox/dirty及公平分批重建已实现。请求只GET Redis，故障仅热点降级；T16.4实时通知权限、Vue和全局导航未改。
+- Java全仓`clean verify`九模块成功：401项，344执行/57条件跳过，0失败/错误。新热点与源7项H2专项覆盖排序/空榜/不足六项、跨日及7日边界、重复乱序/取消重报、隐身卡片/内部身份、源失败保留dirty、并发重建和封面裁剪。Windows H2微秒舍入引起的既有通知测试前置时点已修正，生产通知逻辑未变。
+- `generate:api`、typecheck、前端56文件374项测试、三端build通过；真实Prism新GET200/请求验证通过，Mock仍读唯一OpenAPI。原有chunk提示保留，无Vue页面改动。
+- 真实脚本两项已通过（均0失败/跳过）：Gateway/Course/Learning/Media/MySQL/Redis/Rabbit/OSS长链，109课分页1457ms；跨日同人/报名排除、旧消息和重投、批量暂停恢复/发布下架/归档、Redis与源HTTP真实坏端口、丢key/并发重建、有限重试及DLQ、20秒OSS原URL200→403与后台刷新。Learning真实进度同日重复/跨日只发两条日资格事件，人数1；补充FOR UPDATE当前读后最终复验通过，四线程争抢第三日仅新增一条资格事件，3日仍同人1。
+- 失败探索轮不计通过，已修正监听器配置循环、批次等待、数字类型及清理上限。旧轮656条暂停消息以记录的eventId/课程/暂停周期精确ACK；未purge/FLUSHDB/重放历史FAILED。最终复查三个派生业务表、学习资格、合成课程为零、私有队列不存在、共享队列零消息；历史Course/Learning Outbox全字段与《线性代数》不变。没有新数据库/媒体对象，V21/V2结构保留；local.env未修改，秘密仍DPAPI。
+- 分支、PR与关键提交将记录在[独立交付文档](../delivery/T16A-hot-course-cache.md)；Ready PR待本轮最终复验后创建，不自行合并。生产大规模容量与T17A浏览器首页留后续。
+
 ## 2026-10-02 总控独立验收合并 T16.4 与 T16A 开工准备
 
 - 起始工作区干净，独立审阅公告/确认、消息实时授权、分页投递、真正开放、内部身份、Outbox/有限重试/DLQ、迁移及真实验收清理脚本。无业务代码修改，无既有迁移/事件版本改写。

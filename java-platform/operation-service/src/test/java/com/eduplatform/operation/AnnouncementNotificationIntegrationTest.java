@@ -140,7 +140,10 @@ class AnnouncementNotificationIntegrationTest {
         delivery.consume(opened);delivery.page(mapper.readTree(opened).path("eventId").asString());
         assertThat(notifications.counts(student).unreadCount()).isZero();
         String review=id();String json=event("TeacherQualificationDecided",review,Map.of("applicationId",review,"roundId",id(),"userId",student,"decision","REJECTED"));
-        delivery.consume(json);delivery.page(mapper.readTree(json).path("eventId").asString());
+        delivery.consume(json);
+        // H2 TIMESTAMP(6)会四舍五入到未来微秒；确定置为已到期，测试审核隐私而非机器时钟精度。
+        jdbc.update("UPDATE notification_delivery_work SET next_attempt_at=? WHERE event_id=?",Timestamp.from(Instant.now().minusSeconds(1)),mapper.readTree(json).path("eventId").asString());
+        delivery.page(mapper.readTree(json).path("eventId").asString());
         String rendered=mapper.writeValueAsString(notifications.list(student,1,20));
         assertThat(rendered).contains("教师资格审核结果已更新").doesNotContain("qualificationMediaId","reason","body");
         notifications.target(student,messageId()); assertThat(notifications.counts(student).unreadCount()).isEqualTo(1);
@@ -161,6 +164,7 @@ class AnnouncementNotificationIntegrationTest {
         when(domains.recipients(eq(course),any(),eq(""))).thenReturn(new Recipients(ids.subList(0,100),true));
         when(domains.recipients(eq(course),any(),eq(ids.get(99)))).thenThrow(NotificationDomains.unavailable());
         Announcement a=create();String payload=payloads().get(0);String event=mapper.readTree(payload).path("eventId").asString();delivery.consume(payload);
+        jdbc.update("UPDATE notification_delivery_work SET next_attempt_at=? WHERE event_id=?",Timestamp.from(Instant.now().minusSeconds(1)),event);
         delivery.page(event);assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM notification_message",Long.class)).isEqualTo(100);
         var worker=new NotificationDelivery(jdbc,domains,mapper,manager,true);worker.tick();
         assertThat(jdbc.queryForObject("SELECT cursor_id FROM notification_delivery_work WHERE event_id=?",String.class,event)).isEqualTo(ids.get(99));
@@ -178,7 +182,7 @@ class AnnouncementNotificationIntegrationTest {
         doAnswer(inv->{org.springframework.amqp.rabbit.connection.CorrelationData c=inv.getArgument(3);c.getFuture().complete(new org.springframework.amqp.rabbit.connection.CorrelationData.Confirm(false,"test nack"));return null;}).when(rabbit).send(anyString(),anyString(),any(org.springframework.amqp.core.Message.class),any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
         var publisher=new com.eduplatform.operation.messaging.OperationOutboxPublisher(jdbc,rabbit,manager,2,100);publisher.publishPending();
         assertThat(jdbc.queryForObject("SELECT attempts FROM operation_outbox_event",Integer.class)).isEqualTo(1);
-        reset(rabbit);jdbc.update("UPDATE operation_outbox_event SET next_attempt_at=? WHERE event_id=?",Timestamp.from(Instant.now()),event);publisher.publishPending();
+        reset(rabbit);jdbc.update("UPDATE operation_outbox_event SET next_attempt_at=? WHERE event_id=?",Timestamp.from(Instant.now().minusSeconds(1)),event);publisher.publishPending();
         assertThat(jdbc.queryForObject("SELECT status FROM operation_outbox_event",String.class)).isEqualTo("FAILED");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM course_announcement",Long.class)).isEqualTo(1);
         publisher.publishPending();assertThat(jdbc.queryForObject("SELECT attempts FROM operation_outbox_event",Integer.class)).isEqualTo(2);
