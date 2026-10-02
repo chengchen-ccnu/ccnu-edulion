@@ -20,6 +20,9 @@ $iamSecurityCredentialPath = Join-Path $ConfigDirectory "iam-security.credential
 $learningIamCredentialPath = Join-Path $ConfigDirectory "learning-iam-service.credential.clixml"
 $agentIndexCredentialPath = Join-Path $ConfigDirectory "agent-index-service.credential.clixml"
 $agentAccessCredentialPath = Join-Path $ConfigDirectory "agent-access-internal.credential.clixml"
+$operationCredentialPath = Join-Path $ConfigDirectory "operation-readonly.credential.clixml"
+$operationCredential = $null
+$operationNetworkCredential = $null
 $neo4jCredentialPath = Join-Path $ConfigDirectory "neo4j.credential.clixml"
 $rabbitMqCredentialPath = Join-Path $ConfigDirectory "rabbitmq.credential.clixml"
 $iamSmtpCredentialPath = Join-Path $ConfigDirectory "iam-smtp.credential.clixml"
@@ -113,6 +116,17 @@ try {
     $networkCredential = $credential.GetNetworkCredential()
     Set-ScopedEnvironmentVariable -Name "MYSQL_USERNAME" -Value $networkCredential.UserName
     Set-ScopedEnvironmentVariable -Name "MYSQL_PASSWORD" -Value $networkCredential.Password
+
+    # 独立Operation只读授权；没有文件时入口保持关闭，不能回退为其他域写秘密。
+    if (Test-Path -LiteralPath $operationCredentialPath -PathType Leaf) {
+        $operationCredential = Import-Clixml -LiteralPath $operationCredentialPath
+        if ($operationCredential -isnot [PSCredential] -or $operationCredential.UserName -ne "operation-readonly") {
+            throw "The encrypted Operation readonly credential has an unexpected format."
+        }
+        $operationNetworkCredential = $operationCredential.GetNetworkCredential()
+        if ($operationNetworkCredential.Password.Length -lt 32) { throw "The Operation readonly secret is incomplete." }
+        Set-ScopedEnvironmentVariable -Name "OPERATION_INTERNAL_SERVICE_TOKEN" -Value $operationNetworkCredential.Password
+    }
 
     # T16.1 内部写命令使用独立秘密；旧任务可继续执行，未初始化时 Course 写入口保持关闭。
     if (Test-Path -LiteralPath $courseSuspensionCredentialPath -PathType Leaf) {
@@ -236,6 +250,8 @@ finally {
     }
 
     $networkCredential = $null
+    $operationCredential = $null
+    $operationNetworkCredential = $null
     $credential = $null
     $serviceNetworkCredential = $null
     $courseSuspensionCredential = $null

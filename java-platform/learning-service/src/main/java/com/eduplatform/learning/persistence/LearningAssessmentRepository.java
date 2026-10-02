@@ -57,18 +57,28 @@ public class LearningAssessmentRepository {
         return jdbc.query("SELECT * FROM enrollment WHERE id=? AND learner_id=?", this::enrollment,
                 id, learnerId).stream().findFirst();
     }
+    /** 输入新报名事实；同领域事务写报名及半开有效区间，作为触发时名单的依据，失败全部回滚。 */
     public void insertEnrollment(EnrollmentRow value) {
         jdbc.update("INSERT INTO enrollment(id,learner_id,course_id,course_version_id,status,enrolled_at,canceled_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 value.id(), value.learnerId(), value.courseId(), value.courseVersionId(), value.status().name(),
                 ts(value.enrolledAt()), ts(value.canceledAt()), ts(value.createdAt()), ts(value.updatedAt()));
+        // 同报名事实保存本次有效区间，异步通知据此排除后报名者；不覆盖重新报名历史。
+        jdbc.update("INSERT INTO notification_enrollment_interval(id,enrollment_id,course_id,learner_id,starts_at,ends_at) VALUES(?,?,?,?,?,?)",
+                UUID.randomUUID().toString(),value.id(),value.courseId(),value.learnerId(),ts(value.enrolledAt()),ts(value.canceledAt()));
     }
+    /** 输入原报名ID/当前发布版本/重报时点；仅CANCELED恢复并追加新区间，返回实际更新行数，不覆盖旧区间。 */
     public int reactivateEnrollment(String id, String version, Instant now) {
-        return jdbc.update("UPDATE enrollment SET course_version_id=?,status='ACTIVE',enrolled_at=?,canceled_at=NULL,updated_at=? WHERE id=? AND status='CANCELED'",
+        int updated = jdbc.update("UPDATE enrollment SET course_version_id=?,status='ACTIVE',enrolled_at=?,canceled_at=NULL,updated_at=? WHERE id=? AND status='CANCELED'",
                 version, ts(now), ts(now), id);
+        if(updated>0) jdbc.update("INSERT INTO notification_enrollment_interval(id,enrollment_id,course_id,learner_id,starts_at) SELECT ?,id,course_id,learner_id,? FROM enrollment WHERE id=?",UUID.randomUUID().toString(),ts(now),id);
+        return updated;
     }
+    /** 输入本人报名ID和取消时点；仅ACTIVE取消并关闭当前区间，返回更新数，名单历史与访问事件同事务。 */
     public int cancelEnrollment(String id, String learnerId, Instant now) {
-        return jdbc.update("UPDATE enrollment SET status='CANCELED',canceled_at=?,updated_at=? WHERE id=? AND learner_id=? AND status='ACTIVE'",
+        int updated = jdbc.update("UPDATE enrollment SET status='CANCELED',canceled_at=?,updated_at=? WHERE id=? AND learner_id=? AND status='ACTIVE'",
                 ts(now), ts(now), id, learnerId);
+        if(updated>0) jdbc.update("UPDATE notification_enrollment_interval SET ends_at=? WHERE enrollment_id=? AND ends_at IS NULL",ts(now),id);
+        return updated;
     }
     public List<EnrollmentRow> listEnrollments(String learnerId, EnrollmentStatus status, int page, int size) {
         String filter = status == null ? "" : " AND status=?";

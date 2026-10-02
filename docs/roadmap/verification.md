@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-02 T16.4 公告与站内消息后端
+
+- 保留当前分支/cdbabdd，初始git status干净；先阅读仓库/前置/范围/页面职责与协议事件，完成契约自评审再实施。OpenAPI0.30.0、新内部只读1.0.0、公告/任务事件v1及生成客户端落地，不改既有事件版本/已合并迁移。
+- 显式创建edu_platform_operation_dev并执行首个V1（9业务表+Flyway历史），Learning向前V20报名区间/真正开放工作，Course V7/IAM V5；独立DPAPI秘密经统一包装器，不改个人local.env。不做Vue/热点/课程审核/营销，无跨服务业务SQL/第二套消息系统。
+- 实际Gateway→Operation→Course/Learning/IAM、MySQL/Rabbit长链及Learning JVM停止/重启恢复：1项0失败/0跳过。覆盖103人多页、后报名/退课重报、能力/owner/非owner/游客/内部权限及101上限、中文正文、并发编辑/旧确认409/同消息/撤回旧链接、重复乱序、真实到时/暂停原规则顺延、截止/立即结束/结束后OPENED抑制、审核隐私、目标/read/read-all跳公告、真实HTTP503、五次fan-out FAILED、真实mandatory return三次FAILED、毒消息独立DLQ。
+- 随机账号/课程/报名/任务/申请/Operation事实/已知Redis键/随机队列按精确UUID清理。公共队列仅ACK本轮eventId，外来消息requeue，绝不purge/抢现有消费/重放历史FAILED。早期失败清理表名、第二页等待、一小时时间边界、Windows进程核对与构建目录冲突均修复后重跑；4个早期Fixture课程活动残留已精确清理。Learning历史PUBLISHED5734/FAILED6896不变，Course/IAM历史逐行比较及人工《线性代数》不变。
+- 三端类型/构建通过，56文件374项前端测试通过；实际同OpenAPI Prism13新操作通过并停止。完整Java clean verify通过（392项/337执行/55环境跳过、0失败/0错误），Operation领域11项通过；Ready PR/最新CI待实际结果补齐；见独立 [交付文档](../delivery/T16.4-course-announcements-notifications-contract.md)。不开始后续任务、不自行合并。
+
 ## 2026-10-02 总控验收合并 T16.4.0 与 T16.4 开工准备
 
 - 开工指定分支干净，Ready PR #83 head `0196e5ab9dda0780c34b513d220a67306d7b0c5a` 八项CI成功；独立阅读四维护脚本/真实回归、核对备份恢复验收记录和已执行维护记录。未重复执行CHECK TABLE、备份或索引重建，未修改历史状态/尝试数；`git diff --check main...HEAD`通过，生产代码/API/Flyway未改变。

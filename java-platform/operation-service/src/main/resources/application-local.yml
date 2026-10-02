@@ -2,6 +2,18 @@ spring:
   config:
     activate:
       on-profile: local
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${OPERATION_MYSQL_DATABASE}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=${MYSQL_SERVER_TIMEZONE:Asia/Shanghai}&useSSL=${MYSQL_SSL_ENABLED:false}&allowPublicKeyRetrieval=${MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:true}
     username: ${MYSQL_USERNAME}
@@ -35,3 +47,8 @@ management:
       enabled: true
     redis:
       enabled: true
+
+# 仅local显式开启可靠投递；默认构建不连接MQ。
+platform:
+  operation:
+    messaging-enabled: ${OPERATION_MESSAGING_ENABLED:${RABBITMQ_ENABLED:false}}

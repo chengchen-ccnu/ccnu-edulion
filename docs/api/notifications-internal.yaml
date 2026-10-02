@@ -1,0 +1,478 @@
+openapi: 3.1.0
+info:
+  title: Operation 只读通知授权协议
+  version: 1.0.0
+  description: 固定 operation-service caller 与独立32字节秘密；不经Gateway、不授写暂停权限。未知ID从批量结果省略，故障503，禁止假空名单。
+security:
+- caller: []
+  token: []
+paths:
+  /internal/v1/notification-current-recipients:
+    post:
+      operationId: notificationCurrentRecipients
+      description: Learning对fan-out单页最多100位收件人批量再授权，返回当前ACTIVE ID；不逐学生跨服务请求，不决定Course可用性。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - courseId
+              - learnerIds
+              properties:
+                courseId:
+                  type: string
+                  format: uuid
+                  description: Course稳定课程ID，不含课程正文
+                learnerIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+              additionalProperties: false
+      responses:
+        '200':
+          description: 当前ACTIVE子集
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  type: string
+                  format: uuid
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+  /internal/v1/notification-courses:
+    post:
+      operationId: notificationCourseFacts
+      description: Course最多100个精确ID；只返回owner、发布/暂停、水位、支持邮箱，不含课程正文。用于owner写授权与学生访问裁决。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ids'
+      responses:
+        '200':
+          description: 本域当前事实
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  type: object
+                  required:
+                  - courseId
+                  - ownerTeacherId
+                  - publicationStatus
+                  - paused
+                  - availabilityRevision
+                  - supportEmail
+                  properties:
+                    courseId:
+                      type: string
+                      format: uuid
+                      description: Course稳定课程ID，不含课程正文
+                    ownerTeacherId:
+                      type: string
+                      format: uuid
+                      description: 当前课程owner ID，写权限须再验teaching:access
+                    publicationStatus:
+                      type: string
+                      enum:
+                      - DRAFT
+                      - PUBLISHED
+                      - UNPUBLISHED
+                      - ARCHIVED
+                    paused:
+                      type: boolean
+                      description: 当前系统暂停状态，不授课程正文访问
+                    availabilityRevision:
+                      type: integer
+                      minimum: 0
+                      description: Course暂停/恢复事实水位，0表示从未暂停
+                    supportEmail:
+                      type: string
+                      description: 公开支持邮箱，无撤权原因
+                  additionalProperties: false
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+  /internal/v1/notification-recipients/{courseId}:
+    get:
+      operationId: notificationRecipients
+      description: Learning报名区间[start,end)覆盖at；最多100人，按learnerId游标。取消/重报不覆盖旧区间。返回触发时资格，投递仍须当前验权；不得用本接口授权正文。
+      parameters:
+      - name: courseId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: at
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: after
+        in: query
+        schema:
+          type: string
+          maxLength: 36
+          default: ''
+      responses:
+        '200':
+          description: 有界历史报名事实
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - learnerIds
+                - hasMore
+                properties:
+                  learnerIds:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: string
+                      format: uuid
+                  hasMore:
+                    type: boolean
+                    description: 本页最多100，true时用最后learnerId继续
+                additionalProperties: false
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+  /internal/v1/notification-access:
+    post:
+      operationId: notificationLearningAccess
+      description: Learning只校验当前ACTIVE报名及本人HOMEWORK/EXAM目标；课程暂停由Operation经Course事实合并。closed任务可授权已有应交目标，但opened提醒另检验deliverable。Course时钟依赖故障503。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - learnerId
+              - courseIds
+              - assessmentIds
+              - checks
+              properties:
+                learnerId:
+                  type: string
+                  format: uuid
+                  description: 当前学习者稳定ID
+                courseIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+                assessmentIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+                checks:
+                  type: array
+                  maxItems: 100
+                  description: 消息读取同时验证触发时资格，退课期间改版后重报不补旧提醒。
+                  items:
+                    type: object
+                    required:
+                    - key
+                    - courseId
+                    - at
+                    properties:
+                      key:
+                        type: string
+                        format: uuid
+                        description: 调用者持久消息ID，仅关联本批资格结果
+                      courseId:
+                        type: string
+                        format: uuid
+                        description: Course稳定课程ID，不含课程正文
+                      at:
+                        type: string
+                        format: date-time
+                        description: 触发时间，报名区间按半开区间校验
+                    additionalProperties: false
+              additionalProperties: false
+      responses:
+        '200':
+          description: 当前资格；并不替代Learning作答裁决
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - activeCourseIds
+                - accessibleAssessmentIds
+                - eligibleKeys
+                properties:
+                  activeCourseIds:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: string
+                      format: uuid
+                  accessibleAssessmentIds:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: string
+                      format: uuid
+                  eligibleKeys:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: string
+                      format: uuid
+                    description: 同时当前ACTIVE且触发时符合报名区间的key子集
+                additionalProperties: false
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+  /internal/v1/notification-assessments/{assessmentId}:
+    get:
+      operationId: notificationAssessmentFact
+      description: 在原课程时钟同步/锁序下返回最小任务投影；PRACTICE/无课程404。deliverable仅当前已开放、未结束、未暂停、未过最终截止。暂停返回deliverable=false且不补时，恢复后同步原区间顺延。
+      parameters:
+      - name: assessmentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前安全任务事实
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - assessmentId
+                - courseId
+                - title
+                - revision
+                - deliverable
+                properties:
+                  assessmentId:
+                    type: string
+                    format: uuid
+                  courseId:
+                    type: string
+                    format: uuid
+                    description: Course稳定课程ID，不含课程正文
+                  title:
+                    type: string
+                  revision:
+                    type: integer
+                    minimum: 1
+                  deliverable:
+                    type: boolean
+                    description: 当前发布、真正开放、未结束且未暂停；不能替代具体作答授权
+                additionalProperties: false
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '404':
+          description: 不是课程HOMEWORK/EXAM或目标不存在
+  /internal/v1/notification-review-access:
+    post:
+      operationId: notificationReviewAccess
+      description: IAM裁决当前ACTIVE普通账号本人最多100个申请目标，只返回可访问ID，无材料/驳回理由。新轮重提仍可进入本人申请页，不伪造旧决定为当前状态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - userId
+              - applicationIds
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                  description: 当前IAM账号稳定ID
+                applicationIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+              additionalProperties: false
+      responses:
+        '200':
+          description: 本人授权目标
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  type: string
+                  format: uuid
+        '401':
+          description: caller或独立秘密无效；不得获取事实
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '422':
+          description: UUID、时点、游标或每批100项范围不合法
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '500':
+          description: 本域数据库暂不可用，Operation将依赖失败映射503
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+        '503':
+          description: 当前领域依赖不可用；不得当作空名单
+          content:
+            application/json:
+              schema:
+                $ref: ./openapi.yaml#/components/schemas/ApiError
+components:
+  securitySchemes:
+    caller:
+      type: apiKey
+      in: header
+      name: X-Internal-Caller
+    token:
+      type: apiKey
+      in: header
+      name: X-Internal-Service-Token
+  schemas:
+    Ids:
+      type: object
+      additionalProperties: false
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid

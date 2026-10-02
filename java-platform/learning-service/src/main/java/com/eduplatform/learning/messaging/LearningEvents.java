@@ -20,6 +20,14 @@ public class LearningEvents {
 
     public LearningEvents(ObjectMapper mapper) { this.mapper = mapper; }
 
+    /** 任务开放/截止/立即结束的最小通知事实；触发时点固定收件人，不发布题干、答案或媒体信息。 */
+    public Outbox taskNotificationChanged(String assessmentId,String courseId,long revision,String action,
+            Instant triggeredAt,String traceId,Instant now) {
+        return event("CourseTaskNotificationChanged",1,assessmentId,"edu.learning.task-notifications.events.v1",
+                "learning.task.notification.changed.v1",traceId,
+                Map.of("assessmentId",assessmentId,"courseId",courseId,"revision",revision,"action",action,"triggeredAt",triggeredAt),now);
+    }
+
     /**
      * 创建导入请求事件；payload 只有任务、媒体稳定 ID 与格式。
      * @return 待与 import task 同事务写入的 PENDING Outbox

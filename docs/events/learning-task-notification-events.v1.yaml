@@ -1,0 +1,27 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: CourseTaskNotificationChanged v1
+description: |
+  Learning任务真实OPENED、教师最终截止变更或立即结束与Outbox同事务。
+  exchange=edu.learning.task-notifications.events.v1，routingKey=learning.task.notification.changed.v1。
+  仅课程HOMEWORK/EXAM；triggeredAt决定报名区间收件人，不能按消费时间补后报名者。
+  OPENED以max(publishedAt,opensAt)为时点；重试须当前可作答。事件无题干、答案或媒体URL。
+type: object
+additionalProperties: false
+required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+properties:
+  eventId: {type: string, format: uuid}
+  eventType: {const: CourseTaskNotificationChanged}
+  eventVersion: {const: 1}
+  aggregateId: {type: string, format: uuid}
+  occurredAt: {type: string, format: date-time}
+  traceId: {type: string, minLength: 8, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}
+  payload:
+    type: object
+    additionalProperties: false
+    required: [assessmentId, courseId, revision, action, triggeredAt]
+    properties:
+      assessmentId: {type: string, format: uuid}
+      courseId: {type: string, format: uuid}
+      revision: {type: integer, minimum: 1}
+      action: {enum: [OPENED, DEADLINE_CHANGED, ENDED]}
+      triggeredAt: {type: string, format: date-time}

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 /** 把导入消息交给幂等处理器；异常抛回容器执行有限重试与 DLQ。 */
 @Component
 @ConditionalOnProperty(prefix = "platform.learning.import", name = "messaging-enabled", havingValue = "true")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnExpression("${platform.learning.import.consumer-enabled:true}")
 public class QuestionImportListener {
     private final QuestionImportProcessor processor;
     public QuestionImportListener(QuestionImportProcessor processor) { this.processor = processor; }
