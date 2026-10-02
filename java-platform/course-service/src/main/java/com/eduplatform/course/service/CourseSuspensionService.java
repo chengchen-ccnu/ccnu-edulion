@@ -125,6 +125,21 @@ public class CourseSuspensionService {
                 end == null ? null : end.toInstant());
     }
 
+    /** IAM 预览只读取 Course 本域已发布课程；恢复限定原周期，超出有界范围安全拒绝而非截断。 */
+    @Transactional(readOnly = true)
+    public Impact impact(String teacherId, boolean paused, String suspensionId) {
+        if (!paused && suspensionId == null) throw new CourseException(HttpStatus.UNPROCESSABLE_CONTENT,
+                "COURSE.VALIDATION_FAILED", "恢复预览必须指定原暂停周期");
+        List<String> ids = paused
+                ? jdbc.query("SELECT id FROM course WHERE owner_teacher_id=? AND publication_status='PUBLISHED' AND system_suspended=FALSE ORDER BY id LIMIT 1001",
+                        (rs, n) -> rs.getString(1), teacherId)
+                : jdbc.query("SELECT c.id FROM course c JOIN course_suspension_interval i ON i.course_id=c.id WHERE c.owner_teacher_id=? AND c.publication_status='PUBLISHED' AND c.system_suspended=TRUE AND i.suspension_id=? AND i.resumed_at IS NULL ORDER BY c.id LIMIT 1001",
+                        (rs, n) -> rs.getString(1), teacherId, suspensionId);
+        if (ids.size() > 1000) throw new CourseException(HttpStatus.SERVICE_UNAVAILABLE,
+                "COURSE.IMPACT_LIMIT_EXCEEDED", "影响范围超过当前预览上限，请联系运维");
+        return new Impact(ids);
+    }
+
     /** 事件只带公开状态与区间，复用已有有确认的 Outbox 发布器；不会发布撤权原因或媒体标识。 */
     private void emit(String courseId, long revision, boolean paused, Interval interval, String traceId, Instant now) {
         String id = UUID.randomUUID().toString();
@@ -145,6 +160,7 @@ public class CourseSuspensionService {
         return new CourseException(HttpStatus.CONFLICT, "COURSE.AVAILABILITY_CONFLICT", "课程系统可用性命令冲突");
     }
     public record TeacherState(String teacherId, long accessRevision, String suspensionId, boolean paused, int affectedCourses) {}
+    public record Impact(List<String> courseIds) {}
     private record CourseState(String id, long revision) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Interval(long sequence, String suspensionId, Instant suspendedAt, Instant resumedAt) {}

@@ -18,7 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 发布 IAM 事务中写入的媒体引用和最小审核决定事件。
+ * 发布 IAM 事务中写入的媒体引用、最小审核决定和账号权限事实事件。
  * mandatory return、NACK、超时或连接错误均有限退避，耗尽后留 FAILED 供人工重放。
  */
 @Component

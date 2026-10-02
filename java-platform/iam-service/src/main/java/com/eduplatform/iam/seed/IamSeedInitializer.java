@@ -31,27 +31,42 @@ public class IamSeedInitializer implements ApplicationRunner {
     private final IamMapper mapper;
     private final PasswordEncoder encoder;
     private final IamProperties properties;
+    private final com.eduplatform.iam.security.IdentitySecurityStore security;
+    private final com.eduplatform.iam.service.AdminAuthority authority;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
-    public IamSeedInitializer(IamMapper mapper, PasswordEncoder encoder, IamProperties properties) {
+    public IamSeedInitializer(IamMapper mapper, PasswordEncoder encoder, IamProperties properties,
+            com.eduplatform.iam.security.IdentitySecurityStore security,com.eduplatform.iam.service.AdminAuthority authority,
+            org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.mapper = mapper;
         this.encoder = encoder;
         this.properties = properties;
+        this.security=security;this.authority=authority;this.jdbc=jdbc;
     }
 
     @Override
     /** 在单一事务中生成角色、权限、测试用户及关联，任一步失败则整体回滚。 */
-    @Transactional
+    @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void run(ApplicationArguments args) {
         String password = properties.seed().password();
         if (password == null || password.length() < 12) {
             throw new IllegalStateException("IAM_SEED_PASSWORD must contain at least 12 characters when seed is enabled");
         }
+        authority.lock();
         for (SeedUser user : USERS) {
             mapper.upsertRole(user.role(), user.role());
             mapper.upsertPermission(user.permission(), user.permission());
+            var existing=mapper.findUserByIdForUpdate(user.id());
+            boolean retainedTeacher=existing!=null && mapper.findRoles(user.id()).contains("TEACHER");
+            if(existing!=null && !matchesControlledAccount(user,existing.getAccount()))throw new IllegalStateException("固定测试ID已被非测试账号占用");
+            if(existing!=null)security.invalidateSessionVersion(user.id());
             mapper.upsertSeedUser(user.id(), user.account(), user.displayName(), encoder.encode(password));
-            mapper.assignRole(user.id(), user.role());
+            // 新教学样本仍只是学生，首次教学授予必须真实审核；仅保留旧受控样本已有教学身份，不伪造批准。
+            jdbc.update("DELETE FROM user_role WHERE user_id=?",user.id());
+            mapper.assignRole(user.id(), "TEACHER".equals(user.role()) ? "STUDENT" : user.role());
             mapper.assignPermission(user.role(), user.permission());
+            if("TEACHER".equals(user.role()) && retainedTeacher)mapper.assignRole(user.id(),"TEACHER");
+            if(existing!=null) { mapper.bumpSessionVersion(user.id());mapper.revokeAllUserSessions(user.id()); }
         }
         Instant now = Instant.now();
         mapper.upsertSeedIdentity("00000000-0000-4000-8000-000000001101", USERS[0].id(), "EMAIL",
@@ -77,6 +92,47 @@ public class IamSeedInitializer implements ApplicationRunner {
         mapper.insertProtocolDocumentIfAbsent(id, type, version, body, now, false, now);
         mapper.clearCurrentProtocolDocument(type);
         mapper.markProtocolDocumentCurrent(id);
+    }
+
+    /**
+     * 仅受控local/test工具调用：给两个固定、且account匹配的仅教师样本补学生身份，隔离固定管理员的普通能力。
+     * 不重置密码/状态、不授予缺失的TEACHER或ADMIN、不新增批准记录、不删除领域数据；缓存失败整体回滚。
+     * 返回实际规范化数量，调用者仍须在专用开发库事务内执行，不能用于正式账号迁移。
+     */
+    @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public Normalized normalizeCapabilities() {
+        authority.lock();int teachers=0,admins=0;
+        for(SeedUser seed:USERS) {
+            var user=mapper.findUserByIdForUpdate(seed.id());
+            if(user==null)continue;
+            if(!matchesControlledAccount(seed,user.getAccount()))throw new IllegalStateException("固定测试ID已被非测试账号占用");
+            var roles=mapper.findRoles(seed.id());
+            boolean teacher="TEACHER".equals(seed.role()) && roles.equals(java.util.List.of("TEACHER"));
+            boolean admin="ADMIN".equals(seed.role()) && roles.contains("ADMIN")
+                    && (roles.contains("STUDENT") || roles.contains("TEACHER"));
+            if(!teacher && !admin)continue;
+            security.invalidateSessionVersion(seed.id());
+            if(teacher) { mapper.assignRole(seed.id(),"STUDENT");teachers++; }
+            if(admin) {
+                jdbc.update("DELETE FROM user_role WHERE user_id=? AND role_id IN(SELECT id FROM `role` WHERE code IN('STUDENT','TEACHER'))",seed.id());admins++;
+            }
+            if("ACTIVE".equals(user.getStatus()))mapper.bumpSessionVersion(seed.id());
+            mapper.revokeAllUserSessions(seed.id());
+        }
+        return new Normalized(teachers,admins);
+    }
+    public record Normalized(int upgradedTeacherSamples,int isolatedAdministratorSamples) {}
+
+    /** 固定UUID必须同时匹配当前seed标识或已确认的T04历史测试标识；不接受模糊前缀或普通账号。 */
+    private static boolean matchesControlledAccount(SeedUser seed,String account) {
+        String historical=switch(seed.account()) {
+            case "seed_student_01" -> "student_test_01";
+            case "seed_teacher_01" -> "teacher_test_01";
+            case "seed_teacher_02" -> "teacher_test_02";
+            case "seed_admin_01" -> "admin_test_01";
+            default -> throw new IllegalStateException("未知受控样本");
+        };
+        return seed.account().equals(account) || historical.equals(account);
     }
 
     private record SeedUser(String id, String account, String displayName, String role, String permission) {}

@@ -1,5 +1,27 @@
 # Local development environment
 
+## T16.3 权限协调与管理员邀请
+
+使用 `pwsh -NoProfile -File scripts/Invoke-T16.3SessionRaceRealAcceptance.ps1`；脚本从 `Invoke-WithLocalEnvironment.ps1` 加载 DPAPI 凭据，要求现有 `edu_platform_iam_dev`、Redis 和空闲 18080/18081。不创建数据库，不需要新增秘密或修改个人 local.env。
+
+会话脚本启停本轮 IAM/Gateway，关闭 Seed/审核消息/保留/协调 Worker；8项真实并发测试精确清理随机学生/管理员、会话、命令、审计和 Redis。只规范化四个固定且标识匹配的历史测试身份，不造批准、不重置密码；2026-10-02实际补了两名教师的STUDENT能力。
+
+完整验收用 `pwsh -NoProfile -File scripts/Invoke-T16.3AccountPermissionsRealAcceptance.ps1`，限定 IAM/Course/Learning/Media 开发 Schema、空闲18080～18084，检查实际迁移/依赖；目前 IAM V5、Course V7、Learning V19。要求真实 RabbitMQ、Redis、SMTP和OSS加密配置，SMTP受控收件地址仅来自DPAPI配置，不记录地址。真实资格通过Media/OSS审核产生；finally按本轮UUID/eventId/确切缓存键清理，保留手工《线性代数》。结果/环境风险见 [交付文档](../delivery/T16.3-account-permissions-admin-invitation-contract.md)。
+
+| 配置 | 默认 / 用途 |
+|---|---|
+| `IAM_ACCOUNT_COORDINATION_ENABLED` | true，关闭只停止Worker，不把PENDING改成功 |
+| `IAM_ACCOUNT_COORDINATION_POLL_DELAY` | 2s，轮询持久化命令 |
+| `IAM_ACCOUNT_COORDINATION_TIMEOUT` | 3s，单次HTTP，必须大于0且不超过10s |
+| `COURSE_SERVICE_BASE_URL` / `LEARNING_SERVICE_BASE_URL` | 既有内部服务地址，浏览器仍只走Gateway |
+| `COURSE_SUSPENSION_IAM_TOKEN` | 既有DPAPI内部秘密，Course/Learning均仅验证IAM，不放local.env |
+| `IAM_FIRST_ADMINISTRATOR_ENABLED` | false，只有显式CLI `--initialize-first-admin`才运行 |
+| `IAM_FIRST_ADMINISTRATOR_EMAIL` / `IAM_FIRST_ADMINISTRATOR_REQUEST_ID` | 非秘密邮箱及UUID；已有任何ADMIN禁止初始化 |
+
+首位初始化不是Seed密码或公开注册：仍经SMTP、24小时单次凭证、受邀者自设密码。重发60秒冷却、最多六次，SMTP失败明确FAILED；秘密只在POST正文，不进URL。初始化后移除/关闭上述FIRST_ADMIN设置。正式部署秘密用Secret Manager；开发仍通过共享DPAPI包装器，禁止打印凭据。本轮未改个人local.env，测试临时环境finally恢复。非敏感地址/Schema可保留；如local.env仍有密码/Token/AccessKey/Seed/JWT明文，须迁入秘密管理后删除。
+
+开发库Learning存量Outbox PRIMARY/覆盖索引状态不一致，完整验收关闭全量Learning发布器，用既有生产发布器精确发布本轮报名事件；没有修复或删除旧记录，不能据此宣称存量发布器健康。暂停/恢复消费者真实运行。
+
 ## 2026-09-08 Agent 新架构前置
 
 目标架构见 [Agent 重设计](../architecture/agent-platform-design.md)。旧 Python 代码仍加载 FAISS；新 T13 系列改为 Qdrant、Neo4j 派生图和独立 Index Worker。不能把旧启动条件或已有 8 项测试当作新架构验收。

@@ -32,6 +32,8 @@ public class PasswordResetService {
         String normalized = challenges.consume(request.challengeId().toString(), "PASSWORD_RESET", type,
                 request.target(), request.verificationCode());
         UserAccount user = mapper.findUserByIdentity(type, normalized);
+        // 同登录/撤权共用账号锁，确保缓存失效后没有旧快照重新发布。
+        if (user != null) user = mapper.findUserByIdForUpdate(user.getId());
         String passwordHash = encoder.encode(request.newPassword());
         if (user == null || !"ACTIVE".equals(user.getStatus())) {
             mapper.insertSecurityAudit(UUID.randomUUID().toString(), user == null ? null : user.getId(),

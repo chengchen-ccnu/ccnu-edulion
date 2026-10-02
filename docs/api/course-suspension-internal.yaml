@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Course 系统暂停内部协议
-  version: 1.0.0
+  version: 1.1.0
   description: |
     T16.1 的受保护服务协议；不由 Gateway 暴露给浏览器。IAM 正式撤权命令在 T16.3 接入。
     Course 保留原 publication_status，只有命令接收时 PUBLISHED 的课程进入独立暂停区间。
@@ -11,6 +11,29 @@ info:
     Learning 每个课程事务先锁本域课程时钟再读取此协议，事件延迟不放行；Course 故障返回安全 503。
     Redis 未持久化缓冲在首次观察暂停时或恢复后按 availabilityRevision 舍弃，不回算暂停观看秒数。
 paths:
+  /internal/v1/teachers/{teacherId}/availability-impact:
+    get:
+      summary: IAM 确认前读取 Course 自己拥有的受影响课程 ID
+      description: 仅 iam-service 和独立暂停写秘密。暂停为当前已发布且未系统暂停课程；恢复必须提供 suspensionId，只统计该周期仍已发布的系统暂停课程。最多1000个ID，超出返回503，不截断或伪造零影响；依赖失败停止确认。跨服务预览不是原子快照。
+      parameters:
+        - {name: teacherId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: paused, in: query, required: true, schema: {type: boolean}}
+        - {name: suspensionId, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Caller'}
+        - {$ref: '#/components/parameters/Token'}
+      responses:
+        '200':
+          description: 按ID排序的精确范围；Course 不统计其他域学生
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [courseIds]
+                properties:
+                  courseIds: {type: array, maxItems: 1000, items: {type: string, format: uuid}}
+        '401': {$ref: 'openapi.yaml#/components/responses/Unauthorized'}
+        '422': {$ref: 'openapi.yaml#/components/responses/ValidationFailed'}
+        '503': {$ref: 'openapi.yaml#/components/responses/ServiceUnavailable'}
   /internal/v1/teachers/{teacherId}/course-availability:
     put:
       summary: IAM 更新本教师课程的系统可用性

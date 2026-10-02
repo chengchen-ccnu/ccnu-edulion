@@ -38,6 +38,16 @@ public class CourseSuspensionController {
                 command.paused(), trace.matches("[A-Za-z0-9_-]{8,64}") ? trace : UUID.randomUUID().toString());
     }
 
+    /** IAM 读取本域预览范围；不写暂停事实，不返回其他域报名或身份数据。 */
+    @GetMapping("/teachers/{teacherId}/availability-impact")
+    public CourseSuspensionService.Impact impact(@PathVariable UUID teacherId,
+            @RequestParam boolean paused, @RequestParam(required=false) UUID suspensionId,
+            @RequestHeader(value="X-Internal-Caller", defaultValue="") String caller,
+            @RequestHeader(value="X-Internal-Service-Token", defaultValue="") String token) {
+        authorize(caller, token, "iam-service", iamToken);
+        return service.impact(teacherId.toString(), paused, suspensionId == null ? null : suspensionId.toString());
+    }
+
     /** Learning 读取精确课程及有界区间；未知资源返回 404，缺失或其他服务身份返回 401。 */
     @GetMapping("/courses/{courseId}/availability")
     public CourseSuspensionService.Availability availability(@PathVariable UUID courseId,

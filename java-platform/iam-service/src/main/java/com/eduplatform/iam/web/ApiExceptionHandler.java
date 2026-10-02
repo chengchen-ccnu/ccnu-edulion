@@ -31,7 +31,7 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(AuthException.class)
-    ResponseEntity<ApiError> handleAuth(AuthException exception, HttpServletRequest request) {
+    ResponseEntity<?> handleAuth(AuthException exception, HttpServletRequest request) {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.status());
         if (exception.retryAfterSeconds() != null) {
             response.header(HttpHeaders.RETRY_AFTER, Long.toString(Math.max(1L, exception.retryAfterSeconds())));
@@ -45,7 +45,11 @@ public class ApiExceptionHandler {
                     .path("/api/v1").maxAge(0).build();
             response.header(HttpHeaders.SET_COOKIE, cleared.toString());
         }
-        return response.body(error(exception.code(), exception.getMessage(), request, List.of()));
+        ApiError error=error(exception.code(), exception.getMessage(), request, List.of());
+        if(exception instanceof com.eduplatform.iam.service.AccountDisabledException disabled)
+            return response.body(new DisabledError(error.code(),error.message(),error.traceId(),error.timestamp(),
+                    error.path(),error.fieldErrors(),disabled.supportEmail()));
+        return response.body(error);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -57,7 +61,9 @@ public class ApiExceptionHandler {
                 .body(error("COMMON.VALIDATION_FAILED", "请求参数不合法", request, fields));
     }
 
-    @ExceptionHandler({HandlerMethodValidationException.class, MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({HandlerMethodValidationException.class, MethodArgumentTypeMismatchException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class,
+            jakarta.validation.ConstraintViolationException.class})
     ResponseEntity<ApiError> handleRequestParameterValidation(Exception exception, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(error("COMMON.VALIDATION_FAILED", "请求参数不合法", request, List.of()));
@@ -73,4 +79,7 @@ public class ApiExceptionHandler {
         return new ApiError(code, message, (String) request.getAttribute(TraceFilter.ATTRIBUTE), Instant.now(),
                 request.getRequestURI(), fields);
     }
+    /** 扩展统一六字段错误信封，只公开部署支持邮箱；不携带封禁理由。 */
+    private record DisabledError(String code,String message,String traceId,Instant timestamp,String path,
+            List<FieldError> fieldErrors,String supportEmail) {}
 }

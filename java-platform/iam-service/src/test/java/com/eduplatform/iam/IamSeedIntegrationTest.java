@@ -30,6 +30,8 @@ class IamSeedIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `user` WHERE account LIKE 'seed_%'", Integer.class)).isEqualTo(4);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM `role`", Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM permission", Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_role ur JOIN `role` r ON r.id=ur.role_id WHERE r.code='TEACHER'",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM teacher_review_decision",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_identity", Integer.class)).isEqualTo(4);
         assertThat(jdbc.queryForList("SELECT normalized_value FROM user_identity ORDER BY normalized_value", String.class))
                 .containsExactly("admin1@example.invalid", "student1@example.invalid",

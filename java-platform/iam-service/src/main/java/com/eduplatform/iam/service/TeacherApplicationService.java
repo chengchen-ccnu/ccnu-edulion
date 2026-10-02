@@ -78,14 +78,17 @@ public class TeacherApplicationService {
         }
     }
 
+    /** 查询本人申请，已批准教师也可读取历史；独立管理员无申请能力，不允许借已存事实越权读取。 */
     public AccountLifecycleDtos.TeacherApplicationResponse getMine(String userId) {
+        if (mapper.findRoles(userId).contains("ADMIN") || !mapper.findRoles(userId).contains("STUDENT"))
+            throw new AuthException(HttpStatus.FORBIDDEN,"IAM.STUDENT_ACCOUNT_REQUIRED","只有普通学习账号可以读取教师申请");
         TeacherApplication value = mapper.findTeacherApplicationByUser(userId);
         if (value == null) throw new AuthException(HttpStatus.NOT_FOUND, "IAM.NOT_FOUND", "账号或申请不存在");
         return response(value);
     }
 
     private UserAccount requireOrdinary(String userId) {
-        UserAccount user = mapper.findUserById(userId);
+        UserAccount user = mapper.findUserByIdForUpdate(userId);
         if (user == null || !"ACTIVE".equals(user.getStatus())) throw new AuthException(HttpStatus.UNAUTHORIZED,
                 "IAM.UNAUTHORIZED", "请先登录或重新登录");
         if (!mapper.findRoles(userId).contains("STUDENT") || mapper.findRoles(userId).contains("ADMIN")) throw new AuthException(HttpStatus.FORBIDDEN,

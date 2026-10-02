@@ -1,5 +1,25 @@
 # Skeleton verification
 
+## 2026-10-02 T16.3 账号权限与管理员邀请
+
+- 开工status干净，保留指定分支和准备提交adf8221；已读AGENTS、前置审计/已确认范围、页面规格、路线图、T16.1/T16.2交付及接口/内部暂停/事件。用户“全部按建议”确认四项选择，先设计评审后实现。
+- DPAPI实查IAM原V4/Course V7/Learning V19；新增向前IAM V5已应用，旧迁移不改。OpenAPI0.29.0及生成客户端、Course内部1.1.0、Learning聚合1.0.0、权限事件v1；合法能力、独立管理员、预览/确认/revision/幂等、原周期3+3协调、邀请/受控首位初始化、会话竞争修复完成。
+- 完整真实脚本最终1条综合验收0失败/错误/跳过；Gateway→IAM→Course→Learning、MySQL、Redis、RabbitMQ、SMTP，资格批准另经真实Media/OSS，非伪造批准。覆盖实际补时/重复事件/未知回执/六次失败停止/旧JWT/越权/邀请到期重发重放429/事务回滚/管理员并发封禁。SMTP两次接受，不声称收件箱展示；首位成功用H2，不删除现有管理员。
+- 会话真实专项8项0失败/错误/跳过：旧登录/刷新快照、提交发布间撤销、Redis失败、审计事务回滚、两连接四路登录、正式管理员封禁并发登录/刷新。固定历史测试教师仅两名补STUDENT，管理员整理0，无密码/批准修改。
+- focused权限10、邀请10、审核9、Seed1及内部影响专项4+8+3通过；最终全仓Java clean verify BUILD SUCCESS，379项中326执行通过/53环境条件跳过，失败错误0。真实专项另行执行，不把条件跳过当执行通过。前端typecheck/三端build、56文件374测试通过，同源Prism四个新命令实际201/202响应通过并关闭。
+- 本轮精确UUID/eventId/Redis键清理账号、三课程/两报名/两任务草稿/协调/邀请/消息/OSS，手工《线性代数》完整事实前后相同。无新数据库，新增V5五表及user三个字段保留。未改个人local.env，临时环境恢复。
+- Learning旧Outbox索引与PRIMARY状态不一致记录未修复/删除；关闭全量发布器，仅用既有生产发布器精确发布本轮报名消息，真实暂停消费者运行，不宣称存量健康。失败轮类路径/回调/SMTP窗口问题修复复验；Vue/消息消费等后续未实施。见[交付文档](../delivery/T16.3-account-permissions-admin-invitation-contract.md)及[契约评审](../api/T16.3-contract-review.md)。
+- 最终DPAPI只读回查临时账号/命令/邀请/课程/任务均0，手工课程保留1，旧异常记录PRIMARY仍FAILED；18080～18084/4010无本轮监听。git diff --check及准备提交祖先检查通过。
+- 实现提交c78542b保留adf8221，已独立git push origin HEAD并创建/附加[Ready PR #82](https://github.com/chengchen-ccnu/ccnu-edulion/pull/82)，未合并；提交后check:api通过。CI状态以该PR最新HEAD实时检查为准，默认CI条件跳过不能代替已执行真实专项。
+
+## 2026-10-02 T16.2 分支清理与 T16.3 前置准备
+
+- 开工 main 干净，与 origin/main 同为 `ec7da08dc032de90037851e0aefd0adee1174f80`；PR #81 已普通合并。确认 T16.2 分支是 main 祖先后，按用户本次授权删除其本地和远端分支，其余分支/worktree 保留。最新 main [CI #36945937936](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/36945937936) 成功，前一次合并 CI #36945797928 已取消，未记为通过。
+- 只读核对 OpenAPI 0.28.0、课程暂停内部协议 1.0.0、IAM V4 审核/Outbox、权限命令、登录/刷新、Redis 会话版本过滤、Seed 和 SMTP。发现并记录：现有禁用未协调课程暂停、旧版本并发回填竞争、最后管理员并发保护/恢复/邀请接口缺失；这些均属于 T16.3 交付，不冒充已有功能。见 [T16.3 前置审计](T16.3-prerequisite-audit.md)。
+- 共享环境包装器下只检查配置存在与 TCP：MySQL/Redis/RabbitMQ/SMTP 可达，SMTP 配置和加密凭据已具备；正确的 `IAM_VERIFICATION_HMAC_SECRET`、JWT 和 Course IAM 写秘密长度满足要求。未打印秘密、未发送邮件，未把端口检查当业务/认证验收。JDK 17/Maven 3.9.4/Node 20.19.5/pnpm 10.22.0 可用。
+- 开工前置满足，从最新 main 创建 `codex/t16.3-account-permissions-admin-invitation-contract`。本次只提交审计、backlog 和本记录，不推送，不修改业务代码/API/迁移/生成客户端；仅执行文档 diff 检查，未重跑全仓构建与功能测试。
+- 本轮未创建或修改任何数据库、表、伪数据、缓存 Key、MQ 消息、OSS 对象或个人 local.env，无测试数据清理和新增配置迁移。手工《线性代数》未操作。
+
 ## 2026-10-02 PR #81 授权验收与合并
 
 - 用户在交接澄清后明确要求“直接开始下一步，一直到合并结束”；本次据此复核并合并 T16.2，不启动后续功能任务。

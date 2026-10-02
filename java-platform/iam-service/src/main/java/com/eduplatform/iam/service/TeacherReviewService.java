@@ -31,10 +31,14 @@ public class TeacherReviewService {
     private final TeacherReviewRepository reviews;
     private final TeacherQualificationMediaClient media;
     private final ObjectMapper json;
+    private final AdminAuthority authority;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public TeacherReviewService(IamMapper mapper, TeacherReviewRepository reviews,
-            TeacherQualificationMediaClient media, ObjectMapper json) {
+            TeacherQualificationMediaClient media, ObjectMapper json, AdminAuthority authority,
+            org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.mapper = mapper; this.reviews = reviews; this.media = media; this.json = json;
+        this.authority = authority; this.jdbc = jdbc;
     }
 
     /** 查询申请当前轮次的安全列表；仅接受四状态、精确身份及有界页码，查询不改变审核状态。 */
@@ -55,6 +59,7 @@ public class TeacherReviewService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TeacherReviewDtos.Detail open(String actor, String applicationId,
             String remoteAddress, String traceId) {
+        authority.lock();
         requireAdmin(actor);
         TeacherApplication application = requireApplication(reviews.lockApplication(applicationId));
         if ("SUBMITTED".equals(application.getStatus())) {
@@ -78,6 +83,7 @@ public class TeacherReviewService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TeacherReviewDtos.Detail decide(String actor, String applicationId,
             TeacherReviewDtos.DecisionRequest request, String remoteAddress, String traceId) {
+        authority.lock();
         requireAdmin(actor);
         validateDecision(request);
         String fingerprint = fingerprint(actor, applicationId, request);
@@ -87,6 +93,8 @@ public class TeacherReviewService {
             try { return json.readValue(replay.resultJson(), TeacherReviewDtos.Detail.class); }
             catch (RuntimeException failure) { throw new IllegalStateException("Stored review response invalid", failure); }
         }
+        // 提交申请也先锁user再写application，避免撤权/审核与重提形成反向锁死锁。
+        mapper.findUserByIdForUpdate(requireApplication(reviews.application(applicationId)).getUserId());
         TeacherApplication application = requireApplication(reviews.lockApplication(applicationId));
         replay = reviews.replay(request.clientRequestId().toString());
         if (replay != null) {
@@ -98,12 +106,15 @@ public class TeacherReviewService {
                 || !"UNDER_REVIEW".equals(application.getStatus())) conflict();
         TeacherReviewRepository.Round round = reviews.latestRound(applicationId);
         if (round == null || !round.mediaId().equals(application.getQualificationMediaId())) conflict();
-        UserAccount user = mapper.findUserById(application.getUserId());
+        // 与撤权/登录共用user锁；审核不能在封禁后重新授能，也不能绕过原周期恢复。
+        UserAccount user = mapper.findUserByIdForUpdate(application.getUserId());
         if (user == null || !"ACTIVE".equals(user.getStatus()) || !mapper.findRoles(user.getId()).contains("STUDENT")
                 || mapper.findRoles(user.getId()).contains("ADMIN")) {
             throw new AuthException(HttpStatus.FORBIDDEN, "IAM.STUDENT_ACCOUNT_REQUIRED", "申请人不具备普通学习账号资格");
         }
         if (request.decision() == TeacherReviewDtos.Decision.APPROVED) {
+            if (Boolean.TRUE.equals(jdbc.queryForObject("SELECT course_paused FROM `user` WHERE id=?",Boolean.class,user.getId())))
+                throw new AuthException(HttpStatus.CONFLICT,"IAM.TEACHING_RESTORE_REQUIRED","撤权周期中的账号必须通过教学恢复命令联动课程");
             TeacherQualificationMediaClient.Grant grant = media.grant(round.mediaId(), actor, false, traceId);
             media.requireReadable(grant);
         }
@@ -119,6 +130,7 @@ public class TeacherReviewService {
             mapper.upsertPermission("teaching:access", "teaching:access");
             mapper.assignPermission("TEACHER", "teaching:access");
             mapper.assignRole(application.getUserId(), "TEACHER");
+            mapper.touchUserRevision(user.getId(),user.getRevision());
             if (!mapper.findPermissions(application.getUserId()).contains("teaching:access")
                     || !mapper.findPermissions(application.getUserId()).contains("learning:access")) {
                 throw new IllegalStateException("Teacher or student capability was not granted");
@@ -185,12 +197,7 @@ public class TeacherReviewService {
 
     /** 按 IAM 当前数据库能力复核管理员，旧 JWT 或伪造角色头均不能代替实时授权。 */
     private void requireAdmin(String actor) {
-        UserAccount user = mapper.findUserById(actor);
-        if (user == null || !"ACTIVE".equals(user.getStatus())
-                || !mapper.findRoles(actor).contains("ADMIN")
-                || !mapper.findPermissions(actor).contains("administration:access")) {
-            throw new AuthException(HttpStatus.FORBIDDEN, "IAM.FORBIDDEN", "无权审核教师资格");
-        }
+        authority.require(actor);
     }
 
     private static TeacherApplication requireApplication(TeacherApplication application) {
