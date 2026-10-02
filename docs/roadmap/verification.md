@@ -9,7 +9,7 @@
 - `generate:api`、typecheck、前端56文件374项测试、三端build通过；真实Prism新GET200/请求验证通过，Mock仍读唯一OpenAPI。原有chunk提示保留，无Vue页面改动。
 - 真实脚本两项已通过（均0失败/跳过）：Gateway/Course/Learning/Media/MySQL/Redis/Rabbit/OSS长链，109课分页1457ms；跨日同人/报名排除、旧消息和重投、批量暂停恢复/发布下架/归档、Redis与源HTTP真实坏端口、丢key/并发重建、有限重试及DLQ、20秒OSS原URL200→403与后台刷新。Learning真实进度同日重复/跨日只发两条日资格事件，人数1；补充FOR UPDATE当前读后最终复验通过，四线程争抢第三日仅新增一条资格事件，3日仍同人1。
 - 失败探索轮不计通过，已修正监听器配置循环、批次等待、数字类型及清理上限。旧轮656条暂停消息以记录的eventId/课程/暂停周期精确ACK；未purge/FLUSHDB/重放历史FAILED。最终复查三个派生业务表、学习资格、合成课程为零、私有队列不存在、共享队列零消息；历史Course/Learning Outbox全字段与《线性代数》不变。没有新数据库/媒体对象，V21/V2结构保留；local.env未修改，秘密仍DPAPI。
-- 分支、PR与关键提交将记录在[独立交付文档](../delivery/T16A-hot-course-cache.md)；Ready PR待本轮最终复验后创建，不自行合并。生产大规模容量与T17A浏览器首页留后续。
+- 最终资格修订后Learning全模块verify再通过（144项，116执行/28条件跳过），真实两项再次通过；提交后check:api与HEAD一致。实现`df0e22c`已独立`git push origin HEAD`推送，Ready [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85)为OPEN/非Draft，待总控验收，未合并。分支/关键提交与清理记录见[独立交付](../delivery/T16A-hot-course-cache.md)；生产大规模容量与T17A浏览器首页留后续。
 
 ## 2026-10-02 总控独立验收合并 T16.4 与 T16A 开工准备
 

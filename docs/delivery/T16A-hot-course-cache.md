@@ -1,6 +1,6 @@
 # T16A Redis 热点与门户派生缓存
 
-分支 `codex/t16a-hot-course-cache`；准备祖先 `30000d5` 保留。后端与真实验收已完成，Ready PR待推送后创建，交由总控验收；不得自行合并。
+分支 `codex/t16a-hot-course-cache`；准备祖先 `30000d5` 保留，实现提交 `df0e22c`。已用独立命令`git push origin HEAD`推送并创建Ready [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85)（OPEN、非Draft），交由总控验收；未合并。
 
 ## 目标与边界
 
@@ -58,6 +58,8 @@ URL只进入Redis短期响应投影，不写MySQL/事件/日志。后台刷新�
 已执行：OpenAPI生成、前端typecheck、56文件374项测试、三端build通过（原有大chunk警告）；真实Prism新GET返回200并通过请求验证。最终Java全仓clean verify九个Reactor模块成功，401项测试（344执行/57条件跳过）、0失败/错误；真实依赖专项由显式脚本单独运行，不将跳过算通过。
 
 热点H2事务与源专项覆盖字典序排名、NEW补位、零/不足六门、tombstone、跨日同人去重、7日边界、取消重报、内部身份、重复/乱序、源失败保留dirty、并发重建与到期封面。既有通知测试修正H2微秒舍入造成的偶发“尚未到期”前置条件，生产通知逻辑不变。
+
+最终资格锁定读修订后再次执行Learning全模块verify：144项、116执行/28条件跳过，0失败/错误；最终真实脚本两项再次通过。提交后`check:api`重新生成与HEAD一致。GitHub CI以PR当前head检查为准，不将本地真实依赖结果替代总控独立验收。
 
 2026-10-02最终真实脚本通过：Operation长链1项、Learning生产者1项，均0失败/0跳过。109门合成课分页初次重建1457ms（上一通过轮1536ms）；同人第0/6日仍1人，第7日排除，报名活动日不计；取消/重报/旧消息、同eventId重投、草稿/归档/下架、108门批量暂停恢复全部通过。十次Gateway GET未调用源适配；实际Redis坏端口只热点UNAVAILABLE，课程API仍200；丢keyUNINITIALIZED→重建READY。真实坏HTTP保留dirty，旧扫描时的新发布随后追平；毒消息3次后独立DLQ，mandatory return耗尽3次FAILED。20秒封面原签名真实OSS GET200，到期响应先裁掉URL，服务端跨过到期后原签名403，后台重新授权READY。本机比OSS HTTP Date快约6秒，验收按服务端期限额外等待，没有修改签名或期限。Learning真实持久进度重复/同日/跨日仅2条日资格Outbox，四线程同时认领第三日只新增1条；3条confirm发布到独立队列且七日去重人数仍1。唯一键竞争后用FOR UPDATE当前读，不沿用旧事务快照。
 
