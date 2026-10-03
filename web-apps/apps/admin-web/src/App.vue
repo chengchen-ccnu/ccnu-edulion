@@ -5,18 +5,23 @@
  */
 import { availableWorkspaces, buildUnifiedLoginUrl, buildWorkspaceChooserUrl } from "@edu/auth";
 import { AppShell, buildAccountTools } from "@edu/ui";
+import { getPlatformUrls, useNotificationCounts } from "@edu/auth";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { authStore } from "./auth";
 import { buildAdminNavigation } from "./navigation";
 
 const route = useRoute();
+const { counts, unavailable } = useNotificationCounts(authStore);
 const loginUrl = buildUnifiedLoginUrl();
 const workspaceChooserUrl = buildWorkspaceChooserUrl();
 const workspaceLinks = computed(() => availableWorkspaces(authStore.state.currentUser));
 const navigationItems = computed(() => buildAdminNavigation(route.name?.toString()));
 const accountTools = computed(() => buildAccountTools({
   authenticated: authStore.state.status === "authenticated",
+  notificationsHref: new URL("/notifications", getPlatformUrls().student).toString(),
+  unreadCount: counts.value?.unreadCount,
+  notificationsUnavailable: unavailable.value,
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: loginUrl,
   workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined,

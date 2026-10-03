@@ -31,10 +31,11 @@ describe("student application routes", () => {
     expect(route?.meta?.requiredRole).toBeUndefined();
   });
 
-  it("keeps the student learning home protected", () => {
+  it("keeps the original home public with optional session recovery", () => {
     const home = studentRoutes.find(item => item.path === "/");
 
-    expect(home?.meta).toMatchObject({ requiresAuth: true, requiredRole: "STUDENT" });
+    expect(home?.meta).toMatchObject({ restoreSession: true });
+    expect(home?.meta).not.toHaveProperty("requiresAuth");
   });
 
   it("protects the dedicated learning page by capability without embedding it in course detail", () => {

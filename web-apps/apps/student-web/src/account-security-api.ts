@@ -57,13 +57,13 @@ export interface AccountSecurityApi {
   bindIdentity(body: BindIdentityRequest): Promise<IdentityMutationResult>;
   replaceIdentity(identityType: IdentityType, body: ReplaceIdentityRequest): Promise<IdentityMutationResult>;
   unbindIdentity(identityType: IdentityType, body: UnbindIdentityRequest): Promise<IdentityMutationResult>;
-  teacherApplication(): Promise<TeacherApplication | null>;
-  submitTeacherApplication(body: SubmitTeacherApplicationRequest): Promise<TeacherApplication>;
-  createMediaUpload(body: CreateMediaUploadRequest): Promise<MediaUploadSession>;
+  teacherApplication(signal?: AbortSignal): Promise<TeacherApplication | null>;
+  submitTeacherApplication(body: SubmitTeacherApplicationRequest, signal?: AbortSignal): Promise<TeacherApplication>;
+  createMediaUpload(body: CreateMediaUploadRequest, signal?: AbortSignal): Promise<MediaUploadSession>;
   getUpload(uploadId: string, signal?: AbortSignal): Promise<MediaUploadSession>;
   getMedia(mediaId: string, signal?: AbortSignal): Promise<MediaAsset>;
   cancelUpload(uploadId: string): Promise<void>;
-  completeUpload(uploadId: string, body: CompleteMediaUploadRequest): Promise<MediaAsset>;
+  completeUpload(uploadId: string, body: CompleteMediaUploadRequest, signal?: AbortSignal): Promise<MediaAsset>;
   mediaAccessGrant(mediaId: string, signal?: AbortSignal): Promise<MediaAccessGrant>;
 }
 
@@ -165,22 +165,22 @@ export function createAccountSecurityApi(
       }));
       return required(result);
     },
-    async teacherApplication() {
+    async teacherApplication(signal) {
       const result = await authorized(Authorization => client.GET("/api/v1/teacher-applications/me", {
-        headers: { Authorization }
+        headers: { Authorization }, signal
       }));
       if (result.response.status === 404) return null;
       return required(result);
     },
-    async submitTeacherApplication(body) {
+    async submitTeacherApplication(body, signal) {
       const result = await authorized(Authorization => client.POST("/api/v1/teacher-applications", {
-        headers: { Authorization }, body
+        headers: { Authorization }, body, signal
       }));
       return required(result);
     },
-    async createMediaUpload(body) {
+    async createMediaUpload(body, signal) {
       const result = await authorized(Authorization => client.POST("/api/v1/media/uploads", {
-        headers: { Authorization }, body
+        headers: { Authorization }, body, signal
       }));
       return required(result);
     },
@@ -202,9 +202,9 @@ export function createAccountSecurityApi(
       }));
       expectNoContent(result);
     },
-    async completeUpload(uploadId, body) {
+    async completeUpload(uploadId, body, signal) {
       const result = await authorized(Authorization => client.POST("/api/v1/media/uploads/{uploadId}/complete", {
-        headers: { Authorization }, params: { path: { uploadId } }, body
+        headers: { Authorization }, params: { path: { uploadId } }, body, signal
       }));
       return required(result);
     },

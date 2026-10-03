@@ -14,6 +14,8 @@ import { studentCourseApi } from "../course-api";
 import { courseLearningEntries, firstAccessibleLearningEntry } from "../course-learning";
 import { resumeLessonId } from "../learning-model";
 import { isAuthenticationRequired, studentLearningApi } from "../learning-api";
+import CourseAnnouncements from "../components/CourseAnnouncements.vue";
+import CourseStatusNotice from "../components/CourseStatusNotice.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -27,6 +29,7 @@ const personalizationError = ref("");
 const actionMessage = ref("");
 const enrolling = ref(false);
 const coverFailed = ref(false);
+const supportEmail = ref<string | undefined>();
 let detailAbort: AbortController | null = null;
 let personalizationAbort: AbortController | null = null;
 let enrollAbort: AbortController | null = null;
@@ -40,9 +43,10 @@ const resumeId = computed(() => course.value
   ? resumeLessonId(course.value, progress.value, Boolean(enrollment.value)) : null);
 
 watch(() => route.params.courseId, loadCourse, { immediate: true });
-watch(() => [course.value?.id, authStore.state.status, hasLearningAccess.value], loadPersonalization);
+watch([() => course.value?.id, () => authStore.state.currentUser?.id, () => authStore.state.status, hasLearningAccess], loadPersonalization);
 onBeforeUnmount(cancelRequests);
 
+/** 按路由读取公开课程；暂停只显示通用状态/支持邮箱，切课和离页中止旧结果。 */
 async function loadCourse(courseId: unknown) {
   cancelRequests();
   personalizationLoading.value = false;
@@ -55,6 +59,7 @@ async function loadCourse(courseId: unknown) {
   progress.value = null;
   coverFailed.value = false;
   errorMessage.value = "";
+  supportEmail.value = undefined;
   const controller = new AbortController();
   detailAbort = controller;
   try {
@@ -67,7 +72,9 @@ async function loadCourse(courseId: unknown) {
         : error instanceof GatewayRequestError && error.status === 429
           ? "课程详情请求过于频繁，请稍后手动重试。"
           : error instanceof TypeError ? "网络连接不可用，请检查网络后重试。"
-            : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
+            : error instanceof GatewayRequestError && error.code === "COURSE.SUSPENDED" ? "课程暂不可用"
+              : error instanceof GatewayRequestError ? error.message : "课程详情加载失败，请稍后重试。";
+      if (error instanceof GatewayRequestError && error.code === "COURSE.SUSPENDED") supportEmail.value = error.supportEmail;
     }
   } finally {
     if (generation === loadGeneration) loading.value = false;
@@ -89,9 +96,12 @@ async function loadPersonalization() {
   personalizationAbort = controller;
   personalizationLoading.value = true;
   try {
-    enrollment.value = await studentLearningApi.findActiveEnrollment(currentCourse.id, controller.signal);
+    const activeEnrollment = await studentLearningApi.findActiveEnrollment(currentCourse.id, controller.signal);
+    if (controller.signal.aborted) return;
+    enrollment.value = activeEnrollment;
     if (currentCourse.accessType === "PUBLIC" || enrollment.value) {
-      progress.value = await studentLearningApi.progress(currentCourse.id, controller.signal);
+      const value = await studentLearningApi.progress(currentCourse.id, controller.signal);
+      if (!controller.signal.aborted) progress.value = value;
     }
   } catch (error) {
     if (!controller.signal.aborted) personalizationError.value = personalizedErrorMessage(error);
@@ -170,7 +180,10 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
 
 <template>
   <RouterLink class="back-link" to="/courses">← 返回课程中心</RouterLink>
+  <CourseStatusNotice :course-id="String(route.params.courseId)" :notification-id="typeof route.query.notificationId === 'string' ? route.query.notificationId : undefined" />
   <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }}</p>
+  <p v-if="supportEmail">如需帮助，请联系 {{ supportEmail }}</p>
+  <button v-if="errorMessage" class="button button--quiet" @click="loadCourse(route.params.courseId)">重新加载课程</button>
   <div v-if="loading" class="detail-loading">正在读取课程线上版本…</div>
   <template v-else-if="course">
     <section class="detail-hero">
@@ -254,6 +267,12 @@ function lessonTypeLabel(type: CourseDetail["chapters"][number]["lessons"][numbe
         <h3>课程介绍</h3>
         <p class="markdown-copy">{{ course.description || "课程介绍正在完善中。" }}</p>
       </article>
+
+      <CourseAnnouncements v-if="enrollment && hasLearningAccess" :course-id="course.id"
+        :announcement-id="typeof route.query.announcementId === 'string' ? route.query.announcementId : undefined" />
+      <p v-else-if="route.query.announcementId && !personalizationLoading" class="feedback feedback--warning" role="status">
+        公告仅对当前有效报名的学习账号开放，请登录或检查报名状态。
+      </p>
 
       <section class="curriculum-panel">
         <header>

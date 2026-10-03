@@ -12,7 +12,7 @@ export function buildStudentNavigation(routeName: string | null | undefined): Sh
     || routeName === "attempt-result" || routeName === "wrong-questions";
   const isAi = routeName === "ai" || routeName === "ai-conversation";
   return [
-    { id: "home", label: "首页", state: "coming-soon", current: routeName === "home" },
+    { id: "home", label: "首页", state: "enabled", current: routeName === "home", kind: "router", href: "/" },
     { id: "course-center", label: "课程中心", state: "enabled", current: isCourse,
       kind: "router", href: "/courses" },
     { id: "my-learning", label: "我的学习", state: "enabled", current: isLearning,

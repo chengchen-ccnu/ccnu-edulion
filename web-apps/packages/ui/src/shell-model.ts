@@ -17,17 +17,18 @@ export interface ShellNavigationItem {
 
 /** 账号下拉菜单项只描述可用动作或建设中状态，不携带尚未实现页面的地址。 */
 export interface ShellAccountMenuItem {
-  id: "profile" | "preferences" | "logout";
+  id: "profile" | "preferences" | "logout" | "notifications";
   label: string;
   kind: "action" | "link" | "disabled";
   href?: string;
   action?: "logout";
   statusLabel?: string;
+  badge?: string;
 }
 
 /** 账号工具区固定槽位支持链接、动作、只读状态和明确禁用四种表现。 */
 export interface ShellAccountTool {
-  id: "notifications" | "workspace" | "account";
+  id: "workspace" | "account";
   label: string;
   kind: "link" | "menu" | "status" | "disabled";
   href?: string;
@@ -42,11 +43,14 @@ export interface AccountToolInput {
   workspaceHref?: string;
   workspaceLabel?: string;
   profileHref?: string;
+  notificationsHref?: string;
+  unreadCount?: number | null;
+  notificationsUnavailable?: boolean;
 }
 
 /**
- * 构造通知、工作台、账号三个固定工具槽位。
- * 调用方只提供当前会话投影和安全地址；返回模型不会包含角色判断，也不会为建设中通知生成 href。
+ * 构造工作台、账号两个固定工具槽位；消息与未读数放在头像菜单。
+ * 输入由各应用提供当前会话、安全地址及真实计数，故障用未知标识；输出不包含角色判断。
  */
 export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
   const workspace: ShellAccountTool = input.workspaceHref
@@ -60,6 +64,9 @@ export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
         kind: "menu",
         statusLabel: input.accountLabel ?? "已登录",
         menuItems: [
+          ...(input.notificationsHref ? [{ id: "notifications" as const, label: "消息", kind: "link" as const,
+            href: input.notificationsHref, badge: input.notificationsUnavailable ? "暂不可用"
+              : input.unreadCount == null ? "…" : input.unreadCount > 99 ? "99+" : String(input.unreadCount) }] : []),
           input.profileHref ? { id: "profile", label: "个人中心", kind: "link", href: input.profileHref }
             : { id: "profile", label: "个人中心", kind: "disabled", statusLabel: "建设中" },
           { id: "preferences", label: "布局设置", kind: "disabled", statusLabel: "建设中" },
@@ -68,7 +75,6 @@ export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
       }
     : { id: "account", label: "账号", kind: "link", href: input.loginHref, statusLabel: "登录" };
   return [
-    { id: "notifications", label: "通知", kind: "disabled", statusLabel: "建设中" },
     workspace,
     account
   ];

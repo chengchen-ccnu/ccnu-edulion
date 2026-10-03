@@ -155,3 +155,5 @@ button, input { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+.account-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; max-width: 88px; padding: 2px 6px; border-radius: 999px; color: #fff !important; background: #c23e50; font-size: .65rem !important; line-height: 1.4; }
+.app-shell__account-menu-link .account-badge { margin-left: auto; }

@@ -820,3 +820,11 @@ Operation local启用热点Worker，MQ随既有Rabbit开关开启；复用加密
 后台每轮最多50个dirty＋50个keyset源项；整轮巡检每30秒开启，Redis读模型可自动恢复。源失联/跨日/缓存丢失明确降级，不在首页查库重算。后台代码 `HotCourseWorker.requestRebuild()` 可请求从头受控重建；没有公开运维写API。参见 [T16A交付](../delivery/T16A-hot-course-cache.md)。
 
 真实验收命令 `pwsh -NoProfile -File scripts/Invoke-T16AHotCoursesRealAcceptance.ps1`，占用18080/18082～18085；先确认历史PENDING=0，随机UUID/独立队列/namespace/trace，finally精确清理、恢复环境并停止本轮进程。20秒Media TTL只在测试进程，不保存到local.env。个人local.env本轮没有新增/修改项需要删除；秘密仍留DPAPI，正式环境经Secret Manager注入。
+
+## T17A 门户与消息浏览器验收
+
+`scripts/Invoke-T17ABrowserEnvironment.ps1 START`使用安全加载器启动IAM/Course/Media/Learning/Operation/Gateway和三端，不需要Python Agent或模型。Seed强制关闭，五域开发库名必须明确匹配`edu_platform_<domain>_dev`；任何存量PENDING阻止启动发布器，不重放FAILED。要求先有当前版本jar及前端依赖。`STOP`依据本轮PID及启动时间收口进程，不停止其他任务。
+
+`-OperationRedisPort 1`仅改变本轮Operation连接目标，可验证UNAVAILABLE而不关闭共享Redis；正常启动省略此选项。运行前请确认目标端口确实未监听。本轮没有改个人local.env；该临时选项不得写入持久配置。
+
+Fixture脚本`python scripts/t17a_browser_fixture.py create/cleanup`必须在`Invoke-WithLocalEnvironment.ps1 -ScriptBlock`内执行，依赖已有Python bcrypt、mysql和redis-cli。create需要调用者在进程中设置临时`T17A_FIXTURE_PASSWORD`，结束后清除；禁止明文持久化密码、启用Seed或覆盖已有账号。manifest只有UUID，cleanup只删本轮事实与缓存；详细范围及真实验证限制见 [T17A交付](../delivery/T17A-student-home-notifications.md)。

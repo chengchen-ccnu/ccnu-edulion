@@ -20,7 +20,7 @@ import { authStore } from "./auth";
 /** 学生端课程 API；公开目录与受保护课时内容严格使用 OpenAPI 生成投影。 */
 export interface StudentCourseApi {
   list(query: ListCoursesQuery): Promise<CoursePage>;
-  categories(): Promise<CategorySummary[]>;
+  categories(signal?: AbortSignal): Promise<CategorySummary[]>;
   detail(courseId: string, signal?: AbortSignal): Promise<CourseDetail>;
   lessonContent(courseId: string, lessonId: string, signal?: AbortSignal): Promise<LessonContent>;
   resourceGrant(courseId: string, lessonId: string, resourceId: string, action: CourseResourceAction,
@@ -41,8 +41,8 @@ export function createStudentCourseApi(
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },
-    async categories() {
-      const result = await client.GET("/api/v1/courses/categories");
+    async categories(signal) {
+      const result = await client.GET("/api/v1/courses/categories", { signal });
       if (!result.data) throw gatewayRequestError(result.response, result.error);
       return result.data;
     },
