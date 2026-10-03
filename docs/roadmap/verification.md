@@ -1,5 +1,17 @@
 # Skeleton verification
 
+## 2026-10-03 总控独立验收合并 T16A 与 T17A 开工准备
+
+- 起始工作区干净，独立审阅 Redis 请求/后台重建、领域身份和分页、日资格事务/并发、可靠事件与有限重试/DLQ、签名期限及精确清理；只新增V21/V2，不改已合并迁移。没有在总控修订业务代码。
+- 独立 `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 成功：401项，344执行/57环境条件跳过，0失败/错误。`check:api`、typecheck、56文件374项前端测试和三端build均成功；既有chunk警告非阻断。本轮未重复Prism或浏览器首页验收。
+- 独立运行 `Invoke-T16AHotCoursesRealAcceptance.ps1`：Operation长链与Learning生产者共2项，均0失败/0跳过；109课初次分页重建2784ms，真实MySQL/Redis/Rabbit/Gateway/Media→OSS授权过期、故障/重建/乱序及四线程日资格认领通过。按UUID/eventId/trace/namespace清理，比较历史Outbox全字段和手工《线性代数》不变。
+- 另行只读复核projection/inbox/dirty及hot_learning_day全零、Learning PENDING零、临时Rabbit队列零、两条共享队列零消息、验收端口零监听；未新增库/账户/媒体对象或常驻Seed，原迁移结构/协调行保留，个人local.env未改。
+- 最终head `a5977383d7c9bafd34b98a223f3e795a8e2bd1d9` 八项CI全SUCCESS，以精确head普通merge合并 [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85) 为 `0343d6fb569ef589b62c1ad9c28d08ccc629c7aa`。main快进与origin/main一致，本地T16A分支删除、远端保留；从该main准备 `codex/t17a-student-home-notifications`。
+- 合并后 [CI #37085921484](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37085921484) 四项全部SUCCESS。
+- T17A核心前置通过，见 [独立审计](T17A-prerequisite-audit.md)：OpenAPI0.31.0热点、公告/消息全链、申请与真实能力刷新、分类/报名/进度均现成；无头像/资料编辑与正式重新同意写契约，两者后移。取消免费报名有真实DELETE但本轮不扩UI，后续维护任务保留；三端头像菜单共用唯一消息页，不复制教师/管理页面。
+- 只读环境确认IAM V5/Course V7/Learning V21/Operation V2/Media V6、所需加密秘密与基础依赖可用；四个固定测试账户仍ACTIVE且两个教师具双能力、管理员独立。未注入IAM_SEED_PASSWORD且Seed默认关闭，不重置现有账户；真实浏览器仍需在功能任务启动服务、使用操作者控制登录或精确临时Fixture，不能把此审计当页面已验收。
+- 本轮总控只更新交付/状态、page-specs/总体架构旧规划边界及前置文档，提交至准备分支；不推送新分支，不实现Vue/新API/迁移。
+
 ## 2026-10-02 T16A Redis热点与门户派生缓存实施
 
 - 起始status干净，在指定`codex/t16a-hot-course-cache`继续，准备提交`30000d5`仍为祖先；完整阅读AGENTS、前置审计/已确认范围、page specs、路线图及架构热点/Redis章节。先补OpenAPI0.31.0、内部1.0.0和热点事件v1并记录自评审，再实现。
