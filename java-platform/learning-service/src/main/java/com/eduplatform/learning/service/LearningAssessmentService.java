@@ -1380,7 +1380,7 @@ public class LearningAssessmentService {
         return draft(repository.ownedAttempt(attemptId, learnerId).orElseThrow(), Instant.now());
     }
 
-    /** 提交只允许成功一次；事务内先写 SUBMITTED，再完成自动判分、错题累计和最终状态汇总。 */
+    /** 输入本人草稿、revision和提交幂等键，正式提交只成功一次；同事务判分、错题/最终状态及课程首次热点日资格Outbox，失败整体回滚。 */
     @Transactional
     @CourseClock(value=CourseClock.Kind.ATTEMPT, actor=CourseClock.Actor.LEARNER, id=1)
     public LearningDtos.AttemptResult submit(String learnerId, String attemptId,
@@ -1412,6 +1412,11 @@ public class LearningAssessmentService {
         if (attempt.revision() != input.expectedRevision()) throw conflict("LEARNING.ATTEMPT_REVISION_CONFLICT", "作答 revision 已变化");
         validateAnswers(attempt.assessmentId(), complete, true);
         finalizeLockedDraft(attempt, requestId, fingerprint, complete, items, Instant.now());
+        // 只有学生主动正式提交才形成热点学习资格；自动结算分支不调用，公共/自主练习无courseId。
+        if (assessment.courseId()!=null) {
+            Instant hotAt=Instant.now();
+            repository.qualifyHotLearningDay(assessment.courseId(),attempt.learnerId(),hotAt.atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDate(),hotAt);
+        }
         evaluateAutomaticPublications(assessment.id(), Instant.now());
         return result(attemptId, learnerId, false);
     }

@@ -810,3 +810,13 @@ pwsh -NoProfile -File scripts/Invoke-T16.2TeacherReviewRealAcceptance.ps1
 ```
 
 本任务不需在个人 `local.env` 中添加秘密。若有人曾手工写入 MySQL/RabbitMQ/OSS 密码或 `COURSE_MEDIA_AUTH_SECRET`，结束后应从 `local.env` 删除，改用当前用户 DPAPI 初始化或正式部署 Secret Manager；`IAM_MEDIA_AUTH_ISSUER`、服务地址和轮询时间是非敏感配置，可按运行环境保留。
+
+## T16A 热点派生
+
+Operation local启用热点Worker，MQ随既有Rabbit开关开启；复用加密OPERATION_INTERNAL_SERVICE_TOKEN只读调用Course/Learning，封面仍通过Course→Media。不需新增秘密，也不更改T16.4实时通知授权。需要既有专用Course/Learning/Operation/Media开发Schema，Flyway向前应用Learning V21、Operation V2。
+
+新增非敏感配置：`OPERATION_HOT_WORKER_ENABLED=true`、`OPERATION_HOT_MESSAGING_ENABLED`跟随Rabbit、`OPERATION_HOT_QUEUE=edu.operation.hot-courses.v1`、`OPERATION_HOT_NAMESPACE=edu:operation:hot:v1`、`OPERATION_HOT_POLL_DELAY=5s`、`OPERATION_HOT_TRACE_PREFIX=hot`（短前缀最多27字符）。复用Operation Redis DB5，单key为namespace加`:board`，TTL75～90秒且不越上海零点/源刷新90秒期限。生产需将可淘汰门户缓存与身份安全、未落库进度隔离资源池。
+
+后台每轮最多50个dirty＋50个keyset源项；整轮巡检每30秒开启，Redis读模型可自动恢复。源失联/跨日/缓存丢失明确降级，不在首页查库重算。后台代码 `HotCourseWorker.requestRebuild()` 可请求从头受控重建；没有公开运维写API。参见 [T16A交付](../delivery/T16A-hot-course-cache.md)。
+
+真实验收命令 `pwsh -NoProfile -File scripts/Invoke-T16AHotCoursesRealAcceptance.ps1`，占用18080/18082～18085；先确认历史PENDING=0，随机UUID/独立队列/namespace/trace，finally精确清理、恢复环境并停止本轮进程。20秒Media TTL只在测试进程，不保存到local.env。个人local.env本轮没有新增/修改项需要删除；秘密仍留DPAPI，正式环境经Secret Manager注入。

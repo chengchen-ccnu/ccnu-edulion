@@ -38,6 +38,12 @@ public class HttpMediaCoverClient implements MediaCoverClient {
      */
     @Override
     public String issueCover(String mediaId, String viewerId, String traceId) {
+        return issueCoverGrant(mediaId,viewerId,traceId).url();
+    }
+
+    /** 输入Course已授权稳定引用；通过现有Media服务输出短期URL及其实际到期时点，失败不回退永久地址。 */
+    @Override
+    public CoverGrant issueCoverGrant(String mediaId, String viewerId, String traceId) {
         String token = authorizationIssuer.issueCover(viewerId, mediaId, traceId);
         try {
             CourseDtos.CourseMediaPlaybackGrant grant = client.post()
@@ -56,7 +62,7 @@ public class HttpMediaCoverClient implements MediaCoverClient {
                     || grant.expiresAt() == null || grant.headers() == null || !grant.headers().isEmpty()) {
                 throw unavailable();
             }
-            return grant.url();
+            return new CoverGrant(grant.url(),grant.expiresAt());
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 409) {
                 throw new CourseException(HttpStatus.CONFLICT, "MEDIA.NOT_READY", "课程封面尚未处理完成");

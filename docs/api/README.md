@@ -11,3 +11,5 @@ pnpm.cmd --dir web-apps run mock:api
 ```
 
 Mock 地址为 `http://127.0.0.1:4010`。前端不得维护独立 Mock DTO；生成文件 `web-apps/packages/api-client/src/generated/schema.d.ts` 由本目录契约产生。
+
+T16A 增加匿名热点读模型 `GET /api/v1/operations/hot-courses`，最多六项，Redis不可用或未初始化时以明确状态返回空热点区。后台可信源见 [内部协议](hot-courses-internal.yaml)，学习窗口、排序、封面期限与可靠失效的先行评审见 [契约评审](T16A-contract-review.md)。内部接口只用于Operation后台，不提供浏览器入口或课程访问授权。

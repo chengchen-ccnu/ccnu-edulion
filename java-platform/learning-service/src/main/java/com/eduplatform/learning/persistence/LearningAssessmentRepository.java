@@ -235,7 +235,7 @@ public class LearningAssessmentRepository {
                 eventAt, bufferVersion, now, Map.of(), null);
     }
 
-    /** Worker 按 Redis 每日有效增量落库；版本检查和进度行锁使 ACK 丢失后的重试只读不重复累计。 */
+    /** Worker输入Redis每日有效增量并落库进度/日事实；首次真实课程日资格同事务写Outbox，版本与行锁使ACK丢失重试不重复累计。 */
     @Transactional
     public void applyBufferedProgress(String learnerId, String courseId, String lessonId, String contentRevisionId, long position,
             long watched, boolean completed, Instant eventAt, long bufferVersion, Instant now,
@@ -273,7 +273,7 @@ public class LearningAssessmentRepository {
         }
     }
 
-    /** 同一学习者、内容修订、上海自然日单行累加；调用者必须已持有 lesson_progress 行锁。 */
+    /** 输入课程进度和发生日增量，单行累加日事实并登记首次真实学习资格/Outbox；调用者必须在业务事务持有lesson_progress行锁，失败一起回滚。 */
     private void upsertLearningDay(ProgressRow current, LocalDate date, long seconds,
             boolean started, boolean completed, Instant eventAt) {
         if (seconds == 0 && !started && !completed) return;
@@ -283,6 +283,24 @@ public class LearningAssessmentRepository {
                         + "last_activity_at=GREATEST(last_activity_at,VALUES(last_activity_at))",
                 current.courseId(), current.learnerId(), current.lessonId(), current.contentRevisionId(),
                 java.sql.Date.valueOf(date), seconds, started, completed, ts(eventAt));
+        if (seconds > 0 || completed) qualifyHotLearningDay(current.courseId(), current.learnerId(), date, eventAt);
+    }
+
+    /** 输入真实学习课程/学生/发生日；首次日资格与Outbox同事务，重复同日不发消息，失败回滚业务写入。 */
+    @Transactional
+    public void qualifyHotLearningDay(String courseId, String learnerId, LocalDate date, Instant at) {
+        if (courseId == null) return;
+        String eventId=UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO hot_learning_day(course_id,learner_id,activity_date,event_id) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE course_id=course_id",
+                courseId,learnerId,java.sql.Date.valueOf(date),eventId);
+        // 唯一键竞争可能发生在较早的一致读之后；当前锁定读必须看见获胜事务，不能沿用旧快照。
+        String stored=jdbc.queryForObject("SELECT event_id FROM hot_learning_day WHERE course_id=? AND learner_id=? AND activity_date=? FOR UPDATE",String.class,courseId,learnerId,java.sql.Date.valueOf(date));
+        if (!eventId.equals(stored)) return;
+        String traceId=UUID.randomUUID().toString();
+        String json=mapper.writeValueAsString(Map.of("eventId",eventId,"eventType","CourseLearningDayQualified","eventVersion",1,
+                "aggregateId",courseId,"occurredAt",at,"traceId",traceId,"payload",Map.of("courseId",courseId)));
+        insertOutbox(new QuestionRepository.Outbox(eventId,"CourseLearningDayQualified",1,courseId,"edu.learning.hot-course.events.v1",
+                "learning.course.day-qualified.v1",traceId,json,"PENDING",0,at,null,at,null,at));
     }
 
     private static LocalDate day(Instant at) { return at.atZone(SHANGHAI).toLocalDate(); }
@@ -295,7 +313,7 @@ public class LearningAssessmentRepository {
                 courseId, learnerId, java.sql.Date.valueOf(day(at)), ts(at));
     }
 
-    /** ARTICLE 第一次真实完成才写开始与完成日，不建立阅读时长。 */
+    /** 输入ARTICLE首次真实完成及发生时点，写开始/完成日与热点日资格Outbox，不建立阅读时长；沿用调用者完成事务。 */
     public void recordArticleLearningDay(ProgressRow current, Instant at) {
         upsertLearningDay(current, day(at), 0, current.revision() == 0, true, at);
     }

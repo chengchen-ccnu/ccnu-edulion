@@ -555,6 +555,7 @@ public class CourseCatalogService {
             mapper.publishVersion(editable.getId());
             mapper.publishDraft(course.getId(), editable.getId());
             emitLessonContentEvent(course.getId(), editable, traceId);
+            emitPortalEvent(course.getId(), traceId);
             if (previousPublishedVersionId != null && !previousPublishedVersionId.equals(editable.getId())) {
                 emitCourseTextEvents(course.getId(), previousPublishedVersionId, "DELETE", traceId);
             }
@@ -565,6 +566,7 @@ public class CourseCatalogService {
             }
             mapper.updatePublicationStatus(course.getId(), CourseDtos.PublicationStatus.PUBLISHED.name());
             emitLessonContentEvent(course.getId(), editable, traceId);
+            emitPortalEvent(course.getId(), traceId);
             emitCourseTextEvents(course.getId(), editable.getId(), "UPSERT", traceId);
         }
     }
@@ -575,7 +577,17 @@ public class CourseCatalogService {
             throw new CourseException(HttpStatus.CONFLICT, "COURSE.NOT_PUBLISHED", "课程尚未发布，无法下架");
         }
         mapper.updatePublicationStatus(course.getId(), CourseDtos.PublicationStatus.UNPUBLISHED.name());
+        emitPortalEvent(course.getId(), traceId);
         emitCourseTextEvents(course.getId(), course.getPublishedVersionId(), "DELETE", traceId);
+    }
+
+    /** 发布/下架事务内只写稳定课程ID的失效Outbox；消费者必须重查当前可见性，不能用旧消息恢复卡片。 */
+    private void emitPortalEvent(String courseId, String traceId) {
+        Instant at=Instant.now(); String eventId=UUID.randomUUID().toString();
+        String json=objectMapper.writeValueAsString(Map.of("eventId",eventId,"eventType","CoursePortalChanged","eventVersion",1,
+                "aggregateId",courseId,"occurredAt",at,"traceId",traceId,"payload",Map.of("courseId",courseId)));
+        mapper.insertOutbox(new com.eduplatform.course.messaging.CourseOutboxEvent(eventId,"CoursePortalChanged",1,courseId,
+                "edu.course.portal.events.v1","course.portal.changed.v1",traceId,json,"PENDING",0,at,null,null,at,at));
     }
 
     /** 发布状态和每个 ARTICLE 通知在同一课程事务提交，消息仅携带 ID 与 revision。 */

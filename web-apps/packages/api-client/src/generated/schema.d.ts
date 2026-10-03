@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/operations/hot-courses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 首页最多六门Redis派生公开课程
+         * @description 匿名只读Redis，不同步查库/调用领域重算。7个上海自然日同人去重学习为主，当前ACTIVE报名为辅；同分发布时间降序及ID升序。无学习者且发布30日内的补位标NEW。Redis故障/未初始化只降级热点区，200状态可判别。封面过期独立UNAVAILABLE，调用者可重试本接口；不授课程访问权。禁止HTTP缓存。
+         */
+        get: operations["getHotCourses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/teacher/courses/{courseId}/announcements": {
         parameters: {
             query?: never;
@@ -3121,6 +3141,61 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HotCourses: {
+            /** @enum {string} */
+            status: "READY" | "EMPTY" | "UNINITIALIZED" | "UNAVAILABLE";
+            items: components["schemas"]["HotCourseCard"][];
+            /**
+             * Format: date-time
+             * @description 未初始化或故障为空
+             */
+            generatedAt: string | null;
+            /**
+             * Format: date-time
+             * @description 到期不得展示；不晚于下个上海零点
+             */
+            validUntil: string | null;
+            /** Format: date */
+            windowStart: string | null;
+            /** Format: date */
+            windowEnd: string | null;
+        };
+        HotCourseCard: {
+            /** Format: uuid */
+            courseId: string;
+            title: string;
+            summary: string;
+            instructorDisplayName: string;
+            /** Format: uuid */
+            categoryId: string;
+            /** @enum {string} */
+            level: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+            /** @enum {string} */
+            accessType: "PUBLIC" | "ENROLLMENT_REQUIRED";
+            /** Format: date-time */
+            publishedAt: string;
+            /**
+             * @description NEW必须由页面标为“新课”，不能伪称热门
+             * @enum {string}
+             */
+            label: "HOT" | "NEW";
+            learners7d: number;
+            activeEnrollments: number;
+            /** Format: uuid */
+            coverMediaId: string | null;
+            /** @enum {string} */
+            coverStatus: "READY" | "ABSENT" | "UNAVAILABLE";
+            /**
+             * Format: uri
+             * @description 仅READY且距授权过期大于5秒时返回，其他为空；不持久缓存
+             */
+            coverUrl: string | null;
+            /**
+             * Format: date-time
+             * @description Media真实授权到期时点，其他状态为空
+             */
+            coverExpiresAt: string | null;
+        };
         /** @description 标题与纯文本；保留换行，链接仅作文本，不支持富文本、附件或定时发布。 */
         AnnouncementWriteRequest: {
             /** Format: uuid */
@@ -7058,6 +7133,29 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getHotCourses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 榜单或可判别降级状态 */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HotCourses"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listTeacherCourseAnnouncements: {
         parameters: {
             query?: {

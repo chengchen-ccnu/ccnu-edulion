@@ -12,4 +12,9 @@ public interface MediaCoverClient {
      * @throws com.eduplatform.course.service.CourseException 媒体不存在、未就绪或授权依赖不可用时抛出
      */
     String issueCover(String mediaId, String viewerId, String traceId);
+    /** 输入已授权封面及访问者；输出短期URL和Media真实有效期，无持久写入；旧适配器默认拒绝热点授权。 */
+    default CoverGrant issueCoverGrant(String mediaId,String viewerId,String traceId) {
+        throw new com.eduplatform.course.service.CourseException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,"MEDIA.DEPENDENCY_UNAVAILABLE","封面授权暂不可用");
+    }
+    record CoverGrant(String url,java.time.Instant expiresAt) {}
 }

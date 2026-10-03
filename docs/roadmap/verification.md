@@ -1,5 +1,26 @@
 # Skeleton verification
 
+## 2026-10-02 T16A Redis热点与门户派生缓存实施
+
+- 起始status干净，在指定`codex/t16a-hot-course-cache`继续，准备提交`30000d5`仍为祖先；完整阅读AGENTS、前置审计/已确认范围、page specs、路线图及架构热点/Redis章节。先补OpenAPI0.31.0、内部1.0.0和热点事件v1并记录自评审，再实现。
+- Operation拥有榜单派生；Course提供当前公开/暂停tombstone和Course→Media真实封面期限，Learning提供本域一致快照七日稳定学生去重/当前ACTIVE报名。Learning V21及Operation V2只向前迁移；不使用含报名的活跃日，不相加每日人数，不跨域查表。
+- 最多六项、HOT主辅字典序排名/30日NEW补位、Redis单原子结果/75～90秒抖动、上海日窗口/源新鲜度/短期封面截止、独立热点可靠队列/Inbox/dirty及公平分批重建已实现。请求只GET Redis，故障仅热点降级；T16.4实时通知权限、Vue和全局导航未改。
+- Java全仓`clean verify`九模块成功：401项，344执行/57条件跳过，0失败/错误。新热点与源7项H2专项覆盖排序/空榜/不足六项、跨日及7日边界、重复乱序/取消重报、隐身卡片/内部身份、源失败保留dirty、并发重建和封面裁剪。Windows H2微秒舍入引起的既有通知测试前置时点已修正，生产通知逻辑未变。
+- `generate:api`、typecheck、前端56文件374项测试、三端build通过；真实Prism新GET200/请求验证通过，Mock仍读唯一OpenAPI。原有chunk提示保留，无Vue页面改动。
+- 真实脚本两项已通过（均0失败/跳过）：Gateway/Course/Learning/Media/MySQL/Redis/Rabbit/OSS长链，109课分页1457ms；跨日同人/报名排除、旧消息和重投、批量暂停恢复/发布下架/归档、Redis与源HTTP真实坏端口、丢key/并发重建、有限重试及DLQ、20秒OSS原URL200→403与后台刷新。Learning真实进度同日重复/跨日只发两条日资格事件，人数1；补充FOR UPDATE当前读后最终复验通过，四线程争抢第三日仅新增一条资格事件，3日仍同人1。
+- 失败探索轮不计通过，已修正监听器配置循环、批次等待、数字类型及清理上限。旧轮656条暂停消息以记录的eventId/课程/暂停周期精确ACK；未purge/FLUSHDB/重放历史FAILED。最终复查三个派生业务表、学习资格、合成课程为零、私有队列不存在、共享队列零消息；历史Course/Learning Outbox全字段与《线性代数》不变。没有新数据库/媒体对象，V21/V2结构保留；local.env未修改，秘密仍DPAPI。
+- 最终资格修订后Learning全模块verify再通过（144项，116执行/28条件跳过），真实两项再次通过；提交后check:api与HEAD一致。实现`df0e22c`已独立`git push origin HEAD`推送，Ready [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85)为OPEN/非Draft，待总控验收，未合并。分支/关键提交与清理记录见[独立交付](../delivery/T16A-hot-course-cache.md)；生产大规模容量与T17A浏览器首页留后续。
+
+## 2026-10-02 总控独立验收合并 T16.4 与 T16A 开工准备
+
+- 起始工作区干净，独立审阅公告/确认、消息实时授权、分页投递、真正开放、内部身份、Outbox/有限重试/DLQ、迁移及真实验收清理脚本。无业务代码修改，无既有迁移/事件版本改写。
+- 独立 `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 退出0；392项中337执行、55按环境条件跳过，0失败/错误。独立 `check:api`、`typecheck`、`test`、`build` 通过，前端56文件374项、三端构建成功；大chunk警告为已有非阻断事项。本轮未重复Prism13操作或浏览器验收，其原记录不冒充总控重跑。
+- 独立执行 `pwsh -NoProfile -File scripts/Invoke-T16.4NotificationsRealAcceptance.ps1`：五域真实HTTP/MySQL/RabbitMQ及Learning重启/故障长链1项、0失败/错误/跳过。历史Course/IAM/Learning Outbox逐行比较及手工《线性代数》比较通过；未重放历史FAILED。
+- 另行只读核对九张Operation业务表全部0；本轮IAM账号、Course课程、Learning报名/活动/任务全部0；Learning PUBLISHED5734/FAILED6896不变。Management API精确核对本轮队列与DLQ均404，验收端口无遗留进程。仅创建随机5个IAM账号、合成课程/103初始报名、测评/申请/通知/事件与隔离队列等Fixture，已finally精确清理；没有新增Schema/表（Operation V1和Learning V20已存在），没有OSS/SMTP资产或常驻Seed。
+- 最终PR head `1501dff0085912e26b4ff46e2b3f38b6355a9a0d` 八项CI成功，以精确head普通merge合并 [PR #84](https://github.com/chengchen-ccnu/ccnu-edulion/pull/84) 为 `679c2f45f70230418924a605f5c58654f5da24c9`。main与origin/main一致，T16.4本地分支删除、远端保留；合并后 [CI #37004370677](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37004370677) 四项全部SUCCESS。
+- T16A前置审计通过：MySQL认证/物理迁移Operation V1、Learning V20、Course V7、IAM V5；Rabbit认证由真实长链证明，Operation Redis按共享配置认证/选择DB/PING成功。现有学习活跃日含报名，不能直接作为真实学习人数；无热点专用公开卡片/源事实分页/学习事件/REST，这些是本任务契约交付，不谎称现成。详见 [T16A前置审计](T16A-prerequisite-audit.md)。
+- 从最新main准备 `codex/t16a-hot-course-cache`，仅更新状态/审计/交接文档并本地提交，不推送；没有提前实现热点API/事件/迁移/Redis榜单或Vue。个人local.env未改动；保留原维护备份及其他非本任务分支。
+
 ## 2026-10-02 T16.4 公告与站内消息后端
 
 - 保留当前分支/cdbabdd，初始git status干净；先阅读仓库/前置/范围/页面职责与协议事件，完成契约自评审再实施。OpenAPI0.30.0、新内部只读1.0.0、公告/任务事件v1及生成客户端落地，不改既有事件版本/已合并迁移。

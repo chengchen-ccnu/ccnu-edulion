@@ -1,0 +1,33 @@
+contract: edu.portal.hot-course.events
+contractVersion: 1
+contentType: application/json
+deliverySemantics: at-least-once; local Outbox mandatory confirm/return, finite retry, isolated Operation queue/DLQ and eventId inbox
+description: 只提供可靠失效信号；Operation读取领域当前事实，不从事件加减人数，不包含封面URL或学生身份。暂停恢复及报名分别复用既有CourseAvailabilityChanged/EnrollmentAccessChanged v1。
+envelope:
+  type: object
+  additionalProperties: false
+  required: [eventId, eventType, eventVersion, aggregateId, occurredAt, traceId, payload]
+  properties:
+    eventId: {type: string, format: uuid}
+    eventType: {type: string, enum: [CoursePortalChanged, CourseLearningDayQualified]}
+    eventVersion: {type: integer, const: 1}
+    aggregateId: {type: string, format: uuid, description: 稳定courseId}
+    occurredAt: {type: string, format: date-time}
+    traceId: {type: string, minLength: 8, maxLength: 64}
+    payload:
+      type: object
+      additionalProperties: false
+      required: [courseId]
+      properties:
+        courseId: {type: string, format: uuid}
+events:
+  CoursePortalChanged:
+    producer: course-service publish/unpublish transaction
+    exchange: edu.course.portal.events.v1
+    routingKey: course.portal.changed.v1
+    description: 发布/重新发布/下架与现有Outbox同事务，不复制卡片，Operation重查最新可见性。草稿编辑不改变公开版本。
+  CourseLearningDayQualified:
+    producer: learning-service persisted progress/article/manual course submission transaction
+    exchange: edu.learning.hot-course.events.v1
+    routingKey: learning.course.day-qualified.v1
+    description: 每course/learner/上海自然日第一次真实学习资格才写Outbox；事件不暴露learner。重复播放不增加人数、跨日由源COUNT DISTINCT去重。

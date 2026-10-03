@@ -52,3 +52,9 @@ management:
 platform:
   operation:
     messaging-enabled: ${OPERATION_MESSAGING_ENABLED:${RABBITMQ_ENABLED:false}}
+    # 热点只派生公开卡片；独立队列/namespace不得与身份安全或通知权限事实共用。
+    hot:
+      worker-enabled: ${OPERATION_HOT_WORKER_ENABLED:true}
+      messaging-enabled: ${OPERATION_HOT_MESSAGING_ENABLED:${RABBITMQ_ENABLED:false}}
+      namespace: ${OPERATION_HOT_NAMESPACE:edu:operation:hot:v1}
+      poll-delay: ${OPERATION_HOT_POLL_DELAY:5s}
