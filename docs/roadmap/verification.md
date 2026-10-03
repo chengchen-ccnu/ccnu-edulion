@@ -1,5 +1,11 @@
 # Skeleton verification
 
+## 2026-10-03 T17A PR #86 总控验收修复：首页学习空态
+
+- 起始工作区干净，保留现有 `codex/t17a-student-home-notifications` 分支与准备提交。仅修正 `HomePage.vue` 的空态判断：成功完成本次学习记录加载、无错误、未加载中且记录为空才显示“还没有报名课程”；保留部分失败卡片和重试入口。未扩展功能，未改后端、契约、导航或样式。
+- 四项 Vue DOM 回归覆盖加载中、成功空记录、正常记录、部分失败及点击重试恢复；修复前复现三项失败，修复后通过。实际执行 `pnpm.cmd --dir web-apps run typecheck`（八 workspace 成功）、`pnpm.cmd --dir web-apps run test`（58 文件 407 项通过）、`pnpm.cmd --dir web-apps run build`（三端成功，既有大 chunk 警告）；重新生成客户端后与 HEAD 无差异，`git diff --check` 通过。
+- 加载完成标识及复杂重试测试中文注释已人工检查。本次未启动后端或重跑真实浏览器长链，没有创建数据库、表、伪数据或修改个人 `local.env`，无需数据清理。交付文档和 backlog 同步，追加提交至现有 [Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86)，待总控复验，禁止自行合并；本次实际结果见 [独立交付](../delivery/T17A-student-home-notifications.md)。
+
 ## 2026-10-03 T17A 学生首页、课程公告与消息前端
 
 - 指定分支起始干净，保留准备412709e；未重置/新建分支，未改Java/OpenAPI/事件/迁移。匿名原首页、最多六张服务端热点/新课、有界三报名、ACTIVE公告区、唯一消息页、三端头像角标、目标成功后普通已读及真实申请能力刷新完成；AppShell只渲染无角色模型，未扩头像/协议/退课/审核编辑器等后移范围。

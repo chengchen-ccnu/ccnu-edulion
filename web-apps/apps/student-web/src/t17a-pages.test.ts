@@ -64,6 +64,46 @@ describe("T17A real contract consumers", () => {
     state.status = "anonymous"; await mount(HomePage); await vi.waitFor(() => expect(api.hotCourses).toHaveBeenCalledOnce());
     expect(learning.enrollments).not.toHaveBeenCalled(); expect(host.textContent).toContain("登录账号");
   });
+  it("does not show empty learning while enrollments are loading", async () => {
+    learning.enrollments.mockReturnValue(new Promise(() => {}));
+    await mount(HomePage);
+    expect(host.textContent).toContain("正在读取学习记录");
+    expect(host.textContent).not.toContain("还没有报名课程");
+  });
+  it("shows empty learning only after a successful empty response", async () => {
+    await mount(HomePage);
+    await vi.waitFor(() => expect(host.textContent).toContain("还没有报名课程"));
+    expect(host.textContent).not.toContain("正在读取学习记录");
+    expect(button("重试学习记录")).toBeUndefined();
+  });
+  it("does not show empty learning alongside a normal enrollment", async () => {
+    learning.enrollments.mockResolvedValue({ items: [{ id, courseId, status: "ACTIVE" }] });
+    course.detail.mockResolvedValue({ id: courseId, title: "正常学习课程", chapters: [] });
+    learning.progress.mockResolvedValue({ completedLessonCount: 1, lessonCount: 2, completionPercent: 50, lessons: [] });
+    await mount(HomePage);
+    await vi.waitFor(() => expect(host.textContent).toContain("继续学习 →"));
+    expect(host.textContent).toContain("正常学习课程");
+    expect(host.textContent).not.toContain("还没有报名课程");
+    expect(button("重试学习信息")).toBeUndefined();
+  });
+  /** 报名和课程成功、进度失败时保留卡片与重试；点击后恢复进度也不能出现空态。 */
+  it("keeps partial learning failure retry without showing empty learning", async () => {
+    learning.enrollments.mockResolvedValue({ items: [{ id, courseId, status: "ACTIVE" }] });
+    course.detail.mockResolvedValue({ id: courseId, title: "部分失败课程", chapters: [] });
+    learning.progress.mockRejectedValueOnce(failure(503)).mockResolvedValue({ completedLessonCount: 1, lessonCount: 2, completionPercent: 50, lessons: [] });
+    await mount(HomePage);
+    await vi.waitFor(() => expect(button("重试学习信息")).toBeDefined());
+    expect(host.textContent).toContain("部分失败课程");
+    expect(host.textContent).toContain("进度暂不可用");
+    expect(host.textContent).not.toContain("还没有报名课程");
+    button("重试学习信息").click();
+    await nextTick();
+    expect(host.textContent).not.toContain("还没有报名课程");
+    await vi.waitFor(() => expect(host.textContent).toContain("继续学习 →"));
+    expect(learning.enrollments).toHaveBeenCalledTimes(2);
+    expect(button("重试学习信息")).toBeUndefined();
+    expect(host.textContent).not.toContain("还没有报名课程");
+  });
   it("expires the server projection and isolates failed covers", async () => {
     api.hotCourses.mockResolvedValue({ status: "READY", validUntil: new Date(Date.now() + 10000).toISOString(), items: [{ courseId, title: "真实投影课", summary: "课程摘要", instructorDisplayName: "teacher_test", level: "BEGINNER", accessType: "PUBLIC", label: "NEW", coverStatus: "READY", coverUrl: "/cover.png", coverExpiresAt: "2099-01-01T00:00:00Z" }] });
     await mount(HomePage); await vi.waitFor(() => expect(host.querySelector("img")).not.toBeNull());

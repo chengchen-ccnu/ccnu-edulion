@@ -17,6 +17,8 @@ const categories = ref<CategorySummary[]>([]);
 const hot = ref<HotCourses | null>(null);
 const learning = ref<MyLearningItem[]>([]);
 const hotLoading = ref(false), categoryLoading = ref(false), learningLoading = ref(false);
+/** 只有本次报名及卡片读取完成才允许显示空态；未发起、取消或失败不等于没有报名。 */
+const learningLoaded = ref(false);
 const hotFailure = usePortalFailure(), categoryFailure = usePortalFailure(), learningFailure = usePortalFailure();
 const hotError = hotFailure.error, categoryError = categoryFailure.error, learningError = learningFailure.error;
 const failedCovers = ref(new Set<string>());
@@ -61,6 +63,7 @@ async function loadCategories() {
 /** 有界读取本人三条报名；失败区域保留独立文案，进度失败不推断继续课时。 */
 async function loadLearning() {
   learningController?.abort(); learning.value = []; learningError.value = ""; learningLoading.value = false;
+  learningLoaded.value = false;
   if (!canLearn.value || !learningFailure.allowed()) return;
   const active = new AbortController(); learningController = active; learningLoading.value = true;
   try {
@@ -74,7 +77,7 @@ async function loadLearning() {
         courseError: course.status === "rejected" ? "课程信息暂不可用" : "",
         progressError: progress.status === "rejected" ? "进度暂不可用" : "" };
     }));
-    if (!active.signal.aborted) learning.value = values;
+    if (!active.signal.aborted) { learning.value = values; learningLoaded.value = true; }
   } catch (error) { if (!active.signal.aborted) learningFailure.fail(error); }
   finally { if (!active.signal.aborted) learningLoading.value = false; }
 }
@@ -138,7 +141,7 @@ onBeforeUnmount(() => {
       <div v-if="learningLoading" class="portal-skeleton" role="status">正在读取学习记录…</div>
       <div v-else-if="learning.length" class="portal-resume-grid"><article v-for="item in learning" :key="item.enrollment.id" class="portal-resume-card"><h4>{{ item.course?.title ?? '课程信息暂不可用' }}</h4><p v-if="item.courseError || item.progressError" role="status">{{ item.courseError || item.progressError }}，可稍后重试。</p><template v-if="item.progress"><p>已完成 {{ item.progress.completedLessonCount }} / {{ item.progress.lessonCount }} 课时</p><progress :value="item.progress.completionPercent" max="100" :aria-label="`课程完成度 ${item.progress.completionPercent}%`"></progress></template><RouterLink :to="continueHref(item)">{{ item.progress && item.course ? '继续学习' : '查看课程' }} →</RouterLink></article></div>
       <button v-if="learning.some(item => item.courseError || item.progressError)" class="button button--quiet" :disabled="learningLoading" @click="loadLearning">重试学习信息</button>
-      <div v-else-if="!learningError" class="portal-empty">还没有报名课程，<RouterLink to="/courses">发现你的第一门好课 →</RouterLink></div>
+      <div v-if="learningLoaded && !learningLoading && !learningError && !learning.length" class="portal-empty">还没有报名课程，<RouterLink to="/courses">发现你的第一门好课 →</RouterLink></div>
     </section>
     <section v-else-if="authStore.state.status !== 'authenticated'" class="portal-signin"><div><h3>把每一步成长，留在这里</h3><p>登录后查看课程进度，接着上次继续学习。</p></div><RouterLink class="button button--quiet" :to="{ path: '/login', query: { redirect: '/' } }">登录账号 →</RouterLink></section>
   </div>
