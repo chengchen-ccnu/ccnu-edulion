@@ -1,6 +1,10 @@
 # T17A 学生首页、课程公告与消息前端
 
-2026-10-03。实施分支 `codex/t17a-student-home-notifications`，保留准备提交 `412709e`，未新建/重置分支。实现提交 `d67ec964bd712a3290e696a90c51d45271f2406d`；独立 `git push origin HEAD` 已执行。[Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86) 已创建并附加，OPEN/非Draft、base main。状态：实现及本机验收完成，待总控验收；不自行合并。CI最终结果以PR最新HEAD为准，交接记录更新时尚在运行。
+2026-10-03。实施分支 `codex/t17a-student-home-notifications`，保留准备提交 `412709e`。实现提交 `d67ec964bd712a3290e696a90c51d45271f2406d`，首页空态修复 `8a97bf233e3f9d05d2f586bf0a762339c2d867e4`。[PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86) 已经总控验收并普通合并，合并提交 `1f6b971c40724efa471a06ab00b2e432a5dc6a1a`；本地 main 快进同步后清理实施本地分支，远端按用户要求保留。
+
+## 总控复验与合并（2026-10-03）
+
+总控首次独立 check:api、八 workspace 类型检查、58 文件 403 项测试及三端构建通过，但临时 Vue DOM 诊断复现健康报名旁错误空态，暂停合并。修复后独立复查 `8a97bf2` 并运行 `t17a-pages.test.ts`：26 项全部成功，包含新增四种状态回归；提交文档记录的全量为 407 项，本次复验未再次运行全量或真实浏览器。最新 PR HEAD 两组 CI 共八项成功，按精确 HEAD 普通合并。既有真实浏览器覆盖与未覆盖事项仍以本文下方记录为准，不将后端历史验收改称本轮真实复验。临时诊断文件已删除，合并前工作区干净；总控未创建数据库、表或伪数据，也未修改 local.env。
 
 ## 总控验收修复：首页学习空态（2026-10-03）
 

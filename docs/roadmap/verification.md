@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-03 总控合并 T17A、拆分 T17B 与公告管理开工审计
+
+- PR #86 最终 HEAD `8a97bf233e3f9d05d2f586bf0a762339c2d867e4`，两组八项 CI 全部成功。总控前轮独立全量403项/类型/check:api/三构建后发现空态缺陷，修复后独立26项专项复验通过；407项全量为实施方记录，本轮未重复真实浏览器。按精确HEAD普通合并为`1f6b971c40724efa471a06ab00b2e432a5dc6a1a`，main快进同步，T17A本地分支删除，远端保留；未触碰其他分支/worktree。合并后[CI #37103356361](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37103356361)四项全部成功。
+- T17B.1 优先交付教师课程公告管理。OpenAPI0.31.0、生成客户端、Operation owner列表/发布/改版/撤回/审计、Gateway专用路由及Course事实均已存在；无需新增API、迁移、中间件或上传器。页面沿用`/teacher/courses/:courseId/announcements`、课程管理高亮，写入只在已发布未暂停课程且owner具当前教学能力时允许。
+- T17B.2 工作台缺明确摘要/待办契约；T17B.3资产分页已有，但任务总览/引用位置缺口尚在；T17B.4完整资料修改及头像绑定释放缺口尚在。分别待规划，不在公告任务启用旧Placeholder/固定工作台或媒体槽，不虚构指标或前端跨页汇总。page-specs、backlog、T16范围及总体架构同步，详见[T17B前置审计](T17B-prerequisite-audit.md)。
+- 安全加载器只读验证IAM V5、Course V7、Learning V21、Operation V2，四域PENDING均0；MySQL认证成功，Redis PING返回PONG，RabbitMQ实际连接认证成功（不声明/清理队列）。JDK17、Node20.19.5、pnpm10.22.0可用；相关JWT/Operation内部/Rabbit/Course-Media配置仅检查存在、不输出值。业务HTTP/前端端口当前未常驻，须实施时正常启动再做真实验收，不把TCP/认证检查写成业务HTTP通过。
+- 从最新main准备`codex/t17b1-teacher-course-announcements-web`；本提交仅状态/规划/前置审计文档。独立`pnpm.cmd --dir web-apps run check:api`生成无差异，`git diff --check`通过；文档任务未重复全量业务测试。无业务代码、OpenAPI、事件或迁移修改，没有创建库、表、账号、Seed、消息、缓存Key、媒体或OSS对象；未修改local.env，无测试数据清理步骤。本次仅只读领域数据库，不重放历史FAILED或修改手工《线性代数》。
+
 ## 2026-10-03 T17A PR #86 总控验收修复：首页学习空态
 
 - 起始工作区干净，保留现有 `codex/t17a-student-home-notifications` 分支与准备提交。仅修正 `HomePage.vue` 的空态判断：成功完成本次学习记录加载、无错误、未加载中且记录为空才显示“还没有报名课程”；保留部分失败卡片和重试入口。未扩展功能，未改后端、契约、导航或样式。
