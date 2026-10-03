@@ -5,17 +5,22 @@
  */
 import { availableWorkspaces } from "@edu/auth";
 import { AppShell, buildAccountTools } from "@edu/ui";
+import { useNotificationCounts } from "@edu/auth";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { authStore } from "./auth";
 import { buildStudentNavigation } from "./navigation";
 
 const route = useRoute();
+const { counts, unavailable } = useNotificationCounts(authStore);
 const router = useRouter();
 const workspaceLinks = computed(() => availableWorkspaces(authStore.state.currentUser));
 const navigationItems = computed(() => buildStudentNavigation(route.name?.toString()));
 const accountTools = computed(() => buildAccountTools({
   authenticated: authStore.state.status === "authenticated",
+  notificationsHref: "/notifications",
+  unreadCount: counts.value?.unreadCount,
+  notificationsUnavailable: unavailable.value,
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: "/login",
   workspaceHref: workspaceLinks.value.length > 1 ? "/workspaces" : undefined,

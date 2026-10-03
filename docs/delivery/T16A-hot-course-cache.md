@@ -1,6 +1,6 @@
 # T16A Redis 热点与门户派生缓存
 
-分支 `codex/t16a-hot-course-cache`；准备祖先 `30000d5` 保留，实现提交 `df0e22c`。已用独立命令`git push origin HEAD`推送并创建Ready [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85)（OPEN、非Draft），交由总控验收；未合并。
+分支 `codex/t16a-hot-course-cache`；准备祖先 `30000d5` 保留，实现提交 `df0e22c`，最终 head `a597738`。2026-10-03 总控独立验收通过后普通合并 [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85)，合并提交 `0343d6fb569ef589b62c1ad9c28d08ccc629c7aa`；本地 main 已快进同步，本地功能分支清理，按用户要求保留远端分支。
 
 ## 目标与边界
 
@@ -89,3 +89,12 @@ pwsh -NoProfile -File scripts/Invoke-T16AHotCoursesRealAcceptance.ps1
 ## 可读性与后续风险
 
 新控制器、源适配、Worker状态变化、消费者幂等、队列重试、Redis过期及生产者事务均有中文功能/输入输出/副作用注释；新迁移、协议与配置说明边界，自动生成代码未手补注释。派生后台串行批次避免旧快照覆盖新刷新，但不宣称跨域瞬时一致。未有日期的历史不伪造；生产高并发吞吐、完整浏览器首页及多实例容量专项留后续，T17A消费真实生成契约而不是假卡片。
+
+## 2026-10-03 总控独立验收与合并
+
+- 独立审阅请求只读 Redis、后台源授权/分页/排序/时间窗、单协调行与事件竞争、生产者事务/Outbox、有限重试/DLQ、封面到期和迁移；既有迁移未改写，没有新增业务修订。
+- 独立 Java 全仓 `clean verify` 退出 0：401 项，344 执行、57 条件跳过，0 失败/错误；前端 `check:api`、`typecheck`、56 文件 374 项测试及三端 build 全部通过。旧大 chunk 警告非阻断；本轮没有重复 Prism 或浏览器首页验收，不把原任务记录当作独立重跑。
+- 独立运行 `pwsh -NoProfile -File scripts/Invoke-T16AHotCoursesRealAcceptance.ps1`：Operation 真实长链与 Learning 真实生产者共 2 项，0 失败/错误/跳过。109 课分页首次重建本轮 2784ms；排序、真实七日去重/报名排除、重复乱序、暂停/恢复、Redis/HTTP 故障、并发重建、confirm/return/DLQ、真实 OSS 原封面 200→403 与新授权、四线程日资格认领均通过。
+- 脚本精确清理并比较历史 Outbox 全字段及手工《线性代数》不变。另行只读复核热点 projection/inbox/dirty 与 hot_learning_day 均 0，Learning PENDING 为 0，临时 Rabbit 队列 0、两条共享队列消息 0、验收端口监听 0。本轮只创建既有 dev Schema 内的随机 Fixture，未新增库、物理迁移、账户、媒体对象或常驻 Seed；V21/V2 原结构及协调行保留，local.env 未改。
+- 合并前最终 head 八项 CI 全部 SUCCESS，以精确 head 普通 merge；不删远端、不强推。T17A 的前置与旧规划边界见 [独立审计](../roadmap/T17A-prerequisite-audit.md)，没有在总控实现 Vue 或后端代码。
+- 合并后 [CI #37085921484](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37085921484) 的 Java、Python、Frontend、OpenAPI 四项全部 SUCCESS。

@@ -1,5 +1,32 @@
 # Skeleton verification
 
+## 2026-10-03 T17A PR #86 总控验收修复：首页学习空态
+
+- 起始工作区干净，保留现有 `codex/t17a-student-home-notifications` 分支与准备提交。仅修正 `HomePage.vue` 的空态判断：成功完成本次学习记录加载、无错误、未加载中且记录为空才显示“还没有报名课程”；保留部分失败卡片和重试入口。未扩展功能，未改后端、契约、导航或样式。
+- 四项 Vue DOM 回归覆盖加载中、成功空记录、正常记录、部分失败及点击重试恢复；修复前复现三项失败，修复后通过。实际执行 `pnpm.cmd --dir web-apps run typecheck`（八 workspace 成功）、`pnpm.cmd --dir web-apps run test`（58 文件 407 项通过）、`pnpm.cmd --dir web-apps run build`（三端成功，既有大 chunk 警告）；重新生成客户端后与 HEAD 无差异，`git diff --check` 通过。
+- 加载完成标识及复杂重试测试中文注释已人工检查。本次未启动后端或重跑真实浏览器长链，没有创建数据库、表、伪数据或修改个人 `local.env`，无需数据清理。交付文档和 backlog 同步，追加提交至现有 [Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86)，待总控复验，禁止自行合并；本次实际结果见 [独立交付](../delivery/T17A-student-home-notifications.md)。
+
+## 2026-10-03 T17A 学生首页、课程公告与消息前端
+
+- 指定分支起始干净，保留准备412709e；未重置/新建分支，未改Java/OpenAPI/事件/迁移。匿名原首页、最多六张服务端热点/新课、有界三报名、ACTIVE公告区、唯一消息页、三端头像角标、目标成功后普通已读及真实申请能力刷新完成；AppShell只渲染无角色模型，未扩头像/协议/退课/审核编辑器等后移范围。
+- check:api无生成差异、八workspace typecheck、58文件403项测试及三构建成功；Prism同一OpenAPI热点/通知/公告GET请求验证200。git diff --check/准备祖先/PowerShell AST/Python Fixture compileall通过，既有chunk警告非阻断。未重跑未改后端或Python Agent全仓测试。
+- 真实In-app Browser/六服务/MySQL/Redis/Rabbit验证匿名NEW《线性代数》、分类、继续学习部分故障、23条消息分页/刷新/返回、任务与真实驳回落地后普通已读、公告纯文本/深链焦点/真实改版409与第二次明确确认、全部已读剩余20公告、三端唯一消息链接及管理员空箱、真实撤权协调APPLIED后通用暂停状态。360/768/1440无document横向溢出，Enter/Escape与确认焦点通过。
+- 仅本轮Operation连接未监听Redis端口验证UNAVAILABLE隔离；恢复后停止本轮Learning验证503/未知角标、不假空；停止本轮Gateway验证offline手动重试。401/403/404/422/429、撤回/退课、失效封面、真实权限有无、请求取消/身份切换/退出竞争由组件/认证测试覆盖；申请快照替换重读循环经真实浏览器发现并修复。真实批准/OSS上传/课程恢复本轮未重跑，未伪造批准事实，详见独立交付覆盖限制。
+- 没有新库/表/迁移。dev临时三账号、一课/版本/章节/课时、报名/区间、21公告、一任务、一待审轮次；真实API产生通知、审核决定、撤权、Outbox及派生事实。停本轮服务后按UUID/eventId精确清理，临时会话缓存EXISTS0；账号恢复4、临时课/任务/通知/热点0、手工课程1、题库1017、Learning历史PUBLISHED5734/FAILED6896/PENDING0。未Seed/重放FAILED/改人工课/改题库/建OSS对象/发邮件/purge或FLUSHDB；个人local.env未修改，本轮监听和浏览器页已结束。
+- 中文注释人工覆盖确认/权限/幂等/有限重试/生命周期和脚本；生成代码未手改。实现提交d67ec96、独立git push origin HEAD成功；[Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86)创建并附加、OPEN/非Draft，待总控验收，不自行合并。CI以PR最新HEAD为准，交接更新时仍运行；见 [独立交付](../delivery/T17A-student-home-notifications.md)。
+
+## 2026-10-03 总控独立验收合并 T16A 与 T17A 开工准备
+
+- 起始工作区干净，独立审阅 Redis 请求/后台重建、领域身份和分页、日资格事务/并发、可靠事件与有限重试/DLQ、签名期限及精确清理；只新增V21/V2，不改已合并迁移。没有在总控修订业务代码。
+- 独立 `mvn -q '-Dmaven.repo.local=.m2/repository' -f java-platform/pom.xml clean verify` 成功：401项，344执行/57环境条件跳过，0失败/错误。`check:api`、typecheck、56文件374项前端测试和三端build均成功；既有chunk警告非阻断。本轮未重复Prism或浏览器首页验收。
+- 独立运行 `Invoke-T16AHotCoursesRealAcceptance.ps1`：Operation长链与Learning生产者共2项，均0失败/0跳过；109课初次分页重建2784ms，真实MySQL/Redis/Rabbit/Gateway/Media→OSS授权过期、故障/重建/乱序及四线程日资格认领通过。按UUID/eventId/trace/namespace清理，比较历史Outbox全字段和手工《线性代数》不变。
+- 另行只读复核projection/inbox/dirty及hot_learning_day全零、Learning PENDING零、临时Rabbit队列零、两条共享队列零消息、验收端口零监听；未新增库/账户/媒体对象或常驻Seed，原迁移结构/协调行保留，个人local.env未改。
+- 最终head `a5977383d7c9bafd34b98a223f3e795a8e2bd1d9` 八项CI全SUCCESS，以精确head普通merge合并 [PR #85](https://github.com/chengchen-ccnu/ccnu-edulion/pull/85) 为 `0343d6fb569ef589b62c1ad9c28d08ccc629c7aa`。main快进与origin/main一致，本地T16A分支删除、远端保留；从该main准备 `codex/t17a-student-home-notifications`。
+- 合并后 [CI #37085921484](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37085921484) 四项全部SUCCESS。
+- T17A核心前置通过，见 [独立审计](T17A-prerequisite-audit.md)：OpenAPI0.31.0热点、公告/消息全链、申请与真实能力刷新、分类/报名/进度均现成；无头像/资料编辑与正式重新同意写契约，两者后移。取消免费报名有真实DELETE但本轮不扩UI，后续维护任务保留；三端头像菜单共用唯一消息页，不复制教师/管理页面。
+- 只读环境确认IAM V5/Course V7/Learning V21/Operation V2/Media V6、所需加密秘密与基础依赖可用；四个固定测试账户仍ACTIVE且两个教师具双能力、管理员独立。未注入IAM_SEED_PASSWORD且Seed默认关闭，不重置现有账户；真实浏览器仍需在功能任务启动服务、使用操作者控制登录或精确临时Fixture，不能把此审计当页面已验收。
+- 本轮总控只更新交付/状态、page-specs/总体架构旧规划边界及前置文档，提交至准备分支；不推送新分支，不实现Vue/新API/迁移。
+
 ## 2026-10-02 T16A Redis热点与门户派生缓存实施
 
 - 起始status干净，在指定`codex/t16a-hot-course-cache`继续，准备提交`30000d5`仍为祖先；完整阅读AGENTS、前置审计/已确认范围、page specs、路线图及架构热点/Redis章节。先补OpenAPI0.31.0、内部1.0.0和热点事件v1并记录自评审，再实现。

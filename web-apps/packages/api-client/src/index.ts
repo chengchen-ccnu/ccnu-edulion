@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 
 import type { components, paths } from "./generated/schema";
+export { createOperationsApi } from "./operations";
 
 export const DEFAULT_MOCK_BASE_URL = "http://127.0.0.1:4010";
 const runtimeEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
@@ -41,6 +42,15 @@ export type UnbindIdentityRequest = components["schemas"]["UnbindIdentityRequest
 export type IdentityMutationResult = components["schemas"]["IdentityMutationResult"];
 export type SubmitTeacherApplicationRequest = components["schemas"]["SubmitTeacherApplicationRequest"];
 export type TeacherApplication = components["schemas"]["TeacherApplication"];
+export type HotCourses = components["schemas"]["HotCourses"];
+export type HotCourseCard = components["schemas"]["HotCourseCard"];
+export type CourseAnnouncement = components["schemas"]["CourseAnnouncement"];
+export type AnnouncementPage = components["schemas"]["AnnouncementPage"];
+export type AnnouncementRevisionRequest = components["schemas"]["AnnouncementRevisionRequest"];
+export type Notification = components["schemas"]["Notification"];
+export type NotificationPage = components["schemas"]["NotificationPage"];
+export type NotificationCounts = components["schemas"]["NotificationCounts"];
+export type NotificationTarget = components["schemas"]["NotificationTarget"];
 export type LoginResponse = components["schemas"]["LoginResponse"];
 export type CategorySummary = components["schemas"]["CategorySummary"];
 export type CoursePage = components["schemas"]["CoursePage"];
@@ -230,12 +240,14 @@ export class GatewayRequestError extends Error {
   readonly code: string;
   readonly fieldErrors: Record<string, string>;
   readonly retryAfterSeconds: number | null;
+  readonly supportEmail: string | undefined;
 
   constructor(response: Response, error?: ApiError) {
     super(error?.message ?? `Gateway request failed with status ${response.status}`);
     this.name = "GatewayRequestError";
     this.status = response.status;
     this.code = error?.code ?? "COMMON.UNEXPECTED_ERROR";
+    this.supportEmail = error?.supportEmail;
     this.fieldErrors = Object.fromEntries((error?.fieldErrors ?? []).map(item => [item.field, item.reason]));
     const retryAfterHeader = response.headers.get("Retry-After");
     const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);

@@ -6,6 +6,8 @@ import { authStore } from "./auth";
 import CourseDetailPage from "./views/CourseDetailPage.vue";
 import CourseLearningPage from "./views/CourseLearningPage.vue";
 import CourseListPage from "./views/CourseListPage.vue";
+import HomePage from "./views/HomePage.vue";
+import NotificationsPage from "./views/NotificationsPage.vue";
 import LoginPage from "./views/LoginPage.vue";
 import RegisterPage from "./views/RegisterPage.vue";
 import ForgotPasswordPage from "./views/ForgotPasswordPage.vue";
@@ -27,9 +29,8 @@ import AiHomePage from "./views/AiHomePage.vue";
 
 /** 实际交给 Vue Router 的路由记录，也是公共/受保护边界测试的唯一来源。 */
 export const studentRoutes: RouteRecordRaw[] = [
-  { path: "/", name: "home", component: PlaceholderPage,
-    meta: { requiresAuth: true, requiredRole: "STUDENT" },
-    props: { heading: "学习首页", note: "已通过 STUDENT 身份和最小权限校验。" } },
+  { path: "/", name: "home", component: HomePage, meta: { restoreSession: true } },
+  { path: "/notifications", name: "notifications", component: NotificationsPage, meta: { requiresAuth: true } },
   { path: "/courses", name: "courses", component: CourseListPage,
     meta: { restoreSession: true } },
   { path: "/courses/:courseId", name: "course-detail", component: CourseDetailPage,

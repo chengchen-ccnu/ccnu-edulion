@@ -14,7 +14,7 @@ describe("student fixed navigation", () => {
     const items = buildStudentNavigation("courses");
 
     expect(items.filter(item => item.state === "enabled").map(item => item.id))
-      .toEqual(["course-center", "my-learning", "practice-center", "ai-tutor"]);
+      .toEqual(["home", "course-center", "my-learning", "practice-center", "ai-tutor"]);
     expect(items.filter(item => item.state !== "enabled").every(item => item.href === undefined)).toBe(true);
   });
 

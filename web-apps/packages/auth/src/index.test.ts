@@ -23,6 +23,36 @@ const urls: PlatformUrls = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared authentication store", () => {
+  it("does not restore an old user when capability refresh finishes after logout", async () => {
+    let defer = false;
+    let finish: (value: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestUrl(input).pathname;
+      if (path.endsWith("/auth/login")) return json({ accessToken: "test-token", tokenType: "Bearer", expiresIn: 900 });
+      if (path.endsWith("/auth/logout")) return new Response(null, { status: 204 });
+      if (defer) return new Promise<Response>(resolve => { finish = resolve; });
+      return json(user(["STUDENT"], ["learning:access"]));
+    }));
+    const store = createAuthStore(createGatewayClient("http://gateway.test")); await store.login("student_test@example.invalid", "test-only-password");
+    defer = true; const pending = store.ensureCurrentUser(); await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3));
+    await store.logout(); finish(json(user(["STUDENT"], ["learning:access"])));
+    expect(await pending).toBe(false); expect(store.state.currentUser).toBeNull(); expect(store.state.status).toBe("anonymous");
+  });
+  it("retains the authenticated snapshot during offline capability refresh and honors cancellation", async () => {
+    let offline = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestUrl(input).pathname;
+      if (path.endsWith("/auth/login")) return json({ accessToken: "test-token", tokenType: "Bearer", expiresIn: 900 });
+      if (offline) throw new TypeError("offline");
+      return json(user(["STUDENT"], ["learning:access"]));
+    }));
+    const store = createAuthStore(createGatewayClient("http://gateway.test"));
+    await store.login("student_test@example.invalid", "test-only-password"); offline = true;
+    expect(await store.ensureCurrentUser()).toBe(false); expect(store.state.status).toBe("authenticated");
+    expect(store.state.failure?.kind).toBe("network");
+    const controller = new AbortController(); controller.abort();
+    expect(await store.ensureCurrentUser(controller.signal)).toBe(false); expect(store.state.currentUser?.id).toBe(user(["STUDENT"], []).id);
+  });
   it("forwards a server-issued CAPTCHA with password login", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -195,6 +225,12 @@ describe("shared authentication store", () => {
 });
 
 describe("post-login routing", () => {
+  it("lets all authenticated identities enter the unique inbox and preserves its deep link", () => {
+    for (const identity of [user(["STUDENT"], ["learning:access"]), user(["ADMIN"], ["administration:access"])]) {
+      expect(selectPostLoginDestination(identity, "/notifications?page=2", urls)).toMatchObject({ kind: "target", target: { access: "account", href: "http://student.test/notifications?page=2" } });
+    }
+    expect(resolveInternalRedirect("/notifications/https://external.invalid", urls)).toBeNull();
+  });
   it.each([
     ["STUDENT", "learning:access", "http://student.test/my-learning"],
     ["TEACHER", "teaching:access", "http://teacher.test/teacher/courses"],

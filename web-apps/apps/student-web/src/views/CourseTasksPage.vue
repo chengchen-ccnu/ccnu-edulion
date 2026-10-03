@@ -6,17 +6,24 @@
  */
 import { GatewayRequestError } from "@edu/api-client";
 import type { AssessmentGradingStatus, AssessmentSubmissionStatus, AssessmentTimeState, LearnerCourseTaskPage,
-  LearnerCourseTaskSummary } from "@edu/api-client";
+  LearnerCourseTaskSummary, LearnerCourseTask } from "@edu/api-client";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { studentAssessmentApi } from "../assessment-api";
+import { operationsApi } from "../operations-api";
+import { isUuid, readAfterRender } from "../notification-target";
+import { usePortalFailure } from "../portal-state";
+import { authStore } from "../auth";
 
 const route = useRoute();
 const router = useRouter();
 const data = ref<LearnerCourseTaskPage | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const linkedTask = ref<LearnerCourseTask | null>(null);
+const landingFailure = usePortalFailure(), landingError = landingFailure.error;
+let landingController: AbortController | null = null;
 let controller: AbortController | null = null;
 let loadedScope = "";
 
@@ -26,7 +33,23 @@ const size = computed(() => positive(route.query.size, 20));
 const isPractice = computed(() => route.query.type === "PRACTICE");
 
 watch(() => [route.params.courseId, route.query.page, route.query.size, route.query.type], load, { immediate: true });
-onBeforeUnmount(() => controller?.abort());
+watch([() => route.params.courseId, () => route.query.notificationId, () => authStore.state.currentUser?.id], loadLinkedTask, { immediate: true });
+onBeforeUnmount(() => { controller?.abort(); landingController?.abort(); });
+
+/** 消息定位的任务可在当前分页之外；单条真实授权详情成功后再标已读，不遍历全课程任务。 */
+async function loadLinkedTask() {
+  landingController?.abort(); linkedTask.value = null; landingError.value = "";
+  if (!isUuid(route.query.notificationId) || !landingFailure.allowed()) return;
+  const active = new AbortController(); landingController = active;
+  try {
+    const target = await operationsApi.target(route.query.notificationId, active.signal);
+    if (target.targetType !== "COURSE_TASK" || target.courseId !== courseId.value) throw new Error("TARGET_MISMATCH");
+    const detail = await studentAssessmentApi.courseTask(courseId.value, target.targetId, undefined, active.signal);
+    if (active.signal.aborted) return;
+    linkedTask.value = detail;
+    await readAfterRender(route.query.notificationId, target, active.signal);
+  } catch (error) { if (!active.signal.aborted) { landingFailure.fail(error); if ([401,403,404].includes((error as { status?: number }).status ?? 0)) linkedTask.value = null; } }
+}
 
 async function load() {
   controller?.abort();
@@ -49,7 +72,7 @@ async function load() {
   }
 }
 
-async function openTask(task: LearnerCourseTaskSummary) {
+async function openTask(task: LearnerCourseTaskSummary | LearnerCourseTask) {
   if (task.finalAttempt && task.finalAttempt.status !== "DRAFT"
       && (task.attemptsUsed >= task.maxAttempts || task.timeState === "CLOSED")) {
     await router.push({ path: `/learn/${courseId.value}/tasks/${task.id}/result`,
@@ -62,7 +85,7 @@ async function openTask(task: LearnerCourseTaskSummary) {
   }
 }
 
-function taskActionLabel(task: LearnerCourseTaskSummary) {
+function taskActionLabel(task: LearnerCourseTaskSummary | LearnerCourseTask) {
   if (task.finalAttempt && task.finalAttempt.status !== "DRAFT"
       && (task.attemptsUsed >= task.maxAttempts || task.timeState === "CLOSED")) return "查看最后结果";
   if (task.timeState === "OPEN" || task.timeState === "LATE_WINDOW") {
@@ -73,7 +96,7 @@ function taskActionLabel(task: LearnerCourseTaskSummary) {
   return "已关闭";
 }
 
-function canOpen(task: LearnerCourseTaskSummary) {
+function canOpen(task: LearnerCourseTaskSummary | LearnerCourseTask) {
   return (task.timeState === "OPEN" || task.timeState === "LATE_WINDOW")
     || Boolean(task.finalAttempt && task.finalAttempt.status !== "DRAFT"
       && (task.attemptsUsed >= task.maxAttempts || task.timeState === "CLOSED"));
@@ -120,6 +143,8 @@ function messageFor(error: unknown) {
         <p>{{ isPractice ? "只展示教师为当前课程发布且本人有权访问的练习。" : "仅展示本人应交的作业与考试；开放时间、截止裁决和可执行操作均以服务端返回为准。" }}</p></div>
       <RouterLink class="button button--quiet" :to="`/courses/${courseId}`">返回课程详情</RouterLink>
     </header>
+    <p v-if="landingError" class="feedback feedback--warning" role="alert">{{ landingError }} <button @click="loadLinkedTask">重试消息目标</button></p>
+    <article v-if="linkedTask" class="linked-task-notice"><span class="section-kicker">消息中的课程任务</span><h3>{{ linkedTask.title }}</h3><p>{{ timeLabels[linkedTask.timeState] }} · {{ submissionLabels[linkedTask.submissionStatus] }}</p><button class="button button--primary" :disabled="!canOpen(linkedTask)" @click="openTask(linkedTask)">{{ taskActionLabel(linkedTask) }}</button></article>
     <p v-if="errorMessage" class="feedback feedback--error" role="alert">{{ errorMessage }} <button type="button" @click="load">重试</button></p>
     <div v-if="loading && !data" class="practice-loading" role="status">正在读取课程任务…</div>
     <section v-else-if="data?.items.length" class="course-task-list" aria-label="课程任务列表">

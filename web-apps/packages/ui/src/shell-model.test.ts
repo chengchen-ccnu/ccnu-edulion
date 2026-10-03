@@ -9,19 +9,17 @@ describe("shared application shell contract", () => {
     { authenticated: true, accountLabel: "测试账号", loginHref: "/login", workspaceLabel: "学习端" },
     { authenticated: true, accountLabel: "多工作台账号", loginHref: "/login", workspaceHref: "/workspaces" }
   ])("keeps notification, workspace and account tools in a stable order", input => {
-    expect(buildAccountTools(input).map(item => item.id)).toEqual(["notifications", "workspace", "account"]);
+    expect(buildAccountTools(input).map(item => item.id)).toEqual(["workspace", "account"]);
   });
 
-  it("does not make the unfinished notification slot navigable", () => {
-    const notification = buildAccountTools({ authenticated: false, loginHref: "/login" })[0];
-
-    expect(notification).toMatchObject({ kind: "disabled", statusLabel: "建设中" });
-    expect(notification).not.toHaveProperty("href");
+  it("places messages only in the authenticated avatar menu with unknown counts preserved", () => {
+    const account = buildAccountTools({ authenticated: true, loginHref: "/login", notificationsHref: "http://localhost:5173/notifications", unreadCount: null })[1];
+    expect(account.menuItems?.[0]).toMatchObject({ id: "notifications", kind: "link", href: "http://localhost:5173/notifications", badge: "…" });
   });
 
   it("uses the same account slot for anonymous login and an authenticated account menu", () => {
-    const anonymous = buildAccountTools({ authenticated: false, loginHref: "/login" })[2];
-    const authenticated = buildAccountTools({ authenticated: true, accountLabel: "测试账号", loginHref: "/login" })[2];
+    const anonymous = buildAccountTools({ authenticated: false, loginHref: "/login" })[1];
+    const authenticated = buildAccountTools({ authenticated: true, accountLabel: "测试账号", loginHref: "/login" })[1];
 
     expect(anonymous).toMatchObject({ id: "account", kind: "link", href: "/login", statusLabel: "登录" });
     expect(authenticated).toMatchObject({ id: "account", kind: "menu", statusLabel: "测试账号" });
@@ -35,7 +33,7 @@ describe("shared application shell contract", () => {
 
   it("enables the existing profile menu item without changing account-tool order", () => {
     const account = buildAccountTools({ authenticated: true, accountLabel: "测试账号",
-      loginHref: "/login", profileHref: "/profile" })[2];
+      loginHref: "/login", profileHref: "/profile" })[1];
 
     expect(account.menuItems?.[0]).toEqual({ id: "profile", label: "个人中心", kind: "link", href: "/profile" });
     expect(account.menuItems?.map(item => item.id)).toEqual(["profile", "preferences", "logout"]);

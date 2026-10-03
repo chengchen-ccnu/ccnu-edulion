@@ -7,6 +7,7 @@ import type { Router } from "vue-router";
 export { default as AccessDeniedPage } from "./AccessDeniedPage.vue";
 export { default as AuthLoginForm } from "./AuthLoginForm.vue";
 export { default as WorkspaceChooser } from "./WorkspaceChooser.vue";
+export { useNotificationCounts, invalidateNotificationCounts } from "./notification-counts";
 
 export const LOGIN_ROUTE_NAME = "login";
 export const CURRENT_USER_QUERY_KEY = ["current-user"] as const;
@@ -41,7 +42,8 @@ export interface AuthStore {
   /** 接受身份绑定后服务端签发的新访问令牌，不把令牌暴露给页面组件。 */
   acceptLoginResponse(response: LoginResponse): Promise<boolean>;
   restore(): Promise<boolean>;
-  ensureCurrentUser(): Promise<boolean>;
+  /** 重新读取真实账号能力；离页取消不替换快照，网络/服务故障不误报注销。 */
+  ensureCurrentUser(signal?: AbortSignal): Promise<boolean>;
   /** 始终清理本地内存；返回值说明服务端是否确认撤销当前 Refresh Session。 */
   logout(): Promise<boolean>;
   authorizedRequest<T extends { response: Response }>(request: (authorization: string) => Promise<T>): Promise<T>;
@@ -66,7 +68,17 @@ export interface WorkspaceLink {
 }
 
 /** 通过安全白名单解析出的公共目标或受保护工作台目标。 */
-export type InternalRedirect = PublicInternalRedirect | WorkspaceInternalRedirect;
+export type InternalRedirect = PublicInternalRedirect | WorkspaceInternalRedirect | AccountInternalRedirect;
+
+/** 登录账号公共工具页不绑定学习或教学能力，管理员消息也进入同一学生端物理页面。 */
+export interface AccountInternalRedirect {
+  access: "account";
+  id: "student";
+  label: "账号";
+  path: string;
+  requestedPath: string;
+  href: string;
+}
 
 /** 无需任何角色或权限即可到达的站内 redirect。 */
 export interface PublicInternalRedirect {
@@ -107,7 +119,7 @@ const PUBLIC_TARGETS: readonly PublicTargetDefinition[] = [
     id: "student",
     label: "课程中心",
     path: "/courses",
-    accepts: path => path === "/courses" || /^\/courses\/[0-9A-Za-z-]+$/.test(path)
+    accepts: path => path === "/" || path === "/courses" || /^\/courses\/[0-9A-Za-z-]+$/.test(path)
   }
 ];
 
@@ -184,6 +196,10 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
   }
   if (parsed.origin !== "https://platform.invalid") return null;
   const requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  if (["/notifications", "/apply-teacher", "/profile", "/profile/security"].includes(parsed.pathname)) {
+    return { access: "account", id: "student", label: "账号", path: requestedPath, requestedPath,
+      href: new URL(requestedPath, `${urls.student}/`).toString() };
+  }
   const publicTarget = PUBLIC_TARGETS.find(item => item.accepts(parsed.pathname));
   if (publicTarget) {
     return { access: "public", id: publicTarget.id, label: publicTarget.label, path: requestedPath, requestedPath,
@@ -216,7 +232,7 @@ export function selectPostLoginDestination(user: CurrentUser, redirect?: string,
   const workspaces = availableWorkspaces(user, urls);
   const safeRedirect = resolveInternalRedirect(redirect, urls);
   if (safeRedirect) {
-    return safeRedirect.access === "public" || userCanAccess(user, safeRedirect)
+    return safeRedirect.access === "public" || safeRedirect.access === "account" || userCanAccess(user, safeRedirect)
       ? { kind: "target", target: safeRedirect }
       : { kind: "forbidden", workspaces };
   }
@@ -294,28 +310,34 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
     }
   }
 
-  async function ensureCurrentUser(): Promise<boolean> {
+  async function ensureCurrentUser(signal?: AbortSignal): Promise<boolean> {
     state.loading = true;
     state.failure = null;
     try {
       if (!accessToken && !(await refreshAccessToken())) return false;
-      return await fetchCurrentUser(true);
+      if (signal?.aborted) return false;
+      return await fetchCurrentUser(true, signal);
     } finally {
       state.loading = false;
     }
   }
 
-  async function fetchCurrentUser(allowOneRefresh: boolean): Promise<boolean> {
+  /** 查询当前权限，401最多刷新一次；取消、退出或换令牌后丢弃旧响应，避免恢复上一账号。 */
+  async function fetchCurrentUser(allowOneRefresh: boolean, signal?: AbortSignal): Promise<boolean> {
     if (!accessToken) return false;
+    let requestToken = accessToken;
     try {
       let result = await client.GET("/api/v1/users/me", {
-        headers: { Authorization: `Bearer ${accessToken}` }
+        headers: { Authorization: `Bearer ${requestToken}` }, signal
       });
+      if (signal?.aborted || accessToken !== requestToken) return false;
       if (result.response.status === 401 && allowOneRefresh && await refreshAccessToken()) {
+        requestToken = accessToken!;
         result = await client.GET("/api/v1/users/me", {
-          headers: { Authorization: `Bearer ${accessToken}` }
+          headers: { Authorization: `Bearer ${requestToken}` }, signal
         });
       }
+      if (signal?.aborted || accessToken !== requestToken) return false;
       if (result.error || !result.data) {
         failFromResponse(result.response.status, result.error, result.response.headers);
         return false;
@@ -324,7 +346,7 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
       state.status = "authenticated";
       return true;
     } catch {
-      setAnonymous(networkFailure());
+      if (!signal?.aborted) state.failure = networkFailure();
       return false;
     }
   }
@@ -341,7 +363,7 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
         accessToken = result.data.accessToken;
         return true;
       } catch {
-        setAnonymous(networkFailure());
+        state.failure = networkFailure();
         return false;
       } finally {
         refreshInFlight = null;
@@ -398,8 +420,10 @@ export function createAuthStore(client: GatewayClient = createGatewayClient()): 
       : status === 403 ? "forbidden"
       : status === 429 ? "rate-limited" : "unexpected";
     const fieldErrors = Object.fromEntries((error?.fieldErrors ?? []).map(item => [item.field, item.reason]));
-    setAnonymous({ kind, code: error?.code, message: error?.message ?? "请求失败，请稍后重试", fieldErrors,
-      retryAfter: headers.get("Retry-After") ?? undefined });
+    const failure = { kind, code: error?.code, message: error?.message ?? "请求失败，请稍后重试", fieldErrors,
+      retryAfter: headers.get("Retry-After") ?? undefined };
+    if (status >= 500 || status === 429) state.failure = failure;
+    else setAnonymous(failure);
   }
 
   function setAnonymous(failure: AuthFailure): void {
