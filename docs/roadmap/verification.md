@@ -7,7 +7,7 @@
 - 真实In-app Browser/六服务/MySQL/Redis/Rabbit验证匿名NEW《线性代数》、分类、继续学习部分故障、23条消息分页/刷新/返回、任务与真实驳回落地后普通已读、公告纯文本/深链焦点/真实改版409与第二次明确确认、全部已读剩余20公告、三端唯一消息链接及管理员空箱、真实撤权协调APPLIED后通用暂停状态。360/768/1440无document横向溢出，Enter/Escape与确认焦点通过。
 - 仅本轮Operation连接未监听Redis端口验证UNAVAILABLE隔离；恢复后停止本轮Learning验证503/未知角标、不假空；停止本轮Gateway验证offline手动重试。401/403/404/422/429、撤回/退课、失效封面、真实权限有无、请求取消/身份切换/退出竞争由组件/认证测试覆盖；申请快照替换重读循环经真实浏览器发现并修复。真实批准/OSS上传/课程恢复本轮未重跑，未伪造批准事实，详见独立交付覆盖限制。
 - 没有新库/表/迁移。dev临时三账号、一课/版本/章节/课时、报名/区间、21公告、一任务、一待审轮次；真实API产生通知、审核决定、撤权、Outbox及派生事实。停本轮服务后按UUID/eventId精确清理，临时会话缓存EXISTS0；账号恢复4、临时课/任务/通知/热点0、手工课程1、题库1017、Learning历史PUBLISHED5734/FAILED6896/PENDING0。未Seed/重放FAILED/改人工课/改题库/建OSS对象/发邮件/purge或FLUSHDB；个人local.env未修改，本轮监听和浏览器页已结束。
-- 中文注释人工覆盖确认/权限/幂等/有限重试/生命周期和脚本；生成代码未手改。待Ready PR与总控验收，不自行合并；见 [独立交付](../delivery/T17A-student-home-notifications.md)。
+- 中文注释人工覆盖确认/权限/幂等/有限重试/生命周期和脚本；生成代码未手改。实现提交d67ec96、独立git push origin HEAD成功；[Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86)创建并附加、OPEN/非Draft，待总控验收，不自行合并。CI以PR最新HEAD为准，交接更新时仍运行；见 [独立交付](../delivery/T17A-student-home-notifications.md)。
 
 ## 2026-10-03 总控独立验收合并 T16A 与 T17A 开工准备
 

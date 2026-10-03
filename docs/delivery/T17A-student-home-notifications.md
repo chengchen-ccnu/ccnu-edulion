@@ -1,6 +1,6 @@
 # T17A 学生首页、课程公告与消息前端
 
-2026-10-03。实施分支 `codex/t17a-student-home-notifications`，保留准备提交 `412709e`，未新建/重置分支。状态：实现及本机验收完成，待总控验收；不自行合并。PR与实现提交在创建后补入本记录。
+2026-10-03。实施分支 `codex/t17a-student-home-notifications`，保留准备提交 `412709e`，未新建/重置分支。实现提交 `d67ec964bd712a3290e696a90c51d45271f2406d`；独立 `git push origin HEAD` 已执行。[Ready PR #86](https://github.com/chengchen-ccnu/ccnu-edulion/pull/86) 已创建并附加，OPEN/非Draft、base main。状态：实现及本机验收完成，待总控验收；不自行合并。CI最终结果以PR最新HEAD为准，交接记录更新时尚在运行。
 
 ## 目标与边界
 
