@@ -36,35 +36,51 @@ let loadedLocation = "";
 let readController: AbortController | undefined; let auditController: AbortController | undefined;
 let writeController: AbortController | undefined; let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
 const cooling = ref(false);
-let command: { signature: string; id: string; attempts: number } | undefined;
+/** 内存中的逻辑命令快照：重试复用原 ID、版本和输入，不能被刷新后的列表事实或草稿覆盖。 */
+interface WriteCommand {
+  signature: string; id: string; attempts: number;
+  operation: "create" | "update" | "withdraw";
+  courseId: string; announcementId: string; revision: number; title: string; body: string;
+  retryable: boolean;
+}
+const command = ref<WriteCommand | null>(null);
+// dirty 表示编辑变更，busy 表示请求进行中，unresolved 表示曾发送但结果未决，三者独立保护离页。
+const unresolved = ref(false);
 const selected = computed(() => list.value?.items.find(item => item.id === selectedId.value));
 const canTeach = computed(() => authStore.state.currentUser?.roles.includes("TEACHER")
   && authStore.state.currentUser.permissions.includes("teaching:access"));
 const writable = computed(() => canTeach.value && !denied.value && !courseError.value
   && course.value?.publicationStatus === "PUBLISHED");
 const editable = computed(() => panel.value === "create" || (panel.value === "edit" && selected.value?.status === "ACTIVE"));
-const canSend = computed(() => writable.value && !loading.value && !busy.value && !cooling.value && !conflict.value);
+const canSend = computed(() => writable.value && !loading.value && !busy.value && !cooling.value && !conflict.value && !unresolved.value);
+const canRetry = computed(() => unresolved.value && command.value?.retryable && command.value.attempts < 3
+  && writable.value && !loading.value && !busy.value && !cooling.value && !conflict.value);
 const pages = computed(() => Math.max(1, Math.ceil((list.value?.total ?? 0) / 20)));
 const auditPages = computed(() => Math.max(1, Math.ceil((audit.value?.total ?? 0) / 20)));
 const returnTarget = computed(() => route.query.from === "edit" || route.query.from === "curriculum"
   ? { name: `teacher-course-${route.query.from}`, params: { courseId: courseId.value } }
   : { name: "teacher-courses", query: { page: String(pageNumber(route.query.coursePage)) } });
 
-/** 只记录内存草稿；任一输入或版本变化开始新命令，禁止把已使用的幂等 ID 配给另一份正文。 */
+/** 只记录内存草稿；未知结果期间冻结命令快照，明确结束未决命令后输入变化才开始新命令。 */
 watch(() => JSON.stringify(draft), value => {
   dirty.value = editable.value && value !== baseline;
-  command = undefined; fields.value = {}; writeError.value = "";
+  if (!unresolved.value) { command.value = null; fields.value = {}; writeError.value = ""; }
 }, { flush: "sync" });
 
 function resetDraft(item?: CourseAnnouncement) {
   Object.assign(draft, { title: item?.title ?? "", body: item?.body ?? "", revision: item?.revision ?? 0 });
-  baseline = JSON.stringify(draft); dirty.value = false; command = undefined;
+  baseline = JSON.stringify(draft); dirty.value = false;
+  if (!unresolved.value) command.value = null;
   fields.value = {}; writeError.value = ""; conflict.value = false; withdrawConfirm.value = false;
 }
 /** 授权失败清除所有受保护投影，避免并发成功响应重新显示旧身份的正文；暂停只关闭写入。 */
 function clearProtected() {
   readController?.abort(); auditController?.abort(); writeController?.abort();
   course.value = null; list.value = null; audit.value = null;
+  // 授权或身份变化立即清除私有快照并禁止重试；仅留下未决标记、ID 和次数供用户确认放弃。
+  if (unresolved.value && command.value) {
+    command.value.title = ""; command.value.body = ""; command.value.signature = ""; command.value.retryable = false;
+  }
   resetDraft(); initialized = ""; denied.value = true;
   loading.value = false; auditLoading.value = false; busy.value = false;
 }
@@ -164,7 +180,7 @@ function validate(): boolean {
   return Object.keys(fields.value).length === 0;
 }
 
-/** 一次逻辑命令最多手动发送三次。未知结果保留 ID 和草稿；409 更新事实但不自动覆盖或重提正文。 */
+/** 从当前已授权的编辑/撤回输入创建命令；未决状态只能从独立入口重试原快照。 */
 async function send(kind: "save" | "withdraw") {
   if (!canSend.value || kind === "save" && (!editable.value || !validate())) return;
   const item = selected.value;
@@ -172,17 +188,32 @@ async function send(kind: "save" | "withdraw") {
   const operation = kind === "withdraw" ? "withdraw" : panel.value === "create" ? "create" : "update";
   const revision = kind === "withdraw" ? item!.revision : draft.revision;
   const signature = JSON.stringify([courseId.value, operation, item?.id, revision, draft.title, draft.body]);
-  if (!command || command.signature !== signature) command = { signature, id: crypto.randomUUID(), attempts: 0 };
-  if (command.attempts >= 3) { writeError.value = "原命令已尝试三次。请刷新列表核对是否已成功；不要重复发布同一公告。"; return; }
-  command.attempts++; const requestId = command.id;
+  if (!command.value || command.value.signature !== signature) command.value = {
+    signature, id: crypto.randomUUID(), attempts: 0, operation, courseId: courseId.value, announcementId: item?.id ?? "",
+    revision, title: draft.title, body: draft.body, retryable: true
+  };
+  await executeCommand(command.value);
+}
+
+/** 用户手动重试未决写入，最多三次且复用原 ID/revision/正文；权限、冷却和冲突仍禁止发送。 */
+async function retryCommand() {
+  if (canRetry.value && command.value) await executeCommand(command.value);
+}
+
+/** 执行固定快照并记录有限次数；后续明确失败不能证明先前未知请求未写入，必须保留未决状态。 */
+async function executeCommand(snapshot: WriteCommand) {
+  if (snapshot.attempts >= 3) { writeError.value = "原命令已尝试三次。请刷新列表核对是否已成功；不要重复发布同一公告。"; return; }
+  snapshot.attempts++;
+  const { operation, courseId: id, announcementId, revision, title, body } = snapshot;
+  const requestId = snapshot.id;
   writeController?.abort(); const controller = new AbortController(); writeController = controller;
   busy.value = true; writeError.value = ""; fields.value = {}; notice.value = "";
   try {
-    if (operation === "withdraw") await api.withdraw(courseId.value, item!.id, { clientRequestId: requestId, expectedRevision: revision }, controller.signal);
-    else if (operation === "create") await api.create(courseId.value, { clientRequestId: requestId, title: draft.title, body: draft.body }, controller.signal);
-    else await api.update(courseId.value, item!.id, { clientRequestId: requestId, expectedRevision: revision, title: draft.title, body: draft.body }, controller.signal);
+    if (operation === "withdraw") await api.withdraw(id, announcementId, { clientRequestId: requestId, expectedRevision: revision }, controller.signal);
+    else if (operation === "create") await api.create(id, { clientRequestId: requestId, title, body }, controller.signal);
+    else await api.update(id, announcementId, { clientRequestId: requestId, expectedRevision: revision, title, body }, controller.signal);
     if (controller.signal.aborted) return;
-    dirty.value = false; command = undefined; withdrawConfirm.value = false;
+    dirty.value = false; unresolved.value = false; command.value = null; withdrawConfirm.value = false;
     notice.value = operation === "withdraw" ? "公告已撤回，学生旧链接将不可读。" : "公告已立即发布，学生需要确认当前版本。";
     busy.value = false;
     if (panel.value !== "list") await navigate({ panel: undefined, announcementId: undefined, page: "1" });
@@ -193,18 +224,34 @@ async function send(kind: "save" | "withdraw") {
     if (error instanceof GatewayRequestError) fields.value = error.fieldErrors;
     if (isDenied(error)) { const message = writeError.value; clearProtected(); writeError.value = message; }
     else if (error instanceof GatewayRequestError && error.status === 409) {
-      conflict.value = true; withdrawConfirm.value = false; command = undefined;
+      conflict.value = true; withdrawConfirm.value = false;
+      if (!unresolved.value) command.value = null;
       await load();
       writeError.value = "课程状态或公告版本已变化。输入已保留；请核对最新内容，并明确采用新 revision 后再提交。";
     } else if (!(error instanceof GatewayRequestError) || error.status >= 500) {
+      unresolved.value = true;
       writeError.value += " 写入结果尚不确定：先刷新列表核对，重试会使用同一请求 ID。";
     }
   } finally { if (!controller.signal.aborted) busy.value = false; }
 }
 
-/** 浏览器刷新和路由离开都提示草稿或正在写入的命令；确认离开才取消请求，不持久化私有正文。 */
-function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || busy.value) { event.preventDefault(); event.returnValue = ""; } }
-function allowLeave() { return !(dirty.value || busy.value) || window.confirm("有未保存的公告或尚未确认的写入结果。确定离开并丢弃输入吗？"); }
+/** 用户已核对结果或确认放弃时结束未决命令；不把人工结束当作写入成功，也不清除编辑草稿。 */
+function endUnresolved(abandon: boolean) {
+  if (busy.value || !unresolved.value) return;
+  if (abandon && !window.confirm("写入可能已在服务端生效。确定放弃本次重试吗？放弃不会撤销已完成的写入。")) return;
+  unresolved.value = false; command.value = null; writeError.value = ""; fields.value = {};
+  withdrawConfirm.value = false;
+  notice.value = abandon ? "已放弃本次重试，请按服务端实际结果处理。" : "已结束本次重试，请按已核对的处理结果继续操作。";
+}
+
+/** 刷新只请求浏览器确认，不清除命令；取消路由离页保留 ID/次数，确认放弃才取消请求并释放提示。 */
+function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || busy.value || unresolved.value) { event.preventDefault(); event.returnValue = ""; } }
+function allowLeave() {
+  if (!(dirty.value || busy.value || unresolved.value)) return true;
+  if (!window.confirm("有未保存的公告或尚未确认的写入结果。确定离开并放弃输入及本次重试吗？已生效的写入不会撤销。")) return false;
+  writeController?.abort(); busy.value = false; dirty.value = false; unresolved.value = false; command.value = null;
+  return true;
+}
 onBeforeRouteLeave(allowLeave);
 onBeforeRouteUpdate((to, from) => to.fullPath === from.fullPath || allowLeave());
 window.addEventListener("beforeunload", beforeUnload);
@@ -212,7 +259,7 @@ watch(() => route.fullPath, () => { writeController?.abort(); busy.value = false
 watch([() => authStore.state.currentUser?.id, () => authStore.state.currentUser?.sessionVersion, canTeach], () => {
   clearProtected(); void load();
 });
-onBeforeUnmount(() => { clearProtected(); clearTimeout(cooldownTimer); window.removeEventListener("beforeunload", beforeUnload); });
+onBeforeUnmount(() => { clearProtected(); command.value = null; clearTimeout(cooldownTimer); window.removeEventListener("beforeunload", beforeUnload); });
 </script>
 
 <template>
@@ -228,6 +275,15 @@ onBeforeUnmount(() => { clearProtected(); clearTimeout(cooldownTimer); window.re
     <p v-if="courseError" class="feedback feedback--warning" role="alert">{{ courseError }}</p>
     <p v-else-if="course && !writable" class="feedback feedback--warning" role="status">仅已发布且未暂停的本人课程允许写入。当前课程{{ course.publicationStatus === 'DRAFT' ? '为草稿' : '已下架' }}；历史仍由服务端授权。</p>
     <p v-if="notice" class="feedback feedback--success" role="status">{{ notice }}</p>
+    <div v-if="unresolved" class="feedback feedback--warning" role="status">
+      <p>写入结果尚不确定。请先刷新列表核对；仅重试原命令，最多发送三次。离开或刷新页面仍需确认。</p>
+      <p v-if="command && command.attempts >= 3">原命令已尝试三次。请核对处理结果或确认放弃本次重试。</p>
+      <div class="announcement-actions">
+        <button type="button" :disabled="!canRetry" @click="retryCommand">重试原命令</button>
+        <button type="button" :disabled="busy || loading" @click="endUnresolved(false)">已核对处理结果，结束本次重试</button>
+        <button type="button" :disabled="busy" @click="endUnresolved(true)">放弃本次重试</button>
+      </div>
+    </div>
     <p v-if="loading" role="status">正在读取课程状态和公告…</p>
     <p v-if="listError" class="feedback feedback--error" role="alert">{{ listError }} <button :disabled="loading || cooling" type="button" @click="load">重试列表</button></p>
     <div class="announcement-layout">
@@ -255,20 +311,20 @@ onBeforeUnmount(() => { clearProtected(); clearTimeout(cooldownTimer); window.re
           <h3>{{ panel === 'create' ? '立即发布纯文本公告' : `改版 · 基于 revision ${draft.revision}` }}</h3>
           <p>不支持附件、富文本或定时发布。改版后学生需重新确认。</p>
           <label class="editor-field" for="announcement-title">标题（最多 120 字符）
-            <input id="announcement-title" v-model="draft.title" maxlength="120" :disabled="loading || busy || !writable || !editable" :aria-invalid="!!fields.title" :aria-describedby="fields.title ? 'announcement-title-error' : undefined">
+            <input id="announcement-title" v-model="draft.title" maxlength="120" :disabled="loading || busy || unresolved || !writable || !editable" :aria-invalid="!!fields.title" :aria-describedby="fields.title ? 'announcement-title-error' : undefined">
           </label><p v-if="fields.title" id="announcement-title-error" class="feedback--error">{{ fields.title }}</p>
           <label class="editor-field" for="announcement-body">正文（最多 20000 字符）
-            <textarea id="announcement-body" v-model="draft.body" maxlength="20000" rows="10" :disabled="loading || busy || !writable || !editable" :aria-invalid="!!fields.body" :aria-describedby="fields.body ? 'announcement-body-error' : undefined" />
+            <textarea id="announcement-body" v-model="draft.body" maxlength="20000" rows="10" :disabled="loading || busy || unresolved || !writable || !editable" :aria-invalid="!!fields.body" :aria-describedby="fields.body ? 'announcement-body-error' : undefined" />
           </label><p v-if="fields.body" id="announcement-body-error" class="feedback--error">{{ fields.body }}</p>
           <p v-if="dirty" role="status">有尚未保存的公告输入。</p>
           <div v-if="conflict && panel === 'create'" class="feedback feedback--warning">
             <p>请先核对当前课程是否可写，输入仍保留；不会自动再次发布。</p>
-            <button type="button" :disabled="!writable || loading || busy" @click="conflict = false">已核对课程状态，允许重新提交</button>
+            <button type="button" :disabled="!writable || loading || busy || unresolved" @click="conflict = false">已核对课程状态，允许重新提交</button>
           </div>
           <div v-if="conflict && selected" class="feedback feedback--warning">
             <p>当前服务端 revision {{ selected.revision }} · {{ selected.status === 'ACTIVE' ? '已发布' : '已撤回' }}</p>
             <strong>{{ selected.title }}</strong><p class="announcement-body" tabindex="0" aria-label="当前服务端正文">{{ selected.body }}</p>
-            <button v-if="selected.status === 'ACTIVE'" type="button" :disabled="!writable || loading || busy" @click="adoptRevision">采用最新 revision，保留我的输入</button>
+            <button v-if="selected.status === 'ACTIVE'" type="button" :disabled="!writable || loading || busy || unresolved" @click="adoptRevision">采用最新 revision，保留我的输入</button>
           </div>
           <p v-if="selected?.status === 'WITHDRAWN'">公告已撤回，只能查看历史；不能改版或恢复。你的未保存输入仍保留。</p>
           <div class="announcement-actions"><button class="button button--primary" type="submit" :disabled="!canSend || !editable">{{ busy ? '提交中…' : panel === 'create' ? '确认立即发布' : '确认发布改版' }}</button>
@@ -281,7 +337,7 @@ onBeforeUnmount(() => { clearProtected(); clearTimeout(cooldownTimer); window.re
           <div v-else role="group" aria-label="二次确认撤回"><p>确定立即撤回？此处不能恢复已撤回公告。</p>
             <button class="button button--danger" type="button" :disabled="!canSend" @click="send('withdraw')">确认撤回</button>
             <button type="button" :disabled="busy" @click="withdrawConfirm = false">取消撤回</button></div>
-          <button v-if="conflict" type="button" :disabled="!writable || loading || busy" @click="conflict = false; withdrawConfirm = false">已核对最新版本，重新选择撤回</button>
+          <button v-if="conflict" type="button" :disabled="!writable || loading || busy || unresolved" @click="conflict = false; withdrawConfirm = false">已核对最新版本，重新选择撤回</button>
         </div>
         <div v-if="panel === 'audit' && selected">
           <h3>只读审计：{{ selected.title }}</h3><p v-if="auditLoading" role="status">正在读取历史版本…</p>

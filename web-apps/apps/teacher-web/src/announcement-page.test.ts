@@ -77,13 +77,16 @@ describe("teacher course announcements", () => {
     await vi.waitFor(() => expect(button("刷新").disabled).toBe(false));
     expect((host.querySelector("input") as HTMLInputElement).value).toBe("输入不应被刷新覆盖");
   });
-  /** 断网未知结果不生成第二个逻辑发布；输入变化后必须改用新 ID，避免命令幂等与正文错配。 */
+  /** 未决发布只能重发原命令；明确放弃后才允许变更输入并开始新的逻辑发布。 */
   it("keeps a stable ID for bounded uncertain retries and gives changed input a new ID", async () => {
     api.create.mockRejectedValue(new TypeError("offline"));
     await mount("?panel=create"); await input("我的公告");
-    for (let n = 0; n < 3; n++) { await submit(); await vi.waitFor(() => expect(button("确认立即发布").disabled).toBe(false)); }
+    await submit(); await vi.waitFor(() => expect(button("重试原命令")?.disabled).toBe(false));
+    for (let n = 0; n < 2; n++) { button("重试原命令").click(); await vi.waitFor(() => expect(api.create).toHaveBeenCalledTimes(n + 2)); await nextTick(); }
     const ids = api.create.mock.calls.map(call => call[1].clientRequestId); expect(new Set(ids).size).toBe(1);
+    expect(button("重试原命令").disabled).toBe(true);
     await submit(); expect(api.create).toHaveBeenCalledTimes(3); expect(host.textContent).toContain("原命令已尝试三次");
+    button("放弃本次重试").click(); await nextTick();
     await input("更改标题"); await submit(); await vi.waitFor(() => expect(api.create).toHaveBeenCalledTimes(4));
     expect(api.create.mock.calls[3][1].clientRequestId).not.toBe(ids[0]);
   });
@@ -113,6 +116,101 @@ describe("teacher course announcements", () => {
     button("确认撤回").click(); await vi.waitFor(() => expect(api.withdraw).toHaveBeenCalledTimes(1));
     expect(api.withdraw.mock.calls[0][2]).toMatchObject({ expectedRevision: 1 });
     await vi.waitFor(() => expect(button("改版")).toBeUndefined()); expect(host.textContent).toContain("已撤回"); expect(button("选择撤回")).toBeUndefined();
+  });
+  /** 撤回没有编辑草稿。网络/5xx 之后取消刷新或路由离页仍须保留原命令，列表刷新不能替用户判断成功。 */
+  it.each(["offline", "503"])("guards uncertain withdrawal after %s and releases guards only after same-command success", async error => {
+    api.withdraw.mockRejectedValueOnce(error === "offline" ? new TypeError("offline") : failure(503));
+    const router = await mount(`?announcementId=${id}`);
+    button("撤回这条公告").click(); await nextTick(); button("确认撤回").click();
+    await vi.waitFor(() => expect(host.textContent).toContain("写入结果尚不确定"));
+    const original = api.withdraw.mock.calls[0][2]; const location = router.currentRoute.value.fullPath;
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses?page=3");
+    expect(router.currentRoute.value.fullPath).toBe(location);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push(`/teacher/courses/course/announcements?page=2`);
+    expect(router.currentRoute.value.fullPath).toBe(location); expect(api.list).toHaveBeenCalledTimes(1);
+    api.list.mockResolvedValue({ ...page(), items: [item(2, "WITHDRAWN")] }); button("刷新").click(); await nextTick();
+    await vi.waitFor(() => expect(button("刷新").disabled).toBe(false));
+    expect(host.textContent).toContain("写入结果尚不确定");
+    button("重试原命令").click();
+    await vi.waitFor(() => expect(host.textContent).toContain("公告已撤回，学生旧链接将不可读"));
+    expect(api.withdraw.mock.calls[1][2]).toEqual(original); expect(original.expectedRevision).toBe(1);
+    const after = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(after); expect(after.defaultPrevented).toBe(false);
+    const confirmations = vi.mocked(window.confirm).mock.calls.length;
+    await router.push("/teacher/courses?page=3"); expect(window.confirm).toHaveBeenCalledTimes(confirmations);
+  });
+  it("keeps the withdrawal retry budget when leaving or abandonment is cancelled, and permits confirmed abandonment", async () => {
+    api.withdraw.mockRejectedValue(new TypeError("offline")); const router = await mount(`?announcementId=${id}`);
+    button("撤回这条公告").click(); await nextTick(); button("确认撤回").click();
+    await vi.waitFor(() => expect(button("重试原命令")?.disabled).toBe(false));
+    for (let n = 0; n < 2; n++) {
+      vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses");
+      button("重试原命令").click(); await vi.waitFor(() => expect(api.withdraw).toHaveBeenCalledTimes(n + 2)); await nextTick();
+    }
+    expect(new Set(api.withdraw.mock.calls.map(call => call[2].clientRequestId)).size).toBe(1);
+    expect(button("重试原命令").disabled).toBe(true);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); button("放弃本次重试").click(); await nextTick();
+    expect(button("重试原命令").disabled).toBe(true); expect(host.textContent).toContain("原命令已尝试三次");
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses");
+    expect(router.currentRoute.value.name).toBe("teacher-course-announcements");
+    await router.push("/teacher/courses"); expect(router.currentRoute.value.name).toBe("teacher-courses");
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(false);
+    expect(api.withdraw).toHaveBeenCalledTimes(3);
+  });
+  it("allows explicit checked withdrawal outcome to end uncertainty without claiming write success", async () => {
+    api.withdraw.mockRejectedValue(new TypeError("offline")); const router = await mount(`?announcementId=${id}`);
+    button("撤回这条公告").click(); await nextTick(); button("确认撤回").click();
+    await vi.waitFor(() => expect(button("已核对处理结果，结束本次重试")).toBeDefined());
+    button("已核对处理结果，结束本次重试").click(); await nextTick();
+    expect(host.textContent).not.toContain("公告已撤回，学生旧链接将不可读");
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(false);
+    await router.push("/teacher/courses"); expect(window.confirm).not.toHaveBeenCalled();
+  });
+  /** 正文和标题均未修改时 dirty 为 false；未知改版仍保护离页，并以提交快照的 revision 重试。 */
+  it("guards an unchanged update and keeps its original revision across refresh and cancelled navigation", async () => {
+    api.update.mockRejectedValueOnce(failure(503)); const router = await mount(`?panel=edit&announcementId=${id}`);
+    await submit(); await vi.waitFor(() => expect(button("重试原命令")?.disabled).toBe(false));
+    expect(host.textContent).not.toContain("有尚未保存的公告输入");
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses");
+    expect(router.currentRoute.value.query.panel).toBe("edit");
+    api.list.mockResolvedValue(page(2)); button("刷新").click(); await nextTick(); await vi.waitFor(() => expect(button("刷新").disabled).toBe(false));
+    expect((host.querySelector("input") as HTMLInputElement).disabled).toBe(true);
+    button("重试原命令").click(); await vi.waitFor(() => expect(router.currentRoute.value.query.panel).toBeUndefined());
+    expect(api.update.mock.calls[1][2]).toEqual(api.update.mock.calls[0][2]); expect(api.update.mock.calls[1][2].expectedRevision).toBe(1);
+    const after = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(after); expect(after.defaultPrevented).toBe(false);
+  });
+  it("does not forget an earlier uncertain result when its retry gets a definite conflict", async () => {
+    api.update.mockRejectedValueOnce(new TypeError("offline")).mockRejectedValueOnce(failure(409));
+    const router = await mount(`?panel=edit&announcementId=${id}`); await submit();
+    await vi.waitFor(() => expect(button("重试原命令")?.disabled).toBe(false)); button("重试原命令").click();
+    await vi.waitFor(() => expect(host.textContent).toContain("明确采用新 revision"));
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses");
+    expect(router.currentRoute.value.query.panel).toBe("edit"); expect(button("采用最新 revision，保留我的输入").disabled).toBe(true);
+    button("已核对处理结果，结束本次重试").click(); await nextTick();
+    expect(button("采用最新 revision，保留我的输入").disabled).toBe(false);
+  });
+  it("ends uncertainty independently of an edited draft after explicit outcome checking", async () => {
+    api.update.mockRejectedValue(new TypeError("offline")); const router = await mount(`?panel=edit&announcementId=${id}`);
+    await input("保留尚未保存的改版"); await submit(); await vi.waitFor(() => expect(button("重试原命令")).toBeDefined());
+    button("已核对处理结果，结束本次重试").click(); await nextTick();
+    expect(button("重试原命令")).toBeUndefined(); expect((host.querySelector("input") as HTMLInputElement).value).toBe("保留尚未保存的改版");
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    vi.mocked(window.confirm).mockReturnValueOnce(false); await router.push("/teacher/courses");
+    expect(router.currentRoute.value.query.panel).toBe("edit");
+  });
+  it("retains uncertainty but removes private command content and retry authority after capability revocation", async () => {
+    api.update.mockRejectedValue(new TypeError("offline")); const router = await mount(`?panel=edit&announcementId=${id}`);
+    await submit(); await vi.waitFor(() => expect(button("重试原命令")?.disabled).toBe(false));
+    authStore.state.currentUser!.permissions = [];
+    await vi.waitFor(() => expect(host.textContent).toContain("管理员不能代发"));
+    expect(host.textContent).not.toContain("纯文本 <script>"); expect(host.querySelector("textarea")).toBeNull();
+    expect(button("重试原命令").disabled).toBe(true);
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    button("放弃本次重试").click(); await nextTick();
+    await router.push("/teacher/courses"); expect(router.currentRoute.value.name).toBe("teacher-courses");
+    expect(api.update).toHaveBeenCalledTimes(1);
   });
   it.each(["DRAFT", "UNPUBLISHED"])("allows history but disables writes for %s", async publicationStatus => {
     api.detail.mockResolvedValue({ title: "本人课程", publicationStatus }); await mount(`?panel=audit&announcementId=${id}`);
