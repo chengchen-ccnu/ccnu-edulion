@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 管理应用根壳固定渲染 T17C 规划侧栏；当前入口均为建设中且不可跳转，权限守卫仍保护直接深链接。
+ * 管理应用根壳固定渲染教师审核与账号权限侧栏；仅启用审核，权限守卫保护直接深链接。
  * 组件只处理账号退出副作用，不把管理角色判断下沉到共享 AppShell。
  */
 import { availableWorkspaces, buildUnifiedLoginUrl, buildWorkspaceChooserUrl } from "@edu/auth";
@@ -27,6 +27,7 @@ const accountTools = computed(() => buildAccountTools({
   workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined,
   workspaceLabel: authStore.state.status === "authenticated" ? "管理端" : undefined
 }));
+/** 调用既有退出流程后返回统一登录；共享认证清理身份，审核页监听身份变化清理私有资源。 */
 async function logout() {
   await authStore.logout();
   window.location.assign(loginUrl);

@@ -225,6 +225,13 @@ describe("shared authentication store", () => {
 });
 
 describe("post-login routing", () => {
+  it("restores only safe administrator review location and strips private query/hash", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const destination = resolveInternalRedirect(`/admin/teacher-review?page=2&status=REJECTED&order=OLDEST&applicationId=${id}&panel=history&exact=private%40example.invalid#secret`, urls);
+    expect(destination?.href).toBe(`http://admin.test/admin/teacher-review?page=2&status=REJECTED&order=OLDEST&applicationId=${id}&panel=history`);
+    expect(selectPostLoginDestination(user(["STUDENT"], ["learning:access"]), "/admin/teacher-review", urls).kind).toBe("forbidden");
+    expect(resolveInternalRedirect("/admin/users", urls)).toBeNull();
+  });
   it("restores the teacher announcement deep link after login and rejects admin substitution", () => {
     const target = "/teacher/courses/00000000-0000-4000-8000-000000000201/announcements?page=2&panel=audit";
     expect(selectPostLoginDestination(user(["TEACHER"], ["teaching:access"]), target, urls))
@@ -241,7 +248,7 @@ describe("post-login routing", () => {
   it.each([
     ["STUDENT", "learning:access", "http://student.test/my-learning"],
     ["TEACHER", "teaching:access", "http://teacher.test/teacher/courses"],
-    ["ADMIN", "administration:access", "http://admin.test/admin/dashboard"]
+    ["ADMIN", "administration:access", "http://admin.test/admin/teacher-review"]
   ] as const)("sends a single %s role directly to its workspace", (role, permission, href) => {
     const destination = selectPostLoginDestination(user([role], [permission]), undefined, urls);
     expect(destination).toMatchObject({ kind: "target", target: { href } });
@@ -260,7 +267,7 @@ describe("post-login routing", () => {
     const destination = selectPostLoginDestination(user(["STUDENT", "ADMIN"],
       ["learning:access", "administration:access"]), "/admin/reviews?status=pending", urls);
     expect(destination).toMatchObject({ kind: "target",
-      target: { href: "http://admin.test/admin/reviews?status=pending" } });
+      target: { href: "http://admin.test/admin/teacher-review" } });
   });
 
   it.each([

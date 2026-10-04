@@ -153,8 +153,8 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     label: "管理工作台",
     role: "ADMIN",
     permission: "administration:access",
-    path: "/admin/dashboard",
-    accepts: path => path === "/admin/dashboard" || path === "/admin/reviews"
+    path: "/admin/teacher-review",
+    accepts: path => ["/admin/teacher-review", "/admin/dashboard", "/admin/reviews"].includes(path)
   }
 ];
 
@@ -195,7 +195,17 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
     return null;
   }
   if (parsed.origin !== "https://platform.invalid") return null;
-  const requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  let requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // 管理审核回跳仅携带定位信息，精确身份/材料地址/正文和未知参数不能进入登录URL或历史。
+  if (["/admin/teacher-review", "/admin/dashboard", "/admin/reviews"].includes(parsed.pathname)) {
+    const safe = new URL("/admin/teacher-review", "https://platform.invalid");
+    for (const [key, pattern] of Object.entries({ page: /^[1-9]\d{0,4}$/, status: /^(SUBMITTED|UNDER_REVIEW|APPROVED|REJECTED)$/,
+      order: /^(NEWEST|OLDEST)$/, applicationId: /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i, panel: /^(detail|history)$/ })) {
+      const value = parsed.searchParams.get(key);
+      if (value && pattern.test(value) && (key !== "page" || Number(value) <= 50001)) safe.searchParams.set(key, value);
+    }
+    requestedPath = `${safe.pathname}${safe.search}`;
+  }
   if (["/notifications", "/apply-teacher", "/profile", "/profile/security"].includes(parsed.pathname)) {
     return { access: "account", id: "student", label: "账号", path: requestedPath, requestedPath,
       href: new URL(requestedPath, `${urls.student}/`).toString() };
