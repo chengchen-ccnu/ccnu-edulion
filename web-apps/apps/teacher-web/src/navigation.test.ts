@@ -11,6 +11,12 @@ const urls = {
 
 describe("teacher navigation", () => {
   const labels = ["课程中心", "工作台", "课程管理", "题库", "测评管理", "学情分析", "媒体中心"];
+  it("keeps announcements inside course management without activating construction slots", () => {
+    const items = buildTeacherNavigation("teacher-course-announcements", user(["TEACHER"], ["teaching:access"]), urls);
+    expect(items.map(item => item.label)).toEqual(labels);
+    expect(items.filter(item => item.current).map(item => item.label)).toEqual(["课程管理"]);
+    expect(items.filter(item => item.state === "coming-soon").map(item => item.label)).toEqual(["工作台", "媒体中心"]);
+  });
 
   it("keeps the frozen order and enables course center plus course management for a teacher", () => {
     const items = buildTeacherNavigation("teacher-courses", user(["TEACHER"], ["teaching:access"]), urls);

@@ -84,6 +84,10 @@ function messageFor(error: unknown, fallback: string): string {
       <div><span class="section-kicker">COURSE METADATA</span><h2>编辑基本信息</h2></div>
       <div class="version-stack"><strong>{{ course.version }}</strong><span>revision {{ course.revision }}</span></div>
     </header>
+    <nav class="editor-subnav" aria-label="课程编辑上下文"><strong>基本信息</strong>
+      <RouterLink :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">章节与课时</RouterLink>
+      <RouterLink :to="{ name: 'teacher-course-announcements', params: { courseId: course.id }, query: { from: 'edit' } }">课程公告</RouterLink>
+    </nav>
     <p v-if="course.publishedVersion && course.hasUnpublishedChanges" class="version-notice">
       正在编辑新版本 {{ course.draftVersion }}；当前线上 {{ course.publishedVersion }} 不会被直接覆盖。
     </p>

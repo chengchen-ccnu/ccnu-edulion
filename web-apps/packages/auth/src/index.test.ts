@@ -225,6 +225,13 @@ describe("shared authentication store", () => {
 });
 
 describe("post-login routing", () => {
+  it("restores the teacher announcement deep link after login and rejects admin substitution", () => {
+    const target = "/teacher/courses/00000000-0000-4000-8000-000000000201/announcements?page=2&panel=audit";
+    expect(selectPostLoginDestination(user(["TEACHER"], ["teaching:access"]), target, urls))
+      .toMatchObject({ kind: "target", target: { href: `http://teacher.test${target}` } });
+    expect(selectPostLoginDestination(user(["ADMIN"], ["administration:access"]), target, urls).kind).toBe("forbidden");
+    expect(resolveInternalRedirect("/teacher/courses/course/announcements/extra", urls)).toBeNull();
+  });
   it("lets all authenticated identities enter the unique inbox and preserves its deep link", () => {
     for (const identity of [user(["STUDENT"], ["learning:access"]), user(["ADMIN"], ["administration:access"])]) {
       expect(selectPostLoginDestination(identity, "/notifications?page=2", urls)).toMatchObject({ kind: "target", target: { access: "account", href: "http://student.test/notifications?page=2" } });

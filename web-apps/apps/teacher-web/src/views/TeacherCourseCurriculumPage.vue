@@ -431,6 +431,7 @@ function messageFor(error: unknown, fallback: string): string {
       <div class="version-stack"><strong>{{ course.version }}</strong><span>revision {{ course.revision }}</span></div></header>
     <div class="editor-subnav"><RouterLink :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">基本信息</RouterLink>
       <strong>章节与课时</strong><RouterLink :to="{ name: 'teacher-assessments', query: { courseId: course.id, panel: 'basic' } }">管理课程测评</RouterLink>
+      <RouterLink :to="{ name: 'teacher-course-announcements', params: { courseId: course.id }, query: { from: 'curriculum' } }">课程公告</RouterLink>
       <span>草稿显式保存；正文预览与学生端共用安全规则</span></div>
     <p v-if="course.publishedVersion && course.hasUnpublishedChanges" class="version-notice">当前线上版本为 {{ course.publishedVersion }}；发布 {{ course.draftVersion }} 前，学生端不会改变。</p>
     <p v-if="dirty" class="feedback feedback--warning" role="status">有尚未保存的修改。保存后才能发布或下架。</p>

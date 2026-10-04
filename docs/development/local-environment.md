@@ -828,3 +828,9 @@ Operation local启用热点Worker，MQ随既有Rabbit开关开启；复用加密
 `-OperationRedisPort 1`仅改变本轮Operation连接目标，可验证UNAVAILABLE而不关闭共享Redis；正常启动省略此选项。运行前请确认目标端口确实未监听。本轮没有改个人local.env；该临时选项不得写入持久配置。
 
 Fixture脚本`python scripts/t17a_browser_fixture.py create/cleanup`必须在`Invoke-WithLocalEnvironment.ps1 -ScriptBlock`内执行，依赖已有Python bcrypt、mysql和redis-cli。create需要调用者在进程中设置临时`T17A_FIXTURE_PASSWORD`，结束后清除；禁止明文持久化密码、启用Seed或覆盖已有账号。manifest只有UUID，cleanup只删本轮事实与缓存；详细范围及真实验证限制见 [T17A交付](../delivery/T17A-student-home-notifications.md)。
+
+## T17B.1 独立教师公告验收
+
+沿用上述六服务/三端环境启动脚本，独立Fixture位于忽略目录`.m2/t17b1-browser`，不复用T17A账号或课程。运行`Invoke-T17B1Fixture.ps1 -Action create/browser/settle/cleanup`：create创建4个合成账号、1门课程/报名和有界分页/审计样本；browser使用捆绑Playwright与本机Edge验证真实闭环及明确标记的浏览器故障注入；settle只读等待PENDING归零，再执行环境STOP和cleanup按UUID/eventId收口。已有manifest拒绝重复create，失败保留清单，cleanup可重跑。步骤与限制见[T17B.1交付](../delivery/T17B.1-teacher-course-announcements.md)。
+
+凭据仍通过`Invoke-WithLocalEnvironment.ps1`安全加载。额外随机Fixture密码仅以DPAPI保存在当前用户`.ccnu-edulion/t17b1-fixture.credential.clixml`，运行时环境变量`T17B1_FIXTURE_PASSWORD`只用于子进程，结束清除，cleanup删除该凭据。Token不落盘、不输出；`NODE_PATH`仅临时定位既有捆绑运行时并恢复原值。没有新增业务环境变量或修改个人local.env，故本任务没有local.env项需要删除；秘密不得迁入该文件，正式环境使用Secret Manager。

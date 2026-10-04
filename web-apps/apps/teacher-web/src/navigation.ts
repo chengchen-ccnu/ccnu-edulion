@@ -12,7 +12,8 @@ export function buildTeacherNavigation(routeName: string | null | undefined, use
     urls?: PlatformUrls): ShellNavigationItem[] {
   const canTeach = user?.roles.includes("TEACHER") && user.permissions.includes("teaching:access");
   const inCourseManagement = routeName === "teacher-courses" || routeName === "teacher-course-new"
-    || routeName === "teacher-course-edit" || routeName === "teacher-course-curriculum";
+    || routeName === "teacher-course-edit" || routeName === "teacher-course-curriculum"
+    || routeName === "teacher-course-announcements";
   const inQuestionBank = routeName === "teacher-questions" || routeName === "teacher-question-new"
     || routeName === "teacher-question-detail" || routeName === "teacher-question-edit"
     || routeName === "teacher-question-imports" || routeName === "teacher-question-import-detail";

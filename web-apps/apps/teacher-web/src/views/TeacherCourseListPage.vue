@@ -147,6 +147,7 @@ function messageFor(error: unknown, fallback: string): string {
         <div class="teacher-course-card__actions">
           <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-edit', params: { courseId: course.id } }">编辑信息</RouterLink>
           <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-curriculum', params: { courseId: course.id } }">编排目录</RouterLink>
+          <RouterLink class="button button--quiet" :to="{ name: 'teacher-course-announcements', params: { courseId: course.id }, query: { coursePage: String(currentPage()) } }">课程公告</RouterLink>
           <button v-if="publicationControls(course).showPublish" class="button button--primary" type="button"
             :disabled="actionId === course.id || !canPublishCourse(course)" @click="publish(course)">
             {{ publicationControls(course).publishLabel }}
