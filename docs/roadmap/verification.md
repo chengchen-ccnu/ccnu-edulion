@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-10-04 总控合并 PR #88 与 T17C.2 前置审计
+
+- 独立审核 T17C.1 最终 head `9dab3dc`，重跑 `check:api`、八 workspace 类型检查、63 文件 470 项测试和三端构建，全部成功；既有 chunk 警告非阻断。人工复核生产页/适配器/路由、权限与未决请求保护及注释，没有修改业务代码。
+- 新一轮既有 Fixture 脚本真实浏览器结果共 16 组：9 组真实链路/真实 OSS 不可读故障、7 组 Mock 故障。真实批准授能/消息、驳回重提、并发409/非管理员、深链/刷新/返回、360/768/1440及键盘通过；Mock的私有数据清除、未知结果三次稳定重试和offline单列。没有重跑真实PDF插件或七天释放时钟，不把默认端口的OSS CORS限制写成已修复。
+- 未建数据库/表/迁移。创建两合成学生、两临时管理员及通过正常API产生的两申请/三轮/三PNG；settle确认五域PENDING=0，cleanup及重复cleanup成功，三原件精确删除、关联IAM/Media/Operation事实和本轮Redis key清理，原管理员、《线性代数》、题库及历史Outbox快照一致。临时DPAPI凭据/清单已删除，本轮启动服务STOP后相关端口无监听，未修改local.env/云端CORS。
+- 最终两轮共8项CI全绿后，[PR #88](https://github.com/chengchen-ccnu/ccnu-edulion/pull/88)普通合并为 `db255c23c7d8d31233c123c3d4ff5d80277c6fa0`；本地main快进且与origin/main一致，T17C.1本地分支删除、远端确认保留，无关worktree未动。[合并后CI #37208153015](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37208153015)四项全成功。
+- T17C.2页面壳、账号分页/详情、四种动作、预览/确认、按commandId查询及有限补偿已存在；本机六服务和MySQL/Redis/RabbitMQ在上述验收中真实运行，dev Schema与JWT/课程协调秘密配置存在性复核成功。T17C.2不需要模型、Agent、Qdrant、Neo4j、FFmpeg、SMTP或OSS能力。
+- 阻断为只读契约/代码审计确认，未制造实际撤权故障：AdminUser不含权限command定位信息，公开接口也没有按userId取得最新命令；FAILED/PENDING会继续阻止新操作。写入响应丢失再关闭页面、换设备或另一管理员接手时，无法查询/有限补偿。实现中ID与clientRequestId相等不是OpenAPI保证，不能作为前端恢复方案；数据库有幂等事实不等于浏览器有授权查询入口。
+- 因此没有创建T17C.2实施分支，也未扩大业务功能。只在 `codex/docs-t17c1-merge-t17c2-audit` 保存状态和[T17C.2前置审计](T17C.2-prerequisite-audit.md)，建议最小恢复查询补口待用户确认；未修改OpenAPI、生成客户端、Java/Vue或迁移。补口合并后再重新审计T17C.2并准备前端分支。
+
 ## 2026-10-04 T17C.1 管理端应用壳与教师资格审核前端
 
 - 起始工作区干净，在指定`codex/t17c1-admin-teacher-review-web`保留`3ba8126`实施；完整阅读AGENTS/page specs/T17C审计，核对路线图、OpenAPI0.31.0和T16.2交付。只修改管理审核/应用壳、生成类型别名、共享ADMIN回跳和独立验收/交付资料；未改Java、OpenAPI、事件或迁移。
