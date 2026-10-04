@@ -1,5 +1,13 @@
 # Skeleton verification
 
+## 2026-10-04 总控合并 T17B.1 与 T17C 拆分前置审计
+
+- PR #87 最终 head `7b3170f` 总控专项29项通过；实施方全量438项/类型/生成/三构建见交付，真实浏览器长链没有本轮重跑。Ready/MERGEABLE/CLEAN、最终八项 CI 全绿后普通合并为 `98d5b02`；本地 main 快进、T17B.1 本地分支删除、远端确认保留。合并后 [CI #37196215505](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37196215505)成功。
+- T17C 分为 .1 应用壳/教师审核、.2 账号权限、.3 管理员邀请/受邀开户。只批准 .1 开工；审核四类接口、DTO、Gateway/IAM授权及材料绑定已有，不改 OpenAPI0.31.0。当前七槽/占位路由及共享 ADMIN 默认 dashboard 是 .1 应修正的旧壳，不是需要另造后端的缺口；.2/.3 启动前独立审计。
+- 通过安全环境加载器只读核对 IAM V5、Media V6、Course V7、Learning V21、Operation V2；五域 PENDING0，ACTIVE ADMIN1、申请轮次0。MySQL认证、Redis PONG、RabbitMQ实际认证连接成功；JWT/内部令牌/OSS/MQ配置仅验证存在。Java/前端未常驻，未把配置或端口验收当真实材料/审批链成功；JDK17、Node20.19.5、pnpm10.22.0可用。
+- 准备 `codex/t17c1-admin-teacher-review-web`，同步 page-specs/backlog/T16范围/总体架构和 [T17C前置审计](T17C-prerequisite-audit.md)。本轮提交仅状态与规划，不推送、不编写业务代码；实际 `pnpm.cmd --dir web-apps run check:api` 成功、生成客户端与 HEAD 无差异，`git diff --check` 通过。没有重复未受影响的全仓业务构建和测试。
+- 没有新建数据库、表、Fixture、缓存Key、消息队列或OSS对象，未启动业务服务/发送邮件/修改local.env；没有数据清理步骤。保留手工《线性代数》、题库、历史Outbox及无关worktree。
+
 ## 2026-10-04 T17B.1 PR #87 总控验收修复：未决写入离页保护
 
 - 当前指定分支起始干净，保留规划`4995770`与已交付实现；只修改教师公告页、DOM回归及交付/路线图记录，不新增持久化、后端、OpenAPI、事件或迁移。
