@@ -8,7 +8,8 @@
 - 最终check:api、workspace typecheck、63文件470项完整前端测试、三端build成功，生成schema无差异；当前Java启动包`-DskipTests package`成功，未重复未改后端的全仓业务测试。Python/Node语法及diff检查通过。注释人工复核覆盖职责、权限、副作用、快照/冲突/未知结果和资源/夹具精确清理。
 - 真实Edge浏览器＋Gateway/IAM/Media/MySQL/OSS/RabbitMQ：学生UI上传READY资质/提交，列表不提前开始审核，主动详情、PNG预览/下载、批准/同请求重放、原学生能力刷新、异步结果消息，驳回新资质重提/只读旧轮，精确删除本轮原件后的前后端禁止批准（422）、两管理员竞争409、非管理员403/深链拒绝、旧路由/刷新/返回/筛选/精确查询/空分页、360/768/1440和键盘焦点通过。Mock的401/403/404/422/429/500、未知503三次原载荷、拒绝离页/offline另列，不冒充真实依赖故障。
 - 本机OSS CORS原规则仅学生5174可PUT、5173可GET；默认端口上传起初失败。专用启动脚本临时映射学生5174、教师5175、管理5173并注入VITE地址；未关闭浏览器安全或改云端策略。多错误上下文登录实际触发429，按Retry-After等待，不删除共享限流Key。真实PDF/插件渲染和7天释放时钟本轮未验收，限制见[独立交付](../delivery/T17C.1-admin-teacher-review-web.md)。
-- 无新数据库/表。最小Fixture为两学生/两临时管理员、两申请/三轮/三PNG及对应事实，通过正常契约产生；create清单复用、cleanup复核账号前缀并按UUID/eventId/精确对象Key收口，先等本轮消费/投递完成。最终一轮五域PENDING=0，精确清理及重复cleanup成功，原唯一管理员、手工《线性代数》、题库和历史Outbox一致；未整表删除/purge/FLUSHDB。DPAPI临时Fixture凭据已删，本轮实例已STOP，个人local.env未改。Ready PR在交接时补记，等待总控，不自行合并。
+- 无新数据库/表。最小Fixture为两学生/两临时管理员、两申请/三轮/三PNG及对应事实，通过正常契约产生；create清单复用、cleanup复核账号前缀并按UUID/eventId/精确对象Key收口，先等本轮消费/投递完成。最终一轮五域PENDING=0，精确清理及重复cleanup成功，原唯一管理员、手工《线性代数》、题库和历史Outbox一致；未整表删除/purge/FLUSHDB。DPAPI临时Fixture凭据已删，本轮实例已STOP，个人local.env未改。
+- 实现提交`1717d70`，独立`git push origin HEAD`成功；[Ready PR #88](https://github.com/chengchen-ccnu/ccnu-edulion/pull/88)已创建并附加。交接时CI仍在运行，未声明最终head全绿；等待总控，不自行合并。
 
 ## 2026-10-04 总控合并 T17B.1 与 T17C 拆分前置审计
 
