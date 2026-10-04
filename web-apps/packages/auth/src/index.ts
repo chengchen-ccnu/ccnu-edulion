@@ -146,7 +146,7 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
       || path === "/teacher/courses"
       || path === "/teacher/courses/new"
       || path === "/teacher/assessments"
-      || /^\/teacher\/courses\/[0-9A-Za-z-]+\/(edit|curriculum)$/.test(path)
+      || /^\/teacher\/courses\/[0-9A-Za-z-]+\/(edit|curriculum|announcements)$/.test(path)
   },
   {
     id: "admin",

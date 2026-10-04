@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-10-04 T17B.1 教师课程公告管理前端
+
+- 在指定`codex/t17b1-teacher-course-announcements-web`从干净工作区实施，保留规划`4995770`；完整核对AGENTS/page specs/T17B审计/路线图/OpenAPI0.31.0及T16.4/T17A实装。只新增教师公告页/适配器与课程入口，共享生成别名及安全登录redirect白名单；未改Java、外部契约、事件、迁移或全局导航顺序，工作台/媒体槽仍建设中。
+- 固定`/teacher/courses/:courseId/announcements`支持每页20的列表/只读审计、纯文本即时发布/改版/二次确认撤回；有界URL及来源返回，选中项不在当前页只提示定位，不扫描页或猜教师单GET。写入以owner详情的发布/暂停门禁及当前教学能力为前置，Operation最终校验；历史独立授权。clientRequestId稳定、未知结果三次手动上限、expectedRevision/409保留输入并显式决定、422字段与request、429冷却、同身份刷新保留草稿、离页/能力变化Abort及计时器清理完成。
+- 最终`check:api`生成无差异、八workspace类型检查、60文件430项前端全量测试及三端构建通过；既有大chunk警告非阻断。Python Fixture compileall/Node语法/PowerShell AST、git diff --check及规划祖先检查通过；未重跑未修改的Java/Python Agent全仓或新轮Prism。
+- 全新独立dev真实浏览器15组检查通过：三入口/来源返回、分页/刷新/深链/第二页审计；教师发布→学生消息target与纯文本→显式确认清未读→教师改版→学生旧revision真实409并重新明确确认→教师二次撤回→学生旧链接404且无正文；教师并发改版409保留输入/采用revision、nonowner404/admin写403、下架历史可读写409、真实撤教学后Course协调APPLIED及重新登录教学门禁。360/768/1440无横向溢出，截图人工检查，Tab输入/焦点/离页取消与确认通过。
+- 故障注入明确区别真实依赖：浏览器合成offline/loading/empty、未定位选择、慢请求离页实际abort、429 Retry-After、422字段+request、503相同ID重试和401/403清正文；DOM补草稿/保有教学能力时暂停响应、有限重试、输入变更ID、session身份清理和新建课程状态409显式重新提交。没有声称真实基础设施故障、生产部署或总控验收通过，未执行项见交付文档。
+- 未建库/表/迁移；每轮4个合成账号、1临时发布课程/版本/章节/无媒体课时、报名、公告及派生通知/确认/Outbox/撤权协调。前轮调试27条公告已清，最终全新22条也已清；停本轮进程后按UUID/eventId清理，存量课程/题库/历史Outbox ID和状态比对一致，五域PENDING=0。本轮端口停止，浏览器context关闭；未改手工《线性代数》、借用题目、Seed、重放FAILED、purge或FLUSHDB。DPAPI Fixture凭据已删，个人local.env未改；清理可重复。
+- 中文职责/输入输出/权限/幂等/冲突/生命周期及精确Fixture清理注释人工检查通过，生成文件未手改。独立交付：[T17B.1](../delivery/T17B.1-teacher-course-announcements.md)。提交和Ready PR创建后补记，等待总控验收，不自行合并。
+
 ## 2026-10-03 总控合并 T17A、拆分 T17B 与公告管理开工审计
 
 - PR #86 最终 HEAD `8a97bf233e3f9d05d2f586bf0a762339c2d867e4`，两组八项 CI 全部成功。总控前轮独立全量403项/类型/check:api/三构建后发现空态缺陷，修复后独立26项专项复验通过；407项全量为实施方记录，本轮未重复真实浏览器。按精确HEAD普通合并为`1f6b971c40724efa471a06ab00b2e432a5dc6a1a`，main快进同步，T17A本地分支删除，远端保留；未触碰其他分支/worktree。合并后[CI #37103356361](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37103356361)四项全部成功。
