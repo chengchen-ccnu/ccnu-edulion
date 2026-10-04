@@ -834,3 +834,9 @@ Fixture脚本`python scripts/t17a_browser_fixture.py create/cleanup`必须在`In
 沿用上述六服务/三端环境启动脚本，独立Fixture位于忽略目录`.m2/t17b1-browser`，不复用T17A账号或课程。运行`Invoke-T17B1Fixture.ps1 -Action create/browser/settle/cleanup`：create创建4个合成账号、1门课程/报名和有界分页/审计样本；browser使用捆绑Playwright与本机Edge验证真实闭环及明确标记的浏览器故障注入；settle只读等待PENDING归零，再执行环境STOP和cleanup按UUID/eventId收口。已有manifest拒绝重复create，失败保留清单，cleanup可重跑。步骤与限制见[T17B.1交付](../delivery/T17B.1-teacher-course-announcements.md)。
 
 凭据仍通过`Invoke-WithLocalEnvironment.ps1`安全加载。额外随机Fixture密码仅以DPAPI保存在当前用户`.ccnu-edulion/t17b1-fixture.credential.clixml`，运行时环境变量`T17B1_FIXTURE_PASSWORD`只用于子进程，结束清除，cleanup删除该凭据。Token不落盘、不输出；`NODE_PATH`仅临时定位既有捆绑运行时并恢复原值。没有新增业务环境变量或修改个人local.env，故本任务没有local.env项需要删除；秘密不得迁入该文件，正式环境使用Secret Manager。
+
+## T17C.1 教师审核验收
+
+`Invoke-T17C1BrowserEnvironment.ps1 START/STOP`沿用六服务、关闭Seed及历史PENDING检查。为满足本机既有OSS CORS，本轮专用地址为学生localhost:5174、教师5175、管理5173，VITE三端地址只在子进程环境注入，strictPort防止漂移；不更改云端CORS或默认应用配置。普通启动按实际origin保证存储允许学生PUT/管理员GET。
+
+`Invoke-T17C1Fixture.ps1 -Action create/browser/settle/cleanup`建立两名合成学生与两名临时管理员；资格申请、READY上传和决定都通过真实契约。额外OSS SDK只在`.m2/t17c1-python-deps`供精确测试对象删除，不能接入Python Agent。Fixture密码DPAPI文件为`.ccnu-edulion/t17c1-fixture.credential.clixml`，临时环境变量`T17C1_FIXTURE_PASSWORD`不写local.env；清理后删除凭据。消费/投递完成后按UUID/eventId/对象Key清理并比对原管理员、课程、题库与历史Outbox，不purge或FLUSHDB。步骤、依赖版本与真实/Mock限制见[T17C.1交付](../delivery/T17C.1-admin-teacher-review-web.md)。本轮个人local.env无新增/修改项，秘密继续由DPAPI或正式Secret Manager管理。
