@@ -11,6 +11,7 @@
 - 未新建数据库、表、索引或迁移；IAM现有V5校验无变化。仅`edu_platform_iam_dev`两管理员/两学生固定合成UUID、正式API产生的5预览/5命令及本域身份/会话/审计/Outbox与确切自有Redis键，开始/finally精确清理；存量用户安全事实及历史IAM Outbox ID/状态前后相同。没有其他域/课程/题目/报名/媒体/Rabbit消息或队列变更，未改个人local.env，无新增明文或配置迁移事项。
 - 失败轮如实保留：夹具Outbox列名和登录字段分别按V4/OpenAPI修正后真实重跑通过，首轮Mock探测早于就绪后重测全过。中文可读性复核、PowerShell语法及`git diff --check`通过；生成文件不手工补注释。交付/演示/清理与已知风险见[独立交付](../delivery/T16.3.1-permission-command-recovery-query.md)。T17C.2缺口已在实施分支补齐，仍待总控验收合并后复审，不启用账号权限页、不自行合并。
 - 最终独立`-CleanupOnly`幂等清理复验1项0失败/错误/跳过通过，未启动HTTP服务；18080/18081/4010无监听。本轮真实恢复成功日志保留于忽略目录`.m2/t16-3-1-recovery-acceptance/recovery-success.log`，清理轮为`real-test.log`；两轮结果不混写。
+- Git交接：实现`39a3acf`已普通`git push origin HEAD`；提交后`check:api`成功。[Ready PR #89](https://github.com/chengchen-ccnu/ccnu-edulion/pull/89)已创建并附加当前任务，目标main；PR创建时OPEN/非Draft/可合并，CI运行中。最新文档HEAD以GitHub实时检查为准；未自行合并，T17C.2仍等待总控验收合并后复审。
 
 ## 2026-10-04 T16.3.1 范围确认与分支准备
 
