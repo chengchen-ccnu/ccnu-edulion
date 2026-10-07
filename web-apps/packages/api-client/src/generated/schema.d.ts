@@ -312,6 +312,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{userId}/permission-commands/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 按目标账号恢复最近权限命令
+         * @description 仅当前有效独立管理员；复核当前账号、管理能力及会话版本，不只信任旧 JWT，允许其他管理员接手。
+         *     精确过滤 userId，按 decidedRevision 降序、commandId 字典序降序取一条，不按更新时间或状态筛选。
+         *     返回 NOT_REQUIRED/PENDING/FAILED/APPLIED 的现有安全投影，replayed=false；不含原因、原始请求、联系方式、凭据或内部响应正文。
+         *     200 表示读取时事实，协调器随后仍可推进状态；APPLIED 不表示全部 Learning 消费者已完成。账号存在但无命令返回无正文的204，未知账号404。
+         *     GET 不写命令、不增加 attempts 或预算、不发起补偿、不调用 Course。取得 commandId 后使用既有状态查询及有限补偿，不依赖其与 clientRequestId 相等。
+         */
+        get: operations["getLatestAccountPermissionCommand"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/permission-commands/{commandId}": {
         parameters: {
             query?: never;
@@ -7625,6 +7649,42 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLatestAccountPermissionCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 目标账号的稳定 ID，不是原操作者 ID */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 最近权限决定及读取时协调事实 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPermissionCommand"];
+                };
+            };
+            /** @description 账号存在且尚无权限命令；无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["ServiceUnavailable"];

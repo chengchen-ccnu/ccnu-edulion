@@ -1,5 +1,17 @@
 # Skeleton verification
 
+## 2026-10-07 T16.3.1 权限命令恢复查询实施与验收
+
+- 工作区开始干净，使用指定`codex/t16.3.1-permission-command-recovery-query`，保留`eeacb73`/`aca5a03`规划祖先；按准备提示词完整阅读页面规格及相关契约/实现/交付。先更新OpenAPI0.31.1并落盘[契约评审](../api/T16.3.1-contract-review.md)，再做IAM最小读取。
+- `GET /api/v1/admin/users/{userId}/permission-commands/latest`：当前有效独立管理员跨操作者读取，精确目标、decidedRevision/ID降序；200复用安全投影、204无正文、未知404。GET不写入/加预算/调用Course，四态与原有限补偿不变。Gateway复用既有路由和会话/能力检查，IAM复核持久版本及当前数据库身份；无迁移、新DTO、事件版本、页面或业务扩展。
+- IAM focused15项全部通过；新增行为测试覆盖两管理员交接、响应丢失恢复、账号隔离、revision优先/稳定次序、四态及GET全行/审计/Outbox不变、无Course调用、当前权限/旧会话/空/未知/非法ID。回归原幂等和3+3六次上限，并验证恢复后expectedAttempts冲突/两管理员补偿202+409及原周期/水位。
+- 真实脚本`Invoke-T16.3.1RecoveryQueryRealAcceptance.ps1`最终综合1项0失败/错误/跳过：真实Gateway/IAM/MySQL8.0/Redis，临时代理收到上游202后切断客户端回执，第二管理员仅凭userId恢复commandId并沿用既有按ID查询。GET无副作用、最近排序/隔离、204/404/422/401/403、正式封禁/解封后的缺缓存503/旧JWT401及旧角色403通过。没有重跑Course暂停/恢复、SMTP、OSS长链；四态/故障补偿由H2+Mock端口覆盖，不冒充真实跨域结果。
+- 生成API/八workspace类型检查、63文件470项前端测试、三端build成功；同一OpenAPI的Prism新GET实测200/204/401/403/404/422/429/503，通过只读示例的replayed=false、安全投影/预算与204空正文核验。Mock已停止；无Vue实施。
+- 默认Java全仓`clean verify`两轮同一未修改Operation测试`pausedAvailabilityReadableButContentHidden`失败，期望1通知实际0；该类11项单独复验全过。最终`-Dsurefire.rerunFailingTestsCount=1 clean verify`9个Reactor模块BUILD SUCCESS，407项/349执行最终通过/58显式环境跳过，最终失败/错误0，1个Operation flaky首试失败、Runner复跑通过。疑似既有H2 TIMESTAMP(6)任务到期边界（代码及同类其他测试已有对应证据），未证明唯一原因，未扩大范围修复；总控须评估默认失败及最新CI。
+- 未新建数据库、表、索引或迁移；IAM现有V5校验无变化。仅`edu_platform_iam_dev`两管理员/两学生固定合成UUID、正式API产生的5预览/5命令及本域身份/会话/审计/Outbox与确切自有Redis键，开始/finally精确清理；存量用户安全事实及历史IAM Outbox ID/状态前后相同。没有其他域/课程/题目/报名/媒体/Rabbit消息或队列变更，未改个人local.env，无新增明文或配置迁移事项。
+- 失败轮如实保留：夹具Outbox列名和登录字段分别按V4/OpenAPI修正后真实重跑通过，首轮Mock探测早于就绪后重测全过。中文可读性复核、PowerShell语法及`git diff --check`通过；生成文件不手工补注释。交付/演示/清理与已知风险见[独立交付](../delivery/T16.3.1-permission-command-recovery-query.md)。T17C.2缺口已在实施分支补齐，仍待总控验收合并后复审，不启用账号权限页、不自行合并。
+- 最终独立`-CleanupOnly`幂等清理复验1项0失败/错误/跳过通过，未启动HTTP服务；18080/18081/4010无监听。本轮真实恢复成功日志保留于忽略目录`.m2/t16-3-1-recovery-acceptance/recovery-success.log`，清理轮为`real-test.log`；两轮结果不混写。
+
 ## 2026-10-04 T16.3.1 范围确认与分支准备
 
 - 用户确认新增 **T16.3.1 权限命令恢复查询契约补口**，作为 T17C.2 验收合并前置。只补按账号读取最近权限命令，复用现有状态与有限补偿，不新增页面或其他业务系统；同步 backlog、页面规格和 T17C.2 审计，新增[准备文档与实施提示词](T16.3.1-prerequisite-audit.md)。具体 OpenAPI 路径和空值语义留实施任务先评审，本轮不发布契约。

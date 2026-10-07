@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: EDU Platform Gateway API
-  version: 0.31.0
-  description: T16A adds a public Redis-only hot-course read model with seven Shanghai-day distinct learners, current active enrollment tie breaking, explicit NEW fallback, expiring covers and isolated degradation. T16.4 adds course announcements, version confirmation and four authorized in-app notification kinds with bounded reliable delivery. T16.3 adds legal independent account capabilities, confirmed impact previews, durable bounded IAM-to-Course coordination, and verified-email administrator invitations. Legacy disable is deprecated and now requires the new confirmation flow (409); migrate before deploying 0.29.0 clients. T16.2 qualification review remains the only first teaching grant. T16.1 suspension stops task clocks and resumes with actual-duration extensions. No Vue is delivered here.
+  version: 0.31.1
+  description: T16.3.1 adds a read-only latest permission command lookup by target account for lost-response recovery and administrator handoff. T16A adds a public Redis-only hot-course read model with seven Shanghai-day distinct learners, current active enrollment tie breaking, explicit NEW fallback, expiring covers and isolated degradation. T16.4 adds course announcements, version confirmation and four authorized in-app notification kinds with bounded reliable delivery. T16.3 adds legal independent account capabilities, confirmed impact previews, durable bounded IAM-to-Course coordination, and verified-email administrator invitations. Legacy disable is deprecated and now requires the new confirmation flow (409); migrate before deploying 0.29.0 clients. T16.2 qualification review remains the only first teaching grant. T16.1 suspension stops task clocks and resumes with actual-duration extensions. No Vue is delivered here.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -647,6 +647,47 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/admin/users/{userId}/permission-commands/latest:
+    get:
+      tags: [Admin Users]
+      operationId: getLatestAccountPermissionCommand
+      summary: 按目标账号恢复最近权限命令
+      description: |
+        仅当前有效独立管理员；复核当前账号、管理能力及会话版本，不只信任旧 JWT，允许其他管理员接手。
+        精确过滤 userId，按 decidedRevision 降序、commandId 字典序降序取一条，不按更新时间或状态筛选。
+        返回 NOT_REQUIRED/PENDING/FAILED/APPLIED 的现有安全投影，replayed=false；不含原因、原始请求、联系方式、凭据或内部响应正文。
+        200 表示读取时事实，协调器随后仍可推进状态；APPLIED 不表示全部 Learning 消费者已完成。账号存在但无命令返回无正文的204，未知账号404。
+        GET 不写命令、不增加 attempts 或预算、不发起补偿、不调用 Course。取得 commandId 后使用既有状态查询及有限补偿，不依赖其与 clientRequestId 相等。
+      parameters:
+        - {name: userId, in: path, required: true, description: 目标账号的稳定 ID，不是原操作者 ID, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: 最近权限决定及读取时协调事实
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountPermissionCommand'}
+              examples:
+                latestDecision:
+                  summary: 无课程联动的合成账号封禁事实；只读查询不是写命令重放
+                  value:
+                    commandId: 16310000-0000-4000-8000-000000000101
+                    userId: 16310000-0000-4000-8000-000000000003
+                    action: BAN
+                    decidedRevision: 1
+                    accessRevision: 0
+                    coordinationStatus: NOT_REQUIRED
+                    attempts: 0
+                    maxAttempts: 6
+                    affectedCourses: 0
+                    replayed: false
+        '204':
+          description: 账号存在且尚无权限命令；无响应正文
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '422': {$ref: '#/components/responses/ValidationError'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}

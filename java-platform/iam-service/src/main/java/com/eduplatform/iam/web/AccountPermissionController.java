@@ -34,6 +34,12 @@ public class AccountPermissionController {
     public AccountPermissionDtos.Command get(JwtAuthenticationToken actor,@PathVariable UUID commandId) {
         return service.get(actor.getToken().getSubject(),commandId.toString());
     }
+    /** 当前管理员凭目标UUID只读恢复最近命令；存在返回200安全投影，无命令204，未知账号404，无补偿副作用。 */
+    @GetMapping("/users/{userId}/permission-commands/latest")
+    public ResponseEntity<AccountPermissionDtos.Command> latest(JwtAuthenticationToken actor,@PathVariable UUID userId) {
+        return service.latest(actor.getToken().getSubject(),userId.toString())
+                .map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.noContent().build());
+    }
     /** 当前管理员发起一次有界补偿，原周期及水位不变，状态先为PENDING。 */
     @PostMapping("/permission-commands/{commandId}/retry")
     public ResponseEntity<AccountPermissionDtos.Command> retry(JwtAuthenticationToken actor,@PathVariable UUID commandId,

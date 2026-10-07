@@ -835,6 +835,10 @@ Fixture脚本`python scripts/t17a_browser_fixture.py create/cleanup`必须在`In
 
 凭据仍通过`Invoke-WithLocalEnvironment.ps1`安全加载。额外随机Fixture密码仅以DPAPI保存在当前用户`.ccnu-edulion/t17b1-fixture.credential.clixml`，运行时环境变量`T17B1_FIXTURE_PASSWORD`只用于子进程，结束清除，cleanup删除该凭据。Token不落盘、不输出；`NODE_PATH`仅临时定位既有捆绑运行时并恢复原值。没有新增业务环境变量或修改个人local.env，故本任务没有local.env项需要删除；秘密不得迁入该文件，正式环境使用Secret Manager。
 
+## T16.3.1 权限命令恢复查询验收
+
+T16.3.1 的独立恢复查询验收使用 `pwsh -NoProfile -File scripts/Invoke-T16.3.1RecoveryQueryRealAcceptance.ps1`，脚本自行调用DPAPI安全包装器；需既有`edu_platform_iam_dev`及Redis和空闲18080/18081，不需要SMTP、OSS、模型或其他业务Schema。仅本轮IAM/Gateway临时共享IAM Redis逻辑库，使用`edu:t1631:test:session-version`和`edu:t1631:test:gateway:rate`自有键前缀，保留会话校验/限流，关闭Seed、Outbox发布、资格保留和协调Worker；结束恢复环境/停止本轮进程/精确清理四个合成UUID。`-CleanupOnly`只清理同一Fixture，可重复执行，不启动HTTP服务。`T1631_RECOVERY_REAL_ACCEPTANCE`、`T1631_CLEANUP_ONLY`由脚本临时设置，不写local.env；密码仅测试进程内存，无新增生产配置/秘密或个人local.env修改。详见[T16.3.1交付](../delivery/T16.3.1-permission-command-recovery-query.md)。
+
 ## T17C.1 教师审核验收
 
 `Invoke-T17C1BrowserEnvironment.ps1 START/STOP`沿用六服务、关闭Seed及历史PENDING检查。为满足本机既有OSS CORS，本轮专用地址为学生localhost:5174、教师5175、管理5173，VITE三端地址只在子进程环境注入，strictPort防止漂移；不更改云端CORS或默认应用配置。普通启动按实际origin保证存储允许学生PUT/管理员GET。

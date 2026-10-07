@@ -132,6 +132,22 @@ public class AccountPermissionService {
         return response(required(row(id, false)), false);
     }
 
+    /**
+     * 当前有效管理员凭目标账号ID找回最近决定，允许跨操作者接手；未知账号404，无命令返回空。
+     * 按决定revision及ID降序确定次序，返回既有安全投影；只读本域，不加锁写入、不消耗预算或调用Course。
+     * 返回的是读取时事实，后台协调器仍可随后推进状态。
+     * @param actor 当前操作者账号ID，必须具备有效独立管理员身份
+     * @param userId 目标账号ID，不限定命令原操作者
+     * @return 最近命令；目标存在但尚无命令时为空
+     */
+    public java.util.Optional<AccountPermissionDtos.Command> latest(String actor, String userId) {
+        admins.require(actor);
+        if (users.findUserById(userId) == null)
+            throw new AuthException(HttpStatus.NOT_FOUND, "IAM.NOT_FOUND", "账号不存在");
+        return jdbc.query("SELECT * FROM account_permission_command WHERE user_id=? ORDER BY decided_revision DESC,id DESC LIMIT 1",
+                (rs, n) -> map(rs), userId).stream().findFirst().map(value -> response(value, false));
+    }
+
     /** 对FAILED原命令增加一次有限预算；锁下复核管理员、次数和幂等请求，最多六次，不新建暂停周期。 */
     public AccountPermissionDtos.Command retry(String actor, String id, AccountPermissionDtos.RetryRequest request) {
         try {
