@@ -1,5 +1,35 @@
 # Skeleton verification
 
+## 2026-10-07 T16.3.1 权限命令恢复查询实施与验收
+
+- 工作区开始干净，使用指定`codex/t16.3.1-permission-command-recovery-query`，保留`eeacb73`/`aca5a03`规划祖先；按准备提示词完整阅读页面规格及相关契约/实现/交付。先更新OpenAPI0.31.1并落盘[契约评审](../api/T16.3.1-contract-review.md)，再做IAM最小读取。
+- `GET /api/v1/admin/users/{userId}/permission-commands/latest`：当前有效独立管理员跨操作者读取，精确目标、decidedRevision/ID降序；200复用安全投影、204无正文、未知404。GET不写入/加预算/调用Course，四态与原有限补偿不变。Gateway复用既有路由和会话/能力检查，IAM复核持久版本及当前数据库身份；无迁移、新DTO、事件版本、页面或业务扩展。
+- IAM focused15项全部通过；新增行为测试覆盖两管理员交接、响应丢失恢复、账号隔离、revision优先/稳定次序、四态及GET全行/审计/Outbox不变、无Course调用、当前权限/旧会话/空/未知/非法ID。回归原幂等和3+3六次上限，并验证恢复后expectedAttempts冲突/两管理员补偿202+409及原周期/水位。
+- 真实脚本`Invoke-T16.3.1RecoveryQueryRealAcceptance.ps1`最终综合1项0失败/错误/跳过：真实Gateway/IAM/MySQL8.0/Redis，临时代理收到上游202后切断客户端回执，第二管理员仅凭userId恢复commandId并沿用既有按ID查询。GET无副作用、最近排序/隔离、204/404/422/401/403、正式封禁/解封后的缺缓存503/旧JWT401及旧角色403通过。没有重跑Course暂停/恢复、SMTP、OSS长链；四态/故障补偿由H2+Mock端口覆盖，不冒充真实跨域结果。
+- 生成API/八workspace类型检查、63文件470项前端测试、三端build成功；同一OpenAPI的Prism新GET实测200/204/401/403/404/422/429/503，通过只读示例的replayed=false、安全投影/预算与204空正文核验。Mock已停止；无Vue实施。
+- 默认Java全仓`clean verify`两轮同一未修改Operation测试`pausedAvailabilityReadableButContentHidden`失败，期望1通知实际0；该类11项单独复验全过。最终`-Dsurefire.rerunFailingTestsCount=1 clean verify`9个Reactor模块BUILD SUCCESS，407项/349执行最终通过/58显式环境跳过，最终失败/错误0，1个Operation flaky首试失败、Runner复跑通过。疑似既有H2 TIMESTAMP(6)任务到期边界（代码及同类其他测试已有对应证据），未证明唯一原因，未扩大范围修复；总控须评估默认失败及最新CI。
+- 未新建数据库、表、索引或迁移；IAM现有V5校验无变化。仅`edu_platform_iam_dev`两管理员/两学生固定合成UUID、正式API产生的5预览/5命令及本域身份/会话/审计/Outbox与确切自有Redis键，开始/finally精确清理；存量用户安全事实及历史IAM Outbox ID/状态前后相同。没有其他域/课程/题目/报名/媒体/Rabbit消息或队列变更，未改个人local.env，无新增明文或配置迁移事项。
+- 失败轮如实保留：夹具Outbox列名和登录字段分别按V4/OpenAPI修正后真实重跑通过，首轮Mock探测早于就绪后重测全过。中文可读性复核、PowerShell语法及`git diff --check`通过；生成文件不手工补注释。交付/演示/清理与已知风险见[独立交付](../delivery/T16.3.1-permission-command-recovery-query.md)。T17C.2缺口已在实施分支补齐，仍待总控验收合并后复审，不启用账号权限页、不自行合并。
+- 最终独立`-CleanupOnly`幂等清理复验1项0失败/错误/跳过通过，未启动HTTP服务；18080/18081/4010无监听。本轮真实恢复成功日志保留于忽略目录`.m2/t16-3-1-recovery-acceptance/recovery-success.log`，清理轮为`real-test.log`；两轮结果不混写。
+- Git交接：实现`39a3acf`已普通`git push origin HEAD`；提交后`check:api`成功。[Ready PR #89](https://github.com/chengchen-ccnu/ccnu-edulion/pull/89)已创建并附加当前任务，目标main；PR创建时OPEN/非Draft/可合并，CI运行中。最新文档HEAD以GitHub实时检查为准；未自行合并，T17C.2仍等待总控验收合并后复审。
+
+## 2026-10-04 T16.3.1 范围确认与分支准备
+
+- 用户确认新增 **T16.3.1 权限命令恢复查询契约补口**，作为 T17C.2 验收合并前置。只补按账号读取最近权限命令，复用现有状态与有限补偿，不新增页面或其他业务系统；同步 backlog、页面规格和 T17C.2 审计，新增[准备文档与实施提示词](T16.3.1-prerequisite-audit.md)。具体 OpenAPI 路径和空值语义留实施任务先评审，本轮不发布契约。
+- 开始时 `git status --short --branch` 干净，位于 `codex/docs-t17c1-merge-t17c2-audit`，已有状态提交 `eeacb73`，基于 main `db255c2`。本轮在该文档分支提交规划，再从包含状态文档的提交准备 `codex/t16.3.1-permission-command-recovery-query`；不从旧 main 丢弃准备记录，不推送或创建 PR，不准备 T17C.2 前端分支。
+- 完整阅读页面规格，复核既有 OpenAPI、IAM Controller/Service/V5 和 T17C.2 缺口证据；仅文档一致性与 Git 差异检查，未运行 Java/前端构建、Mock、数据库或真实服务验收。T16.3.1 尚待实现，T17C.2 仍被阻塞。
+- 未创建数据库、表、迁移、伪数据、缓存/MQ/OSS 对象；未修改个人 local.env，无数据清理或配置迁移事项。实现任务须另建独立交付文档并记录实际验证与中文注释覆盖。
+
+## 2026-10-04 总控合并 PR #88 与 T17C.2 前置审计
+
+- 独立审核 T17C.1 最终 head `9dab3dc`，重跑 `check:api`、八 workspace 类型检查、63 文件 470 项测试和三端构建，全部成功；既有 chunk 警告非阻断。人工复核生产页/适配器/路由、权限与未决请求保护及注释，没有修改业务代码。
+- 新一轮既有 Fixture 脚本真实浏览器结果共 16 组：9 组真实链路/真实 OSS 不可读故障、7 组 Mock 故障。真实批准授能/消息、驳回重提、并发409/非管理员、深链/刷新/返回、360/768/1440及键盘通过；Mock的私有数据清除、未知结果三次稳定重试和offline单列。没有重跑真实PDF插件或七天释放时钟，不把默认端口的OSS CORS限制写成已修复。
+- 未建数据库/表/迁移。创建两合成学生、两临时管理员及通过正常API产生的两申请/三轮/三PNG；settle确认五域PENDING=0，cleanup及重复cleanup成功，三原件精确删除、关联IAM/Media/Operation事实和本轮Redis key清理，原管理员、《线性代数》、题库及历史Outbox快照一致。临时DPAPI凭据/清单已删除，本轮启动服务STOP后相关端口无监听，未修改local.env/云端CORS。
+- 最终两轮共8项CI全绿后，[PR #88](https://github.com/chengchen-ccnu/ccnu-edulion/pull/88)普通合并为 `db255c23c7d8d31233c123c3d4ff5d80277c6fa0`；本地main快进且与origin/main一致，T17C.1本地分支删除、远端确认保留，无关worktree未动。[合并后CI #37208153015](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/37208153015)四项全成功。
+- T17C.2页面壳、账号分页/详情、四种动作、预览/确认、按commandId查询及有限补偿已存在；本机六服务和MySQL/Redis/RabbitMQ在上述验收中真实运行，dev Schema与JWT/课程协调秘密配置存在性复核成功。T17C.2不需要模型、Agent、Qdrant、Neo4j、FFmpeg、SMTP或OSS能力。
+- 阻断为只读契约/代码审计确认，未制造实际撤权故障：AdminUser不含权限command定位信息，公开接口也没有按userId取得最新命令；FAILED/PENDING会继续阻止新操作。写入响应丢失再关闭页面、换设备或另一管理员接手时，无法查询/有限补偿。实现中ID与clientRequestId相等不是OpenAPI保证，不能作为前端恢复方案；数据库有幂等事实不等于浏览器有授权查询入口。
+- 因此没有创建T17C.2实施分支，也未扩大业务功能。只在 `codex/docs-t17c1-merge-t17c2-audit` 保存状态和[T17C.2前置审计](T17C.2-prerequisite-audit.md)，建议最小恢复查询补口待用户确认；未修改OpenAPI、生成客户端、Java/Vue或迁移。补口合并后再重新审计T17C.2并准备前端分支。
+
 ## 2026-10-04 T17C.1 管理端应用壳与教师资格审核前端
 
 - 起始工作区干净，在指定`codex/t17c1-admin-teacher-review-web`保留`3ba8126`实施；完整阅读AGENTS/page specs/T17C审计，核对路线图、OpenAPI0.31.0和T16.2交付。只修改管理审核/应用壳、生成类型别名、共享ADMIN回跳和独立验收/交付资料；未改Java、OpenAPI、事件或迁移。

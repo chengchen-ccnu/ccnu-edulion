@@ -24,7 +24,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /** 专用H2权限事务测试；Media/Course端口明确Mock，不冒充真实跨服务验收；批准由既有审核服务产生而非伪造决定行。 */
-@SpringBootTest(properties="spring.datasource.url=jdbc:h2:mem:t163_permissions;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
+@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties="spring.datasource.url=jdbc:h2:mem:t163_permissions;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
 @ActiveProfiles("test")
 class AccountPermissionIntegrationTest {
     @Autowired AccountPermissionService permissions;
@@ -32,6 +33,8 @@ class AccountPermissionIntegrationTest {
     @Autowired TeacherReviewService reviews;
     @Autowired JdbcTemplate jdbc;
     @Autowired IamMapper users;
+    @Autowired org.springframework.security.oauth2.jwt.JwtEncoder jwtEncoder;
+    @org.springframework.beans.factory.annotation.Value("${local.server.port}") int port;
     @MockitoBean AccountCourseClient course;
     @MockitoBean TeacherQualificationMediaClient media;
     @MockitoSpyBean IdentitySecurityStore security;
@@ -76,6 +79,125 @@ class AccountPermissionIntegrationTest {
         change(student,Action.UNBAN);
         assertThat(users.findRoles(student)).containsExactly("STUDENT");
         assertThat(users.findUserById(student).getSessionVersion()).isEqualTo(2);
+    }
+
+    /** 丢弃提交返回值后另一管理员只凭userId恢复；读取不改变命令、审计、Outbox或调用Course。 */
+    @Test void latestRecoversLostResponseAcrossAdministratorsWithoutSideEffects() throws Exception {
+        String successor=user("ADMIN");
+        change(student,Action.BAN);
+        var commands=jdbc.queryForList("SELECT * FROM account_permission_command");
+        var audits=jdbc.queryForList("SELECT * FROM account_security_audit");
+        var outbox=jdbc.queryForList("SELECT * FROM iam_outbox_event");
+        clearInvocations(course);
+        var recovered=permissions.latest(successor,student).orElseThrow();
+        assertThat(recovered).isEqualTo(permissions.get(successor,recovered.commandId().toString()));
+        assertThat(recovered.coordinationStatus()).isEqualTo("NOT_REQUIRED");
+        assertThat(recovered.replayed()).isFalse();
+        var http=latestHttp(student,token(successor,"administration:access",0));
+        assertThat(http.statusCode()).isEqualTo(200);
+        assertThat(http.body()).contains(recovered.commandId().toString())
+                .doesNotContain("reason","request_json","requestJson","actorId","email","password","trace-t163","权限测试明确");
+        assertThat(jdbc.queryForList("SELECT * FROM account_permission_command")).isEqualTo(commands);
+        assertThat(jdbc.queryForList("SELECT * FROM account_security_audit")).isEqualTo(audits);
+        assertThat(jdbc.queryForList("SELECT * FROM iam_outbox_event")).isEqualTo(outbox);
+        verifyNoInteractions(course);
+    }
+
+    /** 后提交的其他账号不能串入；revision优先于时间，同revision以ID形成稳定次序。仅H2构造相同revision边界。 */
+    @Test void latestOrdersByDecisionRevisionThenIdAndIsolatesTarget() {
+        var first=change(student,Action.BAN);
+        var latest=change(student,Action.UNBAN);
+        String other=user("STUDENT");change(other,Action.BAN);
+        jdbc.update("UPDATE account_permission_command SET created_at=? WHERE id=?",
+                Timestamp.from(Instant.now().plusSeconds(100)),first.commandId().toString());
+        assertThat(permissions.latest(admin,student).orElseThrow().commandId()).isEqualTo(latest.commandId());
+        jdbc.update("UPDATE account_permission_command SET decided_revision=? WHERE id=?",
+                latest.decidedRevision(),first.commandId().toString());
+        String expected=java.util.stream.Stream.of(first.commandId().toString(),latest.commandId().toString()).max(String::compareTo).orElseThrow();
+        for(int i=0;i<3;i++)assertThat(permissions.latest(admin,student).orElseThrow().commandId().toString()).isEqualTo(expected);
+        assertThat(permissions.latest(admin,other).orElseThrow().userId().toString()).isEqualTo(other);
+    }
+
+    /** 四态沿既有协调器推进；每次GET前后比较原始行，失败后由另一管理员以原ID有限补偿。 */
+    @Test void latestReturnsPendingFailedAppliedWithoutConsumingBudget() {
+        users.assignRole(student,"TEACHER");
+        doThrow(new IllegalStateException("test-timeout")).when(course).apply(anyString(),anyString(),anyLong(),anyBoolean(),anyString());
+        var command=change(student,Action.REVOKE_TEACHING);
+        assertLatestUnchanged("PENDING");
+        for(int i=0;i<3;i++)attempt(command.commandId());
+        assertLatestUnchanged("FAILED");
+        String successor=user("ADMIN");
+        var recovered=permissions.latest(successor,student).orElseThrow();
+        assertThatThrownBy(()->permissions.retry(successor,recovered.commandId().toString(),
+                new AccountPermissionDtos.RetryRequest(UUID.randomUUID(),4)))
+                .isInstanceOfSatisfying(AuthException.class,e->assertThat(e.code()).isEqualTo("IAM.COORDINATION_RETRY_CONFLICT"));
+        permissions.retry(successor,recovered.commandId().toString(),new AccountPermissionDtos.RetryRequest(UUID.randomUUID(),3));
+        doReturn(new AccountCourseClient.Applied(student,recovered.suspensionId().toString(),recovered.accessRevision(),true,0))
+                .when(course).apply(anyString(),anyString(),anyLong(),anyBoolean(),anyString());
+        attempt(recovered.commandId());assertLatestUnchanged("APPLIED");
+    }
+
+    /** 两管理员争抢同一FAILED命令；一次预算成功，另一次409，原水位与周期保持不变。 */
+    @Test void recoveredCommandKeepsConcurrentRetryConflict() throws Exception {
+        users.assignRole(student,"TEACHER");
+        doThrow(new IllegalStateException("test-timeout")).when(course).apply(anyString(),anyString(),anyLong(),anyBoolean(),anyString());
+        var command=change(student,Action.REVOKE_TEACHING);
+        for(int i=0;i<3;i++)attempt(command.commandId());
+        String successor=user("ADMIN");var id=permissions.latest(successor,student).orElseThrow().commandId().toString();
+        ExecutorService pool=Executors.newFixedThreadPool(2);CountDownLatch start=new CountDownLatch(1);
+        try {
+            var results=new java.util.ArrayList<Future<Integer>>();
+            for(String actor:List.of(admin,successor))results.add(pool.submit(()->{
+                start.await();
+                try {permissions.retry(actor,id,new AccountPermissionDtos.RetryRequest(UUID.randomUUID(),3));return 202;}
+                catch(AuthException conflict){return conflict.status().value();}
+            }));
+            start.countDown();assertThat(List.of(results.get(0).get(10,TimeUnit.SECONDS),results.get(1).get(10,TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(202,409);
+            var after=permissions.latest(successor,student).orElseThrow();
+            assertThat(after.attempts()).isEqualTo(3);assertThat(after.accessRevision()).isEqualTo(command.accessRevision());
+            assertThat(after.suspensionId()).isEqualTo(command.suspensionId());
+        }finally {pool.shutdownNow();}
+    }
+
+    /** 真实IAM HTTP过滤链：空账号204、未知404、非法UUID422；匿名/旧会话/禁用401，当前非管理员或过时角色403。 */
+    @Test void latestHttpUsesCurrentAuthorityAndDistinguishesEmptyFromUnknown() throws Exception {
+        String valid=token(admin,"administration:access",0);
+        var empty=latestHttp(student,valid);assertThat(empty.statusCode()).isEqualTo(204);assertThat(empty.body()).isEmpty();
+        var unknown=latestHttp(UUID.randomUUID().toString(),valid);assertThat(unknown.statusCode()).isEqualTo(404);
+        assertThat(unknown.body()).contains("code","message","traceId","timestamp","path","fieldErrors");
+        assertThat(latestHttp("invalid",valid).statusCode()).isEqualTo(422);
+        assertThat(latestHttp(student,null).statusCode()).isEqualTo(401);
+        assertThat(latestHttp(student,token(student,"learning:access",0)).statusCode()).isEqualTo(403);
+        jdbc.update("DELETE FROM user_role WHERE user_id=?",admin);users.assignRole(admin,"STUDENT");
+        assertThat(latestHttp(student,valid).statusCode()).isEqualTo(403);
+        jdbc.update("DELETE FROM user_role WHERE user_id=?",admin);users.assignRole(admin,"ADMIN");
+        jdbc.update("UPDATE `user` SET session_version=1 WHERE id=?",admin);
+        assertThat(latestHttp(student,valid).statusCode()).isEqualTo(401);
+        jdbc.update("UPDATE `user` SET status='DISABLED' WHERE id=?",admin);
+        assertThat(latestHttp(student,token(admin,"administration:access",1)).statusCode()).isEqualTo(401);
+    }
+
+    /** 每种协调状态在两次读取间必须保留所有原始字段，GET不能调用Course或消耗尝试。 */
+    private void assertLatestUnchanged(String status) {
+        var before=jdbc.queryForList("SELECT * FROM account_permission_command WHERE user_id=?",student);
+        clearInvocations(course);
+        assertThat(permissions.latest(admin,student).orElseThrow().coordinationStatus()).isEqualTo(status);
+        assertThat(jdbc.queryForList("SELECT * FROM account_permission_command WHERE user_id=?",student)).isEqualTo(before);
+        verifyNoInteractions(course);
+    }
+    /** 仅H2 HTTP测试签发已知测试密钥JWT；真实验收通过正式登录，不以此替代真实授权。 */
+    private String token(String actor,String permission,long version) {
+        var claims=org.springframework.security.oauth2.jwt.JwtClaimsSet.builder().issuer("edu-platform-iam-test")
+                .audience(List.of("edu-platform-gateway-test")).subject(actor).issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(120))
+                .claim("roles",List.of("ADMIN")).claim("permissions",List.of(permission)).claim("sessionVersion",version).build();
+        return jwtEncoder.encode(org.springframework.security.oauth2.jwt.JwtEncoderParameters.from(
+                org.springframework.security.oauth2.jwt.JwsHeader.with(org.springframework.security.oauth2.jose.jws.MacAlgorithm.HS256).build(),claims)).getTokenValue();
+    }
+    private java.net.http.HttpResponse<String> latestHttp(String target,String token) throws Exception {
+        var request=java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:"+port+"/api/v1/admin/users/"+target+"/permission-commands/latest")).GET();
+        if(token!=null)request.header("Authorization","Bearer "+token);
+        return java.net.http.HttpClient.newHttpClient().send(request.build(),java.net.http.HttpResponse.BodyHandlers.ofString());
     }
     @Test void previewExpiryRevisionAndExplicitConfirmationRejectWrites() {
         var p=preview(student,Action.BAN);
