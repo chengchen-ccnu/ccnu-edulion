@@ -1,5 +1,17 @@
 # Skeleton verification
 
+## 2026-10-10 总控验收合并 T16.3.1 与 T17C.2 准备
+
+[合并后 CI #38039180030](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/38039180030) 四项全部成功。
+
+- 开始工作区干净，在`codex/t16.3.1-permission-command-recovery-query`独立审查最终`0684919`，无业务代码修改。恢复接口当前管理员授权、目标隔离、稳定排序、204空正文和无写入副作用符合OpenAPI0.31.1；已有H2专项/同契约Mock证据复核通过。
+- 独立默认Java全仓`clean verify`未加失败重跑参数：9模块BUILD SUCCESS；Surefire XML汇总407项，349通过/58环境条件跳过、0失败/错误/flaky。前端独立`check:api`、八workspace类型、63文件470项test和三端build成功；既有chunk警告非阻断，Python未本地重跑，最终HEAD两轮共8项CI含Python均成功。
+- 重跑既有真实恢复脚本综合1项0失败/错误/跳过；真实Gateway→IAM→MySQL/Redis回执丢失后第二管理员凭userId恢复、授权/隔离/无副作用通过。独立`-CleanupOnly`复核1项通过，四个合成账号、五预览/命令及其身份/会话/审计/Outbox、自有Redis键精确清零，存量用户/历史Outbox一致，18080/18081无监听；没有新库/表/迁移，未操作课程/题库/OSS/其他Schema或Rabbit队列。
+- Operation历史风险仍保留：本PR无该模块差异，本次默认全仓未复现。只在内存H2 TIMESTAMP(6)诊断验证`.123456789`被取整为`.123457`、存储值比输入晚211纳秒，支持已记录的next_attempt_at到期边界解释，但不是唯一原因证明。周期Worker仍处理未到期PENDING事实，未发现消息丢失证据；结合独立复验与CI评为非本次合并阻断存量测试维护风险，未修改测试/生产代码或持久启用失败复跑。
+- Ready PR #89最终HEAD八项CI成功、CLEAN/MERGEABLE且head未变化；普通合并为`5d3e159035b200afaf7e56e20b6dfcfe8f5ee25f`。main快进与origin/main一致；完成的实施及其规划本地分支删除，远端实施分支用ls-remote确认保留，无关worktree未动。
+- T17C.2前置复审通过，已从最新main准备`codex/t17c2-account-permissions-web`，只更新页面范围/backlog/独立审计及交付状态文档。四动作/预览/命令查询/有限补偿全部已有，补口已合并；共享ADMIN安全回跳加入/admin/users是本次前端责任，邀请、审核、unlock/force-logout不混入。
+- 安全包装器验证IAM/Course/Learning dev Schema、JWT/课程协调/Rabbit凭据存在；Rabbit实际认证连接通过，MySQL/Redis由真实脚本再次验证。本轮未重跑六服务Course暂停/恢复链路，须前端任务实际启动验证；不把环境存在性当长链成功。本轮未改local.env，无新敏感配置迁移事项。完整边界和新任务提示词见[T17C.2审计](T17C.2-prerequisite-audit.md)。
+
 ## 2026-10-07 T16.3.1 权限命令恢复查询实施与验收
 
 - 工作区开始干净，使用指定`codex/t16.3.1-permission-command-recovery-query`，保留`eeacb73`/`aca5a03`规划祖先；按准备提示词完整阅读页面规格及相关契约/实现/交付。先更新OpenAPI0.31.1并落盘[契约评审](../api/T16.3.1-contract-review.md)，再做IAM最小读取。
