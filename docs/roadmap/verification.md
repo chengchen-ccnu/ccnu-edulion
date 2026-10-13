@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-10-13 T17C.2 账号权限管理前端
+
+- 起始指定`codex/t17c2-account-permissions-web`干净，规划`87a8dbe`保留，本地/远端main仍`5d3e159`。完整核对AGENTS/page-specs/审计7～8及依赖交付、OpenAPI0.31.1和生成客户端。只改账号前端、必要共享身份/类型与测试/验收脚本及交付文档，无Java/OpenAPI/事件/迁移改动。
+- `/admin/users`分页/脱敏详情、四动作预览/理由/二次确认、未知原载荷三次发送、latest→公开commandId恢复、账号隔离、四态/异步恢复revision、有界轮询、原命令有限补偿已实现；统一登录安全回跳共用白名单过滤，固定两项侧栏。409明确核对，401/403/身份变化清私有状态，隐藏/离线/卸载清请求和定时器；不实现邀请/任意角色/unlock/force-logout/审核改造。
+- `check:api`、八workspace typecheck、65文件507项前端测试、三端build通过；既有大chunk提示保留。Prism同契约七路径及latest八状态含204空正文通过。Java仅启动包全仓package成功与既有IAM隔离15项通过，没有重跑全仓clean verify或Python业务测试；最后管理员守卫由H2覆盖，不在共享dev制造最后管理员。
+- 共享安全包装器启动六Java服务/三端及MySQL/Redis/RabbitMQ/协调Worker。最终浏览器18组（9真实+9明确Mock）通过：正常资格上传/审核、正常API两发布课/一草稿/同一学生两报名、真实去重2课1人、撤权/暂停/恢复、BAN/UNBAN仅学生及独立恢复教学、旧会话拒绝、恢复revision、两管理员并发409、自封禁保护、真实202回执丢失后userId接手latest恢复、非管理员前后端拒绝、深链/刷新/返回/Enter/Escape及360/768/1440截图人工检查。
+- 独立verify确认两发布课各两个原suspensionId恢复区间和Learning消费，草稿零暂停。FAILED补偿/六次预算/故障四态由组件、同OpenAPI AJV Mock及既有隔离测试验证，没有冒充共享dev真实依赖故障。Mock404/422/429/503/401/403、offline分别标注，APPLIED不宣称所有下游消息送达。
+- 最终四账号、三课程、两报名、一份PNG/资格轮次、10预览/9命令及关联会话/审计/五域Outbox/消费/时钟/媒体/通知精确清理，重复cleanup确认无活动夹具。OSS原件HEAD确认删除、自有Redis Key不存在；热点由既有Worker自然刷新核对，不删共享IP限流/整榜、不purge/FLUSHDB。原管理员、手工《线性代数》、存量题库及历史Outbox比对一致。临时DPAPI凭据/活动清单删除，本轮Java/前端/Prism停止，未改local.env。
+- 失败轮和修正如实记录于[独立交付](../delivery/T17C.2-account-permissions-web.md)：材料授权201、独立登录Cookie污染、暂停公告安全404及旧Refresh撤销的脚本断言/前置修正；组件具体查询监听修复面板变化误刷新列表与焦点丢失。不修改Java或放宽权限通过。Operation历史时间边界风险保留，没有全局失败复跑。
+- 中文注释人工复核、Python/Node/PowerShell语法和`git diff --check`通过；生成文件没有手工改动。交总控独立验收，未自行合并；Ready PR/提交发布后追加。
+
 ## 2026-10-10 总控验收合并 T16.3.1 与 T17C.2 准备
 
 [合并后 CI #38039180030](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/38039180030) 四项全部成功。

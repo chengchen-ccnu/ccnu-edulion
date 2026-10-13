@@ -9,12 +9,12 @@ describe("admin fixed navigation", () => {
     expect(buildAdminNavigation("admin-dashboard").map(item => item.label)).toEqual(labels);
   });
 
-  it("enables only review and keeps permissions without href or keyboard target", () => {
+  it("enables both fixed real routes and highlights permissions", () => {
     const items = buildAdminNavigation("admin-dashboard");
 
     expect(items[0]).toMatchObject({ state: "enabled", href: "/admin/teacher-review", kind: "router" });
-    expect(items[1]).toMatchObject({ state: "coming-soon" });
-    expect(items[1].href).toBeUndefined(); expect(items[1].kind).toBeUndefined();
+    expect(items[1]).toMatchObject({ state: "enabled", href: "/admin/users", kind: "router" });
+    expect(buildAdminNavigation("admin-users")[1].current).toBe(true);
   });
 
   it("does not vary the collection for anonymous, student, teacher, admin or multi-workspace accounts", () => {
