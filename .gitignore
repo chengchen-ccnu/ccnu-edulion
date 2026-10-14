@@ -5,10 +5,7 @@ Thumbs.db
 .vscode/
 *.iml
 .agents/
-.codex/*
-!.codex/rules/
-.codex/rules/*
-!.codex/rules/git-push.rules
+.codex/
 
 # 本地环境、密钥和证书
 .env
