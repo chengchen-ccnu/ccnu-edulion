@@ -17,4 +17,9 @@ describe("admin canonical entry and permission guard", () => {
     await router.push("/admin/teacher-review?page=2&status=REJECTED&panel=history"); expect(router.currentRoute.value.query.page).toBe("2");
     identity.admin = false; await router.push("/admin/teacher-review?page=1"); expect(router.currentRoute.value.name).toBe("forbidden");
   });
+  it("protects the account permission deep link with the same administrator guard", async () => {
+    await router.push("/admin/users?page=2&status=DISABLED&panel=detail");
+    expect(router.currentRoute.value.name).toBe("admin-users"); expect(router.currentRoute.value.query.page).toBe("2");
+    identity.admin = false; await router.push("/admin/users?page=1"); expect(router.currentRoute.value.name).toBe("forbidden");
+  });
 });

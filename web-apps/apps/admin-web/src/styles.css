@@ -35,3 +35,34 @@
 .review-skeleton { min-height: 100px; padding: 24px; background: #f0f4fb; border-radius: 10px; }
 @media (max-width: 1100px) { .review-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .teacher-review { padding: 0 12px; } .review-list, .review-detail { padding: 14px; } .review-filters { align-items: stretch; } .review-filters label { flex: 1; } .review-round dl { grid-template-columns: 1fr; } }
+
+/* 账号分页与详情保持同一键盘顺序；窄屏顺序堆叠，敏感输入不截断，长UUID可换行。 */
+.account-permissions h2 { margin: 14px 0 8px; font-size: 1.85rem; }
+.account-permissions p { color: #59677d; line-height: 1.65; }
+.account-permissions button { padding: 9px 13px; min-height: 42px; border: 1px solid #ccd7e9; border-radius: 9px; background: #fff; color: #234e9b; cursor: pointer; font: inherit; }
+.account-permissions button:disabled { opacity: .55; cursor: not-allowed; }
+.account-permissions input, .account-permissions select, .account-permissions textarea { font: inherit; min-height: 42px; max-width: 100%; padding: 9px; border: 1px solid #cad5e5; border-radius: 8px; background: #fff; }
+.account-permissions :focus-visible { outline: 3px solid #3168db; outline-offset: 3px; }
+.account-filters { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 24px 0; }
+.account-filters label, .account-preview label { display: grid; gap: 8px; }
+.account-keyword { flex: 1; min-width: min(100%, 210px); }
+.account-layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.2fr); gap: 20px; align-items: start; }
+.account-list, .account-detail { min-width: 0; padding: 20px; border: 1px solid #dce4f0; border-radius: 15px; background: #fff; overflow-wrap: anywhere; }
+.account-rows { list-style: none; padding: 0; }
+.account-rows li { padding: 18px 0; border-bottom: 1px solid #e5ebf5; }
+.account-rows .status-chip { display: inline-block; margin: 6px; white-space: normal; }
+.account-rows .selected { border-left: 3px solid #3168db; padding-left: 12px; }
+.account-rows small { display: block; margin-bottom: 10px; }
+.account-actions, .account-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+.account-facts { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; font-size: .9rem; }
+.account-facts dd { margin: 0; color: #5f6d81; }
+.account-preview { display: grid; gap: 12px; border-top: 1px solid #dce4f0; margin-top: 20px; }
+.account-preview textarea { min-height: 100px; resize: vertical; width: 100%; box-sizing: border-box; }
+.account-preview label:has(input[type=checkbox]) { display: flex; align-items: start; }
+.account-preview input[type=checkbox] { min-height: auto; margin-top: 6px; }
+.account-warning { padding: 12px; border: 1px solid #eed29a; background: #fffaed; border-radius: 10px; }
+.account-warning button { margin: 5px; }
+.account-coordination { border-top: 1px solid #dce4f0; margin-top: 20px; }
+.account-skeleton { min-height: 80px; padding: 18px; background: #f0f4fb; border-radius: 10px; }
+@media (max-width: 1100px) { .account-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .account-permissions { padding: 0 12px; } .account-list, .account-detail { padding: 14px; } .account-filters { align-items: stretch; } .account-filters label { flex: 1; } .account-facts { grid-template-columns: 1fr; } }

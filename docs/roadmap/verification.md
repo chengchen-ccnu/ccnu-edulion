@@ -1,5 +1,52 @@
 # Skeleton verification
 
+## 2026-10-14 提交与合并交接
+
+用户明确授权提交并合并既有 [PR #90](https://github.com/chengchen-ccnu/ccnu-edulion/pull/90)。提交范围包含 T17C.2 原实现 `30fe601`、交接 `e6b92f0` 与本轮图片/排版/工作台显示、精确开发数据维护脚本及 PNG；当前本地 522 测试、八 workspace 类型检查及三端构建已通过，生成类型无差异。合并前检查本次推送的最新 CI，最终提交和合并身份以 PR 记录为准。此交接不重新运行维护脚本、创建数据或开展用户要求自行完成的浏览器验收。
+
+## 2026-10-14 顶栏工作台与结果页可读性
+
+- 工作台：匿名和单工作台不再生成只读占位，多工作台保留安全切换地址；页面规格及三端输入同步，共享壳没有新增角色判断。
+- 结果页：题号、分数含义和答案层次调整，保留公布权限与图片授权链路。本轮前端 66 文件/522 测试、八个 workspace 类型检查和三端构建通过，保留已有大 chunk 提示；生成类型无差异。
+- 用户明确自行验收后未再操作浏览器或账号；实际页面、响应式、键盘验收由用户完成，未伪报通过。无数据库、表或伪数据新增，无配置/凭据变更。
+- 详见 [工作台显示](../delivery/T17A-account-workspace-visibility.md) 与 [结果页排版](../delivery/T12B-result-readability.md)。
+
+## 2026-10-13 T12B 结果页解析图片修复
+
+- 根因：旧解析与 AI 冻结快照中四图完整 READY/BOUND，结果页只传文字。补齐媒体/旧编号分段/授权/测评缓存范围，不猜 DTO、不改答案公布事实；同一结果页同时覆盖自主练习与课程结果。
+- 类型检查八 workspace、学生构建通过；最终前端 66 文件/522 测试通过，专项 15 项覆盖旧分段/稳定 UUID/权限/部分失败与401/404/409/422/429/503/offline有限请求、深链接及临时 URL 释放。保留既有 chunk 提示；无 Java/Python修改，不重复其构建。
+- student1 既有练习整卷 11 图真实 HTTP 200且解码成功，第2题4图恢复；深链/硬刷新/Enter切题与360/768/1440无横向溢出检查通过。未在共享服务制造故障或新增持久伪数据；1440截图失败与明确Mock范围如实见 [交付记录](../delivery/T12B-result-media-rendering.md)。视口恢复，服务/凭据/原学习数据保留。
+
+## 2026-10-13 student1 本地封面与孤立报名修复
+
+- 只维护既有 Course/Media/Learning 专用 dev Schema；无新库/表/迁移/伪账号。PNG 经教师正常 Media 上传、READY/所有权/用途校验；固定旧 Seed v1 封面精确修复，正常发布被缺视频校验拒绝的本轮草稿已撤掉。Course Outbox 三条引用事件均 PUBLISHED，Media v1 BOUND/v2 RELEASED，相关 PENDING=0。
+- 固定 f201 课程缺失，student1 无其进度/笔记/作答/图文完成；精确删除一条孤立报名及级联通知区间。重复脚本零删除，其他两 ACTIVE 报名保留。封面修复重复执行零写入。
+- Gateway 公共详情与原图 HTTP 200，PNG 1536×1024、2,044,876 字节；教师页面硬刷新图片 complete=true/正确 naturalWidth，已发布 v1/r1 且无本轮草稿。PowerShell 解析及 diff 检查通过；无生产代码变更，未重跑全仓构建或用教师会话冒充 student1 UI 验收。
+- 真实 RabbitMQ 处理使用临时 18083/18082 Helper，完成后停止，不重启原应用、不清空 MQ/Redis、不改凭据/local.env。旧演示课缺视频与后续启动需显式消息开关的限制见 [独立交付](../delivery/T12A-local-learning-data-repair.md)。
+
+## 2026-10-13 T17C.2 账号权限管理前端
+
+- 起始指定`codex/t17c2-account-permissions-web`干净，规划`87a8dbe`保留，本地/远端main仍`5d3e159`。完整核对AGENTS/page-specs/审计7～8及依赖交付、OpenAPI0.31.1和生成客户端。只改账号前端、必要共享身份/类型与测试/验收脚本及交付文档，无Java/OpenAPI/事件/迁移改动。
+- `/admin/users`分页/脱敏详情、四动作预览/理由/二次确认、未知原载荷三次发送、latest→公开commandId恢复、账号隔离、四态/异步恢复revision、有界轮询、原命令有限补偿已实现；统一登录安全回跳共用白名单过滤，固定两项侧栏。409明确核对，401/403/身份变化清私有状态，隐藏/离线/卸载清请求和定时器；不实现邀请/任意角色/unlock/force-logout/审核改造。
+- `check:api`、八workspace typecheck、65文件507项前端测试、三端build通过；既有大chunk提示保留。Prism同契约七路径及latest八状态含204空正文通过。Java仅启动包全仓package成功与既有IAM隔离15项通过，没有重跑全仓clean verify或Python业务测试；最后管理员守卫由H2覆盖，不在共享dev制造最后管理员。
+- 共享安全包装器启动六Java服务/三端及MySQL/Redis/RabbitMQ/协调Worker。最终浏览器18组（9真实+9明确Mock）通过：正常资格上传/审核、正常API两发布课/一草稿/同一学生两报名、真实去重2课1人、撤权/暂停/恢复、BAN/UNBAN仅学生及独立恢复教学、旧会话拒绝、恢复revision、两管理员并发409、自封禁保护、真实202回执丢失后userId接手latest恢复、非管理员前后端拒绝、深链/刷新/返回/Enter/Escape及360/768/1440截图人工检查。
+- 独立verify确认两发布课各两个原suspensionId恢复区间和Learning消费，草稿零暂停。FAILED补偿/六次预算/故障四态由组件、同OpenAPI AJV Mock及既有隔离测试验证，没有冒充共享dev真实依赖故障。Mock404/422/429/503/401/403、offline分别标注，APPLIED不宣称所有下游消息送达。
+- 最终四账号、三课程、两报名、一份PNG/资格轮次、10预览/9命令及关联会话/审计/五域Outbox/消费/时钟/媒体/通知精确清理，重复cleanup确认无活动夹具。OSS原件HEAD确认删除、自有Redis Key不存在；热点由既有Worker自然刷新核对，不删共享IP限流/整榜、不purge/FLUSHDB。原管理员、手工《线性代数》、存量题库及历史Outbox比对一致。临时DPAPI凭据/活动清单删除，本轮Java/前端/Prism停止，未改local.env。
+- 失败轮和修正如实记录于[独立交付](../delivery/T17C.2-account-permissions-web.md)：材料授权201、独立登录Cookie污染、暂停公告安全404及旧Refresh撤销的脚本断言/前置修正；组件具体查询监听修复面板变化误刷新列表与焦点丢失。不修改Java或放宽权限通过。Operation历史时间边界风险保留，没有全局失败复跑。
+- 中文注释人工复核、Python/Node/PowerShell语法和`git diff --check`通过；生成文件没有手工改动。实现`30fe601`用独立`git push origin HEAD`普通推送，规划祖先保留，提交后check:api成功。[Ready PR #90](https://github.com/chengchen-ccnu/ccnu-edulion/pull/90)已创建并附加，创建时OPEN/非Draft、CI进行中；最新HEAD/检查以PR实时状态为准。交总控独立验收，未自行合并、未删远端分支。
+
+## 2026-10-10 总控验收合并 T16.3.1 与 T17C.2 准备
+
+[合并后 CI #38039180030](https://github.com/chengchen-ccnu/ccnu-edulion/actions/runs/38039180030) 四项全部成功。
+
+- 开始工作区干净，在`codex/t16.3.1-permission-command-recovery-query`独立审查最终`0684919`，无业务代码修改。恢复接口当前管理员授权、目标隔离、稳定排序、204空正文和无写入副作用符合OpenAPI0.31.1；已有H2专项/同契约Mock证据复核通过。
+- 独立默认Java全仓`clean verify`未加失败重跑参数：9模块BUILD SUCCESS；Surefire XML汇总407项，349通过/58环境条件跳过、0失败/错误/flaky。前端独立`check:api`、八workspace类型、63文件470项test和三端build成功；既有chunk警告非阻断，Python未本地重跑，最终HEAD两轮共8项CI含Python均成功。
+- 重跑既有真实恢复脚本综合1项0失败/错误/跳过；真实Gateway→IAM→MySQL/Redis回执丢失后第二管理员凭userId恢复、授权/隔离/无副作用通过。独立`-CleanupOnly`复核1项通过，四个合成账号、五预览/命令及其身份/会话/审计/Outbox、自有Redis键精确清零，存量用户/历史Outbox一致，18080/18081无监听；没有新库/表/迁移，未操作课程/题库/OSS/其他Schema或Rabbit队列。
+- Operation历史风险仍保留：本PR无该模块差异，本次默认全仓未复现。只在内存H2 TIMESTAMP(6)诊断验证`.123456789`被取整为`.123457`、存储值比输入晚211纳秒，支持已记录的next_attempt_at到期边界解释，但不是唯一原因证明。周期Worker仍处理未到期PENDING事实，未发现消息丢失证据；结合独立复验与CI评为非本次合并阻断存量测试维护风险，未修改测试/生产代码或持久启用失败复跑。
+- Ready PR #89最终HEAD八项CI成功、CLEAN/MERGEABLE且head未变化；普通合并为`5d3e159035b200afaf7e56e20b6dfcfe8f5ee25f`。main快进与origin/main一致；完成的实施及其规划本地分支删除，远端实施分支用ls-remote确认保留，无关worktree未动。
+- T17C.2前置复审通过，已从最新main准备`codex/t17c2-account-permissions-web`，只更新页面范围/backlog/独立审计及交付状态文档。四动作/预览/命令查询/有限补偿全部已有，补口已合并；共享ADMIN安全回跳加入/admin/users是本次前端责任，邀请、审核、unlock/force-logout不混入。
+- 安全包装器验证IAM/Course/Learning dev Schema、JWT/课程协调/Rabbit凭据存在；Rabbit实际认证连接通过，MySQL/Redis由真实脚本再次验证。本轮未重跑六服务Course暂停/恢复链路，须前端任务实际启动验证；不把环境存在性当长链成功。本轮未改local.env，无新敏感配置迁移事项。完整边界和新任务提示词见[T17C.2审计](T17C.2-prerequisite-audit.md)。
+
 ## 2026-10-07 T16.3.1 权限命令恢复查询实施与验收
 
 - 工作区开始干净，使用指定`codex/t16.3.1-permission-command-recovery-query`，保留`eeacb73`/`aca5a03`规划祖先；按准备提示词完整阅读页面规格及相关契约/实现/交付。先更新OpenAPI0.31.1并落盘[契约评审](../api/T16.3.1-contract-review.md)，再做IAM最小读取。

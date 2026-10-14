@@ -24,8 +24,7 @@ const accountTools = computed(() => buildAccountTools({
   notificationsUnavailable: unavailable.value,
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: loginUrl,
-  workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined,
-  workspaceLabel: authStore.state.status === "authenticated" ? "教师端" : undefined
+  workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined
 }));
 async function logout() {
   await authStore.logout();

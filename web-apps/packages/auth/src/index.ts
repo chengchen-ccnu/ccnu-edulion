@@ -154,7 +154,7 @@ const WORKSPACES: readonly WorkspaceDefinition[] = [
     role: "ADMIN",
     permission: "administration:access",
     path: "/admin/teacher-review",
-    accepts: path => ["/admin/teacher-review", "/admin/dashboard", "/admin/reviews"].includes(path)
+    accepts: path => ["/admin/teacher-review", "/admin/dashboard", "/admin/reviews", "/admin/users"].includes(path)
   }
 ];
 
@@ -196,6 +196,14 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
   }
   if (parsed.origin !== "https://platform.invalid") return null;
   let requestedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  if (parsed.pathname === "/admin/users") {
+    const safe = new URL("/admin/users", "https://platform.invalid");
+    const query = sanitizeAccountPermissionsQuery(Object.fromEntries([...parsed.searchParams.keys()].map(key => {
+      const values = parsed.searchParams.getAll(key); return [key, values.length === 1 ? values[0] : values];
+    })));
+    for (const [key, value] of Object.entries(query)) safe.searchParams.set(key, value);
+    requestedPath = `${safe.pathname}${safe.search}`;
+  }
   // 管理审核回跳仅携带定位信息，精确身份/材料地址/正文和未知参数不能进入登录URL或历史。
   if (["/admin/teacher-review", "/admin/dashboard", "/admin/reviews"].includes(parsed.pathname)) {
     const safe = new URL("/admin/teacher-review", "https://platform.invalid");
@@ -219,6 +227,20 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
   if (!workspace) return null;
   return { ...toWorkspaceLink(workspace, urls), access: "workspace", path: requestedPath, requestedPath,
     href: new URL(requestedPath, `${originFor(workspace.role, urls)}/`).toString() };
+}
+
+/** 账号深链只保留有界页码/状态及UUID定位；身份关键词、理由、重复参数和hash不能进入登录历史。 */
+export function sanitizeAccountPermissionsQuery(query: Record<string, unknown>): Record<string, string> {
+  const safe: Record<string, string> = {};
+  const patterns = { page: /^[1-9]\d{0,4}$/, status: /^(ACTIVE|DISABLED)$/,
+    userId: /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i,
+    commandId: /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i, panel: /^(detail|coordination)$/ };
+  for (const [key, pattern] of Object.entries(patterns)) {
+    const value = query[key];
+    if (typeof value === "string" && pattern.test(value) && (key !== "page" || Number(value) <= 50001)) safe[key] = value;
+  }
+  if (!safe.userId) { delete safe.commandId; delete safe.panel; }
+  return safe;
 }
 
 /** 生成由 student-web 物理承载的统一登录地址，只携带通过白名单校验的站内 redirect。 */

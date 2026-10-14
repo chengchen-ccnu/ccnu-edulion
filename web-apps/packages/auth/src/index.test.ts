@@ -22,6 +22,25 @@ const urls: PlatformUrls = {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("account permission unified login return", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  it("preserves bounded account deep links and removes identity, reason, arbitrary fields and fragments", () => {
+    const target = `/admin/users?page=2&status=DISABLED&userId=${id}&commandId=${id}&panel=coordination`;
+    expect(resolveInternalRedirect(`${target}&keyword=private&reason=private&invitationId=${id}#private`, urls)?.requestedPath).toBe(target);
+    expect(new URL(buildUnifiedLoginUrl(target, urls)).searchParams.get("redirect")).toBe(target);
+    expect(selectPostLoginDestination(user(["ADMIN"], ["administration:access"]), target, urls)).toMatchObject({ kind: "target", target: { href: `http://admin.test${target}` } });
+    expect(selectPostLoginDestination(user(["STUDENT"], ["learning:access"]), target, urls).kind).toBe("forbidden");
+  });
+  it.each(["page=50002", "page=0", "status=TEACHER", "userId=invalid", "panel=invite", "page=1&page=2", "userId=a&userId=b"])("drops invalid or repeated query %s", query => {
+    expect(resolveInternalRedirect(`/admin/users?${query}`, urls)?.requestedPath).toBe("/admin/users");
+  });
+  it("drops unbound command/panel, retains default review and rejects external redirects", () => {
+    expect(resolveInternalRedirect(`/admin/users?commandId=${id}&panel=detail`, urls)?.requestedPath).toBe("/admin/users");
+    expect(selectPostLoginDestination(user(["ADMIN"], ["administration:access"]), undefined, urls)).toMatchObject({ kind: "target", target: { path: "/admin/teacher-review" } });
+    expect(resolveInternalRedirect("//outside.test/admin/users", urls)).toBeNull();
+  });
+});
+
 describe("shared authentication store", () => {
   it("does not restore an old user when capability refresh finishes after logout", async () => {
     let defer = false;
@@ -230,7 +249,7 @@ describe("post-login routing", () => {
     const destination = resolveInternalRedirect(`/admin/teacher-review?page=2&status=REJECTED&order=OLDEST&applicationId=${id}&panel=history&exact=private%40example.invalid#secret`, urls);
     expect(destination?.href).toBe(`http://admin.test/admin/teacher-review?page=2&status=REJECTED&order=OLDEST&applicationId=${id}&panel=history`);
     expect(selectPostLoginDestination(user(["STUDENT"], ["learning:access"]), "/admin/teacher-review", urls).kind).toBe("forbidden");
-    expect(resolveInternalRedirect("/admin/users", urls)).toBeNull();
+    expect(resolveInternalRedirect("/admin/users", urls)?.path).toBe("/admin/users");
   });
   it("restores the teacher announcement deep link after login and rejects admin substitution", () => {
     const target = "/teacher/courses/00000000-0000-4000-8000-000000000201/announcements?page=2&panel=audit";

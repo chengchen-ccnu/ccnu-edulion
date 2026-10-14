@@ -24,8 +24,7 @@ const accountTools = computed(() => buildAccountTools({
   notificationsUnavailable: unavailable.value,
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: loginUrl,
-  workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined,
-  workspaceLabel: authStore.state.status === "authenticated" ? "管理端" : undefined
+  workspaceHref: workspaceLinks.value.length > 1 ? workspaceChooserUrl : undefined
 }));
 /** 调用既有退出流程后返回统一登录；共享认证清理身份，审核页监听身份变化清理私有资源。 */
 async function logout() {

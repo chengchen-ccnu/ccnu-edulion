@@ -26,7 +26,7 @@ export interface ShellAccountMenuItem {
   badge?: string;
 }
 
-/** 账号工具区固定槽位支持链接、动作、只读状态和明确禁用四种表现。 */
+/** 账号工具区按模型顺序渲染；工作台工具仅在有真实切换地址时提供。 */
 export interface ShellAccountTool {
   id: "workspace" | "account";
   label: string;
@@ -40,8 +40,8 @@ export interface AccountToolInput {
   authenticated: boolean;
   accountLabel?: string;
   loginHref: string;
+  /** 应用确认存在多个可用工作台后提供安全切换地址；缺省时不展示工作台工具。 */
   workspaceHref?: string;
-  workspaceLabel?: string;
   profileHref?: string;
   notificationsHref?: string;
   unreadCount?: number | null;
@@ -49,14 +49,10 @@ export interface AccountToolInput {
 }
 
 /**
- * 构造工作台、账号两个固定工具槽位；消息与未读数放在头像菜单。
- * 输入由各应用提供当前会话、安全地址及真实计数，故障用未知标识；输出不包含角色判断。
+ * 构造可用的工作台切换和账号工具；缺少切换地址时仅返回账号，消息与未读数放在头像菜单。
+ * 输入由各应用提供当前会话、安全地址及真实计数，故障用未知标识；输出不包含角色判断或只读工作台占位。
  */
 export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
-  const workspace: ShellAccountTool = input.workspaceHref
-    ? { id: "workspace", label: "工作台", kind: "link", href: input.workspaceHref, statusLabel: "切换" }
-    : { id: "workspace", label: "工作台", kind: "status",
-        statusLabel: input.workspaceLabel ?? (input.authenticated ? "当前" : "登录后可用") };
   const account: ShellAccountTool = input.authenticated
     ? {
         id: "account",
@@ -74,8 +70,7 @@ export function buildAccountTools(input: AccountToolInput): ShellAccountTool[] {
         ]
       }
     : { id: "account", label: "账号", kind: "link", href: input.loginHref, statusLabel: "登录" };
-  return [
-    workspace,
-    account
-  ];
+  return input.workspaceHref
+    ? [{ id: "workspace", label: "工作台", kind: "link", href: input.workspaceHref, statusLabel: "切换" }, account]
+    : [account];
 }
