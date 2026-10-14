@@ -1,5 +1,29 @@
 # Skeleton verification
 
+## 2026-10-14 提交与合并交接
+
+用户明确授权提交并合并既有 [PR #90](https://github.com/chengchen-ccnu/ccnu-edulion/pull/90)。提交范围包含 T17C.2 原实现 `30fe601`、交接 `e6b92f0` 与本轮图片/排版/工作台显示、精确开发数据维护脚本及 PNG；当前本地 522 测试、八 workspace 类型检查及三端构建已通过，生成类型无差异。合并前检查本次推送的最新 CI，最终提交和合并身份以 PR 记录为准。此交接不重新运行维护脚本、创建数据或开展用户要求自行完成的浏览器验收。
+
+## 2026-10-14 顶栏工作台与结果页可读性
+
+- 工作台：匿名和单工作台不再生成只读占位，多工作台保留安全切换地址；页面规格及三端输入同步，共享壳没有新增角色判断。
+- 结果页：题号、分数含义和答案层次调整，保留公布权限与图片授权链路。本轮前端 66 文件/522 测试、八个 workspace 类型检查和三端构建通过，保留已有大 chunk 提示；生成类型无差异。
+- 用户明确自行验收后未再操作浏览器或账号；实际页面、响应式、键盘验收由用户完成，未伪报通过。无数据库、表或伪数据新增，无配置/凭据变更。
+- 详见 [工作台显示](../delivery/T17A-account-workspace-visibility.md) 与 [结果页排版](../delivery/T12B-result-readability.md)。
+
+## 2026-10-13 T12B 结果页解析图片修复
+
+- 根因：旧解析与 AI 冻结快照中四图完整 READY/BOUND，结果页只传文字。补齐媒体/旧编号分段/授权/测评缓存范围，不猜 DTO、不改答案公布事实；同一结果页同时覆盖自主练习与课程结果。
+- 类型检查八 workspace、学生构建通过；最终前端 66 文件/522 测试通过，专项 15 项覆盖旧分段/稳定 UUID/权限/部分失败与401/404/409/422/429/503/offline有限请求、深链接及临时 URL 释放。保留既有 chunk 提示；无 Java/Python修改，不重复其构建。
+- student1 既有练习整卷 11 图真实 HTTP 200且解码成功，第2题4图恢复；深链/硬刷新/Enter切题与360/768/1440无横向溢出检查通过。未在共享服务制造故障或新增持久伪数据；1440截图失败与明确Mock范围如实见 [交付记录](../delivery/T12B-result-media-rendering.md)。视口恢复，服务/凭据/原学习数据保留。
+
+## 2026-10-13 student1 本地封面与孤立报名修复
+
+- 只维护既有 Course/Media/Learning 专用 dev Schema；无新库/表/迁移/伪账号。PNG 经教师正常 Media 上传、READY/所有权/用途校验；固定旧 Seed v1 封面精确修复，正常发布被缺视频校验拒绝的本轮草稿已撤掉。Course Outbox 三条引用事件均 PUBLISHED，Media v1 BOUND/v2 RELEASED，相关 PENDING=0。
+- 固定 f201 课程缺失，student1 无其进度/笔记/作答/图文完成；精确删除一条孤立报名及级联通知区间。重复脚本零删除，其他两 ACTIVE 报名保留。封面修复重复执行零写入。
+- Gateway 公共详情与原图 HTTP 200，PNG 1536×1024、2,044,876 字节；教师页面硬刷新图片 complete=true/正确 naturalWidth，已发布 v1/r1 且无本轮草稿。PowerShell 解析及 diff 检查通过；无生产代码变更，未重跑全仓构建或用教师会话冒充 student1 UI 验收。
+- 真实 RabbitMQ 处理使用临时 18083/18082 Helper，完成后停止，不重启原应用、不清空 MQ/Redis、不改凭据/local.env。旧演示课缺视频与后续启动需显式消息开关的限制见 [独立交付](../delivery/T12A-local-learning-data-repair.md)。
+
 ## 2026-10-13 T17C.2 账号权限管理前端
 
 - 起始指定`codex/t17c2-account-permissions-web`干净，规划`87a8dbe`保留，本地/远端main仍`5d3e159`。完整核对AGENTS/page-specs/审计7～8及依赖交付、OpenAPI0.31.1和生成客户端。只改账号前端、必要共享身份/类型与测试/验收脚本及交付文档，无Java/OpenAPI/事件/迁移改动。

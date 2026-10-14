@@ -24,7 +24,6 @@ const accountTools = computed(() => buildAccountTools({
   accountLabel: authStore.state.currentUser?.displayName,
   loginHref: "/login",
   workspaceHref: workspaceLinks.value.length > 1 ? "/workspaces" : undefined,
-  workspaceLabel: authStore.state.status === "authenticated" ? "学习端" : undefined,
   profileHref: "/profile"
 }));
 
