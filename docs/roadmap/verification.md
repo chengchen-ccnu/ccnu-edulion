@@ -1,5 +1,16 @@
 # Skeleton verification
 
+## 2026-10-22 T17C.3 管理员邀请与受邀开户前端
+
+- 开工指定`codex/t17c3-admin-invitation-web`干净，保留规划`901278d`及main基线`1121dce`。只实现`/admin/users`内邀请面板与student-web唯一身份壳`/accept-admin-invitation`，同步安全URL/登录回跳、中文注释和独立交付。无新侧栏/全量邀请列表/公开管理员注册，无Java/OpenAPI0.31.1/事件/迁移变更。
+- 管理创建/重发45秒、查询15秒有界；未知写入最多三次手动精确原ID/载荷重放，离页保护、双维状态、服务端revision/冷却/六次预算、409重读、429冷却与401/403私有清理。PENDING默认2秒30次，只查询不发信，隐藏/离线/卸载停止。邮箱/理由仅内存，URL只留invite及合法ID，不依赖userId，不混commandId。
+- 公共accept只发正文且credentials omit，无Authorization/刷新/自动登录。邮件凭证手动输入，43字符、昵称可见1～30、密码至少12字符且UTF-8最多72字节；已知会话不覆盖，201清表单后统一登录。网络/5xx/超时/取消锁住再次消费，明确结果未确认，给正常登录及联系邀请人；422保持统一，不输出秘密验证细节。
+- 最终`check:api`成功、八workspace typecheck、71文件572测试、三端build通过，保留已有chunk提示；Prism同一OpenAPI四接口32响应及请求AJV校验通过。最小Java四模块package成功，无Java改动，未重跑全仓业务测试。Node/Python/PowerShell语法、diff检查及两项隔离Fixture清理测试通过；不启用全局失败复跑。
+- 最小真实Gateway/IAM/MySQL/Redis/SMTP及两前端：临时管理员统一登录安全回跳；用户确认首封及一次重发两封收件、旧凭证422、新凭证201及正常密码登录。只读verify确认SENT/2次发送/ACCEPTED/revision2、仅ADMIN/administration:access，浏览器受邀昵称/默认教师审核；第二管理员已知ID查询、过滤/刷新/返回、已接受禁重发、Tab/Enter、学习403、已知身份返回开户无表单通过。真实HTTP另测匿名401/普通账号403/绑定邮箱409、ADMIN学习/教学/申请403及已消费邀请合成输入422/重发409，未额外发信。
+- 明确Mock浏览器：404/422/429/503/401/403（后两者清私有）、FAILED/EXPIRED/6次耗尽/ACCEPTED、create503后三次原请求禁新建、accept503后不再提交且计数仅一次。开户页360/768/1440真实页面布局/刷新/键盘通过；管理端三档在同源码Mock浏览器实际测量并人工看图，真实用户标签固定492宽，未冒充三档真实数据。离线/隐藏/超时/卸载/PENDING预算由组件覆盖。
+- 创建两个合成初始账号、一个真实接受管理员及一邀请/两个发信命令、对应审计/会话/精确Redis键；没有新库/表。cleanup及重复cleanup通过、临时DPAPI/清单删除，原管理员、手工课程/存量题库/历史五域Outbox比对一致。Gateway本轮用户发信限流键精确核对不存在，共享IP限流未删，无purge/FLUSHDB/其他域写入。所有本轮服务/前端/Mock/Prism已停止，端口无监听；个人local.env未改，无新明文配置待迁移。邮件不可撤回，受控邮箱/凭证/密码不记入交付。
+- 失败轮及浏览器工具限制如实分列于[独立交付](../delivery/T17C.3-admin-invitation-web.md)：定时器同步取消修复、测试异步等待/readonly赋值修正、Prism就绪前失败、开发热更新清草稿后重新核对、未知离页保护阻止导航和视口作用标签差异。没有放宽后端保护或改契约通过。实现提交/Ready PR见交付末尾，等待总控，不自行合并。
+
 ## 2026-10-22 T17C.2 合并状态收尾与 T17C.3 前置准备
 
 - 开始main工作区干净。核对PR #90已于2026-10-14合并为`6ce99f75f0baeb98a4e3b8ff1da8de1c65584c89`；合并后CI #38502843427及最新main `1121dce` CI #38514124359均成功。`git pull --ff-only origin main`无更新；确认祖先后删除本地T17C.2分支，`ls-remote`确认远端`273e98a`保留，无关worktree未动。本轮未重复T17C.2浏览器或开发数据维护，原507/最终522测试及18组浏览器属于交付历史证据。
@@ -1770,7 +1781,7 @@ Java 领域服务将模块名替换为 `iam-service`、`course-service`、`media
 
 ## 2026-09-13 PR #68 合并与 T15C 前置审计
 
-- 合并与清理：[PR #68](https://github.com/chengchen-ccnu/ccnu-edulion/pull/68) 在 Ready、可合并且 8 项 CI 全部成功后，以普通 merge 合并为 `main@c82a748247b3bb66c571902756a081bf529d7cce`；本地 `main` 已 `--ff-only` 同步，T14.3 本地和远端分支均已删除。
+- 合并与清理：[PR #68](https://github.com/chengchen-ccnu/ccnu-edulion/pull/68) 在 Ready、可合并且 8 项 CI 全部成功后，以普通 merge 合并为 `main@c82a748247b3bb66c572902756a081bf529d7cce`；本地 `main` 已 `--ff-only` 同步，T14.3 本地和远端分支均已删除。
 - 动作前置：OpenAPI 0.23.4 与生成客户端已提供会话当前动作、按 action 查询、revision 确认/取消、`PENDING/EXPIRED/EXECUTING/SUCCEEDED/FAILED` 状态和稳定执行结果。SSE `FINAL_RESULT.pendingPracticeAction` 只返回 Java 复核并保存后的安全投影，足以覆盖真实数量、参数修改后旧动作失效、超时未知结果查询和重复请求恢复。
 - 页面前置：T15A/T15B 已提供独立 AI 页、普通公共题悬浮窗、会话/SSE/中断生命周期和统一消息渲染；T10C.2/T12B 已提供公共题入口与既有作答器。T15C 只增加建议/结果卡片及相应请求状态，不修改全局导航，不进入课程播放器、HOMEWORK/EXAM，也不复制答题器。
 - 路由审计：T14.3 返回稳定 `/practice/{assessmentId}`，但当前该路由仍由 `LegacyPracticeRedirectPage` 仅调用课程 assessment entry。此差异属于 T15C 的必要前端接线：按服务端事实兼容本人自主练习直接进入既有 `PracticeAttemptPage` 与课程旧链接迁移；不得猜 courseId、信任查询参数或改变后端归属模型。

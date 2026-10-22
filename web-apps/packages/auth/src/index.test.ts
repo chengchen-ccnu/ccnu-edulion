@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   availableWorkspaces,
   buildCourseCenterUrl,
+  buildAdminInvitationAcceptanceUrl,
   buildUnifiedLoginUrl,
   createAuthStore,
   installAuthGuard,
@@ -31,8 +32,18 @@ describe("account permission unified login return", () => {
     expect(selectPostLoginDestination(user(["ADMIN"], ["administration:access"]), target, urls)).toMatchObject({ kind: "target", target: { href: `http://admin.test${target}` } });
     expect(selectPostLoginDestination(user(["STUDENT"], ["learning:access"]), target, urls).kind).toBe("forbidden");
   });
-  it.each(["page=50002", "page=0", "status=TEACHER", "userId=invalid", "panel=invite", "page=1&page=2", "userId=a&userId=b"])("drops invalid or repeated query %s", query => {
+  it.each(["page=50002", "page=0", "status=TEACHER", "userId=invalid", "panel=invalid", "page=1&page=2", "userId=a&userId=b"])("drops invalid or repeated query %s", query => {
     expect(resolveInternalRedirect(`/admin/users?${query}`, urls)?.requestedPath).toBe("/admin/users");
+  });
+  it("allows only a non-secret invitation target without a user and builds a generic acceptance URL", () => {
+    const target = `/admin/users?panel=invite&invitationId=${id}`;
+    expect(resolveInternalRedirect(`${target}&userId=${id}&commandId=${id}&email=private&secret=private&page=2#private`, urls)?.requestedPath).toBe(target);
+    expect(new URL(buildUnifiedLoginUrl(target, urls)).searchParams.get("redirect")).toBe(target);
+    expect(resolveInternalRedirect(`/admin/users?panel=invite&invitationId=${id}&invitationId=${id}`, urls)?.requestedPath).toBe("/admin/users?panel=invite");
+    expect(resolveInternalRedirect("/admin/users?panel=invite&invitationId=invalid", urls)?.requestedPath).toBe("/admin/users?panel=invite");
+    expect(resolveInternalRedirect("/admin/users?panel=invite&panel=detail", urls)?.requestedPath).toBe("/admin/users");
+    expect(buildAdminInvitationAcceptanceUrl(urls)).toBe("http://student.test/accept-admin-invitation");
+    expect(resolveInternalRedirect("/accept-admin-invitation?secret=private", urls)).toBeNull();
   });
   it("drops unbound command/panel, retains default review and rejects external redirects", () => {
     expect(resolveInternalRedirect(`/admin/users?commandId=${id}&panel=detail`, urls)?.requestedPath).toBe("/admin/users");

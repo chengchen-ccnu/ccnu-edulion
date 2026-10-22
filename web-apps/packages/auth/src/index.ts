@@ -174,6 +174,11 @@ export function buildCourseCenterUrl(urls: PlatformUrls = getPlatformUrls()): st
   return new URL("/courses", `${urls.student}/`).toString();
 }
 
+/** 由既有学生端配置构造通用开户地址；不接收邀请信息，不添加查询或片段。 */
+export function buildAdminInvitationAcceptanceUrl(urls: PlatformUrls = getPlatformUrls()): string {
+  return new URL("/accept-admin-invitation", `${urls.student}/`).toString();
+}
+
 export function availableWorkspaces(user: CurrentUser | null, urls: PlatformUrls = getPlatformUrls()): WorkspaceLink[] {
   if (!user) return [];
   return WORKSPACES.filter(workspace => userCanAccess(user, workspace))
@@ -232,6 +237,13 @@ export function resolveInternalRedirect(candidate: string | null | undefined,
 /** 账号深链只保留有界页码/状态及UUID定位；身份关键词、理由、重复参数和hash不能进入登录历史。 */
 export function sanitizeAccountPermissionsQuery(query: Record<string, unknown>): Record<string, string> {
   const safe: Record<string, string> = {};
+  if (query.panel === "invite") {
+    safe.panel = "invite";
+    if (typeof query.invitationId === "string" && /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i.test(query.invitationId)) {
+      safe.invitationId = query.invitationId;
+    }
+    return safe;
+  }
   const patterns = { page: /^[1-9]\d{0,4}$/, status: /^(ACTIVE|DISABLED)$/,
     userId: /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i,
     commandId: /^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/i, panel: /^(detail|coordination)$/ };

@@ -22,4 +22,9 @@ describe("admin canonical entry and permission guard", () => {
     expect(router.currentRoute.value.name).toBe("admin-users"); expect(router.currentRoute.value.query.page).toBe("2");
     identity.admin = false; await router.push("/admin/users?page=1"); expect(router.currentRoute.value.name).toBe("forbidden");
   });
+  it("protects an invitation deep link that has no userId", async () => {
+    await router.push("/admin/users?panel=invite&invitationId=00000000-0000-4000-8000-000000000001");
+    expect(router.currentRoute.value.query.panel).toBe("invite");
+    identity.admin = false; await router.push("/admin/users?panel=invite"); expect(router.currentRoute.value.name).toBe("forbidden");
+  });
 });
