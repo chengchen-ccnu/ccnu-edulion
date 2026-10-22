@@ -1,5 +1,15 @@
 # Skeleton verification
 
+## 2026-10-22 T17C.2 合并状态收尾与 T17C.3 前置准备
+
+- 开始main工作区干净。核对PR #90已于2026-10-14合并为`6ce99f75f0baeb98a4e3b8ff1da8de1c65584c89`；合并后CI #38502843427及最新main `1121dce` CI #38514124359均成功。`git pull --ff-only origin main`无更新；确认祖先后删除本地T17C.2分支，`ls-remote`确认远端`273e98a`保留，无关worktree未动。本轮未重复T17C.2浏览器或开发数据维护，原507/最终522测试及18组浏览器属于交付历史证据。
+- 完整阅读AGENTS/page-specs并审计邀请四接口、OpenAPI0.31.1/生成客户端、IAM Service/Controller/DTO/邮件、Gateway/IAM公开精确入口及权限、管理URL过滤和学生身份壳。没有邀请分页/邮箱检索接口；邮件只有ID/凭证没有页面链接，采用前端提供无查询/片段的通用开户页地址，手动填写，不改Java邮件服务。
+- 前置通过，从最新main准备`codex/t17c3-admin-invitation-web`；仅更新T17C.2已合并状态、页面范围、backlog及[T17C.3独立审计与实施提示词](T17C.3-prerequisite-audit.md)。invite面板需同步放开合法invitationId且不依赖userId的安全回跳；公共开户不替换当前会话，成功后统一登录、不自动登录；一次性accept未知响应不可假设幂等重试。这些均为后续前端责任，未实现页面或业务代码。
+- IAM `AdminInvitationIntegrationTest`独立10项通过，0失败/错误/跳过，3个Reactor模块成功；仅内存H2 V1～V5/Mock SMTP，覆盖独立ADMIN、非管理员、已绑定拒绝、单次消费/并发、过期/错凭证/PENDING、重发/冷却/六次上限、回滚及首位初始化守卫。`pnpm.cmd --dir web-apps run check:api`通过，生成文件与HEAD无差异。本轮未重跑全仓Java、Python业务、前端全量/构建或浏览器，不伪报这些结果。
+- 共享环境包装器加载当前用户加密配置；SMTP mode/host/from/凭据齐备，真实连接/STARTTLS证书验证/AUTH通过，QUIT关闭，未发邮件。IAM专用dev库通过现有JDBC只读SELECT1，当前V5成功且三个邀请/审计表存在；Redis仅AUTH（按配置）/PING通过，无写键。首轮Schema探针误用未定义键，已按application-local更正；langgraph缺pymysql/redis包，未安装而改用既有JDBC/标准库，未遗留诊断文件。
+- Node20.19.5/pnpm10.22.0可用，检查时8080/8081/18080/18081/5173～5175无监听。真实邮件投递、收件和开户登录留实施任务使用受控且未绑定邮箱完成，SMTP AUTH不代表收件成功。邀请最小链路不依赖OSS/RabbitMQ/Agent或其他领域服务，不为本轮清理历史Outbox。
+- 无新持久数据库、表、迁移、开发业务伪数据、消息或OSS对象；仅H2隔离测试临时表/合成邀请事实，逐例清理且JVM结束销毁。真实开发MySQL/Redis只读；个人local.env及凭据未改，无新敏感配置待迁移。文档`git diff --check`通过，规划本地提交、不推送，不创建本轮PR。
+
 ## 2026-10-14 提交与合并交接
 
 用户明确授权提交并合并既有 [PR #90](https://github.com/chengchen-ccnu/ccnu-edulion/pull/90)。提交范围包含 T17C.2 原实现 `30fe601`、交接 `e6b92f0` 与本轮图片/排版/工作台显示、精确开发数据维护脚本及 PNG；当前本地 522 测试、八 workspace 类型检查及三端构建已通过，生成类型无差异。合并前检查本次推送的最新 CI，最终提交和合并身份以 PR 记录为准。此交接不重新运行维护脚本、创建数据或开展用户要求自行完成的浏览器验收。
