@@ -5,6 +5,11 @@ import { readFileSync } from "node:fs";
 import { studentRoutes } from "./routes";
 
 describe("student application routes", () => {
+  it("keeps invited acceptance public without restoring another account session", () => {
+    const route = studentRoutes.find(item => item.path === "/accept-admin-invitation");
+    expect(route?.name).toBe("accept-admin-invitation");
+    expect(route?.meta?.requiresAuth).toBeUndefined(); expect(route?.meta?.restoreSession).toBeUndefined();
+  });
   it.each([
     ["/login", false],
     ["/register", false],

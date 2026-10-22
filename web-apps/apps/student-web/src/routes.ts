@@ -10,6 +10,7 @@ import HomePage from "./views/HomePage.vue";
 import NotificationsPage from "./views/NotificationsPage.vue";
 import LoginPage from "./views/LoginPage.vue";
 import RegisterPage from "./views/RegisterPage.vue";
+import AcceptAdminInvitationPage from "./views/AcceptAdminInvitationPage.vue";
 import ForgotPasswordPage from "./views/ForgotPasswordPage.vue";
 import ResetPasswordPage from "./views/ResetPasswordPage.vue";
 import ProfilePage from "./views/ProfilePage.vue";
@@ -61,6 +62,7 @@ export const studentRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: "learning:access" } },
   { path: "/login", name: "login", component: LoginPage },
   { path: "/register", name: "register", component: RegisterPage },
+  { path: "/accept-admin-invitation", name: "accept-admin-invitation", component: AcceptAdminInvitationPage },
   { path: "/forgot-password", name: "forgot-password", component: ForgotPasswordPage },
   { path: "/reset-password", name: "reset-password", component: ResetPasswordPage },
   { path: "/terms", name: "terms", component: ProtocolPage, props: { type: "TERMS" } },

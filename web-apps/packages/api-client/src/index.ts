@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 
 import type { components, paths } from "./generated/schema";
 export { createOperationsApi } from "./operations";
+export { createRequestScope } from "./request-scope";
 
 export const DEFAULT_MOCK_BASE_URL = "http://127.0.0.1:4010";
 const runtimeEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
@@ -46,6 +47,11 @@ export type AdminTeacherApplicationPage = components["schemas"]["AdminTeacherApp
 export type AdminTeacherApplicationDetail = components["schemas"]["AdminTeacherApplicationDetail"];
 export type AdminUser = components["schemas"]["AdminUser"];
 export type AdminUserPage = components["schemas"]["AdminUserPage"];
+export type AdminInvitation = components["schemas"]["AdminInvitation"];
+export type AdminInvitationCreateRequest = components["schemas"]["AdminInvitationCreateRequest"];
+export type AdminInvitationResendRequest = components["schemas"]["AdminInvitationResendRequest"];
+export type AdminInvitationAcceptRequest = components["schemas"]["AdminInvitationAcceptRequest"];
+export type AdminInvitationAcceptance = components["schemas"]["AdminInvitationAcceptance"];
 export type AccountPermissionAction = components["schemas"]["AccountPermissionAction"];
 export type AccountPermissionPreview = components["schemas"]["AccountPermissionPreview"];
 export type AccountPermissionCommand = components["schemas"]["AccountPermissionCommand"];
